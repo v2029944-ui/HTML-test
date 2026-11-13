@@ -1168,6 +1168,11 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 .calendar-details{margin-top:12px;line-height:1.5}
 .calendar-details p{margin:8px 0}
 @media(max-width:740px){.report-calendar{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.quality-advice{margin:8px 0 0;font-size:var(--ui-small-font,12px);line-height:1.5}
+.quality-advice>summary{cursor:pointer;color:var(--accent);font-weight:650}
+.quality-advice p{margin:6px 0;max-width:650px}
+.quality-advice .text-button{min-height:32px;padding:5px 0;text-align:left}
 </style>
   
 </head>
@@ -2812,6 +2817,15 @@ function qualityCellLabel(issue){
   const name=/^[A-Za-zА-Яа-яЁё0-9_]+$/.test(sheet)?sheet:"'"+sheet.replace(/'/g,"''")+"'";
   return cells.map(cell=>name+'!'+cell).join(', ');
 }
+function qualityRepairHint(issue){
+  if(issue.type==='empty-name')return 'Откройте исходный Excel и заполните название работы в указанной ячейке. Затем повторно проверьте файл: временное название не следует считать постоянным.';
+  if(issue.type==='invalid')return 'Проверьте значения количества и суммы в указанных ячейках: числа, разделитель дробной части, формулы и пустые поля. Если ячейки не указаны, найдите строку или контрольный итог в исходном файле.';
+  if(issue.type==='skipped')return 'Проверьте название работы и ближайший заголовок подразделения в этом наборе столбцов. Строка не была включена в расчёт.';
+  if(issue.type==='mismatch')return 'Сравните контрольные количество и сумму с детализацией подразделения или всего набора. Указанные ячейки — точки сверки; расхождение может быть вызвано пропущенными работами выше по листу. Не подгоняйте итоги вручную.';
+  if(issue.type==='missing')return 'Проверьте, существует ли отчёт за этот период и выбранное подразделение; загрузите недостающий файл. Отсутствие отчёта нельзя заменять нулём.';
+  if(issue.type==='duplicate'||issue.type==='overlap')return 'Сверьте даты отчётных периодов. Уберите дубликат или повторите импорт с правильными датами; проверьте данные до подтверждения замены.';
+  return 'Проверьте исходный лист Excel и предупреждения импорта. После исправления повторно загрузите и проверьте файл перед сохранением.';
+}
 function renderQuality(sync=true){
   const reports=$('qualitySource').value==='pending'?state.pending:state.reports;
   const issues=collectQualityIssues(reports,state.settings.orgNames);
@@ -2837,6 +2851,21 @@ function renderQuality(sync=true){
     if(issue.expected&&issue.actual)reason.append(elem('small','Количество: факт '+fmtNumber(issue.actual.count,'count')+' / итог Excel '+fmtNumber(issue.expected.count,'count')+
       '; сумма: факт '+fmtNumber(issue.actual.amount,'amount')+' / итог Excel '+fmtNumber(issue.expected.amount,'amount')));
     if(issue.raw)reason.append(elem('small','Значения при чтении: '+issue.raw.map(x=>x===null?'[нет значения]':String(x)).join(' | ')));
+    const advice=elem('details',null,'quality-advice'),summary=elem('summary','Как проверить и исправить');
+    advice.append(summary,elem('p',qualityRepairHint(issue)));
+    const address=qualityCellLabel(issue);
+    if(address!=='—'){
+      const copy=elem('button','Скопировать адрес ячейки','text-button');copy.type='button';
+      copy.addEventListener('click',async()=>{
+        try{
+          if(!navigator.clipboard?.writeText)throw Error('Нет доступа к буферу обмена');
+          await navigator.clipboard.writeText(address);
+          copy.textContent='Адрес скопирован';
+        }catch(err){notice('Копирование недоступно в этом браузере. Выделите адрес в столбце «Ячейка Excel» и скопируйте вручную.',true);}
+      });
+      advice.append(copy);
+    }
+    reason.append(advice);
     return [periodText,issue.organization||'Не указано / общий итог',QUALITY_TYPES[issue.type]||'Замечание',
       source,issue.row||'—',qualityCellLabel(issue),reason];
   });
