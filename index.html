@@ -1073,6 +1073,38 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
   .dashboard-filter-panel .category-filter-menu{left:0;right:auto;width:100%;max-width:100%;padding:11px}
   .dashboard-filter-panel .category-actions .text-button{min-height:44px}
 }
+
+/* The native Excel chooser follows the same control size as the adjacent selects.
+   Keep a real file input for keyboard access and file:// compatibility. */
+.import-grid #excelFile{
+  box-sizing:border-box;display:block;width:100%;max-width:100%;min-width:0;
+  height:var(--control-height);min-height:var(--control-height);
+  margin-top:var(--field-gap);padding:0 8px 0 0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:var(--font-body);font-size:var(--control-size);font-weight:var(--control-weight);
+  line-height:calc(var(--control-height) - 2px);color:var(--text);
+  border:1px solid var(--field-border);border-radius:var(--radius-control);
+  background:var(--surface);cursor:pointer;
+}
+.import-grid #excelFile::file-selector-button,
+.import-grid #excelFile::-webkit-file-upload-button{
+  height:calc(var(--control-height) - 2px);min-height:0;
+  margin:0 10px 0 0;padding:0 12px;
+  border:0;border-right:1px solid var(--field-border);border-radius:0;
+  font-family:var(--font-body);font-size:var(--control-size);font-weight:600;
+  background:var(--subtle);color:var(--text);cursor:pointer;
+}
+.import-grid #excelFile:hover::file-selector-button{background:var(--hover)}
+.import-grid #excelFile:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+/* Each piece of a saved period has its own line; warnings never join the total. */
+.report-row{min-width:0}
+.report-row>div{min-width:0;flex:1 1 260px;overflow-wrap:anywhere}
+.report-row small{display:block;margin-top:3px;line-height:1.5;overflow-wrap:anywhere}
+.report-row .icon-button{flex-shrink:0;max-width:100%}
+@media(max-width:740px){
+  .import-grid #excelFile{font-size:var(--control-size)}
+  .report-row .icon-button{white-space:normal}
+}
 </style>
   
 </head>
@@ -1124,7 +1156,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <label class="period-mode">Показать данные за<select id="overviewMode"><option value="single">Один период</option><option value="range">Диапазон периодов</option></select></label>
           <label id="overviewSingle">Период<select id="overviewPeriod"></select></label>
           <fieldset class="period-combo" id="overviewRange" aria-label="Общий диапазон" hidden>
-            <div class="overview-period-labels"><label for="rangeStart">С периода</label><label for="rangeEnd">По период</label></div>
+            <div class="overview-period-labels"><label for="rangeStart">С периода</label><label for="rangeEnd">До периода</label></div>
             <div class="period-pair"><select id="rangeStart"></select><select id="rangeEnd"></select></div>
           </fieldset>
         </div>
@@ -1170,7 +1202,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <fieldset class="period-combo comparison-range" id="comparisonRangeGroup" hidden><legend>Один общий диапазон для подразделений</legend>
             <div class="period-pair">
               <label id="comparisonRangeStartLabel">С периода<select id="comparisonRangeStart"></select></label>
-              <label id="comparisonRangeEndLabel">По период<select id="comparisonRangeEnd"></select></label>
+              <label id="comparisonRangeEndLabel">До периода<select id="comparisonRangeEnd"></select></label>
             </div>
           </fieldset>
           <fieldset class="multi-filter"><legend>Показатели сравнения</legend><div id="comparisonMetrics" class="multi-choices"></div></fieldset>
@@ -1331,7 +1363,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <summary>Проверка справочника и групп</summary>
         <p class="muted small">Все уникальные названия из отчётов, справочника и существующих групп. Тип периода и подразделения для проверки выполнений задаются в аналитике. Они не ограничивают общий список названий или правила группировки.</p>
         <div class="extended-filters">
-          <div class="period-pair group-audit-dates"><label>С периода<select id="groupAuditFrom"></select></label><label>По период<select id="groupAuditTo"></select></label></div>
+          <div class="period-pair group-audit-dates"><label>С периода<select id="groupAuditFrom"></select></label><label>До периода<select id="groupAuditTo"></select></label></div>
           <label>Показать<select id="groupAuditMode"><option value="all">Все названия</option><option value="ungrouped">Без группы</option><option value="unused">Группы без выполнений</option></select></label>
           <label>Поиск по всем названиям<input id="groupAuditSearch" type="search" placeholder="Услуга или группа"></label>
         </div>
@@ -2120,7 +2152,7 @@ function buildPending() {
 }
 function renderPreview(pending) {
   const root=$('importPreview');root.replaceChildren();
-  root.append(elem('strong',pending.length+' отчётных периодов найдено'));
+  root.append(elem('strong','Найдено отчётных периодов: '+pending.length));
   const grid=elem('div',null,'import-preview-grid');
   pending.forEach(r=>{
     const card=elem('div',null,'import-preview-card');
@@ -2131,7 +2163,7 @@ function renderPreview(pending) {
     grid.append(card);
   });
   root.append(grid);
-  if(state.catalogPreview.length)root.append(elem('p','Дополнительно распознан справочник услуг на других листах: '+state.catalogPreview.length+' записей. Он будет сохранён вместе с отчётами.','muted small'));
+  if(state.catalogPreview.length)root.append(elem('p','На других листах найдены записи справочника услуг: '+state.catalogPreview.length+'. Справочник будет сохранён вместе с отчётами.','muted small'));
   root.append(elem('p','Проверьте дату первого периода и предупреждения. Совпадающие периоды не будут дублироваться.','muted small'));
 }
 /* Справочник со второго и последующих листов: форматы
@@ -3005,14 +3037,23 @@ function renderDashboard(sync=true){
   $('chartHelp').textContent='Выбрано подразделений: '+orgs.size+' из '+state.settings.orgNames.length+
     '. '+(metrics.length===2?'Сумма и количество показаны отдельно.':'');
 }
+function ruPlural(number,one,few,many){
+  const value=Math.abs(Math.trunc(number)),lastTwo=value%100,last=value%10;
+  if(lastTwo>=11&&lastTwo<=14)return many;
+  if(last===1)return one;
+  if(last>=2&&last<=4)return few;
+  return many;
+}
 function renderReports() {
-  const root=$('reports');root.replaceChildren();$('reportCount').textContent=state.reports.length+' периодов';
+  const root=$('reports');root.replaceChildren();$('reportCount').textContent=
+    state.reports.length+' '+ruPlural(state.reports.length,'период','периода','периодов');
   const sorted=state.reports.slice().sort((a,b)=>b.start.localeCompare(a.start));
   if(!sorted.length){empty(root,'Отчёты ещё не загружены');return;}
   sorted.forEach(r=>{
     const row=elem('div',null,'report-row'),main=elem('div');
     main.append(elem('strong',displayPeriod(r)+' · '+(r.type==='week'?'Неделя':'Месяц')));
-    main.append(elem('small',r.organizations.join(', ')+' · '+r.rows.length+' записей · '+fmtNumber(r.amount,'amount')+' сумма'));
+    main.append(elem('small',r.organizations.join(', ')+' · '+r.rows.length+' '+ruPlural(r.rows.length,'запись','записи','записей')+
+      ' · Сумма: '+fmtNumber(r.amount,'amount')));
     if(r.warnings?.length)main.append(elem('small','Есть замечания к данным: '+r.warnings.length,'warn'));
     const del=elem('button','Удалить отчёт','icon-button');del.title='Удалить из браузера отчёт за '+displayPeriod(r);
     del.addEventListener('click',async()=>{if(!confirm('Удалить отчёт за '+displayPeriod(r)+'?'))return;
@@ -3086,7 +3127,7 @@ function renderGroups() {
   if(!state.settings.groups.length){empty(root,'Групп пока нет — создайте первую ниже.');return;}
   state.settings.groups.forEach(g=>{
     const details=elem('details',null,'group-details');details.dataset.group=g.id;details.open=open.has(g.id);
-    const heading=elem('summary',g.name);heading.append(elem('small',g.works.length+' работ'));details.append(heading);
+    const heading=elem('summary',g.name);heading.append(elem('small',g.works.length+' '+ruPlural(g.works.length,'работа','работы','работ')));details.append(heading);
     const actions=elem('div',null,'actions'),edit=elem('button','Изменить группу','icon-button'),del=elem('button','Удалить группу','icon-button');
     edit.addEventListener('click',()=>{
       state.editingGroup=g.id;state.selectedWorks=new Set(g.works);$('groupName').value=g.name;$('workSearch').value='';renderWorkList();
