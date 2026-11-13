@@ -1074,34 +1074,61 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
   .dashboard-filter-panel .category-actions .text-button{min-height:44px}
 }
 
-/* The native Excel chooser follows the same control size as the adjacent selects.
-   Keep a real file input for keyboard access and file:// compatibility. */
+/* Work/group filter has a clear filled trigger in every palette and design. */
+.dashboard-filter-panel .category-filter-control{
+  border-color:var(--accent-fill);
+  background:var(--accent-fill);
+  color:var(--on-accent);
+}
+.dashboard-filter-panel .category-filter-arrow{
+  border-color:var(--on-accent);
+}
+.dashboard-filter-panel .category-filter>summary:hover .category-filter-control,
+.dashboard-filter-panel .category-filter[open] .category-filter-control{
+  border-color:var(--accent-hover);background:var(--accent-hover);
+}
+/* Import inputs use one field background; the sheet select is not a different shade. */
+.import-grid :is(#importType,#importWeek,#importMonth,#sheetSelect){
+  box-sizing:border-box;width:100%;max-width:100%;min-width:0;
+  min-height:var(--control-height);height:var(--control-height);
+  background:var(--field-bg);color:var(--text);
+}
+.import-grid #sheetSelect:disabled{
+  opacity:1;background:var(--field-bg);color:var(--muted);
+  -webkit-text-fill-color:var(--muted);
+}
+/* Single accessible file picker control: actual file input overlays the visible button. */
+.import-grid .import-file-field{display:block;min-width:0;max-width:100%}
+.import-grid .import-file-field>label{
+  display:block;font-size:var(--label-size);line-height:var(--label-leading);font-weight:600;
+}
+.import-grid .import-file-wrap{
+  position:relative;box-sizing:border-box;min-width:0;width:100%;
+  height:var(--control-height);min-height:var(--control-height);margin-top:var(--field-gap);
+}
 .import-grid #excelFile{
-  box-sizing:border-box;display:block;width:100%;max-width:100%;min-width:0;
-  height:var(--control-height);min-height:var(--control-height);
-  margin-top:var(--field-gap);padding:0 8px 0 0;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-  font-family:var(--font-body);font-size:var(--control-size);font-weight:var(--control-weight);
-  line-height:calc(var(--control-height) - 2px);color:var(--text);
-  border:1px solid var(--field-border);border-radius:var(--radius-control);
-  background:var(--surface);cursor:pointer;
+  position:absolute;inset:0;z-index:1;opacity:0;
+  box-sizing:border-box;width:100%;height:100%;min-width:0;
+  margin:0;padding:0;border:0;cursor:pointer;
 }
-.import-grid #excelFile::file-selector-button{
-  height:calc(var(--control-height) - 2px);min-height:0;
-  margin:0 10px 0 0;padding:0 12px;
-  border:0;border-right:1px solid var(--field-border);border-radius:0;
-  font-family:var(--font-body);font-size:var(--control-size);font-weight:600;
-  background:var(--subtle);color:var(--text);cursor:pointer;
+.import-grid .import-file-button{
+  display:flex;box-sizing:border-box;width:100%;height:100%;
+  align-items:center;justify-content:center;min-width:0;
+  padding:9px 12px;border:1px solid var(--accent-fill);
+  border-radius:var(--radius-control);background:var(--accent-fill);
+  color:var(--on-accent);font-family:var(--font-body);
+  font-size:var(--control-size);font-weight:700;text-align:center;
+  overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
 }
-.import-grid #excelFile::-webkit-file-upload-button{
-  height:calc(var(--control-height) - 2px);min-height:0;
-  margin:0 10px 0 0;padding:0 12px;
-  border:0;border-right:1px solid var(--field-border);border-radius:0;
-  font-family:var(--font-body);font-size:var(--control-size);font-weight:600;
-  background:var(--subtle);color:var(--text);cursor:pointer;
+.import-grid .import-file-wrap:hover .import-file-button{
+  background:var(--accent-hover);border-color:var(--accent-hover);
 }
-.import-grid #excelFile:hover::file-selector-button{background:var(--hover)}
-.import-grid #excelFile:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.import-grid .import-file-wrap:focus-within .import-file-button{
+  outline:2px solid var(--focus);outline-offset:2px;
+}
+@media(max-width:740px){
+  .import-grid .import-file-wrap{max-width:100%}
+}
 /* Each piece of a saved period has its own line; warnings never join the total. */
 .report-row{min-width:0}
 .report-row>div{min-width:0;flex:1 1 260px;overflow-wrap:anywhere}
@@ -1337,11 +1364,17 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <h2>Импорт Excel</h2>
         <p class="muted">Поддерживаются несколько периодов и блоков подразделений на одном листе. Каждая тройка столбцов «работа / количество / сумма» импортируется отдельно.</p>
         <div class="import-grid">
-          <label>Файл .xlsx<input id="excelFile" type="file" accept=".xlsx"></label>
+          <div class="import-file-field">
+            <label for="excelFile">Файл .xlsx</label>
+            <div class="import-file-wrap">
+              <input id="excelFile" type="file" accept=".xlsx" aria-describedby="excelFileStatus">
+              <span id="excelFileStatus" class="import-file-button" aria-live="polite">Выберите файл</span>
+            </div>
+          </div>
           <label>Тип отчётов<select id="importType"><option value="week">Недели</option><option value="month">Месяцы</option></select></label>
           <label id="weekStartLabel">Начало первой недели<input id="importWeek" type="date"></label>
           <label id="monthStartLabel" hidden>Первый месяц<input id="importMonth" type="month"></label>
-          <label>Лист<select id="sheetSelect" disabled></select></label>
+          <label>Лист<select id="sheetSelect" disabled><option value="">Сначала выберите файл</option></select></label>
         </div>
         <p class="muted small">Для <code>Анализ.xlsx</code> первая неделя начинается 19.10.2026. Для других файлов укажите собственные даты. Можно открыть этот HTML двойным нажатием на компьютере, интернет не требуется.</p>
         <label class="checkline"><input type="checkbox" id="replaceExisting"> Заменить уже сохранённый отчёт за совпадающий период</label>
@@ -2298,6 +2331,18 @@ async function importCatalogFile(file) {
   notice('Справочник загружен: '+entries.length+' услуг, новых '+added+'. Создавайте группы вручную в разделе «Группы работ».');
 }
 
+function resetWorkbookSelection(){
+  state.workbook=null;state.fileName='';state.pending=[];state.catalogPreview=[];
+  const select=$('sheetSelect');
+  select.replaceChildren(elem('option','Сначала выберите файл'));
+  select.disabled=true;
+  $('inspectFile').disabled=true;
+  $('saveImport').disabled=true;
+  $('importPreview').textContent='Выберите файл и проверьте структуру перед сохранением.';
+  $('excelFileStatus').textContent='Выберите файл';
+  $('excelFileStatus').title='';
+  $('excelFile').title='';
+}
 async function selectWorkbook(buffer,fileName) {
   if(!window.XLSX)throw Error('Модуль чтения Excel недоступен');
   const workbook=window.XLSX.read(buffer,{type:'array',cellDates:true});
@@ -3923,7 +3968,23 @@ function wire() {
   $('selectTop').addEventListener('click',()=>{state.selectedCategories=new Set(categoryOrder(currentTypeReports(),state.selectedOrganizations,rankMetric()).slice(0,8));renderDashboard(false);});
   $('importType').addEventListener('change',()=>{$('weekStartLabel').hidden=$('importType').value!=='week';$('monthStartLabel').hidden=$('importType').value!=='month';state.pending=[];$('saveImport').disabled=true;});
   ['importWeek','importMonth','sheetSelect'].forEach(id=>$(id).addEventListener('change',()=>{state.pending=[];$('saveImport').disabled=true;}));
-  $('excelFile').addEventListener('change',async(e)=>{try{const file=e.target.files?.[0];if(file)await selectWorkbook(await file.arrayBuffer(),file.name);}catch(err){notice(err.message,true);}});
+  $('excelFile').addEventListener('change',async(e)=>{
+    const file=e.target.files?.[0];
+    if(!file)return;
+    resetWorkbookSelection();
+    $('excelFileStatus').textContent='Загрузка файла…';
+    try{
+      await selectWorkbook(await file.arrayBuffer(),file.name);
+      const status=$('excelFileStatus');
+      status.textContent='Файл загружен';
+      status.title=file.name;
+      e.target.title=file.name;
+    }catch(err){
+      resetWorkbookSelection();
+      e.target.value='';
+      notice(err.message,true);
+    }
+  });
   $('sampleBtn').addEventListener('click',()=>{$('excelFile').click();});
   $('inspectFile').addEventListener('click',()=>{try{inspectImport();}catch(err){notice(err.message,true);}});
   $('saveImport').addEventListener('click',async()=>{try{await saveImport();}catch(err){notice(err.message,true);}});
