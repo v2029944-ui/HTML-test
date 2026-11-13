@@ -1193,6 +1193,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 
 .chart-view-controls{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
 .chart-view-controls>label{display:block;min-width:200px;flex:1 1 200px;max-width:295px}
+.chart-view-controls>label[hidden]{display:none!important}
 .chart-view-controls select{display:block;box-sizing:border-box;min-width:0;width:100%;height:var(--control-height);margin-top:var(--field-gap)}
 .chart-mode-controls{display:flex;flex-wrap:wrap;width:fit-content;max-width:100%;margin-bottom:14px}
 #chartOrgTotals{margin-top:16px}
@@ -3436,6 +3437,7 @@ function renderDepartmentTrend(index,orgs,metrics){
         (item?.available.length||0)+' / '+periods.length];
     }),{
       title:'Итог по подразделениям за диапазон',totalRow:false,
+      csvMetric:'Сравнение подразделений',csvUnit:'сумма и количество указаны в заголовках; полнота — число периодов',
       headerHelp:[
         'Название подразделения из верхнего фильтра.',
         ...metrics.map(metric=>'Итоговый показатель «'+metricTitle(metric)+'» по всем выбранным периодам. Если хотя бы один отчёт подразделения отсутствует, показан прочерк.'),
@@ -3475,7 +3477,7 @@ function renderDashboard(sync=true){
   $('chartHelp').textContent=byDepartments?
     'Сравниваются '+orgs.size+' из '+state.settings.orgNames.length+' подразделений. Учитываются '+
       ($('chartOrgScope').value==='all'?'все выполненные работы.':'только отмеченные работы и группы.')+
-      ' Пропущенные отчёты показаны прочерками; итоги диапазона доступны только для полных данных. '+
+      ' Отсутствующие отчёты дают разрывы на графике и прочерки в таблице; итоги диапазона доступны только для полных данных. '+
       (metrics.length===2?'Сумма и количество показаны отдельно.':''):
     'Выбрано подразделений: '+orgs.size+' из '+state.settings.orgNames.length+
       '. '+(metrics.length===2?'Сумма и количество показаны отдельно.':'');
