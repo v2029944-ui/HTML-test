@@ -1173,6 +1173,23 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 .quality-advice>summary{cursor:pointer;color:var(--accent);font-weight:650}
 .quality-advice p{margin:6px 0;max-width:650px}
 .quality-advice .text-button{min-height:32px;padding:5px 0;text-align:left}
+
+@media screen{#printReport{display:none!important}}
+@media print{
+  @page{size:A4;margin:14mm}
+  html,body{background:white!important;color:#1b2638!important}
+  body>*:not(#printReport){display:none!important}
+  #printReport{display:block!important;position:static!important;width:100%;margin:0;padding:0;
+    font-family:Arial,sans-serif;font-size:10pt;line-height:1.45;color:#1b2638;background:white}
+  #printReport *{color:#1b2638!important;background:transparent!important;box-shadow:none!important;text-shadow:none!important}
+  #printReport h1{font-size:20pt;margin:0 0 10pt}
+  #printReport h2{font-size:13pt;margin:16pt 0 7pt;break-after:avoid}
+  #printReport p{margin:4pt 0;overflow-wrap:anywhere}
+  #printReport table{width:100%;border-collapse:collapse;table-layout:auto;margin:6pt 0 15pt}
+  #printReport th,#printReport td{border:1px solid #b4bcc6;padding:6pt;text-align:left;vertical-align:top;overflow-wrap:anywhere}
+  #printReport th{font-weight:bold;background:#edf0f4!important}
+  #printReport tr{break-inside:avoid}
+}
 </style>
   
 </head>
@@ -1231,7 +1248,8 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <details class="quick-help"><summary>Как выбрать данные для отчёта?</summary><p>Выберите недели или месяцы, подразделения и один период либо диапазон. Фильтр «Работы и группы» находится рядом с показателями: открой его, чтобы искать и отмечать нужные услуги. Обзор показывает итоги <strong>всех выполненных работ</strong> выбранных подразделений; отметки работ и переключатель показателей влияют на подробную аналитику.</p></details>
       </div>
       <section class="panel overview-panel" id="overviewPanel" aria-labelledby="overviewHeading">
-        <div class="sectionbar"><div><h2 id="overviewHeading">Обзор работы</h2><p id="overviewPeriodText" class="muted small">Выберите период для анализа.</p></div></div>
+        <div class="sectionbar"><div><h2 id="overviewHeading">Обзор работы</h2><p id="overviewPeriodText" class="muted small">Выберите период для анализа.</p></div>
+          <button type="button" id="printSummary" class="button secondary" title="Распечатать итоговую сводку или сохранить её в PDF через диалог печати браузера">Печать сводки / PDF</button></div>
         <div id="overviewAlerts" role="status" aria-live="polite"></div>
         <div class="kpis overview-kpis" id="overviewKpis" aria-live="polite"></div>
         <div class="overview-sections">
@@ -1525,6 +1543,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
       <div class="panel danger"><h2>Очистка данных</h2><p class="muted">Удалить все импортированные отчёты на этом устройстве. Правила групп останутся.</p><button id="clearReports" class="button danger-button" title="Удалить загруженные отчёты из этого браузера после подтверждения">Удалить загруженные отчёты</button></div>
     </section>
   </main>
+  <section id="printReport" class="print-report" hidden aria-label="Сводка для печати"></section>
   <footer>Работает в браузере · Без отправки Excel на сервер · На другом устройстве данные не появляются автоматически</footer>
 <script>
 /* Автономное чтение XLSX: ZIP/DEFLATE + XML. Не требует сетевых запросов. */
@@ -3206,6 +3225,54 @@ function overviewTrendClass(current,previous){
   if(current===null||previous===null||!Number.isFinite(current)||!Number.isFinite(previous))return '';
   return current>previous?'positive':current<previous?'negative':'';
 }
+
+function printReportTable(root,title,headings,rows){
+  root.append(elem('h2',title));
+  const table=elem('table'),thead=elem('thead'),header=elem('tr'),body=elem('tbody');
+  for(const text of headings)header.append(elem('th',text));
+  thead.append(header);table.append(thead);
+  for(const values of rows){
+    const tr=elem('tr');for(const value of values)tr.append(elem('td',String(value??'—')));
+    body.append(tr);
+  }
+  table.append(body);root.append(table);
+}
+function buildPrintReport(){
+  const root=$('printReport');root.replaceChildren();
+  const index=analyticsIndex(),orgs=[...state.selectedOrganizations];
+  const {current,previous,drivers}=overviewSnapshot(index,$('rangeStart').value,$('rangeEnd').value,orgs);
+  root.append(elem('h1','Сводка выполненных работ'));
+  const period=current.periods.length?(current.periods.length===1?displayPeriod(current.periods[0]):rangeCaption(current)):'Не выбран';
+  root.append(elem('p','Период: '+period+' · Масштаб: '+(index.type==='week'?'недели':'месяцы')));
+  root.append(elem('p','Подразделения: '+orgs.join(', ')));
+  root.append(elem('p','Дата подготовки: '+new Date().toLocaleDateString('ru-RU')));
+  if(!current.periods.length){root.append(elem('p','Нет отчётов за выбранный период.'));return;}
+  const measures=[['Сумма работ','amount'],['Количество работ','count'],['Средняя сумма на работу','average']];
+  printReportTable(root,'Основные показатели',['Показатель','Текущий результат','Относительно предыдущего интервала'],
+    measures.map(([label,key])=>[label,formatMetric(current.total[key],key),
+      previous.complete?overviewDifference(current.total[key],previous.total[key],key):'Нет сопоставимого полного периода']));
+  if(!current.complete)root.append(elem('p','ВНИМАНИЕ: отчёты некоторых выбранных подразделений неполны. Итоговые значения недоступны или несопоставимы.'));
+  const sourceWarnings=orgs.some(org=>current.orgs.get(org)?.available.some(r=>r.warnings?.length||r.issues?.length));
+  if(sourceWarnings)root.append(elem('p','В исходных Excel есть замечания; результаты рассчитаны по распознанной детализации. Перед использованием проверьте раздел «Контроль качества данных».'));
+  printReportTable(root,'По подразделениям',['Подразделение','Сумма','Количество'],
+    orgs.map(org=>{
+      const item=current.orgs.get(org);
+      return [org,item?.complete?formatMetric(item.amount,'amount'):'Нет полного отчёта',
+        item?.complete?formatMetric(item.count,'count'):'Нет полного отчёта'];
+    }));
+  if(drivers?.complete){
+    for(const [metric,label]of [['amount','Сумма'],['count','Количество']]){
+      const entries=drivers.rows.filter(r=>Number.isFinite(r[metric]?.delta)&&r[metric].delta!==0)
+        .sort((a,b)=>Math.abs(b[metric].delta)-Math.abs(a[metric].delta)).slice(0,5);
+      if(entries.length)printReportTable(root,'Крупнейшие изменения: '+label,
+        ['Услуга или группа','Было','Стало','Изменение'],
+        entries.map(r=>[r.name+(r.kind==='group'?' (группа)':''),formatMetric(r[metric].base,metric),
+          formatMetric(r[metric].current,metric),(r[metric].delta>0?'+':'')+formatMetric(r[metric].delta,metric)]));
+    }
+  }else root.append(elem('p','Причины изменений не рассчитаны: для сравнения нужны полные текущий и предыдущий интервалы.'));
+  root.append(elem('p','Сводка сформирована локально. Группы учитываются без двойного подсчёта. Отсутствие отчёта не считается нулём. Рост показателя сам по себе не означает улучшение эффективности.'));
+}
+
 function renderOverview(index){
   const organizations=[...state.selectedOrganizations],
     from=$('rangeStart').value,to=$('rangeEnd').value,
@@ -3213,6 +3280,7 @@ function renderOverview(index){
     root=$('overviewKpis'),insights=$('overviewInsights'),
     departments=$('overviewOrganizations'),alerts=$('overviewAlerts');
   root.replaceChildren();insights.replaceChildren();departments.replaceChildren();alerts.replaceChildren();
+  $('printSummary').disabled=!current.periods.length;
   $('overviewPeriodText').textContent=current.periods.length?
     (current.periods.length===1?displayPeriod(current.periods[0]):rangeCaption(current))+
     ' · '+organizations.join(', '):
@@ -4189,6 +4257,11 @@ function initChartTooltip() {
   document.documentElement.addEventListener('pointerleave',hide);
 }
 function wire() {
+  $('printSummary').addEventListener('click',()=>{
+    try{buildPrintReport();$('printReport').hidden=false;window.print();}
+    catch(err){notice('Не удалось подготовить сводку для печати: '+err.message,true);}
+  });
+  window.addEventListener('afterprint',()=>{$('printReport').hidden=true;});
   initTheme();
   initChartTooltip();
   let chartResize;
