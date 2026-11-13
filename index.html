@@ -1190,6 +1190,19 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
   #printReport th{font-weight:bold;background:#edf0f4!important}
   #printReport tr{break-inside:avoid}
 }
+
+.chart-view-controls{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+.chart-view-controls>label{display:block;min-width:200px;flex:1 1 200px;max-width:295px}
+.chart-view-controls select{display:block;box-sizing:border-box;min-width:0;width:100%;height:var(--control-height);margin-top:var(--field-gap)}
+.chart-mode-controls{display:flex;flex-wrap:wrap;width:fit-content;max-width:100%;margin-bottom:14px}
+#chartOrgTotals{margin-top:16px}
+#chartOrgTotals:empty{display:none}
+@media(max-width:740px){
+  .chart-view-controls{width:100%;display:grid;grid-template-columns:minmax(0,1fr)}
+  .chart-view-controls>label{min-width:0;max-width:none;width:100%}
+  .chart-mode-controls{width:100%}
+  .chart-mode-controls button{flex:1 1 110px;white-space:normal;min-width:0}
+}
 </style>
   
 </head>
@@ -1268,10 +1281,15 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
       <details class="analytics-details-container" id="advancedAnalytics">
         <summary><span><strong>Подробный анализ</strong><small>Графики, таблицы, причины изменений, структура и регулярность услуг</small></span><span class="details-toggle-text" aria-hidden="true">Открыть</span></summary>
       <div class="panel">
-        <div class="sectionbar"><div><h2>Динамика работ</h2><p class="muted small">Отмечайте работы и группы в верхнем фильтре «Работы и группы», чтобы показать их на графике и в таблице.</p></div>
-        <div class="segmented"><button data-chart="line" class="active" title="Показывать изменение работ по периодам линиями">Линейный график</button><button data-chart="bar" title="Сравнивать значения столбцами">Столбцы</button><button data-chart="table" title="Показывать точные значения работ по периодам">Таблица значений</button></div></div>
+        <div class="sectionbar"><div><h2>Графики и сравнение подразделений</h2><p id="chartDescription" class="muted small">Динамика отмеченных работ и групп за выбранный диапазон.</p></div>
+          <div class="chart-view-controls">
+            <label>Сравнивать<select id="chartBreakdown"><option value="works">Работы и группы</option><option value="organizations">Подразделения</option></select></label>
+            <label id="chartOrgScopeLabel" hidden>Какие работы учитывать<select id="chartOrgScope"><option value="all">Все выполненные работы</option><option value="selected">Только отмеченные</option></select></label>
+          </div>
+        </div>
+        <div class="segmented chart-mode-controls"><button data-chart="line" class="active" title="Показывать изменение значений по периодам линиями">Линейный график</button><button data-chart="bar" title="Сравнивать значения столбцами">Столбцы</button><button data-chart="table" title="Показывать точные значения по периодам">Таблица значений</button></div>
         <div class="chart-and-filter">
-          <div class="chart-wrap"><div id="chartsContainer"></div><div id="dataTable" class="table-scroll" hidden></div><p id="chartHelp" class="muted small"></p></div>
+          <div class="chart-wrap"><div id="chartsContainer"></div><div id="dataTable" class="table-scroll" hidden></div><div id="chartOrgTotals"></div><p id="chartHelp" class="muted small"></p></div>
         </div>
       </div>
       <section class="panel" id="comparison" aria-labelledby="comparisonHeading">
@@ -3363,26 +3381,104 @@ function renderOverview(index){
   if(!insights.children.length)insights.append(elem('p','Изменений не обнаружено.','muted small'));
 }
 
+function departmentTrendData(index,from,to,organizations,names=null){
+  const periods=rangePeriods(index.type,from,to);
+  const data=periods.map(period=>{
+    const range=aggregateReportRange(index,{from:period.start,to:period.start,organizations,names});
+    return new Map(organizations.map(org=>[org,{
+      amount:rangeMetric(range,org,null,'amount'),
+      count:rangeMetric(range,org,null,'count')
+    }]));
+  });
+  return {periods,data};
+}
+function renderDepartmentTrend(index,orgs,metrics){
+  const charts=$('chartsContainer'),table=$('dataTable'),totals=$('chartOrgTotals');
+  const from=$('rangeStart').value,to=$('rangeEnd').value;
+  const organizations=[...orgs],selected=$('chartOrgScope').value==='selected';
+  const names=selected?state.selectedCategories:null;
+  charts.replaceChildren();table.replaceChildren();totals.replaceChildren();
+  if(selected&&!names.size){
+    empty(state.chart==='table'?table:charts,'Нет отмеченных работ. Выберите работы или группы в верхнем фильтре либо переключите на «Все выполненные работы».');
+    return;
+  }
+  const {periods,data}=departmentTrendData(index,from,to,organizations,names);
+  if(!periods.length){
+    empty(state.chart==='table'?table:charts,'Выберите корректный диапазон недель или месяцев для сравнения подразделений.');
+    return;
+  }
+  if(state.chart==='table'){
+    for(const metric of metrics){
+      const rows=organizations.map(org=>[
+        org,...data.map(period=>formatMetric(period.get(org)?.[metric]??null,metric))
+      ]);
+      makeTable(table,metric,'По подразделениям · '+displayPeriod(periods[0])+' — '+displayPeriod(periods.at(-1)),
+        ['Подразделение',...periods.map(displayPeriod)],rows,{
+          title:metricTitle(metric)+' по подразделениям',totalRow:false,
+          csvRows:organizations.map(org=>[org,...data.map(period=>period.get(org)?.[metric]??null)])
+        });
+    }
+  }else{
+    for(const metric of metrics){
+      const section=elem('section',null,'metric-chart'),plot=elem('div',null,'metric-plot');
+      section.append(elem('h3',metricTitle(metric)+' по подразделениям'),plot);
+      charts.append(section);
+      drawChart(periods,new Set(organizations),metric,plot,{
+        chart:state.chart,categories:organizations,data
+      });
+    }
+  }
+  const all=aggregateReportRange(index,{from,to,organizations,names});
+  makeTable(totals,'amount','Итоги за '+displayPeriod(periods[0])+' — '+displayPeriod(periods.at(-1)),
+    ['Подразделение',...metrics.map(metricTitle),'Полных периодов'],organizations.map(org=>{
+      const item=all.orgs.get(org);
+      return [org,...metrics.map(metric=>formatMetric(rangeMetric(all,org,null,metric),metric)),
+        (item?.available.length||0)+' / '+periods.length];
+    }),{
+      title:'Итог по подразделениям за диапазон',totalRow:false,
+      headerHelp:[
+        'Название подразделения из верхнего фильтра.',
+        ...metrics.map(metric=>'Итоговый показатель «'+metricTitle(metric)+'» по всем выбранным периодам. Если хотя бы один отчёт подразделения отсутствует, показан прочерк.'),
+        'Сколько отчётных периодов подразделения загружено из общего выбранного диапазона. Пропуск отчёта не считается нулём.'
+      ],
+      csvRows:organizations.map(org=>{
+        const item=all.orgs.get(org);
+        return [org,...metrics.map(metric=>rangeMetric(all,org,null,metric)),(item?.available.length||0)+' / '+periods.length];
+      })
+    });
+}
 function renderDashboard(sync=true){
   if(sync)syncPeriods();
   const periods=currentTypeReports(),orgs=state.selectedOrganizations,metrics=chosenMetrics();
   const from=$('rangeStart').value,to=$('rangeEnd').value;
   const filtered=periods.filter(r=>(!from||r.start>=from)&&(!to||r.start<=to));
   setCategories(periods);
-  const charts=$('chartsContainer'),table=$('dataTable');charts.replaceChildren();
+  const charts=$('chartsContainer'),table=$('dataTable'),byDepartments=$('chartBreakdown').value==='organizations';
+  charts.replaceChildren();table.replaceChildren();$('chartOrgTotals').replaceChildren();
   charts.hidden=state.chart==='table';table.hidden=state.chart!=='table';
-  if(state.chart==='table')renderTable(orgs,metrics);
+  $('chartOrgScopeLabel').hidden=!byDepartments;
+  $('chartDescription').textContent=byDepartments?
+    'Сравнивайте выбранные подразделения по неделям или месяцам. Сумма и количество показаны отдельно; пропущенные отчёты — не нули.':
+    'Отмечайте работы и группы в верхнем фильтре «Работы и группы», чтобы показать их на графике и в таблице.';
+  const index=analyticsIndex();
+  if(byDepartments)renderDepartmentTrend(index,orgs,metrics);
+  else if(state.chart==='table')renderTable(orgs,metrics);
   else metrics.forEach(metric=>{
     const section=elem('section',null,'metric-chart');
     section.append(elem('h3',metric==='amount'?'Сумма по периодам':'Количество по периодам'));
     const plot=elem('div',null,'metric-plot');
     section.append(plot);charts.append(section);drawChart(filtered,orgs,metric,plot);
   });
-  const index=analyticsIndex();renderOverview(index);renderComparison(index);renderStructure(index);
+  renderOverview(index);renderComparison(index);renderStructure(index);
   if($('usualPanel').open)renderUsual(index);
   if($('regularityPanel').open)renderRegularity(index);
-  $('chartHelp').textContent='Выбрано подразделений: '+orgs.size+' из '+state.settings.orgNames.length+
-    '. '+(metrics.length===2?'Сумма и количество показаны отдельно.':'');
+  $('chartHelp').textContent=byDepartments?
+    'Сравниваются '+orgs.size+' из '+state.settings.orgNames.length+' подразделений. Учитываются '+
+      ($('chartOrgScope').value==='all'?'все выполненные работы.':'только отмеченные работы и группы.')+
+      ' Пропущенные отчёты показаны прочерками; итоги диапазона доступны только для полных данных. '+
+      (metrics.length===2?'Сумма и количество показаны отдельно.':''):
+    'Выбрано подразделений: '+orgs.size+' из '+state.settings.orgNames.length+
+      '. '+(metrics.length===2?'Сумма и количество показаны отдельно.':'');
 }
 function ruPlural(number,one,few,many){
   const value=Math.abs(Math.trunc(number)),lastTwo=value%100,last=value%10;
@@ -4354,6 +4450,7 @@ function wire() {
     $('comparison').scrollIntoView({behavior:'smooth',block:'start'});
   });
   $('categorySearch').addEventListener('input',()=>renderDashboard(false));
+  ['chartBreakdown','chartOrgScope'].forEach(id=>$(id).addEventListener('change',()=>renderDashboard(false)));
   document.querySelectorAll('[data-chart]').forEach(btn=>btn.addEventListener('click',()=>{
     state.chart=btn.dataset.chart;document.querySelectorAll('[data-chart]').forEach(b=>b.classList.toggle('active',b===btn));renderDashboard(false);
   }));
