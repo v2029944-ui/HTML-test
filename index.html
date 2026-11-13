@@ -978,7 +978,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <section class="overview-section" aria-labelledby="overviewInsightsHeading">
             <h3 id="overviewInsightsHeading">Что изменилось?</h3>
             <div id="overviewInsights"></div>
-            <button type="button" id="overviewShowComparison" class="button secondary">Открыть подробное сравнение</button>
+            <button type="button" id="overviewShowComparison" class="button secondary" title="Перейти к сравнению за выбранный период; в подробном отчёте действуют отметки работ">Сравнить выбранные работы подробнее</button>
           </section>
           <section class="overview-section" aria-labelledby="overviewOrganizationsHeading">
             <h3 id="overviewOrganizationsHeading">Результаты подразделений</h3>
@@ -3592,13 +3592,22 @@ function wire() {
   });
   $('overviewShowComparison').addEventListener('click',()=>{
     const panel=$('advancedAnalytics');panel.open=true;
-    if($('overviewMode').value==='single'){
+    if($('overviewMode').value==='range'){
+      $('comparisonMode').value='organizations';
+      $('comparisonScope').value='range';
+      $('comparisonRangeStart').value=$('rangeStart').value;
+      $('comparisonRangeEnd').value=$('rangeEnd').value;
+    }else{
       const current=$('overviewPeriod').value,prior=shiftPeriod($('periodType').value,current,-1);
       if([...$('basePeriod').options].some(opt=>opt.value===prior)&&current){
         $('comparisonMode').value='periods';$('basePeriod').value=prior;$('currentPeriod').value=current;
-        renderDashboard(false);
+      }else{
+        $('comparisonMode').value='organizations';
+        $('comparisonScope').value='single';
+        $('comparisonPeriod').value=current;
       }
     }
+    renderDashboard(false);
     $('comparison').scrollIntoView({behavior:'smooth',block:'start'});
   });
   $('categorySearch').addEventListener('input',()=>renderDashboard(false));
