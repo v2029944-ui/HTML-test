@@ -980,6 +980,50 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
   border-radius:var(--radius-round);background:var(--surface);cursor:help}
 .table-help-button:hover,.table-help-button:focus-visible{background:var(--selected)}
 .table-header-help{padding:9px 12px;border-left:3px solid var(--accent);background:var(--subtle);line-height:1.5}
+
+/* Single and paired periods share the same field rhythm as other controls.
+   The paired-date container is layout only, not a second input frame. */
+.changes-filters > .change-date-pair{
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:end;gap:12px;
+  min-width:0;width:100%;height:auto;border:0;border-radius:0;
+  padding:0;background:transparent;box-shadow:none;overflow:visible;
+}
+.changes-filters > .change-date-pair.single{grid-template-columns:minmax(0,1fr)}
+.changes-filters > .change-date-pair > label,
+.changes-filters > .change-date-pair > label + label{
+  display:block;min-width:0;margin:0;padding:0;border:0;
+  font-size:var(--label-size);font-weight:600;line-height:var(--label-leading);color:var(--text);
+}
+.changes-filters > .change-date-pair select,
+.changes-filters > label > select{
+  display:block;box-sizing:border-box;width:100%;max-width:100%;min-width:0;
+  height:var(--control-height);min-height:var(--control-height);
+  margin-top:var(--field-gap);padding:10px 12px;
+  border:1px solid var(--field-border);border-radius:var(--radius-control);
+  background:var(--surface);color:var(--text);
+  font-family:var(--font-body);font-size:var(--control-size);font-weight:var(--control-weight);
+  line-height:var(--control-leading);
+}
+/* Native date inputs may otherwise retain a large intrinsic width on phones. */
+.import-grid > label{min-width:0;max-width:100%}
+.import-grid input[type="date"],.import-grid input[type="month"]{
+  display:block;box-sizing:border-box;width:100%;max-width:100%;min-width:0;
+}
+@media(max-width:740px){
+  .import-grid{min-width:0}
+  #weekStartLabel,#monthStartLabel{display:block;min-width:0;max-width:100%}
+  #importWeek,#importMonth{
+    box-sizing:border-box;display:block;width:100%;max-width:100%;min-width:0;
+    padding-inline:8px;font-size:var(--control-size);
+  }
+  #importWeek::-webkit-date-and-time-value,#importMonth::-webkit-date-and-time-value{min-width:0}
+}
+@media(min-width:581px) and (max-width:1000px){
+  .changes-filters > .change-date-pair:not(.single){grid-column:1/-1}
+}
+@media(max-width:580px){
+  .changes-filters > .change-date-pair:not(.single){grid-template-columns:minmax(0,1fr)}
+}
 </style>
   
 </head>
@@ -1105,11 +1149,17 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
       </details>
       <details class="panel" id="usualPanel">
         <summary>Что изменилось относительно предыдущих 4–8 периодов?</summary>
-        <p class="muted small">Подразделения и отмеченные услуги/группы — из фильтров выше. Среднее количества и суммы — за предыдущие календарные периоды без текущего; средняя сумма на работу = общая сумма / общее количество. Период учитывается, только если есть отчёты всех выбранных подразделений. Пропуски исключаются, отсутствие услуги в полном отчёте — ноль.</p>
+        <p class="muted small">Сравнивает текущую неделю или месяц с обычным уровнем за предыдущие 4 либо 8 периодов. Учитываются подразделения и отмеченные работы/группы из фильтров выше. Например, если раньше выполняли в среднем 10 работ за неделю, а сейчас 15, отклонение составляет +5 (+50%).</p>
+        <details class="quick-help"><summary>Как рассчитываются обычный уровень, отклонение и оценка?</summary>
+          <p><strong>Обычный уровень:</strong> для количества и суммы — среднее по доступным полным предыдущим периодам, без анализируемого. Например, 10, 20, 10 и 20 работ дают среднее 15. Средняя сумма на работу вычисляется отдельно: вся сумма за полные предыдущие периоды / всё количество работ в этих периодах.</p>
+          <p><strong>Отклонение:</strong> значение сейчас − обычный уровень. <strong>Отклонение, %:</strong> отклонение / модуль обычного уровня × 100%. При нулевом обычном уровне процент не вычисляется.</p>
+          <p><strong>Необычно выше/ниже:</strong> числовое отклонение достигает указанного процентного порога (по умолчанию 30%); при нулевой базе любое ненулевое отклонение отмечается отдельно, без процента. Для оценки нужны не менее двух полных предыдущих периодов. Это простой порог, а не статистический прогноз.</p>
+          <p><strong>Пропуски:</strong> период без полного отчёта хотя бы одного выбранного подразделения исключается из среднего, а не считается нулём. Если услуга отсутствует в полном отчёте, её значение за этот период — ноль. Отрицательные значения могут быть корректировками: «выше» и «ниже» означают направление числа, не оценку эффективности.</p>
+        </details>
         <div class="extended-filters">
           <label>Анализируемый период<select id="usualPeriod"></select></label>
-          <label>Окно среднего<select id="usualWindow"><option value="4">4 предыдущих периода</option><option value="8">8 предыдущих периодов</option></select></label>
-          <label>Необычное отклонение, %<input id="usualPercent" type="number" min="0" step="any" value="30"></label>
+          <label>Окно среднего<select id="usualWindow" title="Сколько предыдущих недель или месяцев учитывать при расчёте среднего. Неполные отчётные периоды исключаются."><option value="4">4 предыдущих периода</option><option value="8">8 предыдущих периодов</option></select></label>
+          <label>Необычное отклонение, %<input title="Порог для статуса «Необычно выше/ниже». Например, 30 означает отклонение на 30% или больше от модуля среднего." id="usualPercent" type="number" min="0" step="any" value="30"></label>
           <fieldset class="multi-filter"><legend>Показатели</legend><div id="usualMetrics" class="multi-choices"></div></fieldset>
         </div>
         <p class="muted small">Оценка по процентному порогу, от модуля базы; это не статистический прогноз. При нулевой базе процент не рассчитан. Для выделения нужны хотя бы 2 фактических периода. При отрицательных значениях выше/ниже означает числовое отклонение.</p>
@@ -2619,7 +2669,16 @@ function renderUsual(index=analyticsIndex()){
     const rows=page.map(row=>{const x=row[metric],valuesForRow=values(row);return [row.key===null?row.name:serviceButton(index,row,orgs,baseRange,current,[metric]),
       ...valuesForRow.slice(1,4).map(value=>formatMetric(value,metric)),x.percent===null?'—':fmtNumber(x.percent,'count')+'%',
       elem('span',USUAL_LABELS[x.status],x.status==='normal'?'':x.status==='insufficient'?'muted':'warn')];});
-    makeTable(root,metric,caption,['Услуга / группа','Обычный уровень','В периоде','Отклонение','Отклонение, %','Оценка'],rows,{csvRows:result.rows.map(values),csvContext:[['Подразделения',orgs.join(', ')],['Пропуски среднего',result.missing.map(displayDay).join(', ')],['Полнота анализируемого периода',current.complete?'Полный':'Неполный']]});
+    makeTable(root,metric,caption,['Услуга / группа','Среднее раньше','Сейчас','Отклонение','Отклонение, %','Оценка'],rows,{
+      headerHelp:[
+        'Отмеченная услуга, группа работ или общий итог по отмеченным работам.',
+        'Для количества и суммы — среднее за полные предыдущие 4 или 8 периодов. Для средней суммы на работу — суммарная стоимость / суммарное количество за эти периоды.',
+        'Фактическое значение услуги в анализируемом периоде. Прочерк означает отсутствие сопоставимого полного отчёта.',
+        'Значение сейчас минус среднее раньше. Положительное отклонение — рост показателя, отрицательное — снижение.',
+        '(Сейчас − среднее раньше) / модуль среднего раньше × 100%. При нулевой базе процент не рассчитывается.',
+        '«Необычно выше» или «Необычно ниже», если отклонение достигает заданного порога; при нулевой базе любое ненулевое изменение также отмечается. При менее чем двух предыдущих полных периодах оценка недоступна.'
+      ],
+      csvRows:result.rows.map(values),csvContext:[['Подразделения',orgs.join(', ')],['Пропуски среднего',result.missing.map(displayDay).join(', ')],['Полнота анализируемого периода',current.complete?'Полный':'Неполный']]});
   }
 }
 function renderRegularity(index=analyticsIndex()){
