@@ -869,6 +869,58 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 
 .appearance-categories{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:18px 0}.appearance-category{display:flex;flex-direction:column;min-width:0;margin:0;padding:16px;border:1px solid var(--border);border-radius:var(--radius-panel)}.appearance-category>legend{padding:0 7px;font-size:15px;font-weight:700;color:var(--text)}.appearance-category>.appearance-grid{grid-template-columns:1fr;margin:auto 0 0}.appearance-category>.appearance-grid>label{display:block}
 @media(max-width:740px){.appearance-categories{grid-template-columns:1fr}.appearance-category{padding:12px}.appearance-category>legend{font-size:16px}}
+
+/* Обзор для руководителя: простая сводка поверх существующей аналитики. */
+.period-toolbar{display:grid;grid-template-columns:minmax(170px,240px) minmax(0,1fr);gap:14px;align-items:end;margin-top:18px}
+.period-toolbar>label,.period-toolbar>.period-combo{min-width:0}
+.period-toolbar select,.comparison-filters select{font-variant-numeric:tabular-nums}
+.period-combo{min-width:0;margin:0;padding:0;border:0}
+.period-combo legend{font-size:12px;color:var(--text);font-weight:600;line-height:18px;margin-bottom:6px}
+.period-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border:1px solid var(--field-border);border-radius:var(--radius-control);background:var(--field-bg);overflow:hidden;min-width:0}
+.period-pair>label{display:block;min-width:0;padding:5px 9px;color:var(--muted);font-size:11px;font-weight:600;line-height:1.3}
+.period-pair>label+label{border-left:1px solid var(--field-border)}
+.period-pair select,.period-pair label select,.comparison-filters .period-pair select{width:100%;min-width:0;min-height:35px;height:35px;margin:0;padding:3px 22px 3px 3px;border:0;border-radius:0;background:transparent;color:var(--text);font-size:13px;font-weight:600;outline-offset:-3px}
+.comparison-filters .comparison-range{grid-column:1/-1}
+.comparison-filters .period-pair-comparison{grid-column:1/-1}
+.comparison-advanced{grid-column:1/-1;min-width:0}
+.comparison-advanced>summary{color:var(--accent);font-size:13px;font-weight:650;cursor:pointer;padding:9px 0}
+.comparison-advanced>label{display:block;max-width:460px}
+.comparison-advanced>p{margin-top:8px}
+.quick-help{margin-top:11px;font-size:12px;color:var(--muted);max-width:880px}
+.quick-help>summary{color:var(--accent);font-size:12px;font-weight:650;cursor:pointer;min-height:30px;display:list-item;padding:5px 0}
+.quick-help>p{margin:6px 0 10px;line-height:1.5}
+.overview-panel .sectionbar{margin-bottom:14px}
+.overview-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px}
+.overview-kpis .kpi{min-width:0}
+.overview-kpis .kpi strong{overflow-wrap:anywhere}
+.overview-kpis .kpi small{display:block;line-height:1.45}
+.overview-sections{display:grid;grid-template-columns:1.15fr 1fr;gap:16px;margin:16px 0}
+.overview-section{border:1px solid var(--border);border-radius:var(--radius-panel);padding:16px;min-width:0;background:var(--subtle)}
+.overview-section h3{margin:0 0 12px;font-size:15px;line-height:1.4}
+.overview-section .button{margin-top:12px}
+.overview-line{padding:9px 0;border-bottom:1px solid var(--border);line-height:1.45}
+.overview-line:last-child{border:0}
+.overview-line strong{display:block;font-size:13px;overflow-wrap:anywhere}
+.overview-line small{display:block;color:var(--muted);margin-top:3px}
+.overview-unit{display:flex;align-items:baseline;justify-content:space-between;gap:12px;min-width:0;font-size:13px;padding:9px 0;border-bottom:1px solid var(--border)}
+.overview-unit:last-child{border:0}
+.overview-unit>span{overflow-wrap:anywhere}
+.overview-unit>strong{font-variant-numeric:tabular-nums;white-space:nowrap}
+.overview-alert{padding:10px 13px;border-left:3px solid var(--accent);background:var(--subtle);color:var(--text);font-size:13px;margin:8px 0}
+.overview-alert.warn{border-left-color:var(--danger,#ce6b42)}
+.overview-footnote{line-height:1.5}
+.analytics-details-container{margin-bottom:17px}
+.analytics-details-container>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:18px;cursor:pointer;border:1px solid var(--field-border);background:var(--surface);border-radius:var(--radius-panel);padding:17px 20px;margin-bottom:16px}
+.analytics-details-container>summary::-webkit-details-marker{display:none}
+.analytics-details-container>summary>span:first-child{display:flex;flex-direction:column;gap:4px}
+.analytics-details-container>summary strong{font-size:17px;color:var(--text)}
+.analytics-details-container>summary small{font-size:12px;color:var(--muted)}
+.analytics-details-container .details-toggle-text{color:var(--accent);white-space:nowrap;font-size:13px;font-weight:750}
+.analytics-details-container[open]>.panel:first-of-type{margin-top:0}
+@media(max-width:1000px){.overview-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.overview-sections{grid-template-columns:1fr}}
+@media(max-width:740px){.period-toolbar{grid-template-columns:1fr;gap:10px}.period-pair{grid-template-columns:repeat(2,minmax(0,1fr))}.period-pair>label{padding:6px}.period-pair select,.period-pair label select,.comparison-filters .period-pair select{font-size:12px;min-height:36px;height:36px;padding-right:17px}.overview-panel{padding:15px}.overview-sections{gap:11px}.overview-section{padding:13px}.analytics-details-container>summary{padding:15px;align-items:center;gap:10px}.analytics-details-container>summary strong{font-size:16px}.analytics-details-container>summary small{font-size:11px}.analytics-details-container .details-toggle-text{font-size:12px}.overview-kpis .kpi strong{font-size:19px}}
+@media(max-width:360px){.overview-kpis{grid-template-columns:minmax(0,1fr)}.period-pair select,.period-pair label select{font-size:11px}}
+
 </style>
   
 </head>
@@ -900,43 +952,76 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <fieldset class="multi-filter"><legend>Показатели</legend><div id="metric" class="multi-choices"></div></fieldset>
 
         </div>
-        <div class="filterfoot"><label>Начало диапазона<select id="rangeStart"></select></label><label>Конец диапазона<select id="rangeEnd"></select></label></div>
+        <div class="period-toolbar" aria-label="Общий период для выбранных подразделений">
+          <label class="period-mode">Показать данные за<select id="overviewMode"><option value="single">Один период</option><option value="range">Диапазон периодов</option></select></label>
+          <label id="overviewSingle">Период<select id="overviewPeriod"></select></label>
+          <fieldset class="period-combo" id="overviewRange" hidden><legend>Общий диапазон</legend>
+            <div class="period-pair"><label>С периода<select id="rangeStart"></select></label><label>По период<select id="rangeEnd"></select></label></div>
+          </fieldset>
+        </div>
+        <details class="quick-help"><summary>Как выбрать данные для отчёта?</summary><p>Выбери недели или месяцы, подразделения и один период либо диапазон. Обзор показывает итоги <strong>всех выполненных работ</strong> выбранных подразделений. Отметки конкретных работ и переключатель показателей применяются к подробным графикам.</p></details>
       </div>
+      <section class="panel overview-panel" id="overviewPanel" aria-labelledby="overviewHeading">
+        <div class="sectionbar"><div><h2 id="overviewHeading">Обзор работы</h2><p id="overviewPeriodText" class="muted small">Выберите период для анализа.</p></div></div>
+        <div id="overviewAlerts" role="status" aria-live="polite"></div>
+        <div class="kpis overview-kpis" id="overviewKpis" aria-live="polite"></div>
+        <div class="overview-sections">
+          <section class="overview-section" aria-labelledby="overviewInsightsHeading">
+            <h3 id="overviewInsightsHeading">Что изменилось?</h3>
+            <div id="overviewInsights"></div>
+            <button type="button" id="overviewShowComparison" class="button secondary">Открыть подробное сравнение</button>
+          </section>
+          <section class="overview-section" aria-labelledby="overviewOrganizationsHeading">
+            <h3 id="overviewOrganizationsHeading">Результаты подразделений</h3>
+            <div id="overviewOrganizations"></div>
+          </section>
+        </div>
+        <p class="muted small overview-footnote">Сумма и количество показываются отдельно. Средняя сумма на работу = общая сумма / количество. Изменения — относительно предшествующего интервала той же длительности. Рост показателя сам по себе не означает рост эффективности.</p>
+      </section>
+      <details class="analytics-details-container" id="advancedAnalytics">
+        <summary><span><strong>Подробный анализ</strong><small>Графики, таблицы, причины изменений, структура и регулярность услуг</small></span><span class="details-toggle-text" aria-hidden="true">Открыть</span></summary>
       <div class="panel">
         <div class="sectionbar"><div><h2>Динамика работ</h2><p class="muted small">Отмечайте работы и группы в списке, чтобы показать их на графике и в таблице.</p></div>
-        <div class="segmented"><button data-chart="line" class="active">Линии</button><button data-chart="bar">Столбцы</button><button data-chart="table">Таблица</button></div></div>
+        <div class="segmented"><button data-chart="line" class="active" title="Показывать изменение работ по периодам линиями">Линейный график</button><button data-chart="bar" title="Сравнивать значения столбцами">Столбцы</button><button data-chart="table" title="Показывать точные значения работ по периодам">Таблица значений</button></div></div>
         <div class="chart-and-filter">
           <div class="chart-wrap"><div id="chartsContainer"></div><div id="dataTable" class="table-scroll" hidden></div><p id="chartHelp" class="muted small"></p></div>
           <aside class="categories"><div class="category-head"><strong>Работы и группы</strong><span id="categoryCount" class="tiny muted"></span></div>
             <input id="categorySearch" type="search" placeholder="Поиск работы или группы" aria-label="Поиск работы или группы">
-            <div class="category-actions"><button id="selectAll" class="text-button">Все</button><button id="clearAll" class="text-button">Снять выбор</button><button id="selectTop" class="text-button">Топ-8</button></div>
+            <div class="category-actions"><button id="selectAll" class="text-button" title="Отметить все работы для подробного графика и сравнения">Выбрать все</button><button id="clearAll" class="text-button" title="Убрать все отметки работ; сводные итоги не изменятся">Снять всё</button><button id="selectTop" class="text-button" title="Отметить восемь крупнейших работ по выбранному показателю">8 крупнейших</button></div>
             <div id="categories" class="category-list"></div>
           </aside>
         </div>
       </div>
       <section class="panel" id="comparison" aria-labelledby="comparisonHeading">
         <div class="sectionbar"><div><h2 id="comparisonHeading">Сравнение</h2><p class="muted small">Учитываются выбранные выше подразделения, показатели и работы.</p></div>
-          <label>Что сравниваем<select id="comparisonMode"><option value="periods">Периоды</option><option value="organizations">Подразделения</option></select></label>
+          <label>Сравниваем<select id="comparisonMode"><option value="periods">Периоды</option><option value="organizations">Подразделения</option></select></label>
         </div>
         <div id="periodComparisonFilters" class="comparison-filters">
-          <label>Первый период<select id="basePeriod"></select></label>
-          <label>Второй период<select id="currentPeriod"></select></label>
+          <div class="period-pair-comparison period-pair"><label>С чем сравниваем<select id="basePeriod"></select></label>
+          <label>Какой период анализируем<select id="currentPeriod"></select></label></div>
         </div>
         <div id="orgComparisonFilters" class="comparison-filters" hidden>
-          <label>Общий интервал<select id="comparisonScope"><option value="single">Один период</option><option value="range">Диапазон периодов</option></select></label>
+          <label>Временной интервал<select id="comparisonScope"><option value="single">Один период</option><option value="range">Диапазон периодов</option></select></label>
           <label id="comparisonPeriodLabel">Общий период<select id="comparisonPeriod"></select></label>
-          <label id="comparisonRangeStartLabel" hidden>С периода<select id="comparisonRangeStart"></select></label>
-          <label id="comparisonRangeEndLabel" hidden>По период<select id="comparisonRangeEnd"></select></label>
+          <fieldset class="period-combo comparison-range" id="comparisonRangeGroup" hidden><legend>Один общий диапазон для подразделений</legend>
+            <div class="period-pair">
+              <label id="comparisonRangeStartLabel">С периода<select id="comparisonRangeStart"></select></label>
+              <label id="comparisonRangeEndLabel">По период<select id="comparisonRangeEnd"></select></label>
+            </div>
+          </fieldset>
           <fieldset class="multi-filter"><legend>Показатели сравнения</legend><div id="comparisonMetrics" class="multi-choices"></div></fieldset>
-          <label>Разница относительно<select id="comparisonBaseOrg"></select></label>
+          <details class="comparison-advanced"><summary>Настроить процентное сравнение</summary><label>Базовое подразделение<select id="comparisonBaseOrg"></select></label><p class="muted small">Проценты остальных подразделений рассчитываются относительно выбранного. При нулевой базе процент не рассчитывается.</p></details>
         </div>
         <div class="kpis" id="kpis"></div>
         <p id="comparisonHelp" class="muted small"></p>
+        <details class="quick-help"><summary>Что показывают «Сравнение» и «Разница»?</summary>
+          <p>При сравнении периодов первое значение — база, второе — анализируемый период. При сравнении подразделений даты общие для всех, а базовое подразделение задаётся в дополнительных параметрах. Прочерк означает отсутствие сопоставимых данных, а не ноль.</p>
+        </details>
         <div id="comparisonCoverage" role="status" aria-live="polite"></div>
         <div id="comparisonTable"></div><div id="comparisonCharts"></div>
         <details id="comparisonDynamics" class="extended-section" hidden><summary>Динамика выбранного диапазона</summary><p class="muted small">Итоги отмеченных работ. Пропуски — разрывы линий; средняя сумма рассчитана отдельно для каждого периода.</p><div id="comparisonDynamicsPlots"></div></details>
         <details id="contributions" class="extended-section">
-          <summary>Причины изменения общих итогов</summary>
+          <summary>Какие работы изменили общий результат?</summary>
           <p class="muted small">Все услуги выбранных подразделений, независимо от отметок работ на графике. Группы учитываются один раз. Процент услуги рассчитан от модуля её базы; доля вклада — от общего изменения и может быть отрицательной или больше 100%. При нуле процент не рассчитывается.</p>
           <div id="contributionCheck"></div>
           <p class="muted small">Сверка вкладов проверяет согласованность расчёта, а не корректность исходного Excel. Замечания источника смотрите в контроле качества.</p>
@@ -946,7 +1031,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 
       </section>
       <details class="panel" id="structurePanel">
-        <summary>Структура услуг</summary>
+        <summary>Какие услуги формируют основную сумму и количество?</summary>
         <p class="muted small">Распределение всех выполненных услуг и общих групп по выбранным выше подразделениям. Справочник не участвует.</p>
         <div class="extended-filters">
           <label>Базовый период<select id="structureBase"></select></label>
@@ -957,7 +1042,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <div id="structureResults"></div>
       </details>
       <details class="panel" id="usualPanel">
-        <summary>Сравнение с обычным уровнем</summary>
+        <summary>Что изменилось относительно предыдущих 4–8 периодов?</summary>
         <p class="muted small">Подразделения и отмеченные услуги/группы — из фильтров выше. Среднее количества и суммы — за предыдущие календарные периоды без текущего; средняя сумма на работу = общая сумма / общее количество. Период учитывается, только если есть отчёты всех выбранных подразделений. Пропуски исключаются, отсутствие услуги в полном отчёте — ноль.</p>
         <div class="extended-filters">
           <label>Анализируемый период<select id="usualPeriod"></select></label>
@@ -970,7 +1055,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 <div class="change-pagination"><button id="usualPrev" class="button secondary">Назад</button><span id="usualPage" class="muted small" aria-live="polite"></span><button id="usualNext" class="button secondary">Далее</button></div>
       </details>
       <details class="panel" id="regularityPanel">
-        <summary>Редкие и исчезающие услуги</summary>
+        <summary>Какие услуги стали редкими или перестали встречаться?</summary>
         <p class="muted small">Общий диапазон, подразделения и отмеченные работы — из фильтров аналитики. Активность — ненулевое количество или сумма хотя бы одной работы, включая корректировки. Группа считается один раз за период даже при взаимном погашении сумм. Частоты рассчитываются только по полным для выбранных подразделений периодам.</p>
         <div class="extended-filters">
           <label>Признак<select id="regularityStatus"><option value="all">Все услуги</option><option value="frequent">Часто</option><option value="rare">Редко</option><option value="rarer">Заметно реже</option><option value="disappeared">Перестала встречаться</option><option value="new">Впервые в загруженной истории</option><option value="dormant">Долго без выполнений</option></select></label>
@@ -985,6 +1070,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <div class="sectionbar"><h2 id="analyticsDetailTitle" tabindex="-1">Динамика услуги</h2><button id="closeAnalyticsDetails" class="button secondary">Закрыть подробности</button></div>
         <div id="analyticsDetailContent"></div>
       </section>
+      </details>
     </section>
 
     <section id="changes" class="view" aria-labelledby="changesHeading">
@@ -2043,11 +2129,17 @@ function selectFill(id,items,desired,fallback) {
 }
 function syncPeriods() {
   const periods=currentTypeReports(),opts=periods.map(r=>({value:r.start,label:displayPeriod(r)}));
-  const prev={base:$('basePeriod').value,current:$('currentPeriod').value,from:$('rangeStart').value,to:$('rangeEnd').value};
+  const prev={base:$('basePeriod').value,current:$('currentPeriod').value,from:$('rangeStart').value,to:$('rangeEnd').value,overview:$('overviewPeriod').value};
   selectFill('basePeriod',opts,prev.base,opts.length>1?opts[opts.length-2].value:opts.at(-1)?.value);
   selectFill('currentPeriod',opts,prev.current,opts.at(-1)?.value);
   selectFill('rangeStart',opts,prev.from,opts[0]?.value);
   selectFill('rangeEnd',opts,prev.to,opts.at(-1)?.value);
+  selectFill('overviewPeriod',opts,prev.overview,opts.at(-1)?.value);
+  if($('overviewMode').value==='single'&&opts.length){
+    $('rangeStart').value=$('overviewPeriod').value;
+    $('rangeEnd').value=$('overviewPeriod').value;
+  }
+  toggleOverviewDates();
   selectFill('comparisonPeriod',opts,$('comparisonPeriod').value,opts.at(-1)?.value);
   selectFill('comparisonRangeStart',opts,$('comparisonRangeStart').value,opts[0]?.value);
   selectFill('comparisonRangeEnd',opts,$('comparisonRangeEnd').value,opts.at(-1)?.value);
@@ -2359,7 +2451,7 @@ function renderDepartmentComparison(index,orgs){
   if(!extendedState.customMetrics)extendedState.comparisonMetrics=new Set(chosenMetrics());
   renderMultiFilter('comparisonMetrics',[['count','Количество'],['amount','Сумма'],['average','Средняя сумма на работу']],extendedState.comparisonMetrics,()=>{extendedState.customMetrics=true;renderDashboard(false);});
   const metrics=[...extendedState.comparisonMetrics],isRange=$('comparisonScope').value==='range';
-  $('comparisonPeriodLabel').hidden=isRange;$('comparisonRangeStartLabel').hidden=!isRange;$('comparisonRangeEndLabel').hidden=!isRange;
+  $('comparisonPeriodLabel').hidden=isRange;$('comparisonRangeGroup').hidden=!isRange;
   const from=isRange?$('comparisonRangeStart').value:$('comparisonPeriod').value,to=isRange?$('comparisonRangeEnd').value:from;
   if(!state.selectedCategories.size){$('comparisonCoverage').replaceChildren();empty(root,'Выберите работы для сравнения.');return;}
   const all=aggregateReportRange(index,{from,to,organizations:orgs,names:state.selectedCategories}),baseOrg=$('comparisonBaseOrg').value;
@@ -2486,7 +2578,10 @@ function wireExtendedAnalytics(){
   for(const [prefix,render] of [['usual',renderUsual],['regularity',renderRegularity],['groupAudit',renderGroupAudit]])
     for(const [suffix,delta] of [['Prev',-1],['Next',1]])$(prefix+suffix).addEventListener('click',()=>{extendedState[prefix+'Page']+=delta;render();});
   for(const id of ['comparisonScope','comparisonRangeStart','comparisonRangeEnd','structureBase','structureCurrent','structureMetric','structureLimit'])
-    $(id).addEventListener('change',()=>{extendedState.contributionPage=0;renderDashboard(false);});
+    $(id).addEventListener('change',()=>{
+      if(id==='comparisonRangeStart'||id==='comparisonRangeEnd')clampDatePair('comparisonRangeStart','comparisonRangeEnd',id);
+      extendedState.contributionPage=0;renderDashboard(false);
+    });
   for(const id of ['qualitySource','qualityPeriod','qualityOrg','qualityType'])$(id).addEventListener('change',()=>{extendedState.qualityPage=0;renderQuality(id==='qualitySource');});
   for(const [prefix,field,render] of [['quality','qualityPage',()=>renderQuality(false)],['contribution','contributionPage',()=>renderDashboard(false)]]){
     $(prefix+'Prev').addEventListener('click',()=>{extendedState[field]--;render();});$(prefix+'Next').addEventListener('click',()=>{extendedState[field]++;render();});
@@ -2524,6 +2619,115 @@ function renderComparison(index=analyticsIndex()) {
     })});
   }
 }
+function toggleOverviewDates(){
+  const isRange=$('overviewMode').value==='range';
+  $('overviewSingle').hidden=isRange;
+  $('overviewRange').hidden=!isRange;
+}
+function clampDatePair(startId,endId,changedId){
+  const a=$(startId),b=$(endId);
+  if(!a.value||!b.value||a.value<=b.value)return;
+  if(changedId===startId)b.value=a.value;else a.value=b.value;
+}
+function overviewSnapshot(index,from,to,organizations){
+  const current=aggregateReportRange(index,{from,to,organizations});
+  const n=current.periods.length;
+  const previous=n?aggregateReportRange(index,{
+    from:shiftPeriod(index.type,from,-n),
+    to:shiftPeriod(index.type,from,-1),
+    organizations
+  }):aggregateReportRange(index,{from:'',to:'',organizations});
+  return {current,previous,drivers:current.complete&&previous.complete?analyzeContributions(previous,current):null};
+}
+function overviewDifference(current,previous,metric){
+  if(current===null||previous===null)return 'Нет сопоставимой базы';
+  const changed=changeMeasure(previous,current,0,0);
+  const kind=changed.delta>0?'Рост':changed.delta<0?'Снижение':'Без изменений';
+  const amount=changed.delta===0?'':(changed.delta>0?'+':'')+formatMetric(changed.delta,metric);
+  const percent=changed.percent===null?'процент не рассчитан':(changed.percent>0?'+':'')+fmtNumber(round(changed.percent,1),'count')+'%';
+  return kind+(amount?' · '+amount:'')+' · '+percent;
+}
+function renderOverview(index){
+  const organizations=[...state.selectedOrganizations],
+    from=$('rangeStart').value,to=$('rangeEnd').value,
+    {current,previous,drivers}=overviewSnapshot(index,from,to,organizations),
+    root=$('overviewKpis'),insights=$('overviewInsights'),
+    departments=$('overviewOrganizations'),alerts=$('overviewAlerts');
+  root.replaceChildren();insights.replaceChildren();departments.replaceChildren();alerts.replaceChildren();
+  $('overviewPeriodText').textContent=current.periods.length?
+    (current.periods.length===1?displayPeriod(current.periods[0]):rangeCaption(current))+
+    ' · '+organizations.join(', '):
+    'Для выбранного масштаба пока нет корректных периодов.';
+  const makeCard=(title,metric,value,previousValue)=>{
+    const card=elem('div',null,'kpi');
+    card.append(elem('span',title),elem('strong',value===null?'—':formatMetric(value,metric)));
+    card.append(elem('small',overviewDifference(value,previousValue,metric)));
+    root.append(card);
+  };
+  makeCard('Сумма выполненных работ','amount',current.total.amount,previous.total.amount);
+  makeCard('Количество выполненных работ','count',current.total.count,previous.total.count);
+  makeCard('Средняя сумма на работу','average',current.total.average,previous.total.average);
+  const count=elem('div',null,'kpi');
+  count.append(elem('span','Выбрано подразделений'),elem('strong',String(organizations.length)),
+    elem('small','Из '+state.settings.orgNames.length+' подразделений'));
+  root.append(count);
+  if(!current.periods.length){
+    alerts.append(elem('p','Загрузите отчёты и выберите один период или диапазон.','overview-alert warn'));
+    insights.append(elem('p','Нет периодов для анализа.','muted small'));
+    return;
+  }
+  for(const org of organizations){
+    const item=current.orgs.get(org),line=elem('div',null,'overview-unit');
+    line.append(elem('span',org));
+    const value=item?.complete?
+      formatMetric(item.amount,'amount')+' · '+formatMetric(item.count,'count')+' работ':
+      'Нет полного отчёта ('+(item?.available.length||0)+'/'+current.periods.length+')';
+    line.append(elem('strong',value));departments.append(line);
+  }
+  if(!current.complete){
+    const missing=organizations.flatMap(org=>{
+      const item=current.orgs.get(org);
+      return (item?.missing||[]).map(start=>org+': '+displayPeriod({type:index.type,start,end:periodEnd(start,index.type)}));
+    });
+    alerts.append(elem('div','Неполные данные: '+missing.join('; ')+'. Итоги и сравнение не рассчитаны.','overview-alert warn'));
+    insights.append(elem('p','Для выводов необходимы полные отчёты выбранных подразделений за весь период.','muted small'));
+    return;
+  }
+  const sourceWarnings=organizations.some(org=>
+    current.orgs.get(org)?.available.some(report=>(report.warnings||[]).length||(report.issues||[]).length));
+  if(sourceWarnings){
+    const warning=elem('div',null,'overview-alert warn');
+    warning.append(elem('span','В исходных отчётах есть замечания. Суммы показаны по распознанной детализации; проверьте данные. '));
+    const button=elem('button','Проверить данные','text-button');
+    button.type='button';button.addEventListener('click',()=>document.querySelector('.tab[data-view="upload"]')?.click());
+    warning.append(button);alerts.append(warning);
+  }
+  if(!previous.complete){
+    const missing=organizations.flatMap(org=>(previous.orgs.get(org)?.missing||[]).map(start=>displayPeriod({type:index.type,start,end:periodEnd(start,index.type)})));
+    insights.append(elem('p','Предыдущий интервал такой же длительности заполнен не полностью'+(missing.length?': '+[...new Set(missing)].join(', '):'')+'. Процентные изменения не оцениваются.','muted small'));
+    return;
+  }
+  for(const [metric,label] of [['amount','Сумма работ'],['count','Количество работ']]){
+    const val=current.total[metric],old=previous.total[metric];
+    const line=elem('div',null,'overview-line');
+    line.append(elem('strong',label+': '+overviewDifference(val,old,metric)));
+    line.append(elem('small','Сравнение с предшествующим '+(current.periods.length===1?'периодом':'интервалом той же длительности')));
+    insights.append(line);
+  }
+  if(drivers?.complete){
+    const metric=state.selectedMetrics.has('amount')?'amount':'count';
+    const sorted=drivers.rows.filter(x=>x[metric].delta!==0).sort((a,b)=>Math.abs(b[metric].delta)-Math.abs(a[metric].delta));
+    for(const entry of sorted.slice(0,2)){
+      const line=elem('div',null,'overview-line');
+      const delta=entry[metric].delta;
+      line.append(elem('strong',entry.name+(entry.kind==='group'?' (группа)':'')+': '+(delta>0?'+':'')+formatMetric(delta,metric)));
+      line.append(elem('small','Один из крупнейших вкладов в изменение '+(metric==='amount'?'суммы':'количества')));
+      insights.append(line);
+    }
+  }
+  if(!insights.children.length)insights.append(elem('p','Изменений не обнаружено.','muted small'));
+}
+
 function renderDashboard(sync=true){
   if(sync)syncPeriods();
   const periods=currentTypeReports(),orgs=state.selectedOrganizations,metrics=chosenMetrics();
@@ -2539,7 +2743,7 @@ function renderDashboard(sync=true){
     const plot=elem('div',null,'metric-plot');
     section.append(plot);charts.append(section);drawChart(filtered,orgs,metric,plot);
   });
-  const index=analyticsIndex();renderComparison(index);renderStructure(index);
+  const index=analyticsIndex();renderOverview(index);renderComparison(index);renderStructure(index);
   if($('usualPanel').open)renderUsual(index);
   if($('regularityPanel').open)renderRegularity(index);
   $('chartHelp').textContent='Выбрано подразделений: '+orgs.size+' из '+state.settings.orgNames.length+
@@ -3351,7 +3555,34 @@ function wire() {
   }));
   $('periodType').addEventListener('change',()=>{state.selectionInitialized=false;syncPeriods();renderDashboard(false);});
   // Фильтры подразделений и показателей обрабатываются через чекбоксы.
-  ['basePeriod','currentPeriod','rangeStart','rangeEnd','comparisonMode','comparisonPeriod','comparisonBaseOrg'].forEach(id=>$(id).addEventListener('change',()=>renderDashboard(false)));
+  ['basePeriod','currentPeriod','comparisonMode','comparisonPeriod','comparisonBaseOrg'].forEach(id=>$(id).addEventListener('change',()=>renderDashboard(false)));
+  $('overviewMode').addEventListener('change',()=>{
+    if($('overviewMode').value==='single'&&$('overviewPeriod').value){
+      $('rangeStart').value=$('overviewPeriod').value;$('rangeEnd').value=$('overviewPeriod').value;
+    }
+    toggleOverviewDates();renderDashboard(false);
+  });
+  $('overviewPeriod').addEventListener('change',()=>{
+    if($('overviewMode').value==='single'){
+      $('rangeStart').value=$('overviewPeriod').value;$('rangeEnd').value=$('overviewPeriod').value;
+    }
+    renderDashboard(false);
+  });
+  for(const id of ['rangeStart','rangeEnd'])$(id).addEventListener('change',()=>{
+    clampDatePair('rangeStart','rangeEnd',id);
+    renderDashboard(false);
+  });
+  $('overviewShowComparison').addEventListener('click',()=>{
+    const panel=$('advancedAnalytics');panel.open=true;
+    if($('overviewMode').value==='single'){
+      const current=$('overviewPeriod').value,prior=shiftPeriod($('periodType').value,current,-1);
+      if([...$('basePeriod').options].some(opt=>opt.value===prior)&&current){
+        $('comparisonMode').value='periods';$('basePeriod').value=prior;$('currentPeriod').value=current;
+        renderDashboard(false);
+      }
+    }
+    $('comparison').scrollIntoView({behavior:'smooth',block:'start'});
+  });
   $('categorySearch').addEventListener('input',()=>renderDashboard(false));
   document.querySelectorAll('[data-chart]').forEach(btn=>btn.addEventListener('click',()=>{
     state.chart=btn.dataset.chart;document.querySelectorAll('[data-chart]').forEach(b=>b.classList.toggle('active',b===btn));renderDashboard(false);
