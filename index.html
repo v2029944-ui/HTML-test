@@ -1384,7 +1384,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
       <div class="panel"><div class="sectionbar"><h2>Загруженные периоды</h2><span id="reportCount" class="muted small"></span></div><div id="reports" class="reports-list"></div></div>
       <section class="panel" aria-labelledby="qualityHeading">
         <h2 id="qualityHeading">Контроль качества данных</h2>
-        <p class="muted small">Доступные итоги Excel, замечания импорта и пропуски между первым и последним загруженными периодами. Показатели не исправляются автоматически. Для старых копий исходные строки могут быть недоступны.</p>
+        <p class="muted small">Доступные итоги Excel, замечания импорта и пропуски между первым и последним загруженными периодами. В новых отчётах показываются адреса подозрительных ячеек (например, Лист1!B27); при расхождении итогов это контрольные ячейки, а не обязательно источник ошибки. Показатели не исправляются автоматически. Для старых копий координаты могут быть недоступны.</p>
         <div class="extended-filters">
           <label>Источник проверки<select id="qualitySource"><option value="saved">Сохранённые отчёты</option><option value="pending">Предпросмотр импорта</option></select></label>
           <label>Период<select id="qualityPeriod"><option value="all">Все периоды</option></select></label>
@@ -2090,6 +2090,16 @@ function readTripleColumns(matrix) {
   }
   return triples.sort((a,b)=>a.col-b.col);
 }
+function excelColumnName(index){
+  if(!Number.isInteger(index)||index<0||index>=500)return null;
+  let letters='';
+  for(let n=index+1;n>0;n=Math.floor((n-1)/26))letters=String.fromCharCode(65+(n-1)%26)+letters;
+  return letters;
+}
+function excelCellRef(column,row){
+  const letters=excelColumnName(column);
+  return letters&&Number.isInteger(row)&&row>0?letters+row:null;
+}
 function parseSheet(sheet) {
   const matrix=window.XLSX.utils.sheet_to_json(sheet,{header:1,raw:true,defval:null,blankrows:true});
   const triples=readTripleColumns(matrix);
@@ -2097,7 +2107,12 @@ function parseSheet(sheet) {
   return triples.map((triple,index)=>{
     const rows=[],warnings=[],totals=[],issues=[],byOrg=new Map();
     let active=null, skipped=0, hasMismatch=false,overallRow=null;
-    const issue=(type,reason,row,organization=active?.name||null,raw=null,extra={})=>issues.push({type,reason,row,organization,raw,...extra});
+    const cellsAt=(row,offsets)=>offsets.map(offset=>excelCellRef(triple.col+offset,row)).filter(Boolean);
+    const numberCells=(row,q,a)=>cellsAt(row,[...(q===null?[1]:[]),...(a===null?[2]:[])]);
+    const issue=(type,reason,row,organization=active?.name||null,raw=null,extra={})=>{
+      const cells=Array.isArray(extra.cells)?extra.cells:cellsAt(row,[1,2]);
+      issues.push({type,reason,row,organization,raw,...extra,cells});
+    };
     function addWork(work,q,a) {
       rows.push({organization:active.name,work,count:q,amount:a});
       const sum=byOrg.get(active.name);sum.count+=q;sum.amount+=a;
@@ -2120,14 +2135,17 @@ function parseSheet(sheet) {
         if(q!==null && a!==null && active) {
           addWork('[Без названия — строка '+(ri+1)+']',q,a);
           warnings.push('Строка '+(ri+1)+' имеет количество и сумму, но название работы пустое. Включена в итоги с временным названием.');
-          issue('empty-name',warnings.at(-1),ri+1,active.name,raw);
+          issue('empty-name',warnings.at(-1),ri+1,active.name,raw,{cells:cellsAt(ri+1,[0])});
         } else if(q!==null || a!==null) {
           skipped++;
           warnings.push('Строка '+(ri+1)+' без названия содержит числовые данные, но не может быть импортирована: проверьте оба числа и подразделение.');
-          issue('invalid',warnings.at(-1),ri+1,active?.name||null,raw,{skipped:true});
+          issue('invalid',warnings.at(-1),ri+1,active?.name||null,raw,
+            {skipped:true,cells:cellsAt(ri+1,[0,...(q===null?[1]:[]),...(a===null?[2]:[])])});
         } else if(raw.slice(1).some(x=>x!==null&&String(x).trim()!=='')){
           skipped++;warnings.push('Строка '+(ri+1)+' без названия содержит некорректные значения.');
-          issue('invalid',warnings.at(-1),ri+1,active?.name||null,raw,{skipped:true});
+          issue('invalid',warnings.at(-1),ri+1,active?.name||null,raw,
+            {skipped:true,cells:cellsAt(ri+1,[0,...(raw[1]!==null&&String(raw[1]).trim()!==''?[1]:[]),
+              ...(raw[2]!==null&&String(raw[2]).trim()!==''?[2]:[])])});
         }
         continue;
       }
@@ -2135,8 +2153,8 @@ function parseSheet(sheet) {
         checkBlock();
         if(rows.length) {
           overallRow=ri+1;
-          if(q===null||a===null){warnings.push('Общий итог (строка '+(ri+1)+') содержит некорректное количество или сумму.');issue('invalid',warnings.at(-1),ri+1,null,raw);}
-          totals.push({type:'all',count:number(values[triple.col+1]),amount:number(values[triple.col+2])});
+          if(q===null||a===null){warnings.push('Общий итог (строка '+(ri+1)+') содержит некорректное количество или сумму.');issue('invalid',warnings.at(-1),ri+1,null,raw,{cells:numberCells(ri+1,q,a)});}
+          totals.push({type:'all',count:number(values[triple.col+1]),amount:number(values[triple.col+2]),row:ri+1});
           break;
         }
         continue;
@@ -2144,14 +2162,14 @@ function parseSheet(sheet) {
       const known=orgName(work);
       if(known) {
         checkBlock();
-        if(q===null||a===null){warnings.push('Итог подразделения '+known+' (строка '+(ri+1)+') не содержит оба числа');issue('invalid',warnings.at(-1),ri+1,known,raw);active=null;continue;}
+        if(q===null||a===null){warnings.push('Итог подразделения '+known+' (строка '+(ri+1)+') не содержит оба числа');issue('invalid',warnings.at(-1),ri+1,known,raw,{cells:numberCells(ri+1,q,a)});active=null;continue;}
         active={name:known,expectedCount:q,expectedAmount:a,sourceRow:ri+1};
-        totals.push({type:'org',name:known,count:q,amount:a});
+        totals.push({type:'org',name:known,count:q,amount:a,row:ri+1});
         if(!byOrg.has(known))byOrg.set(known,{count:0,amount:0});
         continue;
       }
-      if(q===null||a===null){skipped++;const reason='Пропущена строка '+(ri+1)+' (нет количества или суммы): '+work.slice(0,65);if(skipped<=6)warnings.push(reason);issue('invalid',reason,ri+1,active?.name||null,raw,{skipped:true});continue;}
-      if(!active){skipped++;const reason='Строка '+(ri+1)+' без распознанного подразделения: '+work.slice(0,65);if(skipped<=6)warnings.push(reason);issue('skipped',reason,ri+1,null,raw,{skipped:true});continue;}
+      if(q===null||a===null){skipped++;const reason='Пропущена строка '+(ri+1)+' (нет количества или суммы): '+work.slice(0,65);if(skipped<=6)warnings.push(reason);issue('invalid',reason,ri+1,active?.name||null,raw,{skipped:true,cells:numberCells(ri+1,q,a)});continue;}
+      if(!active){skipped++;const reason='Строка '+(ri+1)+' без распознанного подразделения: '+work.slice(0,65);if(skipped<=6)warnings.push(reason);issue('skipped',reason,ri+1,null,raw,{skipped:true,cells:cellsAt(ri+1,[0])});continue;}
       addWork(work,q,a);
     }
     if(active && !totals.some(t=>t.type==='all'))checkBlock();
@@ -2185,7 +2203,7 @@ function buildPending() {
   return sheets.map((x,i)=>{
     const date=type==='month'?addMonths(start,i):addDays(start,7*i);
     return {id:uuid(),type,start:date,end:periodEnd(date,type),fileName:state.fileName,
-      sheetName,sourceBlock:x.index,rows:x.rows,warnings:x.warnings,issues:x.issues,totals:x.totals,
+      sheetName,sourceBlock:x.index,sourceCol:x.col,rows:x.rows,warnings:x.warnings,issues:x.issues,totals:x.totals,
       count:x.count,amount:x.amount,hasMismatch:x.hasMismatch,organizations:x.organizations,importedAt:new Date().toISOString()};
   });
 }
@@ -2624,6 +2642,14 @@ function updatePager(prefix,page,count,size=25){
   $(prefix+'Page').textContent=(safe+1)+' / '+pages+' · записей: '+count;
   $(prefix+'Prev').disabled=safe===0;$(prefix+'Next').disabled=safe>=pages-1;return safe;
 }
+function qualityCellLabel(issue){
+  const cells=Array.isArray(issue.cells)?issue.cells.filter(cell=>typeof cell==='string'&&/^[A-Z]{1,3}[1-9]\d{0,5}$/.test(cell)):[];
+  if(!cells.length)return '—';
+  const sheet=issue.report?.sheetName;
+  if(typeof sheet!=='string'||!sheet.trim())return cells.join(', ');
+  const name=/^[A-Za-zА-Яа-яЁё0-9_]+$/.test(sheet)?sheet:"'"+sheet.replace(/'/g,"''")+"'";
+  return cells.map(cell=>name+'!'+cell).join(', ');
+}
 function renderQuality(sync=true){
   const reports=$('qualitySource').value==='pending'?state.pending:state.reports;
   const issues=collectQualityIssues(reports,state.settings.orgNames);
@@ -2649,13 +2675,16 @@ function renderQuality(sync=true){
     if(issue.expected&&issue.actual)reason.append(elem('small','Количество: факт '+fmtNumber(issue.actual.count,'count')+' / итог Excel '+fmtNumber(issue.expected.count,'count')+
       '; сумма: факт '+fmtNumber(issue.actual.amount,'amount')+' / итог Excel '+fmtNumber(issue.expected.amount,'amount')));
     if(issue.raw)reason.append(elem('small','Значения при чтении: '+issue.raw.map(x=>x===null?'[нет значения]':String(x)).join(' | ')));
-    return [periodText,issue.organization||'Не указано / общий итог',QUALITY_TYPES[issue.type]||'Замечание',source,issue.row||'—',reason];
+    return [periodText,issue.organization||'Не указано / общий итог',QUALITY_TYPES[issue.type]||'Замечание',
+      source,issue.row||'—',qualityCellLabel(issue),reason];
   });
-  makeTable(root,'count','Номера строк показаны только если сохранены в исходной диагностике.',
-    ['Период','Подразделение','Проблема','Источник','Строка Excel','Причина'],rows,{title:'Проблемы отчётов',totalRow:false,tableClass:'quality-table',csvMetric:'Контроль качества',csvUnit:'номера строк Excel; текст',
+  makeTable(root,'count','Ячейки указаны, если координаты сохранены при импорте. Для старых отчётов может быть известна только строка. При расхождении итогов показаны контрольные ячейки — причина расхождения может находиться в других строках.',
+    ['Период','Подразделение','Проблема','Источник','Строка Excel','Ячейка Excel','Причина'],rows,{
+      title:'Проблемы отчётов',totalRow:false,tableClass:'quality-table',csvMetric:'Контроль качества',csvUnit:'номера строк и адреса ячеек Excel; текст',
+      headerHelp:[null,null,null,null,'Номер строки в исходном файле, если он сохранён.','Лист и адрес конкретной ячейки. Для расхождений итогов это контрольные ячейки, а не доказанное место ошибки в детализации.',null],
       csvContext:[['Источник проверки',$('qualitySource').selectedOptions[0].textContent],['Подразделение',org],['Период',period],['Тип проблемы',type]],
       csvRows:filtered.map(issue=>[issue.period&&validReportDate(issue.period.start)&&validReportDate(issue.period.end)?displayPeriod(issue.period):'Даты не сохранены',issue.organization||'Не указано / общий итог',QUALITY_TYPES[issue.type]||'Замечание',
-        issue.report?[issue.report.fileName,issue.report.sheetName,issue.report.sourceBlock?'Блок '+issue.report.sourceBlock:null].filter(Boolean).join(' · '):'Отчёт отсутствует',issue.row||null,
+        issue.report?[issue.report.fileName,issue.report.sheetName,issue.report.sourceBlock?'Блок '+issue.report.sourceBlock:null].filter(Boolean).join(' · '):'Отчёт отсутствует',issue.row||null,qualityCellLabel(issue)==='—'?null:qualityCellLabel(issue),
         issue.reason+(issue.raw?' | Значения при чтении: '+issue.raw.map(x=>x??'[нет значения]').join(' | '):'')+(issue.expected&&issue.actual?' | Итог Excel: '+JSON.stringify(issue.expected)+' | Факт: '+JSON.stringify(issue.actual):'')])});
 }
 function renderContributions(index,orgs,metrics){
@@ -3517,7 +3546,8 @@ function collectQualityIssues(reports,organizations) {
     const saved=Array.isArray(report.issues)?report.issues:[];
     const local=saved.filter(x=>x&&typeof x.reason==='string').map(x=>reportIssue(QUALITY_TYPES[x.type]?x.type:'import',x.reason,report,
       typeof x.organization==='string'?x.organization:null,Number.isInteger(x.row)&&x.row>0?x.row:null,
-      {raw:Array.isArray(x.raw)?x.raw:null,expected:x.expected,actual:x.actual,skipped:!!x.skipped}));
+      {raw:Array.isArray(x.raw)?x.raw:null,expected:x.expected,actual:x.actual,skipped:!!x.skipped,
+        cells:Array.isArray(x.cells)?x.cells.filter(cell=>typeof cell==='string'&&/^[A-Z]{1,3}[1-9]\d{0,5}$/.test(cell)).slice(0,3):[]}));
     for(const warning of report.warnings||[]){
       if(typeof warning!=='string'||saved.some(x=>x?.reason===warning))continue;
       if(saved.length&&/^Всего пропущено строк:/.test(warning))continue;
@@ -3530,13 +3560,18 @@ function collectQualityIssues(reports,organizations) {
     }
     for(const control of report.totals||[]){
       const org=control.type==='org'?control.name:null;
+      const controlCells=Number.isInteger(report.sourceCol)&&Number.isInteger(control.row)?
+        [excelCellRef(report.sourceCol+1,control.row),excelCellRef(report.sourceCol+2,control.row)].filter(Boolean):[];
       const rows=(report.rows||[]).filter(x=>!org||x.organization===org);
       const actual={count:rows.reduce((n,x)=>n+x.count,0),amount:rows.reduce((n,x)=>n+x.amount,0)};
       if(!Number.isFinite(control.count)||!Number.isFinite(control.amount)){
-        if(!local.some(x=>x.type==='invalid'&&x.organization===org))local.push(reportIssue('invalid','Контрольная строка не содержит корректных количества и суммы.',report,org));
+        if(!local.some(x=>x.type==='invalid'&&x.organization===org))
+          local.push(reportIssue('invalid','Контрольная строка не содержит корректных количества и суммы.',report,org,
+            Number.isInteger(control.row)?control.row:null,{cells:controlCells}));
       }else if(Math.abs(actual.count-control.count)>.001||Math.abs(actual.amount-control.amount)>.03){
         let issue=local.find(x=>x.type==='mismatch'&&x.organization===org);
-        if(!issue){issue=reportIssue('mismatch','Детализация не совпадает с контрольным итогом Excel.',report,org);local.push(issue);}
+        if(!issue){issue=reportIssue('mismatch','Детализация не совпадает с контрольным итогом Excel.',report,org,
+          Number.isInteger(control.row)?control.row:null,{cells:controlCells});local.push(issue);}
         issue.expected={count:control.count,amount:control.amount};issue.actual=actual;
       }
     }
