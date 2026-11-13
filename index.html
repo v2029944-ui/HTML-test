@@ -3562,12 +3562,15 @@ function collectQualityIssues(reports,organizations) {
       const org=control.type==='org'?control.name:null;
       const controlCells=Number.isInteger(report.sourceCol)&&Number.isInteger(control.row)?
         [excelCellRef(report.sourceCol+1,control.row),excelCellRef(report.sourceCol+2,control.row)].filter(Boolean):[];
+      const invalidControlCells=Number.isInteger(report.sourceCol)&&Number.isInteger(control.row)?
+        [!Number.isFinite(control.count)?excelCellRef(report.sourceCol+1,control.row):null,
+          !Number.isFinite(control.amount)?excelCellRef(report.sourceCol+2,control.row):null].filter(Boolean):[];
       const rows=(report.rows||[]).filter(x=>!org||x.organization===org);
       const actual={count:rows.reduce((n,x)=>n+x.count,0),amount:rows.reduce((n,x)=>n+x.amount,0)};
       if(!Number.isFinite(control.count)||!Number.isFinite(control.amount)){
         if(!local.some(x=>x.type==='invalid'&&x.organization===org))
           local.push(reportIssue('invalid','Контрольная строка не содержит корректных количества и суммы.',report,org,
-            Number.isInteger(control.row)?control.row:null,{cells:controlCells}));
+            Number.isInteger(control.row)?control.row:null,{cells:invalidControlCells}));
       }else if(Math.abs(actual.count-control.count)>.001||Math.abs(actual.amount-control.amount)>.03){
         let issue=local.find(x=>x.type==='mismatch'&&x.organization===org);
         if(!issue){issue=reportIssue('mismatch','Детализация не совпадает с контрольным итогом Excel.',report,org,
