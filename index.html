@@ -921,6 +921,15 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 @media(max-width:740px){.period-toolbar{grid-template-columns:1fr;gap:10px}.period-pair{grid-template-columns:repeat(2,minmax(0,1fr))}.period-pair>label{padding:6px}.period-pair select,.period-pair label select,.comparison-filters .period-pair select{font-size:12px;min-height:36px;height:36px;padding-right:17px}.overview-panel{padding:15px}.overview-sections{gap:11px}.overview-section{padding:13px}.analytics-details-container>summary{padding:15px;align-items:center;gap:10px}.analytics-details-container>summary strong{font-size:16px}.analytics-details-container>summary small{font-size:11px}.analytics-details-container .details-toggle-text{font-size:12px}.overview-kpis .kpi strong{font-size:19px}}
 @media(max-width:360px){.overview-kpis{grid-template-columns:minmax(0,1fr)}.period-pair select,.period-pair label select{font-size:11px}}
 
+
+/* Периоды в проверках: то же единое поле или общий сдвоенный диапазон. */
+.change-date-pair{min-width:0;align-self:end}
+.change-date-pair.single{grid-template-columns:minmax(0,1fr)}
+.change-date-pair>label{margin:0}
+.group-audit-dates{grid-column:span 2;align-self:end}
+.category-explainer{margin:7px 0 9px;line-height:1.45}
+@media(max-width:740px){.group-audit-dates{grid-column:1/-1}}
+
 </style>
   
 </head>
@@ -988,6 +997,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <aside class="categories"><div class="category-head"><strong>Работы и группы</strong><span id="categoryCount" class="tiny muted"></span></div>
             <input id="categorySearch" type="search" placeholder="Поиск работы или группы" aria-label="Поиск работы или группы">
             <div class="category-actions"><button id="selectAll" class="text-button" title="Отметить все работы для подробного графика и сравнения">Выбрать все</button><button id="clearAll" class="text-button" title="Убрать все отметки работ; сводные итоги не изменятся">Снять всё</button><button id="selectTop" class="text-button" title="Отметить восемь крупнейших работ по выбранному показателю">8 крупнейших</button></div>
+            <p class="muted small category-explainer">Выбор работ влияет только на подробные графики и сравнения, исходные отчёты не изменяются.</p>
             <div id="categories" class="category-list"></div>
           </aside>
         </div>
@@ -1026,7 +1036,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <div id="contributionCheck"></div>
           <p class="muted small">Сверка вкладов проверяет согласованность расчёта, а не корректность исходного Excel. Замечания источника смотрите в контроле качества.</p>
           <div id="contributionResults"></div>
-          <div class="change-pagination"><button id="contributionPrev" class="button secondary">Назад</button><span id="contributionPage" class="muted small" aria-live="polite"></span><button id="contributionNext" class="button secondary">Далее</button></div>
+          <div class="change-pagination"><button id="contributionPrev" class="button secondary" title="Предыдущая страница: Вклад работ">← Предыдущая</button><span id="contributionPage" class="muted small" aria-live="polite"></span><button id="contributionNext" class="button secondary" title="Следующая страница: Вклад работ">Следующая →</button></div>
         </details>
 
       </section>
@@ -1052,7 +1062,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         </div>
         <p class="muted small">Оценка по процентному порогу, от модуля базы; это не статистический прогноз. При нулевой базе процент не рассчитан. Для выделения нужны хотя бы 2 фактических периода. При отрицательных значениях выше/ниже означает числовое отклонение.</p>
         <div id="usualCoverage" role="status" aria-live="polite"></div><div id="usualResults"></div>
-<div class="change-pagination"><button id="usualPrev" class="button secondary">Назад</button><span id="usualPage" class="muted small" aria-live="polite"></span><button id="usualNext" class="button secondary">Далее</button></div>
+<div class="change-pagination"><button id="usualPrev" class="button secondary" title="Предыдущая страница: Отклонения от среднего">← Предыдущая</button><span id="usualPage" class="muted small" aria-live="polite"></span><button id="usualNext" class="button secondary" title="Следующая страница: Отклонения от среднего">Следующая →</button></div>
       </details>
       <details class="panel" id="regularityPanel">
         <summary>Какие услуги стали редкими или перестали встречаться?</summary>
@@ -1064,7 +1074,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         </div>
         <p class="muted small">Часто: не менее 75% при 2+ периодах; редко: не более 25% при 4+ периодах. Заметно реже: частота упала хотя бы вдвое против предыдущего равного диапазона (по 2+ фактических периода, ранее активность в 2+ периодах). Исчезновение подтверждается только при полном текущем диапазоне. Первое/последнее наблюдение относятся к загруженной истории, не к началу деятельности. Пропуск прерывает подтверждённую серию отсутствия.</p>
         <div id="regularityCoverage" role="status" aria-live="polite"></div><div id="regularityResults"></div>
-<div class="change-pagination"><button id="regularityPrev" class="button secondary">Назад</button><span id="regularityPage" class="muted small" aria-live="polite"></span><button id="regularityNext" class="button secondary">Далее</button></div>
+<div class="change-pagination"><button id="regularityPrev" class="button secondary" title="Предыдущая страница: Редкость услуг">← Предыдущая</button><span id="regularityPage" class="muted small" aria-live="polite"></span><button id="regularityNext" class="button secondary" title="Следующая страница: Редкость услуг">Следующая →</button></div>
       </details>
       <section class="panel" id="analyticsDetails" hidden aria-labelledby="analyticsDetailTitle">
         <div class="sectionbar"><h2 id="analyticsDetailTitle" tabindex="-1">Динамика услуги</h2><button id="closeAnalyticsDetails" class="button secondary">Закрыть подробности</button></div>
@@ -1077,11 +1087,14 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
       <div class="panel">
         <h2 id="changesHeading">Анализ изменений</h2>
         <p class="muted small">Изменения услуг по каждому подразделению. Группы учитываются совместно, остальные работы — отдельно.</p>
+        <details class="quick-help"><summary>Как читать результаты изменений?</summary><p>«Сильные изменения» показывает заметные отклонения с учётом процентного и абсолютного порога. «Все работы» показывает полный список. Рост числа — это изменение показателя, а не оценка эффективности. Нажми на название услуги, чтобы увидеть её историю.</p></details>
         <div class="changes-filters">
           <label>Период<select id="changesType"><option value="week">Недели</option><option value="month">Месяцы</option></select></label>
           <label>Способ сравнения<select id="changesMethod"><option value="previous">С предыдущим периодом</option><option value="range">Внутри диапазона</option></select></label>
-          <label id="changesFromLabel" hidden>Начало диапазона<select id="changesFrom"></select></label>
-          <label><span id="changesToText">Текущий период</span><select id="changesTo"></select></label>
+          <div id="changeDatePair" class="period-pair change-date-pair single">
+            <label id="changesFromLabel" hidden>С периода<select id="changesFrom"></select></label>
+            <label><span id="changesToText">Текущий период</span><select id="changesTo"></select></label>
+          </div>
           <fieldset class="multi-filter"><legend>Подразделения</legend><div id="changesOrganizations" class="multi-choices"></div></fieldset>
           <fieldset class="multi-filter"><legend>Показатели</legend><div id="changesMetrics" class="multi-choices"></div></fieldset>
         </div>
@@ -1108,7 +1121,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
       <p class="muted small">Сводка учитывает поиск и фильтр направления. Рост и снижение — по порогам без малой базы и отрицательных значений; новые и исчезнувшие — независимо от порогов. Одна услуга считается один раз на подразделение в каждой категории; в диапазоне она может и расти, и снижаться.</p>
       <div class="panel">
         <div id="changesResults"></div>
-        <div class="change-pagination"><button id="changesPrev" class="button secondary" disabled>Назад</button><span id="changesPage" class="muted small" aria-live="polite"></span><button id="changesNext" class="button secondary" disabled>Далее</button></div>
+        <div class="change-pagination"><button id="changesPrev" class="button secondary" disabled title="Предыдущая страница: Изменения услуг">← Предыдущая</button><span id="changesPage" class="muted small" aria-live="polite"></span><button id="changesNext" class="button secondary" disabled title="Следующая страница: Изменения услуг">Следующая →</button></div>
       </div>
       <section id="changeDetails" class="panel" hidden aria-labelledby="changeDetailTitle">
         <div class="sectionbar"><h2 id="changeDetailTitle" tabindex="-1">Динамика услуги</h2><button id="closeChangeDetails" class="button secondary">Закрыть подробности</button></div>
@@ -1129,7 +1142,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         </div>
         <p class="muted small">Для <code>Анализ.xlsx</code> первая неделя начинается 19.10.2026. Для других файлов укажите собственные даты. Можно открыть этот HTML двойным нажатием на компьютере, интернет не требуется.</p>
         <label class="checkline"><input type="checkbox" id="replaceExisting"> Заменить уже сохранённый отчёт за совпадающий период</label>
-        <div class="actions"><button id="inspectFile" class="button secondary" disabled>Проверить структуру</button><button id="saveImport" class="button primary" disabled>Сохранить отчёты</button></div>
+        <div class="actions"><button id="inspectFile" class="button secondary" title="Разобрать Excel, показать найденные периоды и замечания до сохранения" disabled>Проверить Excel</button><button id="saveImport" class="button primary" disabled>Сохранить отчёты</button></div>
         <div id="importPreview" class="preview muted">Выберите файл и проверьте структуру перед сохранением.</div>
       </div>
       <div class="panel"><div class="sectionbar"><h2>Загруженные периоды</h2><span id="reportCount" class="muted small"></span></div><div id="reports" class="reports-list"></div></div>
@@ -1144,7 +1157,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         </div>
         <p id="qualitySummary" class="muted small" role="status" aria-live="polite"></p>
         <div id="qualityTable"></div>
-        <div class="change-pagination"><button id="qualityPrev" class="button secondary">Назад</button><span id="qualityPage" class="muted small" aria-live="polite"></span><button id="qualityNext" class="button secondary">Далее</button></div>
+        <div class="change-pagination"><button id="qualityPrev" class="button secondary" title="Предыдущая страница: Замечания к Excel">← Предыдущая</button><span id="qualityPage" class="muted small" aria-live="polite"></span><button id="qualityNext" class="button secondary" title="Следующая страница: Замечания к Excel">Следующая →</button></div>
       </section>
     </section>
 
@@ -1153,16 +1166,16 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <summary>Проверка справочника и групп</summary>
         <p class="muted small">Все уникальные названия из отчётов, справочника и существующих групп. Тип периода и подразделения для проверки выполнений задаются в аналитике. Они не ограничивают общий список названий или правила группировки.</p>
         <div class="extended-filters">
-          <label>С периода<select id="groupAuditFrom"></select></label><label>По период<select id="groupAuditTo"></select></label>
+          <div class="period-pair group-audit-dates"><label>С периода<select id="groupAuditFrom"></select></label><label>По период<select id="groupAuditTo"></select></label></div>
           <label>Показать<select id="groupAuditMode"><option value="all">Все названия</option><option value="ungrouped">Без группы</option><option value="unused">Группы без выполнений</option></select></label>
           <label>Поиск по всем названиям<input id="groupAuditSearch" type="search" placeholder="Услуга или группа"></label>
         </div>
         <div id="groupAuditCoverage" role="status" aria-live="polite"></div><div id="groupAuditResults"></div>
-<div class="change-pagination"><button id="groupAuditPrev" class="button secondary">Назад</button><span id="groupAuditPage" class="muted small" aria-live="polite"></span><button id="groupAuditNext" class="button secondary">Далее</button></div>
+<div class="change-pagination"><button id="groupAuditPrev" class="button secondary" title="Предыдущая страница: Проверка групп">← Предыдущая</button><span id="groupAuditPage" class="muted small" aria-live="polite"></span><button id="groupAuditNext" class="button secondary" title="Следующая страница: Проверка групп">Следующая →</button></div>
       </details>
 
       <div class="panel"><h2>Группы работ</h2><p class="muted small">Нажмите на группу, чтобы увидеть все работы и перенести их в другую группу.</p>
-        <div class="actions"><button id="exportGroups" class="button secondary">Экспорт групп JSON</button><label class="button secondary file-label">Импорт групп JSON<input type="file" id="importGroups" accept=".json,application/json" hidden></label></div>
+        <div class="actions"><button id="exportGroups" class="button secondary" title="Скачать список групп без отчётов">Скачать группы (JSON)</button><label class="button secondary file-label">Импорт групп JSON<input type="file" id="importGroups" accept=".json,application/json" hidden></label></div>
 <p class="muted small">Файл JSON содержит названия групп и входящие работы, без отчётов. Импорт заменяет текущий список групп после подтверждения.</p><div id="groupList"></div></div>
       <div class="panel">
         <h2>Создание и изменение группы</h2>
@@ -1180,7 +1193,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
             <label>Поиск работ<input id="workSearch" type="search" placeholder="Введите часть названия"></label>
           </div>
           <div class="works-list" id="worksList" aria-label="Выбор работ"></div>
-          <div class="actions"><button id="saveGroup" class="button primary">Сохранить группу</button><button id="resetGroup" class="button secondary">Очистить выбор</button></div>
+          <div class="actions"><button id="saveGroup" class="button primary">Сохранить группу</button><button id="resetGroup" class="button secondary" title="Сбросить только форму, не удаляя сохранённые группы">Сбросить форму</button></div>
           <p class="muted small">При переносе работы из другой группы предыдущая группа автоматически теряет эту работу.</p>
         </div>
       </div>
@@ -1207,9 +1220,9 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <div id="organizationFields" class="org-grid"></div><button class="button primary" id="saveOrganizations">Сохранить названия</button>
       </div>
       <div class="panel"><h2>Резервная копия</h2><p class="muted">Резервная копия сохраняет отчёты, группы и названия подразделений. Она нужна для переноса на другое устройство и защиты от очистки данных браузера.</p>
-        <div class="actions"><button id="exportBackup" class="button secondary">Сохранить полную копию</button><label class="button secondary file-label">Восстановить копию<input type="file" id="importBackup" accept=".json,application/json" hidden></label></div>
+        <div class="actions"><button id="exportBackup" class="button secondary" title="Скачать все отчёты, группы и настройки в JSON">Скачать резервную копию</button><label class="button secondary file-label">Восстановить копию<input type="file" id="importBackup" accept=".json,application/json" hidden></label></div>
       </div>
-      <div class="panel danger"><h2>Очистка данных</h2><p class="muted">Удалить все импортированные отчёты на этом устройстве. Правила групп останутся.</p><button id="clearReports" class="button danger-button">Удалить отчёты</button></div>
+      <div class="panel danger"><h2>Очистка данных</h2><p class="muted">Удалить все импортированные отчёты на этом устройстве. Правила групп останутся.</p><button id="clearReports" class="button danger-button" title="Удалить загруженные отчёты из этого браузера после подтверждения">Удалить загруженные отчёты</button></div>
     </section>
   </main>
   <footer>Работает в браузере · Без отправки Excel на сервер · На другом устройстве данные не появляются автоматически</footer>
@@ -2758,7 +2771,7 @@ function renderReports() {
     main.append(elem('strong',displayPeriod(r)+' · '+(r.type==='week'?'Неделя':'Месяц')));
     main.append(elem('small',r.organizations.join(', ')+' · '+r.rows.length+' записей · '+fmtNumber(r.amount,'amount')+' сумма'));
     if(r.warnings?.length)main.append(elem('small','Есть замечания к данным: '+r.warnings.length,'warn'));
-    const del=elem('button','Удалить','icon-button');
+    const del=elem('button','Удалить отчёт','icon-button');del.title='Удалить из браузера отчёт за '+displayPeriod(r);
     del.addEventListener('click',async()=>{if(!confirm('Удалить отчёт за '+displayPeriod(r)+'?'))return;
       try{await storeReports(state.reports.filter(x=>x.id!==r.id));state.selectionInitialized=false;renderAll();notice('Отчёт удалён.');}catch(err){notice(err.message,true);}});
     row.append(main,del);root.append(row);
@@ -3117,7 +3130,7 @@ function csvDisplayCell(value,column){
   return value;
 }
 function tableCsvButton(root,title,metric,caption,headers,rows,context=null,unit=metricUnit(metric)){
-  const button=elem('button','Экспорт CSV','button secondary table-export');button.type='button';button.setAttribute('aria-label','Экспорт CSV: '+title);
+  const button=elem('button','Скачать таблицу CSV','button secondary table-export');button.type='button';button.title='Скачать все строки этой таблицы с применёнными фильтрами в файл, который можно открыть в Excel';button.setAttribute('aria-label','Скачать таблицу CSV: '+title);
   button.addEventListener('click',()=>{
     const metadata=[['Раздел',title],['Показатель',metricTitle(metric)],['Единицы',unit],['Условия',caption],
       ...(context||[['Подразделения',[...state.selectedOrganizations].join(', ')]])];
@@ -3345,7 +3358,7 @@ function renderChangeWarnings(analysis,options,root) {
 }
 function renderChanges(sync=true) {
   if(sync){syncChangeFilters();changeState.page=0;}
-  const previous=$('changesMethod').value==='previous';$('changesFromLabel').hidden=previous;
+  const previous=$('changesMethod').value==='previous';$('changesFromLabel').hidden=previous;$('changeDatePair').classList.toggle('single',previous);
   $('changesToText').textContent=previous?'Текущий период':'Конец диапазона';
   const options=changeOptions(),metrics=options.metrics;
   for(const item of $('changesSort').options)item.disabled=item.value.includes('-')&&!metrics.includes(item.value.split('-')[1]);
@@ -3571,6 +3584,11 @@ function wire() {
   for(const id of ['rangeStart','rangeEnd'])$(id).addEventListener('change',()=>{
     clampDatePair('rangeStart','rangeEnd',id);
     renderDashboard(false);
+  });
+  $('advancedAnalytics').addEventListener('toggle',()=>{
+    const label=$('advancedAnalytics').querySelector('.details-toggle-text');
+    if(label)label.textContent=$('advancedAnalytics').open?'Скрыть':'Открыть';
+    if($('advancedAnalytics').open)redrawCharts($('advancedAnalytics'));
   });
   $('overviewShowComparison').addEventListener('click',()=>{
     const panel=$('advancedAnalytics');panel.open=true;
