@@ -1151,6 +1151,23 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 .import-column-row input{width:100%;box-sizing:border-box;min-width:0;max-width:100%;text-transform:uppercase}
 .import-column-row>.button{align-self:end;min-height:var(--control-height);white-space:normal}
 @media(max-width:740px){.import-column-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.report-calendar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.calendar-toolbar{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:14px 0}
+.calendar-toolbar strong{font-size:var(--label-size)}
+.calendar-period{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:6px;
+  text-align:center;min-height:78px;min-width:0;padding:9px;border-radius:var(--radius-control);
+  border:1px solid var(--field-border);background:var(--surface);color:var(--text);cursor:pointer}
+.calendar-period strong{font-size:var(--label-size);overflow-wrap:anywhere}
+.calendar-period small{font-size:var(--ui-small-font,12px)}
+.calendar-complete{background:var(--positive-bg);border-color:var(--positive-border)}
+.calendar-warn,.calendar-partial{background:var(--warning-bg);border-color:var(--warning-border)}
+.calendar-overlap{background:var(--negative-bg);border-color:var(--negative-border)}
+.calendar-missing{background:var(--subtle);color:var(--muted);border-style:dashed}
+.calendar-period:hover,.calendar-period:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.calendar-details{margin-top:12px;line-height:1.5}
+.calendar-details p{margin:8px 0}
+@media(max-width:740px){.report-calendar{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
   
 </head>
@@ -1407,6 +1424,19 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <div id="importPreview" class="preview muted">Выберите файл и проверьте структуру перед сохранением.</div>
       </div>
       <div class="panel"><div class="sectionbar"><h2>Загруженные периоды</h2><span id="reportCount" class="muted small"></span></div><div id="reports" class="reports-list"></div></div>
+      <section class="panel" aria-labelledby="calendarHeading">
+        <div class="sectionbar"><div><h2 id="calendarHeading">Календарь отчётов</h2>
+          <p class="muted small">Полнота всех подразделений, замечания и пропущенные периоды. Отсутствующий отчёт не считается нулём.</p></div>
+          <label>Масштаб<select id="calendarType"><option value="week">Недели</option><option value="month">Месяцы</option></select></label>
+        </div>
+        <div class="calendar-toolbar">
+          <button type="button" class="button secondary" id="calendarPrev">← Раньше</button>
+          <strong id="calendarRange"></strong>
+          <button type="button" class="button secondary" id="calendarNext">Позже →</button>
+        </div>
+        <div id="reportCalendar" class="report-calendar"></div>
+        <div id="calendarDetails" class="calendar-details muted small" role="status" aria-live="polite"></div>
+      </section>
       <section class="panel" aria-labelledby="qualityHeading">
         <h2 id="qualityHeading">Контроль качества данных</h2>
         <p class="muted small">Доступные итоги Excel, замечания импорта и пропуски между первым и последним загруженными периодами. В новых отчётах показываются адреса подозрительных ячеек (например, Лист1!B27); при расхождении итогов это контрольные ячейки, а не обязательно источник ошибки. Показатели не исправляются автоматически. Для старых копий координаты могут быть недоступны.</p>
@@ -3256,6 +3286,76 @@ function ruPlural(number,one,few,many){
   if(last>=2&&last<=4)return few;
   return many;
 }
+let calendarOffset=0;
+function calendarReportStatus(reports,period,organizations){
+  const matching=reports.filter(r=>r.start===period.start&&r.end===period.end);
+  const overlapping=reports.filter(r=>r.start<=period.end&&r.end>=period.start);
+  if(!matching.length)return {kind:overlapping.length?'overlap':'missing',matching:overlapping,
+    label:overlapping.length?'Пересечение':'Нет отчёта'};
+  if(matching.length>1)return {kind:'overlap',matching,label:'Повторный период'};
+  const report=matching[0];
+  const present=new Set(report.organizations||report.rows?.map(x=>x.organization)||[]);
+  const missing=organizations.filter(org=>!present.has(org));
+  if(missing.length)return {kind:'partial',matching,label:'Неполный',missing};
+  if(report.warnings?.length||report.issues?.length)return {kind:'warn',matching,label:'Замечания'};
+  return {kind:'complete',matching,label:'Загружен'};
+}
+function renderReportCalendar(){
+  const root=$('reportCalendar'),details=$('calendarDetails');
+  if(!root)return;
+  root.replaceChildren();details.replaceChildren();
+  const select=$('calendarType');
+  let type=select.value;
+  let reports=state.reports.filter(r=>r.type===type&&validReportDate(r.start)&&validReportDate(r.end));
+  if(!reports.length&&state.reports.length){
+    const fallback=type==='week'?'month':'week';
+    if(state.reports.some(r=>r.type===fallback&&validReportDate(r.start))){
+      type=fallback;select.value=fallback;calendarOffset=0;
+      reports=state.reports.filter(r=>r.type===type&&validReportDate(r.start)&&validReportDate(r.end));
+    }
+  }
+  if(!reports.length){
+    $('calendarRange').textContent='Нет загруженных периодов';
+    $('calendarPrev').disabled=$('calendarNext').disabled=true;
+    root.append(elem('p','Добавьте недельные или месячные отчёты, чтобы увидеть календарь.','muted small'));
+    return;
+  }
+  const size=12,step=type==='month'?addMonths:addDays,move=(value,n)=>step(value,type==='month'?n:7*n);
+  const starts=reports.map(r=>r.start).sort(),latest=starts.at(-1),earliest=starts[0];
+  const first=move(latest,-(size-1)-size*calendarOffset);
+  const last=move(first,size-1);
+  $('calendarRange').textContent=displayDay(first)+' — '+displayDay(periodEnd(last,type));
+  $('calendarNext').disabled=calendarOffset===0;
+  $('calendarPrev').disabled=first<=earliest;
+  for(let i=0;i<size;i++){
+    const start=move(first,i),period={type,start,end:periodEnd(start,type)};
+    const status=calendarReportStatus(reports,period,state.settings.orgNames);
+    const button=elem('button',null,'calendar-period calendar-'+status.kind);
+    button.type='button';
+    button.append(elem('strong',displayPeriod(period)),elem('small',status.label));
+    button.title='Период '+displayPeriod(period)+': '+status.label;
+    button.addEventListener('click',()=>{
+      details.replaceChildren(elem('strong',displayPeriod(period)+' — '+status.label));
+      if(status.missing?.length)details.append(elem('p','Нет отчётов подразделений: '+status.missing.join(', ')+'.'));
+      if(!status.matching.length){details.append(elem('p','В выбранном интервале отчёт не загружен. Это не нулевое значение.'));return;}
+      for(const r of status.matching){
+        details.append(elem('p','Источник: '+(r.fileName||'не сохранён')+' · '+
+          (r.sheetName||'лист не указан')+' · Подразделения: '+(r.organizations||[]).join(', ')+
+          '. Замечаний: '+(r.warnings||[]).length+'.'));
+      }
+      if(status.matching.some(r=>r.start===start&&r.end===period.end)){
+        const action=elem('button','Открыть контроль качества','button secondary');
+        action.type='button';action.addEventListener('click',()=>{
+          $('qualitySource').value='saved';renderQuality(true);
+          $('qualityPeriod').value=type+':'+start;renderQuality(false);
+          $('qualityHeading').scrollIntoView({behavior:'smooth',block:'start'});
+        });
+        details.append(action);
+      }
+    });
+    root.append(button);
+  }
+}
 function renderReports() {
   const root=$('reports');root.replaceChildren();$('reportCount').textContent=
     state.reports.length+' '+ruPlural(state.reports.length,'период','периода','периодов');
@@ -3976,7 +4076,7 @@ function wireChanges() {
   $('closeChangeDetails').addEventListener('click',()=>{$('changeDetails').hidden=true;$('changesSearch').focus();});
 }
 
-function renderAll() {renderOrganizations();syncPeriods();renderDashboard(false);renderReports();renderGroups();syncChangeFilters();renderQuality();if($('changes').classList.contains('active'))renderChanges(false);}
+function renderAll() {renderOrganizations();syncPeriods();renderDashboard(false);renderReports();renderReportCalendar();renderGroups();syncChangeFilters();renderQuality();if($('changes').classList.contains('active'))renderChanges(false);}
 const THEME_KEY='work-reports-theme-v1';
 const DESIGN_KEY='work-reports-design-v1';
 const PALETTE_KEY='work-reports-palette-v1';
@@ -4148,6 +4248,9 @@ function wire() {
     if($('importMappingMode').value==='manual')enableManualImport();
     else {$('importPeriodDates').replaceChildren();renderImportDateFields();}
   });
+  $('calendarType').addEventListener('change',()=>{calendarOffset=0;renderReportCalendar();});
+  $('calendarPrev').addEventListener('click',()=>{calendarOffset++;renderReportCalendar();});
+  $('calendarNext').addEventListener('click',()=>{calendarOffset=Math.max(0,calendarOffset-1);renderReportCalendar();});
   $('importMappingMode').addEventListener('change',enableManualImport);
   $('addImportMapping').addEventListener('click',()=>{
     try{addImportMapping();renderImportDateFields();state.pending=[];$('saveImport').disabled=true;}catch(err){notice(err.message,true);}
