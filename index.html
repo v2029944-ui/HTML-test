@@ -2035,11 +2035,11 @@ async function openDb() {
   });
 }
 const FALLBACK_KEY='work-reports-local-json-v1';
-function fallbackSave(){
-  try {
-    localStorage.setItem(FALLBACK_KEY,JSON.stringify({reports:state.reports,settings:state.settings}));
-  } catch(err) {
-    notice('Браузер не разрешает сохранять данные в этой вкладке или память заполнена. Экспортируйте полную резервную копию, иначе данные исчезнут при закрытии страницы.',true);
+function fallbackSave(reports=state.reports,settings=state.settings){
+  try{
+    localStorage.setItem(FALLBACK_KEY,JSON.stringify({reports,settings}));
+  }catch(err){
+    throw new Error('Данные не сохранены: браузер запретил запись или хранилище заполнено. Прежние отчёты не заменены. Скачайте резервную копию и освободите место.',{cause:err});
   }
 }
 async function loadData() {
@@ -2069,7 +2069,7 @@ async function saveSettings() {
   await txDone(tx);
 }
 async function storeReports(next) {
-  if(!state.db){state.reports=next;fallbackSave();return;}
+  if(!state.db){fallbackSave(next,state.settings);state.reports=next;return;}
   const tx=state.db.transaction('reports','readwrite'),store=tx.objectStore('reports');
   store.clear(); for(const r of next) store.put(r);
   await txDone(tx); state.reports=next;
