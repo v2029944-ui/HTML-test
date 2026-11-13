@@ -1086,7 +1086,13 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
   border:1px solid var(--field-border);border-radius:var(--radius-control);
   background:var(--surface);cursor:pointer;
 }
-.import-grid #excelFile::file-selector-button,
+.import-grid #excelFile::file-selector-button{
+  height:calc(var(--control-height) - 2px);min-height:0;
+  margin:0 10px 0 0;padding:0 12px;
+  border:0;border-right:1px solid var(--field-border);border-radius:0;
+  font-family:var(--font-body);font-size:var(--control-size);font-weight:600;
+  background:var(--subtle);color:var(--text);cursor:pointer;
+}
 .import-grid #excelFile::-webkit-file-upload-button{
   height:calc(var(--control-height) - 2px);min-height:0;
   margin:0 10px 0 0;padding:0 12px;
