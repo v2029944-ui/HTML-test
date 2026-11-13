@@ -1138,6 +1138,19 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
   .import-grid #excelFile{font-size:var(--control-size)}
   .report-row .icon-button{white-space:normal}
 }
+
+.import-advanced{margin-top:12px}
+.import-advanced>label{display:block;max-width:380px;margin:12px 0}
+.import-date-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));gap:12px}
+.import-date-grid>label{min-width:0}
+.import-date-grid input{width:100%;min-width:0;max-width:100%;box-sizing:border-box}
+.import-column-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;gap:10px;align-items:end;
+  margin:12px 0;padding:12px;border:1px solid var(--border);border-radius:var(--radius-panel)}
+.import-column-row legend{font-weight:700}
+.import-column-row>label{min-width:0}
+.import-column-row input{width:100%;box-sizing:border-box;min-width:0;max-width:100%;text-transform:uppercase}
+.import-column-row>.button{align-self:end;min-height:var(--control-height);white-space:normal}
+@media(max-width:740px){.import-column-row{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
   
 </head>
@@ -1377,6 +1390,18 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <label>Лист<select id="sheetSelect" disabled><option value="">Сначала выберите файл</option></select></label>
         </div>
         <p class="muted small">Для <code>Анализ.xlsx</code> первая неделя начинается 19.10.2026. Для других файлов укажите собственные даты. Можно открыть этот HTML двойным нажатием на компьютере, интернет не требуется.</p>
+        <details class="quick-help import-advanced" id="importAdvanced">
+          <summary>Столбцы и даты каждого набора</summary>
+          <p>Обычно столбцы распознаются автоматически, а периоды идут подряд. Для другого формата Excel включите ручную настройку: укажите буквы столбцов работы, количества и суммы и номер строки заголовка для каждого набора. Даты ниже можно изменить по отдельности без изменения первого периода.</p>
+          <label>Способ распознавания<select id="importMappingMode"><option value="auto">Автоматически</option><option value="manual">Указать столбцы вручную</option></select></label>
+          <div id="importManualWrap" hidden>
+            <div id="importColumnMappings"></div>
+            <button type="button" id="addImportMapping" class="button secondary">Добавить набор столбцов</button>
+          </div>
+          <h3>Даты наборов</h3>
+          <p class="muted small">Необязательно менять: по умолчанию периоды последовательные от первой даты. Укажите дату отдельно, если есть пропуски или непоследовательный порядок.</p>
+          <div id="importPeriodDates" class="import-date-grid" aria-live="polite"><p class="muted small">Выберите Excel-файл для настройки дат.</p></div>
+        </details>
         <label class="checkline"><input type="checkbox" id="replaceExisting"> Заменить уже сохранённый отчёт за совпадающий период</label>
         <div class="actions"><button id="inspectFile" class="button secondary" title="Разобрать Excel, показать найденные периоды и замечания до сохранения" disabled>Проверить Excel</button><button id="saveImport" class="button primary" disabled>Сохранить отчёты</button></div>
         <div id="importPreview" class="preview muted">Выберите файл и проверьте структуру перед сохранением.</div>
@@ -2100,14 +2125,15 @@ function excelCellRef(column,row){
   const letters=excelColumnName(column);
   return letters&&Number.isInteger(row)&&row>0?letters+row:null;
 }
-function parseSheet(sheet) {
+function parseSheet(sheet,manualMappings=null) {
   const matrix=window.XLSX.utils.sheet_to_json(sheet,{header:1,raw:true,defval:null,blankrows:true});
-  const triples=readTripleColumns(matrix);
+  const triples=manualMappings===null?readTripleColumns(matrix):manualMappings;
   if(!triples.length) throw Error('Не найдены тройки столбцов «Работа / Количество / Сумма». Проверьте второй ряд заголовков.');
   return triples.map((triple,index)=>{
     const rows=[],warnings=[],totals=[],issues=[],byOrg=new Map();
     let active=null, skipped=0, hasMismatch=false,overallRow=null;
-    const cellsAt=(row,offsets)=>offsets.map(offset=>excelCellRef(triple.col+offset,row)).filter(Boolean);
+    const sourceColumn=offset=>offset===0?triple.col:offset===1?(triple.countCol??triple.col+1):(triple.amountCol??triple.col+2);
+    const cellsAt=(row,offsets)=>offsets.map(offset=>excelCellRef(sourceColumn(offset),row)).filter(Boolean);
     const numberCells=(row,q,a)=>cellsAt(row,[...(q===null?[1]:[]),...(a===null?[2]:[])]);
     const issue=(type,reason,row,organization=active?.name||null,raw=null,extra={})=>{
       const cells=Array.isArray(extra.cells)?extra.cells:cellsAt(row,[1,2]);
@@ -2129,8 +2155,8 @@ function parseSheet(sheet) {
     for(let ri=triple.headerRow+1;ri<matrix.length;ri++){
       const values=matrix[ri]||[];
       const work=String(values[triple.col]??'').trim();
-      const q=number(values[triple.col+1]),a=number(values[triple.col+2]);
-      const raw=[values[triple.col]??null,values[triple.col+1]??null,values[triple.col+2]??null];
+      const q=number(values[sourceColumn(1)]),a=number(values[sourceColumn(2)]);
+      const raw=[values[triple.col]??null,values[sourceColumn(1)]??null,values[sourceColumn(2)]??null];
       if(!work) {
         if(q!==null && a!==null && active) {
           addWork('[Без названия — строка '+(ri+1)+']',q,a);
@@ -2154,7 +2180,7 @@ function parseSheet(sheet) {
         if(rows.length) {
           overallRow=ri+1;
           if(q===null||a===null){warnings.push('Общий итог (строка '+(ri+1)+') содержит некорректное количество или сумму.');issue('invalid',warnings.at(-1),ri+1,null,raw,{cells:numberCells(ri+1,q,a)});}
-          totals.push({type:'all',count:number(values[triple.col+1]),amount:number(values[triple.col+2]),row:ri+1});
+          totals.push({type:'all',count:number(values[sourceColumn(1)]),amount:number(values[sourceColumn(2)]),row:ri+1});
           break;
         }
         continue;
@@ -2182,10 +2208,96 @@ function parseSheet(sheet) {
       issue('mismatch',warnings.at(-1),overallRow,null,null,{expected:{count:total.count,amount:total.amount},actual:{count:byCount,amount:byAmount}});
     }
     if(!rows.length)warnings.push('Нет распознанных работ');
-    return {index:index+1,col:triple.col,headerRow:triple.headerRow,rows,warnings,issues,hasMismatch,totals,
+    return {index:index+1,col:triple.col,countCol:sourceColumn(1),amountCol:sourceColumn(2),headerRow:triple.headerRow,rows,warnings,issues,hasMismatch,totals,
       count:round(byCount,6),amount:round(byAmount,2),organizations:[...byOrg.keys()]};
   });
 }
+
+function excelColumnIndex(text){
+  const value=String(text||'').trim().toUpperCase();
+  if(!/^[A-Z]{1,2}$|^[A-S][A-Z]{2}$/.test(value))return null;
+  let col=0;for(const letter of value)col=col*26+letter.charCodeAt(0)-64;
+  return col<=500?col-1:null;
+}
+function addImportMapping(cols=null){
+  const root=$('importColumnMappings');
+  if(root.children.length>=12)throw Error('За один импорт можно настроить не более 12 наборов столбцов.');
+  const index=root.children.length,block=elem('fieldset',null,'import-column-row'),legend=elem('legend','Набор '+(index+1));
+  block.append(legend);
+  const fields=[['Работа','work',cols?excelColumnName(cols.col):'A'],['Количество','count',cols?excelColumnName(cols.countCol??cols.col+1):'B'],['Сумма','amount',cols?excelColumnName(cols.amountCol??cols.col+2):'C'],['Строка заголовка','header',String(cols?cols.headerRow+1:2)]];
+  for(const [title,role,value]of fields){
+    const label=elem('label',title),input=elem('input');
+    input.type=role==='header'?'number':'text';input.value=value;
+    input.dataset.role=role;input.required=true;
+    if(role==='header'){input.min='1';input.max='60000';input.step='1';}
+    else {input.maxLength=3;input.autocomplete='off';input.spellcheck=false;}
+    input.addEventListener('change',()=>{state.pending=[];$('saveImport').disabled=true;renderImportDateFields();});
+    label.append(input);block.append(label);
+  }
+  const remove=elem('button','Удалить набор','button secondary');remove.type='button';
+  remove.addEventListener('click',()=>{
+    block.remove();
+    [...root.children].forEach((row,i)=>row.querySelector('legend').textContent='Набор '+(i+1));
+    state.pending=[];$('saveImport').disabled=true;renderImportDateFields();
+  });
+  block.append(remove);root.append(block);
+}
+function manualImportMappings(){
+  const blocks=[...$('importColumnMappings').children];
+  if(!blocks.length)throw Error('Добавьте хотя бы один набор столбцов.');
+  const used=new Set();
+  return blocks.map((block,i)=>{
+    const value=role=>block.querySelector('[data-role="'+role+'"]')?.value;
+    const columns=['work','count','amount'].map(role=>excelColumnIndex(value(role)));
+    if(columns.some(col=>col===null))throw Error('Набор '+(i+1)+': укажите корректные буквы столбцов Excel (A–SF).');
+    if(new Set(columns).size!==3)throw Error('Набор '+(i+1)+': работа, количество и сумма должны быть в разных столбцах.');
+    for(const col of columns){if(used.has(col))throw Error('Столбец '+excelColumnName(col)+' указан в нескольких наборах.');used.add(col);}
+    const header=Number(value('header'));
+    if(!Number.isInteger(header)||header<1||header>60000)throw Error('Набор '+(i+1)+': строка заголовка должна быть от 1 до 60000.');
+    return {col:columns[0],countCol:columns[1],amountCol:columns[2],headerRow:header-1};
+  });
+}
+function importBlockMappings(){
+  if(!state.workbook)return [];
+  const sheet=state.workbook.Sheets[$('sheetSelect').value];
+  if(!sheet)return [];
+  return $('importMappingMode').value==='manual'?manualImportMappings():readTripleColumns(sheet);
+}
+function renderImportDateFields(){
+  const root=$('importPeriodDates');
+  const previous=[...root.querySelectorAll('[data-import-date]')].map(el=>({value:el.value,manual:el.dataset.manual==='1'}));
+  root.replaceChildren();
+  if(!state.workbook){root.append(elem('p','Выберите Excel-файл для настройки дат.','muted small'));return;}
+  let blocks;
+  try{blocks=importBlockMappings();}catch(err){root.append(elem('p',err.message,'warn small'));return;}
+  if(!blocks.length){root.append(elem('p','Наборы столбцов не найдены. Включите ручное распознавание.','warn small'));return;}
+  const isMonth=$('importType').value==='month';
+  const rawStart=isMonth?$('importMonth').value:$('importWeek').value;
+  const first=isMonth?(/^\d{4}-\d{2}$/.test(rawStart)?rawStart+'-01':null):validReportDate(rawStart)?rawStart:null;
+  for(let i=0;i<blocks.length;i++){
+    const block=blocks[i],label=elem('label','Набор '+(i+1)+' · '+excelColumnName(block.col)+' / '+excelColumnName(block.countCol??block.col+1)+' / '+excelColumnName(block.amountCol??block.col+2));
+    const input=elem('input');input.type=isMonth?'month':'date';input.dataset.importDate=String(i);
+    const prior=previous[i],defaultDate=first?(isMonth?addMonths(first,i):addDays(first,7*i)):'';
+    input.value=prior?.manual?prior.value:(defaultDate?(isMonth?defaultDate.slice(0,7):defaultDate):'');
+    input.dataset.manual=prior?.manual?'1':'0';
+    input.addEventListener('change',()=>{input.dataset.manual='1';state.pending=[];$('saveImport').disabled=true;});
+    label.append(input);root.append(label);
+  }
+}
+function enableManualImport(){
+  const manual=$('importMappingMode').value==='manual';
+  $('importManualWrap').hidden=!manual;
+  if(manual&&!$('importColumnMappings').children.length){
+    const sheet=state.workbook?.Sheets[$('sheetSelect').value];
+    const auto=sheet?readTripleColumns(sheet):[];
+    for(const mapping of auto.slice(0,12))addImportMapping(mapping);
+    if(!auto.length)addImportMapping();
+  }
+  $('importPeriodDates').replaceChildren();
+  renderImportDateFields();
+  state.pending=[];$('saveImport').disabled=true;
+}
+
 function importStart() {
   if($('importType').value==='month') {
     const month=$('importMonth').value;
@@ -2199,11 +2311,25 @@ function importStart() {
 function buildPending() {
   if(!state.workbook)throw Error('Сначала выберите файл');
   const type=$('importType').value,start=importStart(),sheetName=$('sheetSelect').value;
-  const sheets=parseSheet(state.workbook.Sheets[sheetName]);
+  const manual=$('importMappingMode').value==='manual';
+  const sheets=parseSheet(state.workbook.Sheets[sheetName],manual?manualImportMappings():null);
+  const dates=[...$('importPeriodDates').querySelectorAll('[data-import-date]')];
+  if(dates.length!==sheets.length)renderImportDateFields();
+  const inputs=[...$('importPeriodDates').querySelectorAll('[data-import-date]')];
+  const seen=new Set();
   return sheets.map((x,i)=>{
-    const date=type==='month'?addMonths(start,i):addDays(start,7*i);
+    const suggested=type==='month'?addMonths(start,i):addDays(start,7*i);
+    const raw=inputs[i]?.value;
+    const date=raw?(type==='month'?raw+'-01':raw):suggested;
+    if(!validReportDate(date))throw Error('Набор '+(i+1)+': укажите корректную дату периода.');
+    const end=periodEnd(date,type);
+    for(const previous of seen){
+      const [a,b]=previous.split('|');
+      if(a<=end&&b>=date)throw Error('Даты наборов пересекаются. Проверьте период '+(i+1)+'.');
+    }
+    seen.add(date+'|'+end);
     return {id:uuid(),type,start:date,end:periodEnd(date,type),fileName:state.fileName,
-      sheetName,sourceBlock:x.index,sourceCol:x.col,rows:x.rows,warnings:x.warnings,issues:x.issues,totals:x.totals,
+      sheetName,sourceBlock:x.index,sourceCol:x.col,sourceCountCol:x.countCol,sourceAmountCol:x.amountCol,rows:x.rows,warnings:x.warnings,issues:x.issues,totals:x.totals,
       count:x.count,amount:x.amount,hasMismatch:x.hasMismatch,organizations:x.organizations,importedAt:new Date().toISOString()};
   });
 }
@@ -2215,6 +2341,8 @@ function renderPreview(pending) {
     const card=elem('div',null,'import-preview-card');
     card.append(elem('strong','Период '+r.sourceBlock+' — '+displayPeriod(r)));
     card.append(elem('div',r.rows.length+' строк работ, '+r.organizations.join(', ')));
+    card.append(elem('small','Столбцы: '+excelColumnName(r.sourceCol)+' / '+
+      excelColumnName(r.sourceCountCol??r.sourceCol+1)+' / '+excelColumnName(r.sourceAmountCol??r.sourceCol+2)));
     card.append(elem('small','Количество: '+fmtNumber(r.count,'count')+' · Сумма: '+fmtNumber(r.amount,'amount')));
     r.warnings.forEach(w=>card.append(elem('p',w,'warn small')));
     grid.append(card);
@@ -2357,6 +2485,7 @@ function resetWorkbookSelection(){
   $('inspectFile').disabled=true;
   $('saveImport').disabled=true;
   $('importPreview').textContent='Выберите файл и проверьте структуру перед сохранением.';
+  $('importColumnMappings').replaceChildren();renderImportDateFields();
   $('excelFileStatus').textContent='Выберите файл';
   $('excelFileStatus').title='';
   $('excelFile').title='';
@@ -2370,6 +2499,9 @@ async function selectWorkbook(buffer,fileName) {
   const select=$('sheetSelect');select.replaceChildren();
   workbook.SheetNames.forEach(name=>{const option=elem('option',name);option.value=name;select.append(option);});
   select.disabled=false;$('inspectFile').disabled=false;$('saveImport').disabled=true;
+  $('importMappingMode').value='auto';$('importManualWrap').hidden=true;
+  $('importColumnMappings').replaceChildren();
+  renderImportDateFields();
   $('importPreview').textContent='Файл загружен. Укажите тип и первый период, затем нажмите «Проверить структуру».';
   document.querySelector('[data-view="upload"]').click();
 }
@@ -2396,7 +2528,7 @@ async function saveImport() {
   if(pending.some(x=>x.warnings.length) && !confirm('Обнаружены неполные строки или расхождения с итогами Excel. Сохранение таких отчётов может исказить аналитику. Сначала проверьте предупреждения в предпросмотре. Сохранить с ошибками?'))return;
   if(overlaps && !confirm('У новых отчётов есть пересечения с отчётами другого типа периода. В аналитике недельные и месячные данные считаются раздельно. Сохранить?'))return;
   await storeReports(next);
-  const catalogAdded=mergeCatalog(state.catalogPreview);
+  const catalogAdded=mergeCatalog(state.catalogPreview.filter(entry=>entry.sheet!==$('sheetSelect').value));
   if(catalogAdded)await saveSettings();
   state.selectionInitialized=false;$('qualitySource').value='saved';renderAll();
   notice('Сохранено периодов: '+pending.length+'. Добавлено услуг в справочник: '+catalogAdded+'. Данные находятся только в этом браузере.');
@@ -3561,10 +3693,10 @@ function collectQualityIssues(reports,organizations) {
     for(const control of report.totals||[]){
       const org=control.type==='org'?control.name:null;
       const controlCells=Number.isInteger(report.sourceCol)&&Number.isInteger(control.row)?
-        [excelCellRef(report.sourceCol+1,control.row),excelCellRef(report.sourceCol+2,control.row)].filter(Boolean):[];
+        [excelCellRef(report.sourceCountCol??report.sourceCol+1,control.row),excelCellRef(report.sourceAmountCol??report.sourceCol+2,control.row)].filter(Boolean):[];
       const invalidControlCells=Number.isInteger(report.sourceCol)&&Number.isInteger(control.row)?
-        [!Number.isFinite(control.count)?excelCellRef(report.sourceCol+1,control.row):null,
-          !Number.isFinite(control.amount)?excelCellRef(report.sourceCol+2,control.row):null].filter(Boolean):[];
+        [!Number.isFinite(control.count)?excelCellRef(report.sourceCountCol??report.sourceCol+1,control.row):null,
+          !Number.isFinite(control.amount)?excelCellRef(report.sourceAmountCol??report.sourceCol+2,control.row):null].filter(Boolean):[];
       const rows=(report.rows||[]).filter(x=>!org||x.organization===org);
       const actual={count:rows.reduce((n,x)=>n+x.count,0),amount:rows.reduce((n,x)=>n+x.amount,0)};
       if(!Number.isFinite(control.count)||!Number.isFinite(control.amount)){
@@ -4004,8 +4136,22 @@ function wire() {
   $('selectAll').addEventListener('click',()=>{state.selectedCategories=new Set(categoryOrder(currentTypeReports(),new Set(state.settings.orgNames),rankMetric()));renderDashboard(false);});
   $('clearAll').addEventListener('click',()=>{state.selectedCategories.clear();renderDashboard(false);});
   $('selectTop').addEventListener('click',()=>{state.selectedCategories=new Set(categoryOrder(currentTypeReports(),state.selectedOrganizations,rankMetric()).slice(0,8));renderDashboard(false);});
-  $('importType').addEventListener('change',()=>{$('weekStartLabel').hidden=$('importType').value!=='week';$('monthStartLabel').hidden=$('importType').value!=='month';state.pending=[];$('saveImport').disabled=true;});
-  ['importWeek','importMonth','sheetSelect'].forEach(id=>$(id).addEventListener('change',()=>{state.pending=[];$('saveImport').disabled=true;}));
+  $('importType').addEventListener('change',()=>{
+    $('weekStartLabel').hidden=$('importType').value!=='week';
+    $('monthStartLabel').hidden=$('importType').value!=='month';
+    state.pending=[];$('saveImport').disabled=true;
+    $('importPeriodDates').replaceChildren();renderImportDateFields();
+  });
+  ['importWeek','importMonth'].forEach(id=>$(id).addEventListener('change',()=>{state.pending=[];$('saveImport').disabled=true;renderImportDateFields();}));
+  $('sheetSelect').addEventListener('change',()=>{
+    state.pending=[];$('saveImport').disabled=true;$('importColumnMappings').replaceChildren();
+    if($('importMappingMode').value==='manual')enableManualImport();
+    else {$('importPeriodDates').replaceChildren();renderImportDateFields();}
+  });
+  $('importMappingMode').addEventListener('change',enableManualImport);
+  $('addImportMapping').addEventListener('click',()=>{
+    try{addImportMapping();renderImportDateFields();state.pending=[];$('saveImport').disabled=true;}catch(err){notice(err.message,true);}
+  });
   $('excelFile').addEventListener('change',async(e)=>{
     const file=e.target.files?.[0];
     if(!file)return;
