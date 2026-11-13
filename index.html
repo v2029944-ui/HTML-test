@@ -1538,6 +1538,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <div id="organizationFields" class="org-grid"></div><button class="button primary" id="saveOrganizations">Сохранить названия</button>
       </div>
       <div class="panel"><h2>Резервная копия</h2><p class="muted">Резервная копия сохраняет отчёты, группы и названия подразделений. Она нужна для переноса на другое устройство и защиты от очистки данных браузера.</p>
+        <p id="storageModeInfo" class="muted small" role="status" aria-live="polite"></p>
         <div class="actions"><button id="exportBackup" class="button secondary" title="Скачать все отчёты, группы и настройки в JSON">Скачать резервную копию</button><label class="button secondary file-label">Восстановить копию<input type="file" id="importBackup" accept=".json,application/json" hidden></label></div>
       </div>
       <div class="panel danger"><h2>Очистка данных</h2><p class="muted">Удалить все импортированные отчёты на этом устройстве. Правила групп останутся.</p><button id="clearReports" class="button danger-button" title="Удалить загруженные отчёты из этого браузера после подтверждения">Удалить загруженные отчёты</button></div>
@@ -2410,7 +2411,8 @@ function renderPreview(pending) {
     grid.append(card);
   });
   root.append(grid);
-  if(state.catalogPreview.length)root.append(elem('p','На других листах найдены записи справочника услуг: '+state.catalogPreview.length+'. Справочник будет сохранён вместе с отчётами.','muted small'));
+  const catalogPreview=state.catalogPreview.filter(entry=>entry.sheet!==$('sheetSelect').value);
+  if(catalogPreview.length)root.append(elem('p','На других листах найдены записи справочника услуг: '+catalogPreview.length+'. Справочник будет сохранён вместе с отчётами.','muted small'));
   root.append(elem('p','Проверьте дату первого периода и предупреждения. Совпадающие периоды не будут дублироваться.','muted small'));
 }
 /* Справочник со второго и последующих листов: форматы
@@ -2525,19 +2527,13 @@ function catalogWithEntries(before,entries){
   }
   return merged;
 }
-function mergeCatalog(entries){
-  const before=state.settings.catalog||[];
-  const merged=catalogWithEntries(before,entries);
-  state.settings.catalog=merged;
-  return merged.length-before.length;
-}
 async function importCatalogFile(file) {
   if(!file)return;
   const workbook=window.XLSX.read(await file.arrayBuffer(),{type:'array'});
   const entries=detectCatalogWorkbook(workbook);
   if(!entries.length)throw Error('Не удалось распознать справочник услуг. Укажите названия подразделений в заголовках и услуги под ними.');
-  const added=mergeCatalog(entries);
-  await saveSettings();renderAll();
+  const before=state.settings.catalog||[],catalog=catalogWithEntries(before,entries),added=catalog.length-before.length;
+  await saveSettings({...state.settings,catalog});renderAll();
   notice('Справочник загружен: '+entries.length+' услуг, новых '+added+'. Создавайте группы вручную в разделе «Группы работ».');
 }
 
@@ -3395,7 +3391,7 @@ function ruPlural(number,one,few,many){
   if(last>=2&&last<=4)return few;
   return many;
 }
-let calendarOffset=0;
+let calendarOffset=0,calendarViewInitialized=false;
 function calendarReportStatus(reports,period,organizations){
   const matching=reports.filter(r=>r.start===period.start&&r.end===period.end);
   const overlapping=reports.filter(r=>r.start<=period.end&&r.end>=period.start);
@@ -3416,11 +3412,14 @@ function renderReportCalendar(){
   const select=$('calendarType');
   let type=select.value;
   let reports=state.reports.filter(r=>r.type===type&&validReportDate(r.start)&&validReportDate(r.end));
-  if(!reports.length&&state.reports.length){
-    const fallback=type==='week'?'month':'week';
-    if(state.reports.some(r=>r.type===fallback&&validReportDate(r.start))){
-      type=fallback;select.value=fallback;calendarOffset=0;
-      reports=state.reports.filter(r=>r.type===type&&validReportDate(r.start)&&validReportDate(r.end));
+  if(!calendarViewInitialized&&state.reports.length){
+    calendarViewInitialized=true;
+    if(!reports.length){
+      const fallback=type==='week'?'month':'week';
+      if(state.reports.some(r=>r.type===fallback&&validReportDate(r.start))){
+        type=fallback;select.value=fallback;calendarOffset=0;
+        reports=state.reports.filter(r=>r.type===type&&validReportDate(r.start)&&validReportDate(r.end));
+      }
     }
   }
   if(!reports.length){
@@ -4187,7 +4186,16 @@ function wireChanges() {
   $('closeChangeDetails').addEventListener('click',()=>{$('changeDetails').hidden=true;$('changesSearch').focus();});
 }
 
-function renderAll() {renderOrganizations();syncPeriods();renderDashboard(false);renderReports();renderReportCalendar();renderGroups();syncChangeFilters();renderQuality();if($('changes').classList.contains('active'))renderChanges(false);}
+function renderStorageModeInfo(){
+  const target=$('storageModeInfo');if(!target)return;
+  if(state.db){target.textContent='Хранилище: IndexedDB этого браузера. Данные не синхронизируются с другими устройствами. Регулярно скачивайте резервную копию.';return;}
+  let readable=true;
+  try{localStorage.getItem(FALLBACK_KEY);}catch(err){readable=false;}
+  target.textContent=readable?
+    'Хранилище: запасной localStorage. Объём ограничен; при невозможности записи приложение покажет ошибку. Скачивайте резервные копии.':
+    'Внимание: браузерное хранилище недоступно. Не полагайтесь на сохранение отчётов; используйте резервную копию.';
+}
+function renderAll() {renderOrganizations();syncPeriods();renderDashboard(false);renderReports();renderReportCalendar();renderGroups();syncChangeFilters();renderQuality();renderStorageModeInfo();if($('changes').classList.contains('active'))renderChanges(false);}
 const THEME_KEY='work-reports-theme-v1';
 const DESIGN_KEY='work-reports-design-v1';
 const PALETTE_KEY='work-reports-palette-v1';
@@ -4364,7 +4372,7 @@ function wire() {
     if($('importMappingMode').value==='manual')enableManualImport();
     else {$('importPeriodDates').replaceChildren();renderImportDateFields();}
   });
-  $('calendarType').addEventListener('change',()=>{calendarOffset=0;renderReportCalendar();});
+  $('calendarType').addEventListener('change',()=>{calendarViewInitialized=true;calendarOffset=0;renderReportCalendar();});
   $('calendarPrev').addEventListener('click',()=>{calendarOffset++;renderReportCalendar();});
   $('calendarNext').addEventListener('click',()=>{calendarOffset=Math.max(0,calendarOffset-1);renderReportCalendar();});
   $('importMappingMode').addEventListener('change',enableManualImport);
