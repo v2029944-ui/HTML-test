@@ -2650,6 +2650,7 @@ function analysisCoverage(root,index,organizations,text,missing=[]){
   if(index.issues.length)root.append(elem('p','Есть исключённые некорректные, повторные или пересекающиеся отчёты. Подробности — в контроле качества.','warn small'));
   root.append(elem('p','Подразделения: '+organizations.join(', ')+'. Период: '+(index.type==='week'?'недели':'месяцы')+'. Полнота означает наличие отчётов; замечания импорта — в контроле качества.','muted small'));
 }
+function usualStatusClass(status){return status==='high'?'positive':status==='low'?'negative':status==='insufficient'?'muted':'';}
 function renderUsual(index=analyticsIndex()){
   const root=$('usualResults');root.replaceChildren();
   const orgs=[...state.selectedOrganizations],period=$('usualPeriod').value,windowSize=Number($('usualWindow').value),percent=Number($('usualPercent').value);
@@ -2668,7 +2669,7 @@ function renderUsual(index=analyticsIndex()){
     const values=row=>{const x=row[metric];return [row.name+(row.kind==='group'?' (группа)':''),x.base,x.current,x.delta,x.percent,USUAL_LABELS[x.status]];};
     const rows=page.map(row=>{const x=row[metric],valuesForRow=values(row);return [row.key===null?row.name:serviceButton(index,row,orgs,baseRange,current,[metric]),
       ...valuesForRow.slice(1,4).map(value=>formatMetric(value,metric)),x.percent===null?'—':fmtNumber(x.percent,'count')+'%',
-      elem('span',USUAL_LABELS[x.status],x.status==='normal'?'':x.status==='insufficient'?'muted':'warn')];});
+      elem('span',USUAL_LABELS[x.status],usualStatusClass(x.status))];});
     makeTable(root,metric,caption,['Услуга / группа','Среднее раньше','Сейчас','Отклонение','Отклонение, %','Оценка'],rows,{
       headerHelp:[
         'Отмеченная услуга, группа работ или общий итог по отмеченным работам.',
