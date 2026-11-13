@@ -930,6 +930,16 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 .category-explainer{margin:7px 0 9px;line-height:1.45}
 @media(max-width:740px){.group-audit-dates{grid-column:1/-1}}
 
+
+/* В обзоре подписи обоих периодов расположены снаружи, над общей рамкой.
+   Высота сдвоенного поля равна высоте стандартного select при любой теме и на телефоне. */
+.period-toolbar .overview-period-labels{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0;margin:0 0 var(--field-gap);font-size:var(--label-size);font-weight:600;line-height:var(--label-leading);color:var(--text)}
+.period-toolbar .overview-period-labels label{display:block;min-width:0;font-size:inherit;line-height:inherit}
+.period-toolbar #overviewRange .period-pair,.period-toolbar .period-mode>select,.period-toolbar #overviewSingle>select{box-sizing:border-box;height:var(--control-height);min-height:var(--control-height)}
+.period-toolbar #overviewRange .period-pair>select{box-sizing:border-box;width:100%;height:100%;min-height:0;min-width:0;margin:0;padding:0 28px 0 12px;border:0;border-radius:0;background:transparent;color:var(--text);font-size:var(--control-size);font-weight:var(--control-weight);outline-offset:-3px}
+.period-toolbar #overviewRange .period-pair>select+select{border-left:1px solid var(--field-border)}
+@media(max-width:740px){.period-toolbar #overviewRange .period-pair>select{padding:0 20px 0 8px;font-size:var(--control-size)}}
+
 </style>
   
 </head>
@@ -964,8 +974,9 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <div class="period-toolbar" aria-label="Общий период для выбранных подразделений">
           <label class="period-mode">Показать данные за<select id="overviewMode"><option value="single">Один период</option><option value="range">Диапазон периодов</option></select></label>
           <label id="overviewSingle">Период<select id="overviewPeriod"></select></label>
-          <fieldset class="period-combo" id="overviewRange" hidden><legend>Общий диапазон</legend>
-            <div class="period-pair"><label>С периода<select id="rangeStart"></select></label><label>По период<select id="rangeEnd"></select></label></div>
+          <fieldset class="period-combo" id="overviewRange" aria-label="Общий диапазон" hidden>
+            <div class="overview-period-labels"><label for="rangeStart">С периода</label><label for="rangeEnd">По период</label></div>
+            <div class="period-pair"><select id="rangeStart"></select><select id="rangeEnd"></select></div>
           </fieldset>
         </div>
         <details class="quick-help"><summary>Как выбрать данные для отчёта?</summary><p>Выбери недели или месяцы, подразделения и один период либо диапазон. Обзор показывает итоги <strong>всех выполненных работ</strong> выбранных подразделений. Отметки конкретных работ и переключатель показателей применяются к подробным графикам.</p></details>
