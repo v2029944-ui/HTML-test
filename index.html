@@ -940,6 +940,46 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 .period-toolbar #overviewRange .period-pair>select+select{border-left:1px solid var(--field-border)}
 @media(max-width:740px){.period-toolbar #overviewRange .period-pair>select{padding:0 20px 0 8px;font-size:var(--control-size)}}
 
+
+/* Independently selectable UI size. Standard keeps the original measurements. */
+:root[data-ui-size="large"]{
+  --ui-body-font:17px;--ui-small-font:14px;--ui-tiny-font:13px;--ui-table-font:14px;
+  --ui-button-font:15px;--ui-nav-font:15px;--ui-control-font:16px;--ui-label-font:15px;
+  --ui-control-height:50px;--ui-heading-font:22px;--ui-kpi-font:28px;--ui-legend-font:14px;
+  --ui-row-font:14px;--ui-table-pad:12px;
+}
+:root[data-ui-size="xlarge"]{
+  --ui-body-font:19px;--ui-small-font:16px;--ui-tiny-font:14px;--ui-table-font:16px;
+  --ui-button-font:17px;--ui-nav-font:17px;--ui-control-font:18px;--ui-label-font:17px;
+  --ui-control-height:56px;--ui-heading-font:25px;--ui-kpi-font:32px;--ui-legend-font:16px;
+  --ui-row-font:16px;--ui-table-pad:15px;
+}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]){
+  font-size:var(--ui-body-font);--control-size:var(--ui-control-font);--label-size:var(--ui-label-font);--control-height:var(--ui-control-height)
+}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(small,.small){font-size:var(--ui-small-font)}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) .tiny{font-size:var(--ui-tiny-font)}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(h2,.overview-section h3){font-size:var(--ui-heading-font)}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(.table,.table th,.table td){font-size:var(--ui-table-font)}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(.table th,.table td){padding:var(--ui-table-pad);line-height:1.5}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(.button,.icon-button,.text-button,.segmented button){font-size:var(--ui-button-font);min-height:var(--ui-control-height)}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) .tab{font-size:var(--ui-nav-font);min-height:var(--ui-control-height)}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(.category-row,.work-row,.filter-choice,.overview-line strong,.overview-unit){font-size:var(--ui-row-font)}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(.category-row,.work-row){min-height:var(--ui-control-height);line-height:1.5}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(.kpi span,.kpi small,.overview-unit small){font-size:var(--ui-small-font)}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) .kpi strong{font-size:var(--ui-kpi-font)}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(.chart-legend span,.multi-menu .filter-choice,.preview,.quick-help,.quick-help>summary,.period-combo legend){font-size:var(--ui-legend-font)}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(.period-pair select,.period-pair label select,.comparison-filters .period-pair select){font-size:var(--ui-control-font)}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) .period-pair{min-height:var(--ui-control-height)}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]) .appearance-category>legend{font-size:var(--ui-button-font)}
+.appearance-category.appearance-size{grid-column:1/-1}
+.appearance-size .appearance-grid{max-width:380px}
+.table-help-button{display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;
+  min-width:25px;min-height:25px;margin-left:6px;padding:0 4px;font-size:12px;line-height:1;
+  font-weight:750;color:var(--accent);border:1px solid var(--field-border);
+  border-radius:var(--radius-round);background:var(--surface);cursor:help}
+.table-help-button:hover,.table-help-button:focus-visible{background:var(--selected)}
+.table-header-help{padding:9px 12px;border-left:3px solid var(--accent);background:var(--subtle);line-height:1.5}
 </style>
   
 </head>
@@ -1053,12 +1093,13 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
       </section>
       <details class="panel" id="structurePanel">
         <summary>Какие услуги формируют основную сумму и количество?</summary>
-        <p class="muted small">Распределение всех выполненных услуг и общих групп по выбранным выше подразделениям. Справочник не участвует.</p>
+        <p class="muted small">Показывает, какие услуги дают наибольшую часть количества или суммы за выбранный период. По умолчанию учитываются только отмеченные выше работы и группы. Для полного состава переключите режим на «Все выполненные работы». Справочник услуг не участвует.</p>
         <div class="extended-filters">
           <label>Базовый период<select id="structureBase"></select></label>
           <label>Анализируемый период<select id="structureCurrent"></select></label>
           <label>Показатель<select id="structureMetric"><option value="amount">Сумма</option><option value="count">Количество</option></select></label>
           <label>Ведущие услуги<select id="structureLimit"><option value="10">Топ-10</option><option value="20">Топ-20</option></select></label>
+          <label>Какие работы учитывать<select id="structureScope"><option value="selected">Только отмеченные работы</option><option value="all">Все выполненные работы</option></select></label>
         </div>
         <div id="structureResults"></div>
       </details>
@@ -1076,14 +1117,18 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 <div class="change-pagination"><button id="usualPrev" class="button secondary" title="Предыдущая страница: Отклонения от среднего">← Предыдущая</button><span id="usualPage" class="muted small" aria-live="polite"></span><button id="usualNext" class="button secondary" title="Следующая страница: Отклонения от среднего">Следующая →</button></div>
       </details>
       <details class="panel" id="regularityPanel">
-        <summary>Какие услуги стали редкими или перестали встречаться?</summary>
-        <p class="muted small">Общий диапазон, подразделения и отмеченные работы — из фильтров аналитики. Активность — ненулевое количество или сумма хотя бы одной работы, включая корректировки. Группа считается один раз за период даже при взаимном погашении сумм. Частоты рассчитываются только по полным для выбранных подразделений периодам.</p>
+        <summary>Какие услуги выполняются редко или давно не выполнялись?</summary>
+        <p class="muted small">Здесь показано, в скольких неделях или месяцах выполнялась каждая отмеченная работа, а не сколько раз её сделали. Например, если услуга была в 1 из 4 полных недель, её частота — 25%. Подразделения, работы и диапазон берутся из фильтров выше.</p>
+        <details class="quick-help"><summary>Как понимать «редко», «исчезла» и другие признаки?</summary>
+          <p><strong>Часто</strong> — выполнялась в 75% или более полных периодов (нужны хотя бы 2). <strong>Редко</strong> — в 25% или менее (нужны хотя бы 4 полных периода и хотя бы одно выполнение). <strong>Заметно реже</strong> — частота упала минимум вдвое относительно предыдущего равного диапазона; нужны хотя бы по 2 полных периода в обоих диапазонах и хотя бы 2 периода с прежней активностью. <strong>Перестала встречаться</strong> — была в предыдущем диапазоне, но ни разу в полностью загруженном текущем. <strong>Долго без выполнений</strong> — после последней отмеченной активности прошло 4 или 8 полных периодов подряд.</p>
+          <p><strong>Важно:</strong> отсутствие отчёта не означает отсутствие услуги. Пропуски не считаются нулём и мешают подтвердить исчезновение. «Впервые» означает только первое появление в загруженной истории. Активность — ненулевое количество или сумма, в том числе корректировки, а не оценка важности услуги.</p>
+        </details>
         <div class="extended-filters">
           <label>Признак<select id="regularityStatus"><option value="all">Все услуги</option><option value="frequent">Часто</option><option value="rare">Редко</option><option value="rarer">Заметно реже</option><option value="disappeared">Перестала встречаться</option><option value="new">Впервые в загруженной истории</option><option value="dormant">Долго без выполнений</option></select></label>
           <label>Долгое отсутствие<select id="regularityGap"><option value="4">4 периода подряд</option><option value="8">8 периодов подряд</option></select></label>
           <label>Поиск услуги или группы<input id="regularitySearch" type="search" placeholder="Введите часть названия"></label>
         </div>
-        <p class="muted small">Часто: не менее 75% при 2+ периодах; редко: не более 25% при 4+ периодах. Заметно реже: частота упала хотя бы вдвое против предыдущего равного диапазона (по 2+ фактических периода, ранее активность в 2+ периодах). Исчезновение подтверждается только при полном текущем диапазоне. Первое/последнее наблюдение относятся к загруженной истории, не к началу деятельности. Пропуск прерывает подтверждённую серию отсутствия.</p>
+        <p class="muted small">«Признак» фильтрует услуги по типу активности, а «Долгое отсутствие» задаёт, сколько полных периодов подряд считать длительным перерывом. «Все услуги» показывает все отмеченные выше работы.</p>
         <div id="regularityCoverage" role="status" aria-live="polite"></div><div id="regularityResults"></div>
 <div class="change-pagination"><button id="regularityPrev" class="button secondary" title="Предыдущая страница: Редкость услуг">← Предыдущая</button><span id="regularityPage" class="muted small" aria-live="polite"></span><button id="regularityNext" class="button secondary" title="Следующая страница: Редкость услуг">Следующая →</button></div>
       </details>
@@ -1223,6 +1268,10 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
             <label>Дизайн<select id="appearanceDesign"><option value="modern">Современный</option><option value="classic">Строгий</option><option value="compact">Компактный</option><option value="neon">Неоновый</option><option value="glass">Стеклянный</option><option value="corporate">Корпоративный</option><option value="paper">Бумажный</option><option value="industrial">Индустриальный</option></select></label>
             <label>Готовое сочетание<select id="appearancePreset"><option value="custom" disabled>Своё сочетание</option><option value="minimal">Минимализм</option><option value="neon">Неон</option><option value="glass">Мягкое стекло</option><option value="corporate">Корпоративный</option><option value="paper">Редакционный</option><option value="industrial">Индустриальный</option></select></label>
           </div></fieldset>
+          <fieldset class="appearance-category appearance-size"><legend>Размер интерфейса</legend>
+            <p class="muted small">Размер текста, таблиц и элементов управления. Не меняет тему, палитру, дизайн или исходные данные.</p>
+            <div class="appearance-grid"><label>Масштаб текста и элементов<select id="appearanceSize"><option value="standard">Стандартный (100%)</option><option value="large">Крупный (около 115%)</option><option value="xlarge">Очень крупный (около 130%)</option></select></label></div>
+          </fieldset>
         </div>
         <div class="appearance-preview"><strong>Предпросмотр оформления</strong><p id="appearanceDescription" class="muted small" role="status" aria-live="polite"></p></div>
       </section>
@@ -2322,7 +2371,22 @@ function makeTable(root,metric,caption,headers,rows,options={}) {
   scroll.tabIndex=0;scroll.setAttribute('role','region');scroll.setAttribute('aria-label',(options.title||metricTitle(metric))+' — таблица, можно прокручивать');
   table.append(elem('caption',caption));
   const head=elem('thead'),tr=elem('tr');
-  headers.forEach(label=>{const th=elem('th',label);th.scope='col';tr.append(th);});head.append(tr);table.append(head);
+  const headerHelp=Array.isArray(options.headerHelp)?options.headerHelp:[];
+  let helpNote=null;
+  if(headerHelp.some(Boolean)){
+    helpNote=elem('p',null,'table-header-help muted small');
+    helpNote.hidden=true;helpNote.setAttribute('role','status');section.append(helpNote);
+  }
+  headers.forEach((label,i)=>{
+    const th=elem('th',label);th.scope='col';
+    if(headerHelp[i]){
+      const help=elem('button','?','table-help-button');help.type='button';
+      help.title=headerHelp[i];help.setAttribute('aria-label','Пояснение: '+label);
+      help.addEventListener('click',()=>{helpNote.textContent=label+'. '+headerHelp[i];helpNote.hidden=false;});
+      th.append(help);
+    }
+    tr.append(th);
+  });head.append(tr);table.append(head);
   const body=elem('tbody');
   rows.forEach((values,i)=>{const row=elem('tr',null,i===0&&options.totalRow!==false?'total-row':'');values.forEach(value=>{const cell=elem('td');if(value?.nodeType)cell.append(value);else cell.textContent=String(value??'—');row.append(cell);});body.append(row);});
   table.append(body);scroll.append(table);section.append(scroll);
@@ -2422,24 +2486,45 @@ function renderContributions(index,orgs,metrics){
         (value.delta>0?'+':'')+formatMetric(value.delta,metric),value.percent===null?'—':fmtNumber(value.percent,'count')+'%',
         check.delta===0?'—':fmtNumber(value.delta/check.delta*100,'count')+'%'];
     });
-    if(rows.length)makeTable(root,metric,rangeCaption(before)+' / '+rangeCaption(after),['Услуга / группа','Было','Стало','Вклад','% от базы услуги','% общего изменения'],rows,{totalRow:false,csvRows:changed.map(row=>[row.name+(row.kind==='group'?' (группа)':''),row[metric].base,row[metric].current,row[metric].delta,row[metric].percent,check.delta===0?null:row[metric].delta/check.delta*100])});
+    if(rows.length)makeTable(root,metric,rangeCaption(before)+' / '+rangeCaption(after),['Услуга / группа','Значение раньше','Значение сейчас','Изменение значения','Изменение, %','Вклад в общее изменение, %'],rows,{totalRow:false,
+      headerHelp:[
+        'Название услуги или группы, которая повлияла на общий итог.',
+        'Значение услуги в выбранном базовом периоде.',
+        'Значение услуги в анализируемом периоде.',
+        'Значение сейчас минус значение раньше. Положительное число увеличило общий итог, отрицательное уменьшило.',
+        '(Сейчас − раньше) / модуль прежнего значения × 100%. При нулевой базе процент не рассчитывается.',
+        'Изменение этой услуги / изменение общего результата × 100%. Может быть больше 100% или отрицательным, если другие услуги компенсировали изменение. При нулевом общем изменении не рассчитывается.'
+      ],
+      csvRows:changed.map(row=>[row.name+(row.kind==='group'?' (группа)':''),row[metric].base,row[metric].current,row[metric].delta,row[metric].percent,check.delta===0?null:row[metric].delta/check.delta*100])});
   }
   if(!changed.length)empty(root,'Общие итоги не изменились. Вклады по всем работам равны нулю.');
 }
 function renderStructure(index){
   const root=$('structureResults');root.replaceChildren();const metric=$('structureMetric').value,orgs=[...state.selectedOrganizations];
-  const before=aggregateReportRange(index,{from:$('structureBase').value,to:$('structureBase').value,organizations:orgs});
-  const after=aggregateReportRange(index,{from:$('structureCurrent').value,to:$('structureCurrent').value,organizations:orgs});
+  const onlySelected=$('structureScope').value!=='all',names=onlySelected?state.selectedCategories:null;
+  if(onlySelected&&!names.size){empty(root,'Нет отмеченных работ. Отметьте услуги или группы в списке выше либо переключите «Какие работы учитывать» на «Все выполненные работы».');return;}
+  const before=aggregateReportRange(index,{from:$('structureBase').value,to:$('structureBase').value,organizations:orgs,names});
+  const after=aggregateReportRange(index,{from:$('structureCurrent').value,to:$('structureCurrent').value,organizations:orgs,names});
   const structure=analyzeStructure(before,after,metric,Number($('structureLimit').value));
   if(!structure.complete){empty(root,'Не у всех выбранных подразделений есть отчёт за анализируемый период. Доли не рассчитываются.');return;}
-  root.append(elem('p','Общий результат выбранных подразделений: '+formatMetric(structure.total,metric),'small'));
+  root.append(elem('p',(onlySelected?'Итог по отмеченным работам и группам':'Итог по всем выполненным работам')+' выбранных подразделений: '+formatMetric(structure.total,metric),'small'));
   if(!structure.sharesValid)root.append(elem('p','Есть отрицательные значения или неположительный итог. Показаны значения; доли и накопленные проценты не рассчитываются.','warn small'));
   if(!before.complete)root.append(elem('p','Базовый период неполон: изменение долей недоступно.','warn small'));
+  root.append(elem('p','Доля услуги считается от итога '+(onlySelected?'отмеченных работ и групп':'всех выполненных работ')+' выбранных подразделений за соответствующий период. Накопленная доля складывает строки сверху вниз. Изменение доли — разница в процентных пунктах (п. п.). Даже если значение услуги не изменилось, её доля может измениться из-за других услуг. Нажмите ? в заголовке для формулы.','muted small'));
   const percent=value=>value===null?'—':fmtNumber(value,'count')+'%';
   const rows=structure.rows.map(row=>[row.other?row.name:serviceButton(index,row,orgs,before,after,[metric]),formatMetric(row.base,metric),formatMetric(row.current,metric),
     percent(row.baseShare),percent(row.share),percent(row.cumulative),row.shareChange===null?'—':fmtNumber(row.shareChange,'count')+' п. п.']);
   if(!rows.length){empty(root,'В отчёте нет выполненных услуг.');return;}
-  makeTable(root,metric,rangeCaption(before)+' / '+rangeCaption(after),['Услуга / группа','Было','Стало','Доля в базе','Текущая доля','Накопленная доля','Изменение доли'],rows,{totalRow:false,
+  makeTable(root,metric,rangeCaption(before)+' / '+rangeCaption(after),['Услуга / группа','Значение раньше','Значение сейчас','Доля раньше','Доля сейчас','Накопленная доля','Изменение доли'],rows,{totalRow:false,
+    headerHelp:[
+      'Название выполненной услуги или общей группы. Одна работа входит максимум в одну группу.',
+      'Количество или сумма этой услуги за базовый (предыдущий) период, выбранный выше.',
+      'Количество или сумма этой услуги за анализируемый (текущий) период.',
+      'Значение услуги в базовом периоде / общий результат всех услуг базового периода × 100%.',
+      'Значение услуги в анализируемом периоде / общий результат всех услуг анализируемого периода × 100%.',
+      'Сумма текущих долей всех показанных строк от первой до этой включительно. Последняя строка «Остальные услуги» учитывает оставшиеся работы.',
+      'Доля сейчас минус доля раньше. Единица — процентные пункты (п. п.), а не проценты изменения самой услуги.'
+    ],
     csvRows:structure.rows.map(row=>[row.name+(row.kind==='group'?' (группа)':''),row.base,row.current,row.baseShare,row.share,row.cumulative,row.shareChange])});
   const plot=elem('div',null,'metric-plot');root.append(plot);
   drawChart([{type:after.type,start:after.from,end:after.periods.at(-1).end}],new Set(orgs),metric,plot,
@@ -2544,6 +2629,16 @@ function renderRegularity(index=analyticsIndex()){
     (result.used<2?' Недостаточно данных для оценки частоты.':''),result.missing);
   const search=normalized($('regularitySearch').value),status=$('regularityStatus').value;
   const rows=result.rows.filter(row=>normalized(row.name).includes(search)&&(status==='all'||row.statuses.includes(status)));
+  if(!state.selectedCategories.size){empty(root,'Ни одна услуга не отмечена. Выберите работы или группы в списке выше.');updatePager('regularity',0,0);return;}
+  const summary=elem('p',null,'muted small');
+  summary.textContent='В текущем диапазоне полных периодов: '+result.used+' из '+result.expected+
+    '; в предыдущем: '+result.previousUsed+'. Отмеченных услуг: '+result.rows.length+
+    '; часто: '+result.rows.filter(x=>x.statuses.includes('frequent')).length+
+    '; редко: '+result.rows.filter(x=>x.statuses.includes('rare')).length+
+    '; исчезли: '+result.rows.filter(x=>x.statuses.includes('disappeared')).length+'.';
+  root.append(summary);
+  if(result.used<4)root.append(elem('p','Для вывода «Редко» нужно минимум 4 полных периода; сейчас доступно '+result.used+'. До накопления истории это не ошибка.','muted small'));
+  if(result.previousUsed<2)root.append(elem('p','Для сравнения частоты с прошлым диапазоном пока недостаточно полных предыдущих периодов.','muted small'));
   extendedState.regularityPage=updatePager('regularity',extendedState.regularityPage,rows.length);
   if(!rows.length){empty(root,'Нет услуг по выбранным фильтрам. Проверьте отметки работ выше.');return;}
   const labels=row=>row.statuses.map(x=>REGULARITY_LABELS[x]).join('; '),date=value=>value?displayDay(value):'—';
@@ -2554,8 +2649,21 @@ function renderRegularity(index=analyticsIndex()){
       values[5]===null?'—':fmtNumber(values[5],'count')+' п. п.',date(row.first),date(row.last),row.trailing??'—',labels(row)];
   });
   const caption=rangeCaption({periods:rangePeriods(index.type,from,to)})+'; фактических периодов '+result.used+'/'+result.expected+'; предыдущих '+result.previousUsed+'. Частота — доля фактических периодов, не число строк.';
-  makeTable(root,'count',caption,['Услуга / группа','Периодов с активностью','Частота, %','Ранее: периодов','Ранее: частота, %','Частота, п. п.','Первое наблюдение','Последнее наблюдение','Подряд без активности','Признаки'],page,
-    {title:'Регулярность услуг',totalRow:false,csvRows:rows.map(raw),csvMetric:'Регулярность услуг',csvUnit:'периоды; частоты — проценты; даты',csvContext:[['Подразделения',orgs.join(', ')],['Пропуски',result.missing.map(displayDay).join(', ')],['Фильтр признака',status==='all'?'Все':REGULARITY_LABELS[status]],['Поиск',$('regularitySearch').value],['Долгое отсутствие, периодов',$('regularityGap').value]]});
+  makeTable(root,'count',caption,['Услуга / группа','Была в периодах','Частота сейчас, %','Была раньше','Частота раньше, %','Разница частоты, п. п.','Впервые в истории','Последний раз','Подряд без активности','Что это значит'],page,
+    {title:'Как часто выполнялись услуги',totalRow:false,
+      headerHelp:[
+        'Название отмеченной услуги или группы. Одна группа считается как единая услуга.',
+        'Количество полных недель или месяцев в выбранном диапазоне, в которых была ненулевая активность этой услуги.',
+        'Количество периодов с активностью / количество всех полных периодов выбранного диапазона × 100%.',
+        'Количество полных периодов с активностью в непосредственно предыдущем равном диапазоне.',
+        'Частота активности в предыдущем диапазоне, рассчитанная только по полным отчётам.',
+        'Частота сейчас минус частота раньше. Отрицательное значение показывает снижение частоты в процентных пунктах.',
+        'Первое появление в загруженных отчётах (не дата первого выполнения в реальности).',
+        'Последнее появление в загруженных отчётах.',
+        'Число полных недель или месяцев подряд без активности с момента последнего появления. Пропуск отчёта прерывает подсчёт.',
+        'Простой вывод по частоте: часто, редко, заметно реже, перестала встречаться и другие признаки. Один случай может соответствовать нескольким признакам.'
+      ],
+      csvRows:rows.map(raw),csvMetric:'Регулярность услуг',csvUnit:'периоды; частоты — проценты; даты',csvContext:[['Подразделения',orgs.join(', ')],['Пропуски',result.missing.map(displayDay).join(', ')],['Фильтр признака',status==='all'?'Все':REGULARITY_LABELS[status]],['Поиск',$('regularitySearch').value],['Долгое отсутствие, периодов',$('regularityGap').value]]});
 }
 function workGroupSelect(work,groupId){
   const select=elem('select');select.setAttribute('aria-label','Группа для работы '+work);const none=elem('option','Без группы');none.value='';select.append(none);
@@ -2601,7 +2709,7 @@ function wireExtendedAnalytics(){
     $(id).addEventListener('input',()=>{extendedState[field]=0;render();});
   for(const [prefix,render] of [['usual',renderUsual],['regularity',renderRegularity],['groupAudit',renderGroupAudit]])
     for(const [suffix,delta] of [['Prev',-1],['Next',1]])$(prefix+suffix).addEventListener('click',()=>{extendedState[prefix+'Page']+=delta;render();});
-  for(const id of ['comparisonScope','comparisonRangeStart','comparisonRangeEnd','structureBase','structureCurrent','structureMetric','structureLimit'])
+  for(const id of ['comparisonScope','comparisonRangeStart','comparisonRangeEnd','structureBase','structureCurrent','structureMetric','structureLimit','structureScope'])
     $(id).addEventListener('change',()=>{
       if(id==='comparisonRangeStart'||id==='comparisonRangeEnd')clampDatePair('comparisonRangeStart','comparisonRangeEnd',id);
       extendedState.contributionPage=0;renderDashboard(false);
@@ -2666,10 +2774,15 @@ function overviewSnapshot(index,from,to,organizations){
 function overviewDifference(current,previous,metric){
   if(current===null||previous===null)return 'Нет сопоставимой базы';
   const changed=changeMeasure(previous,current,0,0);
-  const kind=changed.delta>0?'Рост':changed.delta<0?'Снижение':'Без изменений';
-  const amount=changed.delta===0?'':(changed.delta>0?'+':'')+formatMetric(changed.delta,metric);
+  if(changed.delta===0)return 'Без изменений';
+  const kind=changed.delta>0?'Рост':'Снижение';
+  const amount=(changed.delta>0?'+':'')+formatMetric(changed.delta,metric);
   const percent=changed.percent===null?'процент не рассчитан':(changed.percent>0?'+':'')+fmtNumber(round(changed.percent,1),'count')+'%';
-  return kind+(amount?' · '+amount:'')+' · '+percent;
+  return kind+': '+amount+' ('+percent+')';
+}
+function overviewTrendClass(current,previous){
+  if(current===null||previous===null||!Number.isFinite(current)||!Number.isFinite(previous))return '';
+  return current>previous?'positive':current<previous?'negative':'';
 }
 function renderOverview(index){
   const organizations=[...state.selectedOrganizations],
@@ -2685,7 +2798,7 @@ function renderOverview(index){
   const makeCard=(title,metric,value,previousValue)=>{
     const card=elem('div',null,'kpi');
     card.append(elem('span',title),elem('strong',value===null?'—':formatMetric(value,metric)));
-    card.append(elem('small',overviewDifference(value,previousValue,metric)));
+    card.append(elem('small',overviewDifference(value,previousValue,metric),overviewTrendClass(value,previousValue)));
     root.append(card);
   };
   makeCard('Сумма выполненных работ','amount',current.total.amount,previous.total.amount);
@@ -2734,7 +2847,7 @@ function renderOverview(index){
   for(const [metric,label] of [['amount','Сумма работ'],['count','Количество работ']]){
     const val=current.total[metric],old=previous.total[metric];
     const line=elem('div',null,'overview-line');
-    line.append(elem('strong',label+': '+overviewDifference(val,old,metric)));
+    line.append(elem('strong',label+': '+overviewDifference(val,old,metric),overviewTrendClass(val,old)));
     line.append(elem('small','Сравнение с предшествующим '+(current.periods.length===1?'периодом':'интервалом той же длительности')));
     insights.append(line);
   }
@@ -2744,7 +2857,7 @@ function renderOverview(index){
     for(const entry of sorted.slice(0,2)){
       const line=elem('div',null,'overview-line');
       const delta=entry[metric].delta;
-      line.append(elem('strong',entry.name+(entry.kind==='group'?' (группа)':'')+': '+(delta>0?'+':'')+formatMetric(delta,metric)));
+      line.append(elem('strong',entry.name+(entry.kind==='group'?' (группа)':'')+': '+(delta>0?'+':'')+formatMetric(delta,metric),delta>0?'positive':'negative'));
       line.append(elem('small','Один из крупнейших вкладов в изменение '+(metric==='amount'?'суммы':'количества')));
       insights.append(line);
     }
@@ -3486,6 +3599,9 @@ function renderAll() {renderOrganizations();syncPeriods();renderDashboard(false)
 const THEME_KEY='work-reports-theme-v1';
 const DESIGN_KEY='work-reports-design-v1';
 const PALETTE_KEY='work-reports-palette-v1';
+const UI_SIZE_KEY='work-reports-ui-size-v1';
+const UI_SIZES=['standard','large','xlarge'];
+function uiSizePreference(value){return UI_SIZES.includes(value)?value:'standard';}
 const APPEARANCE_PALETTES=['minimal','neon','glass','corporate','paper','industrial'];
 const APPEARANCE_DESIGNS=['modern','classic','compact','neon','glass','corporate','paper','industrial'];
 const APPEARANCE_PRESETS={minimal:'modern',neon:'neon',glass:'glass',corporate:'corporate',paper:'paper',industrial:'industrial'};
@@ -3499,26 +3615,28 @@ function appearancePreferences(savedTheme,savedPalette,savedDesign){
   return {theme,palette,design,migrate:legacy||(!hasPalette&&(savedTheme!==null||savedDesign!==null))};
 }
 function initTheme() {
-  const picker=$('themeToggle'),themeSelect=$('appearanceTheme'),paletteSelect=$('appearancePalette'),designSelect=$('appearanceDesign'),presetSelect=$('appearancePreset');
+  const picker=$('themeToggle'),themeSelect=$('appearanceTheme'),paletteSelect=$('appearancePalette'),designSelect=$('appearanceDesign'),presetSelect=$('appearancePreset'),sizeSelect=$('appearanceSize');
   const system=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;
   let preferences=appearancePreferences(null,null,null),storageAvailable=true;
   try{preferences=appearancePreferences(localStorage.getItem(THEME_KEY),localStorage.getItem(PALETTE_KEY),localStorage.getItem(DESIGN_KEY));}
   catch{storageAvailable=false;}
-  let {theme,palette,design}=preferences;
+  let {theme,palette,design}=preferences,size='standard';
+  try{size=uiSizePreference(localStorage.getItem(UI_SIZE_KEY));}catch{storageAvailable=false;}
   const apply=()=>{
     const actual=theme==='system'?(system?.matches?'dark':'light'):theme;
     const designChanged=document.documentElement.dataset.design!==design;
-    document.documentElement.dataset.theme=actual;document.documentElement.dataset.palette=palette;document.documentElement.dataset.design=design;
-    picker.value=theme;themeSelect.value=theme;paletteSelect.value=palette;designSelect.value=design;
+    const sizeChanged=document.documentElement.dataset.uiSize!==size;
+    document.documentElement.dataset.theme=actual;document.documentElement.dataset.palette=palette;document.documentElement.dataset.design=design;document.documentElement.dataset.uiSize=size;
+    picker.value=theme;themeSelect.value=theme;paletteSelect.value=palette;designSelect.value=design;sizeSelect.value=size;
     presetSelect.value=APPEARANCE_PRESETS[palette]===design?palette:'custom';
     document.querySelector('meta[name="color-scheme"]').content=actual;
     document.querySelector('meta[name="theme-color"]').content=getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
     $('appearanceDescription').textContent='Тема: '+(theme==='system'?'как на устройстве ('+(actual==='dark'?'тёмная':'светлая')+')':themeSelect.selectedOptions[0].textContent.toLowerCase())+
-      '. Палитра: '+paletteSelect.selectedOptions[0].textContent+'. Дизайн: '+designSelect.selectedOptions[0].textContent+'.';
-    if(designChanged)redrawCharts();
+      '. Палитра: '+paletteSelect.selectedOptions[0].textContent+'. Дизайн: '+designSelect.selectedOptions[0].textContent+'. Размер: '+sizeSelect.selectedOptions[0].textContent+'.';
+    if(designChanged||sizeChanged)redrawCharts();
   };
   const save=()=>{
-    const pairs=[[PALETTE_KEY,palette],[DESIGN_KEY,design],[THEME_KEY,theme]];
+    const pairs=[[PALETTE_KEY,palette],[DESIGN_KEY,design],[THEME_KEY,theme],[UI_SIZE_KEY,size]];
     if(storageAvailable){
       try{for(const [key,value] of pairs)localStorage.setItem(key,value);return;}catch{storageAvailable=false;}
     }
@@ -3530,6 +3648,7 @@ function initTheme() {
   for(const select of [picker,themeSelect])select.addEventListener('change',()=>{theme=select.value;apply();save();});
   paletteSelect.addEventListener('change',()=>{palette=paletteSelect.value;apply();save();});
   designSelect.addEventListener('change',()=>{design=designSelect.value;apply();save();});
+  sizeSelect.addEventListener('change',()=>{size=uiSizePreference(sizeSelect.value);apply();save();});
   presetSelect.addEventListener('change',()=>{
     if(!APPEARANCE_PRESETS[presetSelect.value])return;
     palette=presetSelect.value;design=APPEARANCE_PRESETS[palette];apply();save();
