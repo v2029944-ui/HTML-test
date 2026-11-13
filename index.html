@@ -1024,6 +1024,55 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 @media(max-width:580px){
   .changes-filters > .change-date-pair:not(.single){grid-template-columns:minmax(0,1fr)}
 }
+
+/* Работы и группы в одной строке с остальными фильтрами. */
+.dashboard-filter-panel{position:relative;z-index:2}
+.dashboard-filter-panel .filters{grid-template-columns:repeat(4,minmax(0,1fr))}
+.dashboard-filter-panel .category-filter{display:block;position:relative;min-width:0;width:100%;margin:0;padding:0;border:0}
+.dashboard-filter-panel .category-filter>summary{display:block;cursor:pointer;list-style:none;min-width:0}
+.dashboard-filter-panel .category-filter>summary::-webkit-details-marker{display:none}
+.dashboard-filter-panel .category-filter>summary::marker{content:''}
+.category-filter-label{display:block;font-size:var(--label-size);line-height:var(--label-leading);font-weight:600;color:var(--text);margin-bottom:var(--field-gap)}
+.category-filter-control{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;box-sizing:border-box;
+  width:100%;height:var(--control-height);min-height:var(--control-height);padding:10px 12px;
+  border:1px solid var(--field-border);border-radius:var(--radius-control);
+  font-family:var(--font-body);font-size:var(--control-size);font-weight:var(--control-weight);line-height:var(--control-leading);
+  background:var(--surface);color:var(--text)
+}
+.category-filter-control>span:first-child{min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.category-filter-arrow{display:block;flex:0 0 7px;width:7px;height:7px;
+  border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);
+  transform:translateY(-2px) rotate(45deg)}
+.category-filter[open] .category-filter-arrow{transform:translateY(2px) rotate(225deg)}
+.category-filter[open] .category-filter-control{border-color:var(--focus)}
+.category-filter>summary:focus-visible .category-filter-control{outline:2px solid var(--focus);outline-offset:2px}
+.dashboard-filter-panel .category-filter-menu{
+  position:absolute;top:100%;right:0;z-index:30;
+  width:min(440px,calc(100vw - 30px));max-width:calc(100vw - 30px);
+  padding:14px;box-sizing:border-box;
+  border:1px solid var(--field-border);border-radius:var(--radius-control);
+  background:var(--surface);box-shadow:var(--shadow-menu)
+}
+.category-search-label{display:block;margin:0 0 6px;font-size:var(--label-size);font-weight:600}
+.dashboard-filter-panel #categorySearch{
+  display:block;box-sizing:border-box;width:100%;min-width:0;min-height:var(--control-height);
+  padding:10px 12px;border:1px solid var(--field-border);border-radius:var(--radius-control);
+  font:inherit;font-size:var(--control-size);background:var(--surface);color:var(--text)
+}
+.dashboard-filter-panel .category-actions{display:flex;justify-content:flex-start;flex-wrap:wrap;gap:4px 10px;margin:10px 0}
+.dashboard-filter-panel .category-actions .text-button{min-height:36px}
+.dashboard-filter-panel .category-list{max-height:min(360px,45vh);overflow:auto;min-width:0}
+.dashboard-filter-panel .category-explainer{margin:6px 0 9px}
+.chart-and-filter{grid-template-columns:minmax(0,1fr)}
+@media(max-width:1100px){
+  .dashboard-filter-panel .filters{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:740px){
+  .dashboard-filter-panel .filters{grid-template-columns:minmax(0,1fr)}
+  .dashboard-filter-panel .category-filter-menu{left:0;right:auto;width:100%;max-width:100%;padding:11px}
+  .dashboard-filter-panel .category-actions .text-button{min-height:44px}
+}
 </style>
   
 </head>
@@ -1048,12 +1097,28 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
     <p class="mobile-help muted">Широкие таблицы и большие диапазоны графиков можно прокручивать по горизонтали.</p>
 
     <section id="dashboard" class="view active">
-      <div class="panel">
+      <div class="panel dashboard-filter-panel">
         <div class="filters">
           <label>Период<select id="periodType"><option value="week">Недели</option><option value="month">Месяцы</option></select></label>
           <fieldset class="multi-filter"><legend>Подразделения</legend><div id="orgFilter" class="multi-choices"></div></fieldset>
           <fieldset class="multi-filter"><legend>Показатели</legend><div id="metric" class="multi-choices"></div></fieldset>
-
+          <details class="categories category-filter" id="categoryFilter">
+            <summary>
+              <span class="category-filter-label">Работы и группы</span>
+              <span class="category-filter-control"><span>Выбрано: <span id="categoryCount" aria-live="polite">0</span></span><span class="category-filter-arrow" aria-hidden="true"></span></span>
+            </summary>
+            <div class="category-filter-menu">
+              <label for="categorySearch" class="category-search-label">Найти работу или группу</label>
+              <input id="categorySearch" type="search" placeholder="Поиск работы или группы" aria-label="Поиск работы или группы">
+              <div class="category-actions">
+                <button type="button" id="selectAll" class="text-button" title="Отметить все работы для подробного графика и сравнения">Выбрать все</button>
+                <button type="button" id="clearAll" class="text-button" title="Убрать все отметки работ; основные показатели обзора не изменятся">Снять всё</button>
+                <button type="button" id="selectTop" class="text-button" title="Отметить восемь крупнейших работ по выбранному показателю">8 крупнейших</button>
+              </div>
+              <p class="muted small category-explainer">Отметки применяются к детальным графикам и анализу выбранных работ. Основные итоги обзора по-прежнему охватывают все выполненные работы.</p>
+              <div id="categories" class="category-list"></div>
+            </div>
+          </details>
         </div>
         <div class="period-toolbar" aria-label="Общий период для выбранных подразделений">
           <label class="period-mode">Показать данные за<select id="overviewMode"><option value="single">Один период</option><option value="range">Диапазон периодов</option></select></label>
@@ -1063,7 +1128,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
             <div class="period-pair"><select id="rangeStart"></select><select id="rangeEnd"></select></div>
           </fieldset>
         </div>
-        <details class="quick-help"><summary>Как выбрать данные для отчёта?</summary><p>Выбери недели или месяцы, подразделения и один период либо диапазон. Обзор показывает итоги <strong>всех выполненных работ</strong> выбранных подразделений. Отметки конкретных работ и переключатель показателей применяются к подробным графикам.</p></details>
+        <details class="quick-help"><summary>Как выбрать данные для отчёта?</summary><p>Выбери недели или месяцы, подразделения и один период либо диапазон. Фильтр «Работы и группы» находится рядом с показателями: открой его, чтобы искать и отмечать нужные услуги. Обзор показывает итоги <strong>всех выполненных работ</strong> выбранных подразделений; отметки работ и переключатель показателей влияют на подробную аналитику.</p></details>
       </div>
       <section class="panel overview-panel" id="overviewPanel" aria-labelledby="overviewHeading">
         <div class="sectionbar"><div><h2 id="overviewHeading">Обзор работы</h2><p id="overviewPeriodText" class="muted small">Выберите период для анализа.</p></div></div>
@@ -1085,16 +1150,10 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
       <details class="analytics-details-container" id="advancedAnalytics">
         <summary><span><strong>Подробный анализ</strong><small>Графики, таблицы, причины изменений, структура и регулярность услуг</small></span><span class="details-toggle-text" aria-hidden="true">Открыть</span></summary>
       <div class="panel">
-        <div class="sectionbar"><div><h2>Динамика работ</h2><p class="muted small">Отмечайте работы и группы в списке, чтобы показать их на графике и в таблице.</p></div>
+        <div class="sectionbar"><div><h2>Динамика работ</h2><p class="muted small">Отмечайте работы и группы в верхнем фильтре «Работы и группы», чтобы показать их на графике и в таблице.</p></div>
         <div class="segmented"><button data-chart="line" class="active" title="Показывать изменение работ по периодам линиями">Линейный график</button><button data-chart="bar" title="Сравнивать значения столбцами">Столбцы</button><button data-chart="table" title="Показывать точные значения работ по периодам">Таблица значений</button></div></div>
         <div class="chart-and-filter">
           <div class="chart-wrap"><div id="chartsContainer"></div><div id="dataTable" class="table-scroll" hidden></div><p id="chartHelp" class="muted small"></p></div>
-          <aside class="categories"><div class="category-head"><strong>Работы и группы</strong><span id="categoryCount" class="tiny muted"></span></div>
-            <input id="categorySearch" type="search" placeholder="Поиск работы или группы" aria-label="Поиск работы или группы">
-            <div class="category-actions"><button id="selectAll" class="text-button" title="Отметить все работы для подробного графика и сравнения">Выбрать все</button><button id="clearAll" class="text-button" title="Убрать все отметки работ; сводные итоги не изменятся">Снять всё</button><button id="selectTop" class="text-button" title="Отметить восемь крупнейших работ по выбранному показателю">8 крупнейших</button></div>
-            <p class="muted small category-explainer">Выбор работ влияет только на подробные графики и сравнения, исходные отчёты не изменяются.</p>
-            <div id="categories" class="category-list"></div>
-          </aside>
         </div>
       </div>
       <section class="panel" id="comparison" aria-labelledby="comparisonHeading">
@@ -3746,8 +3805,16 @@ function wire() {
   document.addEventListener('toggle',event=>{if(event.target.open&&event.target.querySelector('.metric-plot'))redrawCharts(event.target);},true);
   wireExtendedAnalytics();
   wireChanges();
-  document.addEventListener('click',e=>{document.querySelectorAll('.multi-dropdown[open]').forEach(node=>{if(!node.contains(e.target))node.open=false;});});
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.multi-dropdown[open]').forEach(node=>{node.open=false;node.querySelector('summary').focus();});});
+  document.addEventListener('click',e=>{
+    document.querySelectorAll('.multi-dropdown[open], #categoryFilter[open]').forEach(node=>{
+      if(!node.contains(e.target))node.open=false;
+    });
+  });
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape')document.querySelectorAll('.multi-dropdown[open], #categoryFilter[open]').forEach(node=>{
+      node.open=false;node.querySelector('summary').focus();
+    });
+  });
   document.querySelectorAll('.tab').forEach(tab=>tab.addEventListener('click',()=>{
     document.querySelectorAll('.tab').forEach(t=>{t.classList.toggle('active',t===tab);t.setAttribute('aria-current',t===tab?'page':'false');});
     document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===tab.dataset.view));
