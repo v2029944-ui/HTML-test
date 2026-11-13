@@ -2141,17 +2141,25 @@ async function loadData() {
     groups:Array.isArray(saved.value.groups) ? saved.value.groups : [],
     catalog:Array.isArray(saved.value.catalog) ? saved.value.catalog : [] };
 }
-async function saveSettings() {
-  if(!state.db){fallbackSave();return;}
+async function saveSettings(next=state.settings) {
+  if(!state.db){fallbackSave(state.reports,next);state.settings=next;return;}
   const tx=state.db.transaction('settings','readwrite');
-  tx.objectStore('settings').put({key:'main',value:state.settings});
-  await txDone(tx);
+  tx.objectStore('settings').put({key:'main',value:next});
+  await txDone(tx);state.settings=next;
 }
 async function storeReports(next) {
   if(!state.db){fallbackSave(next,state.settings);state.reports=next;return;}
   const tx=state.db.transaction('reports','readwrite'),store=tx.objectStore('reports');
   store.clear(); for(const r of next) store.put(r);
   await txDone(tx); state.reports=next;
+}
+async function storeAllData(reports,settings){
+  if(!state.db){fallbackSave(reports,settings);state.reports=reports;state.settings=settings;return;}
+  const tx=state.db.transaction(['reports','settings'],'readwrite'),store=tx.objectStore('reports');
+  store.clear();for(const report of reports)store.put(report);
+  tx.objectStore('settings').put({key:'main',value:settings});
+  await txDone(tx);
+  state.reports=reports;state.settings=settings;
 }
 function orgName(text) {
   const wanted=normalized(text);
@@ -2508,16 +2516,18 @@ function detectCatalogWorkbook(workbook) {
   });
   return output;
 }
-function mergeCatalog(entries) {
-  const before=state.settings.catalog||[];
+function catalogWithEntries(before,entries){
   const keys=new Set(before.map(x=>normalized(x.organization)+'\u0000'+normalized(x.work)));
   const merged=before.slice();
   for(const entry of entries){
     const key=normalized(entry.organization)+'\u0000'+normalized(entry.work);
-    if(!keys.has(key)){
-      keys.add(key);merged.push({organization:entry.organization,work:entry.work});
-    }
+    if(!keys.has(key)){keys.add(key);merged.push({organization:entry.organization,work:entry.work});}
   }
+  return merged;
+}
+function mergeCatalog(entries){
+  const before=state.settings.catalog||[];
+  const merged=catalogWithEntries(before,entries);
   state.settings.catalog=merged;
   return merged.length-before.length;
 }
@@ -2581,9 +2591,11 @@ async function saveImport() {
   pending.forEach(item=>{overlaps+=state.reports.filter(x=>x.type!==item.type && x.start<=item.end && x.end>=item.start).length;});
   if(pending.some(x=>x.warnings.length) && !confirm('Обнаружены неполные строки или расхождения с итогами Excel. Сохранение таких отчётов может исказить аналитику. Сначала проверьте предупреждения в предпросмотре. Сохранить с ошибками?'))return;
   if(overlaps && !confirm('У новых отчётов есть пересечения с отчётами другого типа периода. В аналитике недельные и месячные данные считаются раздельно. Сохранить?'))return;
-  await storeReports(next);
-  const catalogAdded=mergeCatalog(state.catalogPreview.filter(entry=>entry.sheet!==$('sheetSelect').value));
-  if(catalogAdded)await saveSettings();
+  const oldCatalog=state.settings.catalog||[];
+  const catalog=catalogWithEntries(oldCatalog,state.catalogPreview.filter(entry=>entry.sheet!==$('sheetSelect').value));
+  const catalogAdded=catalog.length-oldCatalog.length;
+  if(catalogAdded)await storeAllData(next,{...state.settings,catalog});
+  else await storeReports(next);
   state.selectionInitialized=false;$('qualitySource').value='saved';renderAll();
   notice('Сохранено периодов: '+pending.length+'. Добавлено услуг в справочник: '+catalogAdded+'. Данные находятся только в этом браузере.');
 }
@@ -3505,7 +3517,7 @@ async function saveGroup() {
   const other=state.settings.groups.filter(g=>g.id!==state.editingGroup).map(g=>({...g,works:g.works.filter(x=>!state.selectedWorks.has(x))})).filter(g=>g.works.length);
   const item={id:state.editingGroup||uuid(),name,works};
   if(other.some(g=>normalized(g.name)===normalized(name)))throw Error('Группа с таким названием уже существует');
-  other.push(item);state.settings.groups=other;await saveSettings();resetGroup();state.selectionInitialized=false;renderAll();notice('Группа сохранена.');
+  other.push(item);await saveSettings({...state.settings,groups:other});resetGroup();state.selectionInitialized=false;renderAll();notice('Группа сохранена.');
 }
 
 function remapCategorySelection(previousGroups) {
@@ -3583,10 +3595,11 @@ async function saveOrganizations() {
     organizations:r.organizations.map(x=>names[old.indexOf(x)]||x),
     ...(Array.isArray(r.issues)?{issues:r.issues.map(x=>x&&typeof x==='object'?{...x,organization:names[old.indexOf(x.organization)]||x.organization}:x)}:{}),
     totals:r.totals.map(x=>x.name?{...x,name:names[old.indexOf(x.name)]||x.name}:x)}));
-  await storeReports(renamed);
-  state.settings.catalog=(state.settings.catalog||[]).map(x=>({...x,organization:names[old.indexOf(x.organization)]||x.organization}));
+  const nextSettings={...state.settings,orgNames:names,
+    catalog:(state.settings.catalog||[]).map(x=>({...x,organization:names[old.indexOf(x.organization)]||x.organization}))};
+  await storeAllData(renamed,nextSettings);
   state.selectedOrganizations=new Set(old.filter(x=>state.selectedOrganizations.has(x)).map(x=>names[old.indexOf(x)]));
-  state.settings.orgNames=names;await saveSettings();renderAll();notice('Названия подразделений сохранены.');
+  renderAll();notice('Названия подразделений сохранены.');
 }
 function downloadJson(name,obj) {
   const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob);
@@ -3612,7 +3625,7 @@ async function importGroupFile(file) {
   if(data.format!=='work-groups' || data.version!==1)throw Error('Неизвестный формат настроек групп');
   const groups=checkedGroups(data.groups);
   if(!confirm('Заменить текущие группы импортированными ('+groups.length+')?'))return;
-  state.settings.groups=groups;await saveSettings();resetGroup();state.selectionInitialized=false;renderAll();notice('Группы импортированы.');
+  await saveSettings({...state.settings,groups});resetGroup();state.selectionInitialized=false;renderAll();notice('Группы импортированы.');
 }
 async function importBackupFile(file) {
   const data=await readJsonFile(file);if(!data)return;
@@ -3622,7 +3635,8 @@ async function importBackupFile(file) {
   if(!confirm('Восстановить резервную копию? Все текущие отчёты и настройки будут заменены.'))return;
   const catalog=Array.isArray(data.settings.catalog)?data.settings.catalog.filter(x=>x && typeof x.organization==='string' && typeof x.work==='string'):[];
   const nextSettings={orgNames:data.settings.orgNames,groups,catalog};
-  await storeReports(data.reports);state.settings=nextSettings;state.orgSelectionInitialized=false;await saveSettings();state.selectionInitialized=false;resetGroup();renderAll();notice('Резервная копия восстановлена.');
+  await storeAllData(data.reports,nextSettings);
+  state.orgSelectionInitialized=false;state.selectionInitialized=false;resetGroup();renderAll();notice('Резервная копия восстановлена.');
 }
 // One calculation path for both change-analysis views; no stored-data mutations.
 function changeMeasure(base,current,minimum,percentThreshold) {
