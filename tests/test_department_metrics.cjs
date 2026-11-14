@@ -19,6 +19,9 @@ class MockNode {
   append(...nodes){this.children.push(...nodes);}
   replaceChildren(...nodes){this.children=[...nodes];}
   setAttribute(name,value){this.attributes[name]=value;}
+  contains(){return false;}
+  querySelector(){return null;}
+  focus(){}
   querySelectorAll(){return [];}
 }
 const context=vm.createContext({
@@ -154,4 +157,51 @@ test('bar legend swatches match fill intensity of their plotted metrics',()=>{
   assert.ok(plot);
   assert.equal(nodes(plot).filter(node=>node.tag==='rect').length,12);
   assert.equal(items[0].children[0].children[0].attributes.fill,items[1].children[0].children[0].attributes.fill);
+});
+
+test('raw work names and internal work keys keep the same chart color',()=>{
+  assert.equal(run("workSeriesColor('Кран')"),run("workSeriesColor('work:Кран')"));
+  assert.equal(run("workSeriesColor('Ремонт')"),run("workSeriesColor('work:Ремонт')"));
+  run("state.settings.groups=[{id:'g-1',name:'Ремонтная группа',works:['Кран']}]");
+  assert.equal(run("workSeriesColor('Ремонтная группа')"),run("workSeriesColor('group:g-1')"));
+  // Переименование не меняет цвет группы, если её идентификатор остался прежним.
+  run("state.settings.groups[0].name='Новое название'");
+  assert.equal(run("workSeriesColor('Новое название')"),run("workSeriesColor('group:g-1')"));
+  run("state.settings.groups=[]");
+});
+
+test('chart keeps lines across consecutive weeks and breaks across an absent week',()=>{
+  const first=periods[0],second=periods[1];
+  const late={type:'week',start:'2026-11-09',end:'2026-11-15'};
+  const later={type:'week',start:'2026-11-16',end:'2026-11-22'};
+  const seriesData=[100,150,200,250].map(amount=>new Map([['Кран',{amount}]]));
+  const draw=(chosen,chosenData)=>{
+    const root=new MockNode('div');
+    run("state.chart='line';drawChart(chosen,new Set(['СМУ16']),'amount',root,{categories:['Кран'],data:chosenData,chart:'line'})",{
+      chosen,chosenData,root
+    });
+    return {root,items:nodes(root)};
+  };
+  const adjacent=draw([first,second],seriesData.slice(0,2));
+  assert.equal(adjacent.items.filter(node=>node.tag==='polyline').length,1);
+  assert.equal(adjacent.items.filter(node=>node.tag==='circle').length,2);
+  const separated=draw([first,late],seriesData.slice(0,2));
+  assert.equal(separated.items.filter(node=>node.tag==='polyline').length,0);
+  assert.equal(separated.items.filter(node=>node.tag==='circle').length,2);
+  assert.ok(separated.items.some(node=>node.textContent?.includes('Пропуск')));
+  assert.ok(separated.items.some(node=>node.textContent?.includes('Линии через пропуски не соединяются')));
+  const doubleSegment=draw([first,second,late,later],seriesData);
+  assert.equal(doubleSegment.items.filter(node=>node.tag==='polyline').length,2);
+  assert.equal(doubleSegment.items.filter(node=>node.tag==='circle').length,4);
+});
+
+test('missing monthly period is identified without replacing it with zero',()=>{
+  const periodsWithGap=[
+    {type:'month',start:'2026-12-01',end:'2026-12-31'},
+    {type:'month',start:'2027-02-01',end:'2027-02-28'}
+  ];
+  const gaps=run('chartTimelineGaps(periodsWithGap)',{periodsWithGap});
+  assert.equal(gaps.length,1);
+  assert.equal(gaps[0].first,'2027-01-01');
+  assert.equal(gaps[0].last,'2027-01-01');
 });
