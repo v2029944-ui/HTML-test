@@ -1193,14 +1193,18 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 
 .chart-view-controls{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
 .chart-view-controls>label{display:block;min-width:200px;flex:1 1 200px;max-width:295px}
-.chart-view-controls>label[hidden]{display:none!important}
+.chart-view-controls>label[hidden],.chart-view-controls>.chart-metric-control[hidden]{display:none!important}
+.chart-view-controls>.chart-metric-control{min-width:200px;flex:1 1 200px;max-width:295px}
+.chart-metric-control>span{display:block;font-size:13px;font-weight:600}
+.chart-metric-control .multi-dropdown{margin-top:var(--field-gap);width:100%}
+.chart-scale-note{margin:10px 0;color:var(--text);font-size:12px;line-height:1.5}
 .chart-view-controls select{display:block;box-sizing:border-box;min-width:0;width:100%;height:var(--control-height);margin-top:var(--field-gap)}
 .chart-mode-controls{display:flex;flex-wrap:wrap;width:fit-content;max-width:100%;margin-bottom:14px}
 #chartOrgTotals{margin-top:16px}
 #chartOrgTotals:empty{display:none}
 @media(max-width:740px){
   .chart-view-controls{width:100%;display:grid;grid-template-columns:minmax(0,1fr)}
-  .chart-view-controls>label{min-width:0;max-width:none;width:100%}
+  .chart-view-controls>label,.chart-view-controls>.chart-metric-control{min-width:0;max-width:none;width:100%}
   .chart-mode-controls{width:100%}
   .chart-mode-controls button{flex:1 1 110px;white-space:normal;min-width:0}
 }
@@ -1286,6 +1290,8 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <div class="chart-view-controls">
             <label>Сравнивать<select id="chartBreakdown"><option value="works">Работы и группы</option><option value="organizations">Подразделения</option></select></label>
             <label id="chartOrgScopeLabel" hidden>Какие работы учитывать<select id="chartOrgScope"><option value="all">Все выполненные работы</option><option value="selected">Только отмеченные</option></select></label>
+            <div id="chartMetricsWrap" class="chart-metric-control" hidden><span>Показатели для графика</span><div id="chartMetrics" class="multi-choices"></div></div>
+            <label id="chartSeriesLayoutLabel" hidden>Отображение<select id="chartSeriesLayout"><option value="combined">Все серии на одном графике</option><option value="separate">Отдельный график для каждого показателя</option></select></label>
           </div>
         </div>
         <div class="segmented chart-mode-controls"><button data-chart="line" class="active" title="Показывать изменение значений по периодам линиями">Линейный график</button><button data-chart="bar" title="Сравнивать значения столбцами">Столбцы</button><button data-chart="table" title="Показывать точные значения по периодам">Таблица значений</button></div>
@@ -2082,7 +2088,7 @@ const DB_VERSION = 1;
 const COLORS = Array.from({length:8},(_,index)=>'var(--plot-'+index+')');
 const state = { db: null, reports: [], settings: { orgNames: DEFAULT_ORGS.slice(), groups: [], catalog: [] },
   workbook: null, fileName: '', pending: [], catalogPreview: [], selectedCategories: new Set(), selectionInitialized: false,
-  chart: 'line', editingGroup: null, selectedWorks: new Set(),
+  chart: 'line', chartMetrics:new Set(['amount','count','average']), editingGroup: null, selectedWorks: new Set(),
   selectedOrganizations:new Set(DEFAULT_ORGS), orgSelectionInitialized:false,
   selectedMetrics:new Set(['amount']) };
 
@@ -2676,6 +2682,7 @@ function renderAnalysisFilters() {
   }
   renderMultiFilter('orgFilter',orgs.map(x=>[x,x]),state.selectedOrganizations,()=>renderDashboard(false));
   renderMultiFilter('metric',[['amount','Сумма'],['count','Количество']],state.selectedMetrics,()=>renderDashboard(false));
+  renderMultiFilter('chartMetrics',[['amount','Сумма'],['count','Количество'],['average','Средняя сумма на работу']],state.chartMetrics,()=>renderDashboard(false));
 }
 function summary(report,orgs) {
   const by=new Map();let count=0,amount=0,rows=0;
@@ -3388,10 +3395,102 @@ function departmentTrendData(index,from,to,organizations,names=null){
     const range=aggregateReportRange(index,{from:period.start,to:period.start,organizations,names});
     return new Map(organizations.map(org=>[org,{
       amount:rangeMetric(range,org,null,'amount'),
-      count:rangeMetric(range,org,null,'count')
+      count:rangeMetric(range,org,null,'count'),
+      average:rangeMetric(range,org,null,'average')
     }]));
   });
   return {periods,data};
+}
+function departmentMultiSeries(organizations,metrics,data){
+  return metrics.flatMap((metric,metricIndex)=>organizations.map((organization,orgIndex)=>({
+    organization,metric,metricIndex,orgIndex,
+    label:organization+' · '+metricTitle(metric),
+    values:data.map(period=>period.get(organization)?.[metric]??null)
+  })));
+}
+function departmentScaleMax(series){
+  const result=new Map();
+  for(const entry of series){
+    let maximum=result.get(entry.metric)||0;
+    for(const value of entry.values)if(Number.isFinite(value))maximum=Math.max(maximum,Math.abs(value));
+    result.set(entry.metric,maximum);
+  }
+  return result;
+}
+// Разные единицы не наносятся на одну абсолютную ось: каждый показатель
+// нормируется по своему максимальному по модулю значению; исходные числа сохраняются.
+function drawDepartmentMultiChart(periods,organizations,metrics,data,root){
+  chartRenders.set(root,()=>drawDepartmentMultiChart(periods,organizations,metrics,data,root));
+  root.replaceChildren();
+  const series=departmentMultiSeries(organizations,metrics,data);
+  if(!periods.length||!series.length){empty(root,'Нет выбранных показателей или отчётных периодов');return;}
+  const scales=departmentScaleMax(series),bar=state.chart==='bar';
+  const phone=window.matchMedia?.('(max-width:740px)').matches||false;
+  const left=phone?55:76,right=phone?15:28,top=27,bottom=80,height=phone?325:370;
+  const width=phone?Math.max(root.clientWidth||Math.max(240,innerWidth-64),left+right+periods.length*Math.max(84,bar?series.length*16:0)):
+    Math.max(800,periods.length*Math.max(116,bar?series.length*19:116));
+  const usableW=width-left-right,usableH=height-top-bottom;
+  const negative=series.some(entry=>entry.values.some(value=>Number.isFinite(value)&&value<0));
+  const min=negative?-100:0,max=100,py=value=>top+usableH-(value-min)/(max-min)*usableH;
+  const step=usableW/periods.length,px=i=>left+step*(i+.5);
+  const svg=svgEl('svg',{viewBox:'0 0 '+width+' '+height,role:'img',
+    'aria-label':'Сравнение подразделений и показателей. Шкала в процентах от максимума по каждому показателю'});
+  svg.style.minWidth=width+'px';
+  for(let i=0;i<=4;i++){
+    const value=min+(max-min)*i/4,y=py(value);
+    svg.append(svgEl('line',{x1:left,y1:y,x2:width-right,y2:y,stroke:'var(--grid)'}));
+    svg.append(svgEl('text',{x:left-8,y:y+4,'text-anchor':'end',fill:'var(--plot-label)','font-size':11},fmtNumber(value,'count')+'%'));
+  }
+  svg.append(svgEl('line',{x1:left,y1:py(0),x2:width-right,y2:py(0),stroke:'var(--axis)'}));
+  periods.forEach((period,i)=>{
+    const label=svgEl('text',{x:px(i),y:height-49,'text-anchor':'middle',fill:'var(--plot-label)','font-size':11},
+      period.type==='week'?displayDay(period.start).slice(0,5)+'–'+displayDay(period.end).slice(0,5):period.start.slice(0,7));
+    label.append(svgEl('title',{},displayPeriod(period)));svg.append(label);
+    svg.append(svgEl('text',{x:px(i),y:height-32,'text-anchor':'middle',fill:'var(--plot-label)','font-size':10},period.start.slice(0,4)));
+    if(series.every(entry=>entry.values[i]===null))
+      svg.append(svgEl('text',{x:px(i),y:top+18,'text-anchor':'middle',fill:'var(--warning)','font-size':11},'Нет данных'));
+  });
+  series.forEach((entry,index)=>{
+    const color=COLORS[index%COLORS.length],maximum=scales.get(entry.metric)||0;
+    const dash=entry.metricIndex===1?'7 4':entry.metricIndex===2?'3 4':null;
+    let segment=[];
+    const flush=()=>{
+      if(segment.length>1){
+        const attrs={points:segment.map(point=>point.join(',')).join(' '),fill:'none',stroke:color,'stroke-width':2.5,'class':'chart-series'};
+        if(dash)attrs['stroke-dasharray']=dash;
+        svg.append(svgEl('polyline',attrs));
+      }
+      segment=[];
+    };
+    entry.values.forEach((value,i)=>{
+      if(!Number.isFinite(value)){flush();return;}
+      const normalized=maximum?value/maximum*100:0,y=py(normalized);
+      let mark;
+      if(bar){
+        const w=step*.84/series.length,x=px(i)-step*.42+index*w;
+        mark=svgEl('rect',{x:x+1,y:Math.min(y,py(0)),width:Math.max(1,w-2),
+          height:Math.max(1,Math.abs(y-py(0))),fill:color});
+      }else{
+        segment.push([px(i),y]);
+        mark=svgEl('circle',{cx:px(i),cy:y,r:4,fill:color});
+      }
+      mark.dataset.chartTooltip=entry.label+' · '+displayPeriod(periods[i])+': '+fmtNumber(value,entry.metric)+
+        ' (шкала: '+fmtNumber(normalized,'count')+'% от максимума показателя)';
+      mark.setAttribute('tabindex','0');mark.setAttribute('aria-label',mark.dataset.chartTooltip);
+      mark.setAttribute('aria-describedby','chartTooltip');svg.append(mark);
+    });
+    flush();
+  });
+  root.append(svg);
+  const legend=elem('div',null,'chart-legend');
+  series.forEach((entry,index)=>{
+    const label=entry.label,tag=elem('span',label);
+    tag.title=label;tag.style.setProperty('--series',COLORS[index%COLORS.length]);legend.append(tag);
+  });
+  root.append(legend);
+  const scaleText=metrics.map(metric=>metricTitle(metric)+': 100% = '+(scales.get(metric)?
+    fmtNumber(scales.get(metric),metric):'нет ненулевых значений')).join('; ');
+  root.append(elem('p','На совместном графике каждый показатель нормирован отдельно: 100% — максимум по модулю для этого показателя. Это не процент роста. '+scaleText+'. Точные числа — в подсказках и таблице.','muted chart-scale-note'));
 }
 function renderDepartmentTrend(index,orgs,metrics){
   const charts=$('chartsContainer'),table=$('dataTable'),totals=$('chartOrgTotals');
@@ -3409,24 +3508,25 @@ function renderDepartmentTrend(index,orgs,metrics){
     return;
   }
   if(state.chart==='table'){
-    for(const metric of metrics){
-      const rows=organizations.map(org=>[
-        org,...data.map(period=>formatMetric(period.get(org)?.[metric]??null,metric))
-      ]);
-      makeTable(table,metric,'По подразделениям · '+displayPeriod(periods[0])+' — '+displayPeriod(periods.at(-1)),
-        ['Подразделение',...periods.map(displayPeriod)],rows,{
-          title:metricTitle(metric)+' по подразделениям',totalRow:false,
-          csvRows:organizations.map(org=>[org,...data.map(period=>period.get(org)?.[metric]??null)])
-        });
-    }
+    const series=departmentMultiSeries(organizations,metrics,data);
+    const rows=series.map(entry=>[entry.organization,metricTitle(entry.metric),...entry.values.map(value=>formatMetric(value,entry.metric))]);
+    makeTable(table,'amount','По подразделениям · '+displayPeriod(periods[0])+' — '+displayPeriod(periods.at(-1)),
+      ['Подразделение','Показатель',...periods.map(displayPeriod)],rows,{
+        title:'Все выбранные показатели по подразделениям',totalRow:false,
+        csvMetric:'Подразделения и показатели',
+        csvUnit:'единицы указаны в столбце «Показатель»; пустое значение — нет полного отчёта',
+        csvRows:series.map(entry=>[entry.organization,metricTitle(entry.metric),...entry.values])
+      });
+  }else if(metrics.length>1&&$('chartSeriesLayout').value==='combined'){
+    const section=elem('section',null,'metric-chart'),plot=elem('div',null,'metric-plot');
+    section.append(elem('h3','Совместное сравнение: '+organizations.length+' подразделений × '+metrics.length+' показателя'),plot);
+    charts.append(section);drawDepartmentMultiChart(periods,organizations,metrics,data,plot);
   }else{
     for(const metric of metrics){
       const section=elem('section',null,'metric-chart'),plot=elem('div',null,'metric-plot');
       section.append(elem('h3',metricTitle(metric)+' по подразделениям'),plot);
       charts.append(section);
-      drawChart(periods,new Set(organizations),metric,plot,{
-        chart:state.chart,categories:organizations,data
-      });
+      drawChart(periods,new Set(organizations),metric,plot,{chart:state.chart,categories:organizations,data});
     }
   }
   const all=aggregateReportRange(index,{from,to,organizations,names});
@@ -3437,7 +3537,8 @@ function renderDepartmentTrend(index,orgs,metrics){
         (item?.available.length||0)+' / '+periods.length];
     }),{
       title:'Итог по подразделениям за диапазон',totalRow:false,
-      csvMetric:'Сравнение подразделений',csvUnit:'сумма и количество указаны в заголовках; полнота — число периодов',
+      csvMetric:'Сравнение подразделений',
+      csvUnit:'единицы суммы, количества и средней указаны в заголовках; полнота — число периодов',
       headerHelp:[
         'Название подразделения из верхнего фильтра.',
         ...metrics.map(metric=>'Итоговый показатель «'+metricTitle(metric)+'» по всем выбранным периодам. Если хотя бы один отчёт подразделения отсутствует, показан прочерк.'),
@@ -3451,16 +3552,19 @@ function renderDepartmentTrend(index,orgs,metrics){
 }
 function renderDashboard(sync=true){
   if(sync)syncPeriods();
-  const periods=currentTypeReports(),orgs=state.selectedOrganizations,metrics=chosenMetrics();
+  const periods=currentTypeReports(),orgs=state.selectedOrganizations,byDepartments=$('chartBreakdown').value==='organizations';
+  const metrics=byDepartments?['amount','count','average'].filter(metric=>state.chartMetrics.has(metric)):chosenMetrics();
   const from=$('rangeStart').value,to=$('rangeEnd').value;
   const filtered=periods.filter(r=>(!from||r.start>=from)&&(!to||r.start<=to));
   setCategories(periods);
-  const charts=$('chartsContainer'),table=$('dataTable'),byDepartments=$('chartBreakdown').value==='organizations';
+  const charts=$('chartsContainer'),table=$('dataTable');
   charts.replaceChildren();table.replaceChildren();$('chartOrgTotals').replaceChildren();
   charts.hidden=state.chart==='table';table.hidden=state.chart!=='table';
   $('chartOrgScopeLabel').hidden=!byDepartments;
+  $('chartMetricsWrap').hidden=!byDepartments;
+  $('chartSeriesLayoutLabel').hidden=!byDepartments||metrics.length<2;
   $('chartDescription').textContent=byDepartments?
-    'Сравнивайте выбранные подразделения по неделям или месяцам. Сумма и количество показаны отдельно; пропущенные отчёты — не нули.':
+    'Каждая пара «подразделение × показатель» — отдельная серия. Сумма, количество и средняя сумма имеют независимые шкалы; точные значения доступны в подсказках и таблице.':
     'Отмечайте работы и группы в верхнем фильтре «Работы и группы», чтобы показать их на графике и в таблице.';
   const index=analyticsIndex();
   if(byDepartments)renderDepartmentTrend(index,orgs,metrics);
@@ -3478,7 +3582,8 @@ function renderDashboard(sync=true){
     'Сравниваются '+orgs.size+' из '+state.settings.orgNames.length+' подразделений. Учитываются '+
       ($('chartOrgScope').value==='all'?'все выполненные работы.':'только отмеченные работы и группы.')+
       ' Отсутствующие отчёты дают разрывы на графике и прочерки в таблице; итоги диапазона доступны только для полных данных. '+
-      (metrics.length===2?'Сумма и количество показаны отдельно.':''):
+      (metrics.length>1&&$('chartSeriesLayout').value==='combined'&&state.chart!=='table'?
+        ' При совместном сравнении 100% — максимум каждого показателя, а не процент роста.':' При раздельном сравнении используются исходные единицы показателей.'):
     'Выбрано подразделений: '+orgs.size+' из '+state.settings.orgNames.length+
       '. '+(metrics.length===2?'Сумма и количество показаны отдельно.':'');
 }
@@ -4452,7 +4557,7 @@ function wire() {
     $('comparison').scrollIntoView({behavior:'smooth',block:'start'});
   });
   $('categorySearch').addEventListener('input',()=>renderDashboard(false));
-  ['chartBreakdown','chartOrgScope'].forEach(id=>$(id).addEventListener('change',()=>renderDashboard(false)));
+  ['chartBreakdown','chartOrgScope','chartSeriesLayout'].forEach(id=>$(id).addEventListener('change',()=>renderDashboard(false)));
   document.querySelectorAll('[data-chart]').forEach(btn=>btn.addEventListener('click',()=>{
     state.chart=btn.dataset.chart;document.querySelectorAll('[data-chart]').forEach(b=>b.classList.toggle('active',b===btn));renderDashboard(false);
   }));
