@@ -2755,6 +2755,19 @@ const chartRenders=new WeakMap();
 function redrawCharts(root=document){
   for(const plot of root.querySelectorAll('.metric-plot'))if(plot.clientWidth>0)chartRenders.get(plot)?.();
 }
+// Записи соседних точек могут относиться к несмежным неделям или месяцам.
+// Разрыв нельзя изображать непрерывной линией (отсутствующий период не равен нулю).
+function chartTimelineGaps(periods){
+  const gaps=[];
+  for(let i=1;i<periods.length;i++){
+    const previous=periods[i-1],current=periods[i];
+    if(!previous?.start||!current?.start||previous.type!==current.type)continue;
+    const first=shiftPeriod(previous.type,previous.start,1);
+    if(first<current.start)
+      gaps.push({nextIndex:i,first,last:shiftPeriod(current.type,current.start,-1)});
+  }
+  return gaps;
+}
 function drawChart(periods,orgs,metric,root,options={}) {
   chartRenders.set(root,()=>drawChart(periods,orgs,metric,root,options));
   const restoreSeriesFocus=root.contains(document.activeElement)&&document.activeElement?.matches('.chart-series-control select');
@@ -2792,6 +2805,13 @@ function drawChart(periods,orgs,metric,root,options={}) {
   }
   svg.append(svgEl('line',{x1:left,y1:py(0),x2:width-right,y2:py(0),stroke:'var(--axis)'}));
   const step=usableW/periods.length,px=i=>left+step*(i+.5);
+  const gaps=chartTimelineGaps(periods),gapStarts=new Set(gaps.map(gap=>gap.nextIndex));
+  gaps.forEach(gap=>{
+    const x=(px(gap.nextIndex-1)+px(gap.nextIndex))/2;
+    const notice=svgEl('text',{x,y:top+15,'text-anchor':'middle',fill:'var(--warning)','font-size':11},'Пропуск');
+    notice.append(svgEl('title',{},'Нет данных за '+displayDay(gap.first)+' — '+displayDay(periodEnd(gap.last,periods[gap.nextIndex].type))+'. Линия разорвана.'));
+    svg.append(notice);
+  });
   periods.forEach((p,i)=>{
     const label=svgEl('text',{x:px(i),y:height-49,'text-anchor':'middle',fill:'var(--plot-label)','font-size':11},
       p.type==='week'?displayDay(p.start).slice(0,5)+'–'+displayDay(p.end).slice(0,5):p.start.slice(0,7));
@@ -2811,6 +2831,7 @@ function drawChart(periods,orgs,metric,root,options={}) {
     let segment=[];
     const flush=()=>{if(segment.length>1)svg.append(svgEl('polyline',{points:segment.map(p=>p.join(',')).join(' '),fill:'none',stroke:seriesColor(name),'stroke-width':2.5,'class':'chart-series'}));segment=[];};
     periods.forEach((p,i)=>{
+      if(gapStarts.has(i))flush();
       if(!data[i]){flush();return;}
       const raw=(data[i].get(name)||{})[metric];if(raw===null){flush();return;}const value=raw||0,y=py(value);
       let mark;
@@ -2827,6 +2848,12 @@ function drawChart(periods,orgs,metric,root,options={}) {
   root.append(svg);
   const legend=elem('div',null,'chart-legend');
   shown.forEach((x,i)=>{const label=options.label?options.label(x):x;const tag=elem('span',label);tag.title=label;tag.style.setProperty('--series',seriesColor(x));legend.append(tag);});root.append(legend);
+  if(gaps.length){
+    const ranges=gaps.slice(0,3).map(gap=>displayDay(gap.first)+' — '+displayDay(periodEnd(gap.last,periods[gap.nextIndex].type))).join('; ');
+    root.append(elem('p','Между показанными точками нет отчётов за: '+ranges+
+      (gaps.length>3?'; и ещё '+(gaps.length-3)+' промежутков':'')+
+      '. Линии через пропуски не соединяются.','warn small'));
+  }
   if(groups.length>shown.length)root.append(elem('p','Показаны серии '+(page*limit+1)+'–'+(page*limit+shown.length)+'. Все выбранные работы доступны в таблице.','muted small'));
 }
 function makeTable(root,metric,caption,headers,rows,options={}) {
@@ -3452,8 +3479,14 @@ function departmentMetricStyle(metric){
   }[metric]||{dash:null,barOpacity:1,lineName:'сплошная линия'};
 }
 function workSeriesColor(key){
-  // Stable across ordering and filters; separate mapping from department identities.
-  let hash=0;for(const character of String(key))hash=(Math.imul(hash,31)+character.codePointAt(0))>>>0;
+  // Одно название и его внутренний work:/group: ключ должны иметь один цвет.
+  // Группы сопоставляются с id, чтобы их цвет не менялся при переименовании.
+  const raw=String(key);
+  const group=!raw.startsWith('group:')&&!raw.startsWith('work:')?
+    state.settings.groups.find(item=>item.name===raw):null;
+  const identity=raw.startsWith('work:')||raw.startsWith('group:')?raw:
+    group?'group:'+group.id:'work:'+raw;
+  let hash=0;for(const character of identity)hash=(Math.imul(hash,31)+character.codePointAt(0))>>>0;
   return COLORS[(hash+4)%COLORS.length];
 }
 function departmentSeriesColor(organization,orgIndex=0){
