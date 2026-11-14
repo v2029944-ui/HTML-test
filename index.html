@@ -1216,7 +1216,15 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
   .chart-mode-controls{width:100%}
   .chart-mode-controls button{flex:1 1 110px;white-space:normal;min-width:0}
 }
+:root{--change-rise:#2457ad;--change-fall:#713aa8}
+:root[data-theme="dark"]{--change-rise:#9dceff;--change-fall:#d6afff}
 .numeric-change{color:var(--text);font-weight:600}
+.numeric-rise{color:var(--change-rise);font-weight:700}
+.numeric-fall{color:var(--change-fall);font-weight:700}
+.quality-good{color:var(--positive)!important;font-weight:700}
+.quality-bad{color:var(--negative)!important;font-weight:700}
+.calendar-complete small{color:var(--positive);font-weight:700}
+.calendar-overlap small,.calendar-partial small{color:var(--negative);font-weight:700}
 .chart-series-control{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;font-size:var(--ui-legend-font,14px)}
 .chart-series-control select{width:auto;min-width:100px;max-width:100%}
 .metric-plot>.chart-legend{max-height:none;overflow:visible;flex-wrap:wrap}
@@ -1294,7 +1302,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
             <div id="overviewOrganizations"></div>
           </section>
         </div>
-        <p class="muted small overview-footnote">Сумма и количество показываются отдельно. Средняя сумма на работу = общая сумма / суммарное количество. Показатель имеет смысл только при сопоставимых единицах количества выбранных работ. Изменения — относительно предшествующего интервала той же длительности. Рост показателя сам по себе не означает рост эффективности.</p>
+        <p class="muted small overview-footnote">Сумма и количество показываются отдельно. Средняя сумма на работу = общая сумма / суммарное количество. Показатель имеет смысл только при сопоставимых единицах количества выбранных работ. Изменения — относительно предшествующего интервала той же длительности. <span class="numeric-rise">Синий — рост</span>, <span class="numeric-fall">фиолетовый — снижение</span>: это направления, а не оценка эффективности. Зелёный и красный используются для подтверждённого состояния качества данных.</p>
       </section>
       <details class="analytics-details-container" id="advancedAnalytics">
         <summary><span><strong>Подробный анализ</strong><small>Графики, таблицы, причины изменений, структура и регулярность услуг</small></span><span class="details-toggle-text" aria-hidden="true">Открыть</span></summary>
@@ -1378,7 +1386,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <label>Необычное отклонение, %<input title="Порог для статуса «Необычно выше/ниже». Например, 30 означает отклонение на 30% или больше от модуля среднего." id="usualPercent" type="number" min="0" step="any" value="30"></label>
           <fieldset class="multi-filter"><legend>Показатели отклонений</legend><div id="usualMetrics" class="multi-choices"></div></fieldset>
         </div>
-        <p class="muted small">Оценка по процентному порогу, от модуля базы; это не статистический прогноз. При нулевой базе процент не рассчитан. Для выделения нужны хотя бы 2 фактических периода. При отрицательных значениях выше/ниже означает числовое отклонение.</p>
+        <p class="muted small">Оценка по процентному порогу, от модуля базы; это не статистический прогноз. При нулевой базе процент не рассчитан. Для выделения нужны хотя бы 2 фактических периода. <span class="numeric-rise">Синий — необычно выше</span>, <span class="numeric-fall">фиолетовый — необычно ниже</span>. При отрицательных значениях выше/ниже означает числовое отклонение, а не хорошую или плохую работу.</p>
         <div id="usualCoverage" role="status" aria-live="polite"></div><div id="usualResults"></div>
 <div class="change-pagination"><button id="usualPrev" class="button secondary" title="Предыдущая страница: Отклонения от среднего">← Предыдущая</button><span id="usualPage" class="muted small" aria-live="polite"></span><button id="usualNext" class="button secondary" title="Следующая страница: Отклонения от среднего">Следующая →</button></div>
       </details>
@@ -1436,7 +1444,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <label>Показать<select id="changesDirection"><option value="all">Все направления</option><option value="up">Рост</option><option value="down">Снижение</option><option value="new">Новые</option><option value="gone">Нет выполнений</option><option value="small">Малая база</option><option value="negative">Отрицательные значения</option><option value="unchanged">Без изменений</option></select></label>
           <label>Сортировка<select id="changesSort"><option value="significance-count">Значимость по количеству</option><option value="significance-amount">Значимость по сумме</option><option value="absolute-count">Абс. изменение количества</option><option value="absolute-amount">Абс. изменение суммы</option><option value="percent-count">Процент количества</option><option value="percent-amount">Процент суммы</option><option value="current-count">Количество: больше сначала</option><option value="current-amount">Сумма: больше сначала</option><option value="name">Название</option></select></label>
         </div>
-        <p class="muted small">Сначала обычная база, затем малая. Значимость: выполнение порогов, затем абсолютная разница выбранного показателя. Каждая строка указывает конкретную пару соседних периодов.</p>
+        <p class="muted small">Сначала обычная база, затем малая. Значимость: выполнение порогов, затем абсолютная разница выбранного показателя. Каждая строка указывает конкретную пару соседних периодов. <span class="numeric-rise">Синий — рост</span>, <span class="numeric-fall">фиолетовый — снижение</span>; это направление числа, а не оценка эффективности.</p>
       </div>
       <div id="changesWarnings" class="change-warnings" role="status" aria-live="polite"></div>
       <div id="changesSummary" class="kpis"></div>
@@ -2903,7 +2911,8 @@ function renderKpis(now,base,orgs,metrics) {
     const current=now.complete?now.total[metric]:null,previous=base.complete?base.total[metric]:null;
     const card=elem('div',null,'kpi');card.append(elem('span',metricTitle(metric)+' · второй период'),elem('strong',formatMetric(current,metric)),elem('small',rangeCaption(now)));root.append(card);
     const change=elem('div',null,'kpi'),difference=differenceCells(current,previous,metric);
-    change.append(elem('span','Изменение · '+metricTitle(metric).toLowerCase()),elem('strong',difference[0]),elem('small',difference[1]==='—'?'Нет сопоставимой ненулевой базы':difference[1]+' относительно первого периода'));root.append(change);
+    const changeStyle=current===null||previous===null?'':numericChangeClass(current-previous);
+    change.append(elem('span','Изменение · '+metricTitle(metric).toLowerCase()),elem('strong',difference[0],changeStyle),elem('small',difference[1]==='—'?'Нет сопоставимой ненулевой базы':difference[1]+' относительно первого периода',changeStyle));root.append(change);
   }
 }
 const extendedState={usualPage:0,regularityPage:0,groupAuditPage:0,usualMetrics:new Set(['count','amount','average']),qualityPage:0,contributionPage:0,comparisonMetrics:new Set(['amount']),customMetrics:false};
@@ -2955,9 +2964,19 @@ function renderQuality(sync=true){
   const filtered=issues.filter(x=>(period==='all'||x.period?.type+':'+x.period?.start===period)&&(org==='all'||x.organization===org)&&
     (type==='all'||x.type===type||(type==='skipped'&&x.skipped)));
   extendedState.qualityPage=updatePager('quality',extendedState.qualityPage,filtered.length);
-  $('qualitySummary').textContent='Отчётов: '+reports.length+' · Зафиксировано проблем: '+issues.length+' · По фильтру: '+filtered.length;
+  const qualitySummary=$('qualitySummary');
+  qualitySummary.replaceChildren(
+    elem('span','Отчётов: '+reports.length+' · '),
+    elem('strong','Зафиксировано проблем: '+issues.length,
+      !reports.length?'':issues.length?'quality-bad':'quality-good'),
+    elem('span',' · По фильтру: '+filtered.length)
+  );
   const root=$('qualityTable');root.replaceChildren();
-  if(!filtered.length){empty(root,reports.length?'По выбранным условиям зафиксированных проблем нет.':'Нет отчётов для проверки.');return;}
+  if(!filtered.length){
+    const message=reports.length?'По выбранным условиям зафиксированных проблем нет.':'Нет отчётов для проверки.';
+    empty(root,message);
+    return;
+  }
   const rows=filtered.slice(extendedState.qualityPage*25,(extendedState.qualityPage+1)*25).map(issue=>{
     const p=issue.period,periodText=p&&validReportDate(p.start)&&validReportDate(p.end)?displayPeriod(p):'Даты не сохранены или некорректны';
     const source=issue.report?[issue.report.fileName||'Имя файла не сохранено',issue.report.sheetName||'Лист не сохранён',
@@ -3127,7 +3146,14 @@ function analysisCoverage(root,index,organizations,text,missing=[]){
   if(index.issues.length)root.append(elem('p','Есть исключённые некорректные, повторные или пересекающиеся отчёты. Подробности — в контроле качества.','warn small'));
   root.append(elem('p','Подразделения: '+organizations.join(', ')+'. Период: '+(index.type==='week'?'недели':'месяцы')+'. Полнота означает наличие отчётов; замечания импорта — в контроле качества.','muted small'));
 }
-function usualStatusClass(status){return status==='high'||status==='low'?'numeric-change':status==='insufficient'?'muted':'';}
+// Синий/фиолетовый — направление числа; красный/зелёный — только качество данных.
+function numericChangeClass(delta){
+  if(!Number.isFinite(delta)||delta===0)return '';
+  return delta>0?'numeric-rise':'numeric-fall';
+}
+function usualStatusClass(status){
+  return status==='high'?'numeric-rise':status==='low'?'numeric-fall':status==='insufficient'?'muted':'';
+}
 function renderUsual(index=analyticsIndex()){
   const root=$('usualResults');root.replaceChildren();
   const orgs=[...state.selectedOrganizations],period=$('usualPeriod').value,windowSize=Number($('usualWindow').value),percent=Number($('usualPercent').value);
@@ -3319,7 +3345,7 @@ function overviewDifference(current,previous,metric){
 }
 function overviewTrendClass(current,previous){
   if(current===null||previous===null||!Number.isFinite(current)||!Number.isFinite(previous))return '';
-  return current!==previous?'numeric-change':'';
+  return numericChangeClass(current-previous);
 }
 
 function printReportTable(root,title,headings,rows){
@@ -3405,7 +3431,7 @@ function renderOverview(index){
     const value=item?.complete?
       formatMetric(item.amount,'amount')+' · '+formatMetric(item.count,'count')+' работ':
       'Нет полного отчёта ('+(item?.available.length||0)+'/'+current.periods.length+')';
-    line.append(elem('strong',value));departments.append(line);
+    line.append(elem('strong',value,item?.complete?'':'quality-bad'));departments.append(line);
   }
   if(!current.complete){
     const missing=organizations.flatMap(org=>{
@@ -3443,7 +3469,7 @@ function renderOverview(index){
     for(const entry of sorted.slice(0,2)){
       const line=elem('div',null,'overview-line');
       const delta=entry[metric].delta;
-      line.append(elem('strong',entry.name+(entry.kind==='group'?' (группа)':'')+': '+(delta>0?'+':'')+formatMetric(delta,metric),'numeric-change'));
+      line.append(elem('strong',entry.name+(entry.kind==='group'?' (группа)':'')+': '+(delta>0?'+':'')+formatMetric(delta,metric),numericChangeClass(delta)));
       line.append(elem('small','Один из крупнейших вкладов в изменение '+(metric==='amount'?'суммы':'количества')));
       insights.append(line);
     }
@@ -4363,16 +4389,19 @@ function renderChangeSummary(rows,metrics) {
   const root=$('changesSummary');root.replaceChildren();
   const unique=items=>new Set(items.map(x=>JSON.stringify([x.org,x.key]))).size;
   const meaningful=(row,sign)=>metrics.some(m=>row[m].significant&&!row[m].smallBase&&!row[m].negative&&sign*row[m].delta>0);
-  for(const [label,value] of [['Значительно выросло',unique(rows.filter(x=>meaningful(x,1)))],
-    ['Значительно снизилось',unique(rows.filter(x=>meaningful(x,-1)))],
-    ['Новых услуг',unique(rows.filter(x=>x.status==='new'))],['Нет выполнений',unique(rows.filter(x=>x.status==='gone'))]]){
-    const card=elem('div',null,'kpi');card.append(elem('span',label),elem('strong',value));root.append(card);
+  for(const [label,value,style] of [
+    ['Значительно выросло',unique(rows.filter(x=>meaningful(x,1))),'numeric-rise'],
+    ['Значительно снизилось',unique(rows.filter(x=>meaningful(x,-1))),'numeric-fall'],
+    ['Новых услуг',unique(rows.filter(x=>x.status==='new')),''],
+    ['Нет выполнений',unique(rows.filter(x=>x.status==='gone')),'']]){
+    const card=elem('div',null,'kpi');card.append(elem('span',label),elem('strong',value,value>0?style:''));root.append(card);
   }
   for(const metric of metrics){
     const candidates=rows.filter(x=>x[metric].delta!==0);
     const top=candidates.reduce((best,x)=>!best||Math.abs(x[metric].delta)>Math.abs(best[metric].delta)?x:best,null);
     const card=elem('div',null,'kpi');card.append(elem('span','Наибольшее абсолютное изменение · '+(metric==='count'?'количество':'сумма')),
-      elem('strong',top?(top[metric].delta>0?'+':'')+fmtNumber(top[metric].delta,metric):'—'));
+      elem('strong',top?(top[metric].delta>0?'+':'')+fmtNumber(top[metric].delta,metric):'—',
+        top?numericChangeClass(top[metric].delta):''));
     if(top)card.append(elem('small',top.name+' · '+top.org+(top[metric].smallBase?' · малая база':'')+' · '+displayPeriod(top.basePeriod)+' / '+displayPeriod(top.currentPeriod)));
     root.append(card);
   }
@@ -4470,11 +4499,14 @@ function renderChangeTable(root,rows,metric) {
     const value=row[metric];
     [fmtNumber(value.base,metric),fmtNumber(value.current,metric),(value.delta>0?'+':'')+fmtNumber(value.delta,metric),
       value.percent===null?'— (база 0)':(value.percent>0?'+':'')+fmtNumber(value.percent,'count')+'%'].forEach((text,i)=>{
-      const cell=elem('td',text);if(i===2&&!value.negative)cell.className=value.delta!==0?'numeric-change':'';tr.append(cell);
+      const cell=elem('td',text);
+      if((i===2||i===3)&&value.delta!==0&&!(i===3&&value.percent===null))
+        cell.className=numericChangeClass(value.delta);
+      tr.append(cell);
     });
     const direction=elem('td',changeDirection(row,metric));
     if(value.smallBase&&value.delta!==0)direction.append(elem('small','Малая база'));
-    if(value.negative)direction.className='warn';tr.append(direction);
+    direction.className=value.negative?'warn':numericChangeClass(value.delta);tr.append(direction);
     tr.addEventListener('click',event=>{if(!event.target.closest('button'))openChangeDetails(row);});body.append(tr);
   }
   table.append(body);scroll.append(table);root.append(scroll);
