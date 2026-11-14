@@ -1198,6 +1198,14 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 .chart-metric-control>span{display:block;font-size:13px;font-weight:600}
 .chart-metric-control .multi-dropdown{margin-top:var(--field-gap);width:100%}
 .chart-scale-note{margin:10px 0;color:var(--text);font-size:12px;line-height:1.5}
+.chart-comparison-hint{margin:2px 0 14px;padding:12px 14px;background:var(--subtle);border:1px solid var(--border);border-radius:var(--radius-control);font-size:13px;line-height:1.5}
+.chart-comparison-hint strong{display:block;margin-bottom:3px}
+.chart-read-guide{margin:2px 0 14px;font-size:13px;line-height:1.5}
+.chart-legend--departments{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:8px 16px;max-height:240px;overflow:auto;padding:10px 0;margin-top:7px;border-top:1px solid var(--border)}
+.chart-legend--departments span{display:flex;max-width:none;gap:9px;white-space:normal;overflow:visible;overflow-wrap:anywhere;color:var(--text);font-size:12px}
+.chart-legend--departments span:before{display:none}
+.chart-legend--departments svg{width:38px!important;height:16px!important;min-height:0!important;max-height:none!important;flex:0 0 38px;overflow:visible}
+@media(max-width:740px){.chart-legend--departments{grid-template-columns:minmax(0,1fr);max-height:240px}}
 .chart-view-controls select{display:block;box-sizing:border-box;min-width:0;width:100%;height:var(--control-height);margin-top:var(--field-gap)}
 .chart-mode-controls{display:flex;flex-wrap:wrap;width:fit-content;max-width:100%;margin-bottom:14px}
 #chartOrgTotals{margin-top:16px}
@@ -1288,15 +1296,16 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
       <div class="panel">
         <div class="sectionbar"><div><h2>Графики и сравнение подразделений</h2><p id="chartDescription" class="muted small">Динамика отмеченных работ и групп за выбранный диапазон.</p></div>
           <div class="chart-view-controls">
-            <label>Сравнивать<select id="chartBreakdown"><option value="works">Работы и группы</option><option value="organizations">Подразделения</option></select></label>
-            <label id="chartOrgScopeLabel" hidden>Какие работы учитывать<select id="chartOrgScope"><option value="all">Все выполненные работы</option><option value="selected">Только отмеченные</option></select></label>
-            <div id="chartMetricsWrap" class="chart-metric-control" hidden><span>Показатели для графика</span><div id="chartMetrics" class="multi-choices"></div></div>
-            <label id="chartSeriesLayoutLabel" hidden>Отображение<select id="chartSeriesLayout"><option value="combined">Все серии на одном графике</option><option value="separate">Отдельный график для каждого показателя</option></select></label>
+            <label>Что сравнивать<select id="chartBreakdown"><option value="works">Работы и группы</option><option value="organizations">Подразделения по показателям</option></select></label>
+            <label id="chartOrgScopeLabel" hidden>Какие услуги учитывать<select id="chartOrgScope"><option value="all">Все выполненные работы</option><option value="selected">Только отмеченные работы и группы</option></select></label>
+            <div id="chartMetricsWrap" class="chart-metric-control" hidden><span>Какие показатели сравнивать</span><div id="chartMetrics" class="multi-choices"></div></div>
+            <label id="chartSeriesLayoutLabel" hidden>Как расположить показатели<select id="chartSeriesLayout"><option value="combined">Вместе — относительная шкала (%)</option><option value="separate">Отдельно — исходные значения</option></select></label>
           </div>
         </div>
+        <div id="chartComparisonHint" class="chart-comparison-hint" hidden></div>
         <div class="segmented chart-mode-controls"><button data-chart="line" class="active" title="Показывать изменение значений по периодам линиями">Линейный график</button><button data-chart="bar" title="Сравнивать значения столбцами">Столбцы</button><button data-chart="table" title="Показывать точные значения по периодам">Таблица значений</button></div>
         <div class="chart-and-filter">
-          <div class="chart-wrap"><div id="chartsContainer"></div><div id="dataTable" class="table-scroll" hidden></div><div id="chartOrgTotals"></div><p id="chartHelp" class="muted small"></p></div>
+          <div class="chart-wrap"><div id="chartReadGuide" class="chart-read-guide" hidden></div><div id="chartsContainer"></div><div id="dataTable" class="table-scroll" hidden></div><div id="chartOrgTotals"></div><p id="chartHelp" class="muted small"></p></div>
         </div>
       </div>
       <section class="panel" id="comparison" aria-labelledby="comparisonHeading">
@@ -3402,11 +3411,36 @@ function departmentTrendData(index,from,to,organizations,names=null){
   return {periods,data};
 }
 function departmentMultiSeries(organizations,metrics,data){
-  return metrics.flatMap((metric,metricIndex)=>organizations.map((organization,orgIndex)=>({
+  return organizations.flatMap((organization,orgIndex)=>metrics.map((metric,metricIndex)=>({
     organization,metric,metricIndex,orgIndex,
     label:organization+' · '+metricTitle(metric),
     values:data.map(period=>period.get(organization)?.[metric]??null)
   })));
+}
+function departmentMetricStyle(metric){
+  // Значение не зависит от того, какие другие показатели отмечены.
+  return {
+    amount:{dash:null,barOpacity:1,lineName:'сплошная линия'},
+    count:{dash:'8 4',barOpacity:.72,lineName:'штриховая линия'},
+    average:{dash:'2 4',barOpacity:.48,lineName:'точечная линия'}
+  }[metric]||{dash:null,barOpacity:1,lineName:'сплошная линия'};
+}
+function departmentSeriesColor(organization,orgIndex=0){
+  const position=state.settings.orgNames.indexOf(organization);
+  return COLORS[(position<0?orgIndex:position)%COLORS.length];
+}
+function departmentLegendSample(metric,color,bar){
+  const style=departmentMetricStyle(metric);
+  const svg=svgEl('svg',{viewBox:'0 0 38 16',width:38,height:16,'aria-hidden':'true',focusable:'false'});
+  if(bar){
+    svg.append(svgEl('rect',{x:3,y:2,width:30,height:12,fill:color,
+      'fill-opacity':style.barOpacity,stroke:color,'stroke-width':1}));
+  }else{
+    const attrs={x1:1,y1:8,x2:37,y2:8,stroke:color,'stroke-width':3,'stroke-linecap':'butt'};
+    if(style.dash)attrs['stroke-dasharray']=style.dash;
+    svg.append(svgEl('line',attrs));
+  }
+  return svg;
 }
 function departmentScaleMax(series){
   const result=new Map();
@@ -3451,8 +3485,8 @@ function drawDepartmentMultiChart(periods,organizations,metrics,data,root){
       svg.append(svgEl('text',{x:px(i),y:top+18,'text-anchor':'middle',fill:'var(--warning)','font-size':11},'Нет данных'));
   });
   series.forEach((entry,index)=>{
-    const color=COLORS[index%COLORS.length],maximum=scales.get(entry.metric)||0;
-    const dash=entry.metricIndex===1?'7 4':entry.metricIndex===2?'3 4':null;
+    const color=departmentSeriesColor(entry.organization,entry.orgIndex),maximum=scales.get(entry.metric)||0;
+    const style=departmentMetricStyle(entry.metric),dash=style.dash;
     let segment=[];
     const flush=()=>{
       if(segment.length>1){
@@ -3469,7 +3503,8 @@ function drawDepartmentMultiChart(periods,organizations,metrics,data,root){
       if(bar){
         const w=step*.84/series.length,x=px(i)-step*.42+index*w;
         mark=svgEl('rect',{x:x+1,y:Math.min(y,py(0)),width:Math.max(1,w-2),
-          height:Math.max(1,Math.abs(y-py(0))),fill:color});
+          height:Math.max(1,Math.abs(y-py(0))),fill:color,'fill-opacity':style.barOpacity,
+          stroke:color,'stroke-width':.5});
       }else{
         segment.push([px(i),y]);
         mark=svgEl('circle',{cx:px(i),cy:y,r:4,fill:color});
@@ -3482,10 +3517,14 @@ function drawDepartmentMultiChart(periods,organizations,metrics,data,root){
     flush();
   });
   root.append(svg);
-  const legend=elem('div',null,'chart-legend');
-  series.forEach((entry,index)=>{
-    const label=entry.label,tag=elem('span',label);
-    tag.title=label;tag.style.setProperty('--series',COLORS[index%COLORS.length]);legend.append(tag);
+  const legend=elem('div',null,'chart-legend chart-legend--departments');
+  legend.setAttribute('role','list');
+  legend.setAttribute('aria-label','Обозначения подразделений и показателей');
+  series.forEach(entry=>{
+    const label=entry.label,tag=elem('span');
+    tag.title=label;tag.setAttribute('role','listitem');
+    tag.append(departmentLegendSample(entry.metric,departmentSeriesColor(entry.organization,entry.orgIndex),bar),elem('span',label));
+    legend.append(tag);
   });
   root.append(legend);
   const scaleText=metrics.map(metric=>metricTitle(metric)+': 100% = '+(scales.get(metric)?
@@ -3563,8 +3602,27 @@ function renderDashboard(sync=true){
   $('chartOrgScopeLabel').hidden=!byDepartments;
   $('chartMetricsWrap').hidden=!byDepartments;
   $('chartSeriesLayoutLabel').hidden=!byDepartments||metrics.length<2;
+  const hint=$('chartComparisonHint'),guide=$('chartReadGuide');
+  hint.hidden=!byDepartments;
+  guide.hidden=!byDepartments||state.chart==='table';
+  if(byDepartments){
+    const lineMeaning=metrics.map(metric=>metricTitle(metric).toLowerCase()+' — '+departmentMetricStyle(metric).lineName).join('; ');
+    hint.replaceChildren(
+      elem('strong','Как настроить'),
+      elem('span','Подразделения выбираются в фильтре вверху страницы. Здесь выберите показатели именно для этих графиков — верхний фильтр «Показатели» влияет на остальные разделы.')
+    );
+    const combined=metrics.length>1&&$('chartSeriesLayout').value==='combined';
+    guide.replaceChildren(
+      elem('strong',combined?'Как читать общий график: ':'Как читать графики: '),
+      elem('span',combined?
+        (state.chart==='line'?
+          'Цвет обозначает подразделение. Тип линии: '+lineMeaning+'. Образцы линий — в легенде под графиком. Шкала в % от максимума каждого показателя, а не процент изменения.':
+          'Цвет обозначает подразделение. Насыщенность столбца обозначает показатель; образец каждого — в легенде. Шкала в % от максимума своего показателя, а не процент изменения.'):
+        'У каждого показателя своя шкала в исходных единицах. Цвет линии или столбца обозначает подразделение.')
+    );
+  }
   $('chartDescription').textContent=byDepartments?
-    'Каждая пара «подразделение × показатель» — отдельная серия. Сумма, количество и средняя сумма имеют независимые шкалы; точные значения доступны в подсказках и таблице.':
+    'Сравнение выбранных подразделений по неделям или месяцам. Для каждого сочетания подразделения и показателя создаётся отдельная серия.':
     'Отмечайте работы и группы в верхнем фильтре «Работы и группы», чтобы показать их на графике и в таблице.';
   const index=analyticsIndex();
   if(byDepartments)renderDepartmentTrend(index,orgs,metrics);
