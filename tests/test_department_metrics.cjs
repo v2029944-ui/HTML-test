@@ -50,7 +50,7 @@ test('two departments and three metrics produce six distinct series',()=>{
   const series=run('departmentMultiSeries(organizations,metrics,data)',{organizations,metrics,data});
   assert.equal(series.length,6);
   assert.equal(new Set(series.map(s=>s.label)).size,6);
-  assert.deepEqual(series.filter(s=>s.metric==='average').map(s=>s.values[1]),[20,60]);
+  assert.deepEqual(Array.from(series.filter(s=>s.metric==='average'),s=>s.values[1]),[20,60]);
   const maxima=run('departmentScaleMax(series)',{series});
   assert.equal(maxima.get('amount'),200);
   assert.equal(maxima.get('count'),4);
