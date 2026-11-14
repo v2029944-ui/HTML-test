@@ -78,7 +78,7 @@ test('missing values are gaps, while real zeros are plotted',()=>{
     data[0],
     new Map([['СМУ16',{amount:0,count:0,average:null}],['АВТО',{amount:null,count:null,average:null}]])
   ];
-  const series=run('departmentMultiSeries(organizations,metrics,missing)',{organizations,metrics,data:missing});
+  const series=run('departmentMultiSeries(organizations,metrics,missing)',{organizations,metrics,missing});
   assert.equal(series.find(s=>s.organization==='АВТО'&&s.metric==='count').values[1],null);
   assert.equal(series.find(s=>s.organization==='СМУ16'&&s.metric==='count').values[1],0);
   const root=new MockNode('div');
