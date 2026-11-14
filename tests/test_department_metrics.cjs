@@ -64,8 +64,10 @@ test('line and bar modes render six series with correct labels and source-value 
       root,mode,periods,organizations,metrics,data
     });
     const all=nodes(root);
-    assert.equal(all.filter(node=>node.tag===shape).length,expected);
-    assert.equal(all.filter(node=>node.tag==='span').length,6);
+    const plot=all.find(node=>node.tag==='svg'&&node.attributes.role==='img');
+    assert.ok(plot,'График SVG существует');
+    assert.equal(nodes(plot).filter(node=>node.tag===shape).length,expected);
+    assert.equal(all.filter(node=>node.attributes.role==='listitem').length,6);
     const marks=all.filter(node=>node.dataset.chartTooltip);
     assert.equal(marks.length,12);
     assert.ok(marks.some(node=>node.dataset.chartTooltip.includes('СМУ16 · Сумма')));
@@ -112,4 +114,43 @@ test('average is calculated per period; incomplete department remains null',()=>
   assert.equal(trend.data[1].get('СМУ16').count,0);
   assert.equal(trend.data[1].get('СМУ16').average,null);
   assert.equal(trend.data[1].get('АВТО').average,null);
+});
+
+test('solid/dashed/dotted line styles are tied to metrics, not selection order',()=>{
+  assert.equal(run("departmentMetricStyle('amount').dash"),null);
+  assert.equal(run("departmentMetricStyle('count').dash"),'8 4');
+  assert.equal(run("departmentMetricStyle('average').dash"),'2 4');
+  const root=new MockNode('div'),selected=['average','count'];
+  run('state.chart="line";drawDepartmentMultiChart(periods,organizations,selected,data,root)',{
+    root,periods,organizations,selected,data
+  });
+  const all=nodes(root);
+  const legendItems=all.filter(node=>node.attributes.role==='listitem');
+  assert.equal(legendItems.length,4);
+  // Для каждого подразделения первая линия относится к средней, вторая — к количеству.
+  for(let i=0;i<legendItems.length;i+=2){
+    const dotted=legendItems[i].children[0].children[0];
+    const dashed=legendItems[i+1].children[0].children[0];
+    assert.equal(dotted.attributes['stroke-dasharray'],'2 4');
+    assert.equal(dashed.attributes['stroke-dasharray'],'8 4');
+    assert.equal(dotted.attributes.stroke,dashed.attributes.stroke,'Цвет одного подразделения одинаков');
+  }
+  const linePaths=all.filter(node=>node.tag==='polyline');
+  assert.ok(linePaths.some(node=>node.attributes['stroke-dasharray']==='2 4'));
+  assert.ok(linePaths.some(node=>node.attributes['stroke-dasharray']==='8 4'));
+});
+
+test('bar legend swatches match fill intensity of their plotted metrics',()=>{
+  const root=new MockNode('div');
+  run('state.chart="bar";drawDepartmentMultiChart(periods,organizations,metrics,data,root)',{
+    root,periods,organizations,metrics,data
+  });
+  const all=nodes(root),items=all.filter(node=>node.attributes.role==='listitem');
+  assert.equal(items.length,6);
+  assert.equal(items[0].children[0].children[0].attributes['fill-opacity'],1);
+  assert.equal(items[1].children[0].children[0].attributes['fill-opacity'],.72);
+  assert.equal(items[2].children[0].children[0].attributes['fill-opacity'],.48);
+  const bars=all.filter(node=>node.tag==='rect'&&node.attributes.height!==12);
+  assert.equal(bars.length,12);
+  assert.equal(items[0].children[0].children[0].attributes.fill,items[1].children[0].children[0].attributes.fill);
 });
