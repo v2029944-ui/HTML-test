@@ -205,3 +205,45 @@ test('missing monthly period is identified without replacing it with zero',()=>{
   assert.equal(gaps[0].first,'2027-01-01');
   assert.equal(gaps[0].last,'2027-01-01');
 });
+
+test('numeric movement colors distinguish increase, decrease and no change without assigning quality',()=>{
+  assert.equal(run('numericChangeClass(20)'),'numeric-rise');
+  assert.equal(run('numericChangeClass(-5)'),'numeric-fall');
+  assert.equal(run('numericChangeClass(0)'),'');
+  assert.equal(run('numericChangeClass(null)'),'');
+  assert.equal(run('numericChangeClass(NaN)'),'');
+  assert.equal(run('overviewTrendClass(120,100)'),'numeric-rise');
+  assert.equal(run('overviewTrendClass(80,100)'),'numeric-fall');
+  assert.equal(run('overviewTrendClass(100,100)'),'');
+  assert.equal(run('overviewTrendClass(null,100)'),'');
+});
+
+test('unusual high and low levels are distinct, neither marked as positive or negative quality',()=>{
+  assert.equal(run("usualStatusClass('high')"),'numeric-rise');
+  assert.equal(run("usualStatusClass('low')"),'numeric-fall');
+  assert.equal(run("usualStatusClass('normal')"),'');
+  assert.equal(run("usualStatusClass('insufficient')"),'muted');
+});
+
+test('both themes provide directional colors and good/bad colors remain semantically separate',()=>{
+  assert.match(html,/\.numeric-rise\{color:var\(--change-rise\)/);
+  assert.match(html,/\.numeric-fall\{color:var\(--change-fall\)/);
+  assert.match(html,/:root\[data-theme="dark"\]\{--change-rise:[^}]+--change-fall:/);
+  assert.match(html,/\.quality-good\{color:var\(--positive\)!important/);
+  assert.match(html,/\.quality-bad\{color:var\(--negative\)!important/);
+  assert.match(html,/qualitySummary\.replaceChildren\(/);
+  assert.match(html,/\.calendar-complete small\{color:var\(--positive\)/);
+  assert.match(html,/\.calendar-overlap small,\.calendar-partial small\{color:var\(--negative\)/);
+});
+
+test('comparison KPI cards display blue and purple numeric directions',()=>{
+  const root=new MockNode('div');
+  context.document.getElementById=id=>id==='kpis'?root:null;
+  const before={complete:true,periods:[periods[0]],total:{count:2,amount:100}};
+  const after={complete:true,periods:[periods[1]],total:{count:5,amount:70}};
+  run('renderKpis(after,before,new Set(organizations),["count","amount"])',{before,after,organizations});
+  assert.equal(root.children.length,4);
+  assert.equal(root.children[1].children[1].className,'numeric-rise');
+  assert.equal(root.children[3].children[1].className,'numeric-fall');
+  context.document.getElementById=undefined;
+});
