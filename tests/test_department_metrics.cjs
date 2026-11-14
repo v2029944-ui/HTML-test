@@ -235,3 +235,15 @@ test('both themes provide directional colors and good/bad colors remain semantic
   assert.match(html,/\.calendar-complete small\{color:var\(--positive\)/);
   assert.match(html,/\.calendar-overlap small,\.calendar-partial small\{color:var\(--negative\)/);
 });
+
+test('comparison KPI cards display blue and purple numeric directions',()=>{
+  const root=new MockNode('div');
+  context.document.getElementById=id=>id==='kpis'?root:null;
+  const before={complete:true,periods:[periods[0]],total:{count:2,amount:100}};
+  const after={complete:true,periods:[periods[1]],total:{count:5,amount:70}};
+  run('renderKpis(after,before,new Set(organizations),["count","amount"])',{before,after,organizations});
+  assert.equal(root.children.length,4);
+  assert.equal(root.children[1].children[1].className,'numeric-rise');
+  assert.equal(root.children[3].children[1].className,'numeric-fall');
+  context.document.getElementById=undefined;
+});
