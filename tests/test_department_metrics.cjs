@@ -147,10 +147,11 @@ test('bar legend swatches match fill intensity of their plotted metrics',()=>{
   });
   const all=nodes(root),items=all.filter(node=>node.attributes.role==='listitem');
   assert.equal(items.length,6);
-  assert.equal(items[0].children[0].children[0].attributes['fill-opacity'],1);
-  assert.equal(items[1].children[0].children[0].attributes['fill-opacity'],.72);
-  assert.equal(items[2].children[0].children[0].attributes['fill-opacity'],.48);
-  const bars=all.filter(node=>node.tag==='rect'&&node.attributes.height!==12);
-  assert.equal(bars.length,12);
+  assert.equal(items[0].children[0].children[0].attributes['fill-opacity'],'1');
+  assert.equal(items[1].children[0].children[0].attributes['fill-opacity'],'0.72');
+  assert.equal(items[2].children[0].children[0].attributes['fill-opacity'],'0.48');
+  const plot=all.find(node=>node.tag==='svg'&&node.attributes.role==='img');
+  assert.ok(plot);
+  assert.equal(nodes(plot).filter(node=>node.tag==='rect').length,12);
   assert.equal(items[0].children[0].children[0].attributes.fill,items[1].children[0].children[0].attributes.fill);
 });
