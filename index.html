@@ -1216,6 +1216,11 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
   .chart-mode-controls{width:100%}
   .chart-mode-controls button{flex:1 1 110px;white-space:normal;min-width:0}
 }
+.numeric-change{color:var(--text);font-weight:600}
+.chart-series-control{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;font-size:var(--ui-legend-font,14px)}
+.chart-series-control select{width:auto;min-width:100px;max-width:100%}
+.metric-plot>.chart-legend{max-height:none;overflow:visible;flex-wrap:wrap}
+.filter-scope-title{font-size:var(--ui-legend-font,14px);margin:0 0 12px}
 </style>
   
 </head>
@@ -1240,11 +1245,11 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
     <p class="mobile-help muted">Широкие таблицы и большие диапазоны графиков можно прокручивать по горизонтали.</p>
 
     <section id="dashboard" class="view active">
-      <div class="panel dashboard-filter-panel">
+      <div class="panel dashboard-filter-panel"><h2 class="filter-scope-title">Общие фильтры аналитики</h2>
         <div class="filters">
           <label>Период<select id="periodType"><option value="week">Недели</option><option value="month">Месяцы</option></select></label>
           <fieldset class="multi-filter"><legend>Подразделения</legend><div id="orgFilter" class="multi-choices"></div></fieldset>
-          <fieldset class="multi-filter"><legend>Показатели</legend><div id="metric" class="multi-choices"></div></fieldset>
+          <fieldset class="multi-filter"><legend>Показатели обзора и работ</legend><div id="metric" class="multi-choices"></div></fieldset>
           <details class="categories category-filter" id="categoryFilter">
             <summary>
               <span class="category-filter-label">Работы и группы</span>
@@ -1289,7 +1294,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
             <div id="overviewOrganizations"></div>
           </section>
         </div>
-        <p class="muted small overview-footnote">Сумма и количество показываются отдельно. Средняя сумма на работу = общая сумма / количество. Изменения — относительно предшествующего интервала той же длительности. Рост показателя сам по себе не означает рост эффективности.</p>
+        <p class="muted small overview-footnote">Сумма и количество показываются отдельно. Средняя сумма на работу = общая сумма / суммарное количество. Показатель имеет смысл только при сопоставимых единицах количества выбранных работ. Изменения — относительно предшествующего интервала той же длительности. Рост показателя сам по себе не означает рост эффективности.</p>
       </section>
       <details class="analytics-details-container" id="advancedAnalytics">
         <summary><span><strong>Подробный анализ</strong><small>Графики, таблицы, причины изменений, структура и регулярность услуг</small></span><span class="details-toggle-text" aria-hidden="true">Открыть</span></summary>
@@ -1298,7 +1303,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <div class="chart-view-controls">
             <label>Что сравнивать<select id="chartBreakdown"><option value="works">Работы и группы</option><option value="organizations">Подразделения по показателям</option></select></label>
             <label id="chartOrgScopeLabel" hidden>Какие услуги учитывать<select id="chartOrgScope"><option value="all">Все выполненные работы</option><option value="selected">Только отмеченные работы и группы</option></select></label>
-            <div id="chartMetricsWrap" class="chart-metric-control" hidden><span>Какие показатели сравнивать</span><div id="chartMetrics" class="multi-choices"></div></div>
+            <div id="chartMetricsWrap" class="chart-metric-control" hidden><span>Показатели этого графика</span><div id="chartMetrics" class="multi-choices"></div></div>
             <label id="chartSeriesLayoutLabel" hidden>Как расположить показатели<select id="chartSeriesLayout"><option value="combined">Вместе — относительная шкала (%)</option><option value="separate">Отдельно — исходные значения</option></select></label>
           </div>
         </div>
@@ -1362,7 +1367,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <summary>Что изменилось относительно предыдущих 4–8 периодов?</summary>
         <p class="muted small">Сравнивает текущую неделю или месяц с обычным уровнем за предыдущие 4 либо 8 периодов. Учитываются подразделения и отмеченные работы/группы из фильтров выше. Например, если раньше выполняли в среднем 10 работ за неделю, а сейчас 15, отклонение составляет +5 (+50%).</p>
         <details class="quick-help"><summary>Как рассчитываются обычный уровень, отклонение и оценка?</summary>
-          <p><strong>Обычный уровень:</strong> для количества и суммы — среднее по доступным полным предыдущим периодам, без анализируемого. Например, 10, 20, 10 и 20 работ дают среднее 15. Средняя сумма на работу вычисляется отдельно: вся сумма за полные предыдущие периоды / всё количество работ в этих периодах.</p>
+          <p><strong>Обычный уровень:</strong> для количества и суммы — среднее по доступным полным предыдущим периодам, без анализируемого. Например, 10, 20, 10 и 20 работ дают среднее 15. Средняя сумма на работу вычисляется отдельно: вся сумма за полные предыдущие периоды / всё количество работ в этих периодах. Для интерпретации нужны сопоставимые единицы количества выбранных работ.</p>
           <p><strong>Отклонение:</strong> значение сейчас − обычный уровень. <strong>Отклонение, %:</strong> отклонение / модуль обычного уровня × 100%. При нулевом обычном уровне процент не вычисляется.</p>
           <p><strong>Необычно выше/ниже:</strong> числовое отклонение достигает указанного процентного порога (по умолчанию 30%); при нулевой базе любое ненулевое отклонение отмечается отдельно, без процента. Для оценки нужны не менее двух полных предыдущих периодов. Это простой порог, а не статистический прогноз.</p>
           <p><strong>Пропуски:</strong> период без полного отчёта хотя бы одного выбранного подразделения исключается из среднего, а не считается нулём. Если услуга отсутствует в полном отчёте, её значение за этот период — ноль. Отрицательные значения могут быть корректировками: «выше» и «ниже» означают направление числа, не оценку эффективности.</p>
@@ -1371,7 +1376,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <label>Анализируемый период<select id="usualPeriod"></select></label>
           <label>Окно среднего<select id="usualWindow" title="Сколько предыдущих недель или месяцев учитывать при расчёте среднего. Неполные отчётные периоды исключаются."><option value="4">4 предыдущих периода</option><option value="8">8 предыдущих периодов</option></select></label>
           <label>Необычное отклонение, %<input title="Порог для статуса «Необычно выше/ниже». Например, 30 означает отклонение на 30% или больше от модуля среднего." id="usualPercent" type="number" min="0" step="any" value="30"></label>
-          <fieldset class="multi-filter"><legend>Показатели</legend><div id="usualMetrics" class="multi-choices"></div></fieldset>
+          <fieldset class="multi-filter"><legend>Показатели отклонений</legend><div id="usualMetrics" class="multi-choices"></div></fieldset>
         </div>
         <p class="muted small">Оценка по процентному порогу, от модуля базы; это не статистический прогноз. При нулевой базе процент не рассчитан. Для выделения нужны хотя бы 2 фактических периода. При отрицательных значениях выше/ниже означает числовое отклонение.</p>
         <div id="usualCoverage" role="status" aria-live="polite"></div><div id="usualResults"></div>
@@ -1413,7 +1418,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
             <label><span id="changesToText">Текущий период</span><select id="changesTo"></select></label>
           </div>
           <fieldset class="multi-filter"><legend>Подразделения</legend><div id="changesOrganizations" class="multi-choices"></div></fieldset>
-          <fieldset class="multi-filter"><legend>Показатели</legend><div id="changesMetrics" class="multi-choices"></div></fieldset>
+          <fieldset class="multi-filter"><legend>Показатели изменений</legend><div id="changesMetrics" class="multi-choices"></div></fieldset>
         </div>
         <details class="change-sensitivity">
           <summary>Чувствительность анализа</summary>
@@ -2752,13 +2757,25 @@ function redrawCharts(root=document){
 }
 function drawChart(periods,orgs,metric,root,options={}) {
   chartRenders.set(root,()=>drawChart(periods,orgs,metric,root,options));
+  const restoreSeriesFocus=root.contains(document.activeElement)&&document.activeElement?.matches('.chart-series-control select');
   root.replaceChildren();
   const groups=options.categories||[...state.selectedCategories];
   if(!periods.length||!groups.length){empty(root,!periods.length?'Нет отчётов в выбранном диапазоне':'Выберите хотя бы одну работу или группу');return;}
-  const shown=groups.slice(0,options.limit||8),bar=(options.chart||state.chart)==='bar';
+  const limit=options.limit||8,pages=Math.ceil(groups.length/limit);
+  const page=Math.max(0,Math.min(pages-1,options.seriesPage||0)),shown=groups.slice(page*limit,(page+1)*limit),bar=(options.chart||state.chart)==='bar';
+  if(pages>1){
+    const control=elem('label',null,'chart-series-control');
+    control.append(elem('span','Отображается '+shown.length+' из '+groups.length+' серий. Видимые серии'));
+    const select=elem('select');select.setAttribute('aria-label','Видимые серии графика');
+    for(let i=0;i<pages;i++){const option=elem('option',(i*limit+1)+'–'+Math.min((i+1)*limit,groups.length));option.value=String(i);select.append(option);}
+    select.value=String(page);select.addEventListener('change',()=>{options.seriesPage=Number(select.value);drawChart(periods,orgs,metric,root,options);root.querySelector('select')?.focus();});
+    control.append(select);root.append(control);if(restoreSeriesFocus)select.focus({preventScroll:true});
+  }
+  const seriesColor=name=>options.seriesType==='organizations'?departmentSeriesColor(name):workSeriesColor(name);
   const phone=window.matchMedia?.('(max-width:740px)').matches||false;
   const left=phone?(metric==='count'?64:94):85,right=phone?14:35,top=25,bottom=80,height=phone?310:350;
-  const width=phone?Math.max(root.clientWidth||Math.max(240,innerWidth-64),left+right+periods.length*Math.max(74,bar?shown.length*14:0)):
+  const periodWidth=!options.data&&periods.some(p=>!reportHasOrganizations(p,orgs))?150:74;
+  const width=phone?Math.max(root.clientWidth||Math.max(240,innerWidth-64),left+right+periods.length*Math.max(periodWidth,bar?shown.length*14:0)):
     Math.max(760,periods.length*Math.max(110,bar?shown.length*18:110));
   const usableW=width-left-right,usableH=height-top-bottom;
   const svg=svgEl('svg',{viewBox:'0 0 '+width+' '+height,role:'img','aria-label':'Динамика по периодам'});
@@ -2780,20 +2797,28 @@ function drawChart(periods,orgs,metric,root,options={}) {
       p.type==='week'?displayDay(p.start).slice(0,5)+'–'+displayDay(p.end).slice(0,5):p.start.slice(0,7));
     label.append(svgEl('title',{},displayPeriod(p)));svg.append(label);
     svg.append(svgEl('text',{x:px(i),y:height-32,'text-anchor':'middle',fill:'var(--plot-label)','font-size':10},p.start.slice(0,4)));
-    if(!data[i])svg.append(svgEl('text',{x:px(i),y:top+20,'text-anchor':'middle',fill:'var(--warning)','font-size':11},'Нет отчёта'));
+    if(!data[i]){
+      const present=new Set(p.organizations||p.rows?.map(row=>row.organization)||[]);
+      const available=[...orgs].filter(org=>present.has(org)).length;
+      const message=available?'Неполные данные: '+available+' из '+orgs.size+' подразделений':'Нет отчёта';
+      const note=svgEl('text',{x:px(i),y:top+20,'text-anchor':'middle',fill:'var(--warning)','font-size':10});
+      if(available){note.append(svgEl('tspan',{x:px(i)},'Неполные данные: '),svgEl('tspan',{x:px(i),dy:13},available+' из '+orgs.size+' подразделений'));}
+      else note.textContent=message;
+      note.append(svgEl('title',{},message+'. Общий итог не построен: нужны отчёты всех выбранных подразделений.'));svg.append(note);
+    }
   });
   shown.forEach((name,index)=>{
     let segment=[];
-    const flush=()=>{if(segment.length>1)svg.append(svgEl('polyline',{points:segment.map(p=>p.join(',')).join(' '),fill:'none',stroke:COLORS[index%COLORS.length],'stroke-width':2.5,'class':'chart-series'}));segment=[];};
+    const flush=()=>{if(segment.length>1)svg.append(svgEl('polyline',{points:segment.map(p=>p.join(',')).join(' '),fill:'none',stroke:seriesColor(name),'stroke-width':2.5,'class':'chart-series'}));segment=[];};
     periods.forEach((p,i)=>{
       if(!data[i]){flush();return;}
       const raw=(data[i].get(name)||{})[metric];if(raw===null){flush();return;}const value=raw||0,y=py(value);
       let mark;
       if(bar){
         const w=step*.8/shown.length,x=px(i)-step*.4+index*w;
-        mark=svgEl('rect',{x:x+1,y:Math.min(y,py(0)),width:Math.max(1,w-2),height:Math.max(1,Math.abs(y-py(0))),fill:COLORS[index%COLORS.length]});
+        mark=svgEl('rect',{x:x+1,y:Math.min(y,py(0)),width:Math.max(1,w-2),height:Math.max(1,Math.abs(y-py(0))),fill:seriesColor(name)});
       }else{
-        segment.push([px(i),y]);mark=svgEl('circle',{cx:px(i),cy:y,r:4,fill:COLORS[index%COLORS.length]});
+        segment.push([px(i),y]);mark=svgEl('circle',{cx:px(i),cy:y,r:4,fill:seriesColor(name)});
       }
       mark.dataset.chartTooltip=(options.label?options.label(name):name)+' · '+displayPeriod(p)+': '+fmtNumber(value,metric);
       mark.setAttribute('tabindex','0');mark.setAttribute('aria-label',mark.dataset.chartTooltip);mark.setAttribute('aria-describedby','chartTooltip');svg.append(mark);
@@ -2801,11 +2826,12 @@ function drawChart(periods,orgs,metric,root,options={}) {
   });
   root.append(svg);
   const legend=elem('div',null,'chart-legend');
-  shown.forEach((x,i)=>{const label=options.label?options.label(x):x;const tag=elem('span',label);tag.title=label;tag.style.setProperty('--series',COLORS[i%COLORS.length]);legend.append(tag);});root.append(legend);
-  if(groups.length>shown.length)root.append(elem('p','На графике первые '+shown.length+' выбранных работ и групп. Все выбранные работы доступны в таблице.','muted small'));
+  shown.forEach((x,i)=>{const label=options.label?options.label(x):x;const tag=elem('span',label);tag.title=label;tag.style.setProperty('--series',seriesColor(x));legend.append(tag);});root.append(legend);
+  if(groups.length>shown.length)root.append(elem('p','Показаны серии '+(page*limit+1)+'–'+(page*limit+shown.length)+'. Все выбранные работы доступны в таблице.','muted small'));
 }
 function makeTable(root,metric,caption,headers,rows,options={}) {
   const section=elem('section',null,'metric-table');section.append(elem('h3',options.title||metricTitle(metric)));
+  if(metric==='average')section.append(elem('p','Средняя сумма = общая сумма / суммарное количество. Сравнивайте только работы с сопоставимыми единицами количества.','muted small'));
   const scroll=elem('div',null,'table-scroll'),table=elem('table',null,'table '+(options.tableClass||''));
   scroll.tabIndex=0;scroll.setAttribute('role','region');scroll.setAttribute('aria-label',(options.title||metricTitle(metric))+' — таблица, можно прокручивать');
   table.append(elem('caption',caption));
@@ -3055,7 +3081,7 @@ function renderDepartmentComparison(index,orgs){
     })});
     const valid=orgs.filter(org=>rangeMetric(all,org,null,metric)!==null),section=elem('section',null,'metric-chart');
     section.append(elem('h3',metricTitle(metric)+' · общие итоги выбранных работ'));const plot=elem('div',null,'metric-plot');section.append(plot);charts.append(section);
-    if(valid.length)drawChart([{type:index.type,start:from,end:all.periods.at(-1).end}],new Set(valid),metric,plot,{chart:'bar',categories:valid,
+    if(valid.length)drawChart([{type:index.type,start:from,end:all.periods.at(-1).end}],new Set(valid),metric,plot,{chart:'bar',seriesType:'organizations',categories:valid,
       data:[new Map(valid.map(org=>[org,{[metric]:rangeMetric(all,org,null,metric)}]))]});else empty(plot,'Нет сопоставимых значений.');
     if(valid.length!==orgs.length)section.append(elem('p','Прочерк / отсутствие столбца означает неполные данные или отсутствие среднего при количестве ≤ 0.','warn small'));
     const points=all.periods.map(period=>{
@@ -3063,7 +3089,7 @@ function renderDepartmentComparison(index,orgs){
       return new Map(orgs.map(org=>[org,{[metric]:rangeMetric(range,org,null,metric)}]));
     });
     const dynamic=elem('section',null,'metric-chart');dynamic.append(elem('h3',metricTitle(metric)));const dynamicPlot=elem('div',null,'metric-plot');dynamic.append(dynamicPlot);dynamics.append(dynamic);
-    drawChart(all.periods,new Set(orgs),metric,dynamicPlot,{chart:'line',categories:orgs,data:points});
+    drawChart(all.periods,new Set(orgs),metric,dynamicPlot,{chart:'line',seriesType:'organizations',categories:orgs,data:points});
   }
 }
 const REGULARITY_LABELS={frequent:'Часто',rare:'Редко',rarer:'Заметно реже',disappeared:'Перестала встречаться',new:'Впервые в загруженной истории',dormant:'Долго без выполнений',occasional:'Встречается',absent:'Нет выполнений',uncertain:'Нет в доступных отчётах; есть пропуски',unknown:'Нет сопоставимых отчётов'};
@@ -3074,7 +3100,7 @@ function analysisCoverage(root,index,organizations,text,missing=[]){
   if(index.issues.length)root.append(elem('p','Есть исключённые некорректные, повторные или пересекающиеся отчёты. Подробности — в контроле качества.','warn small'));
   root.append(elem('p','Подразделения: '+organizations.join(', ')+'. Период: '+(index.type==='week'?'недели':'месяцы')+'. Полнота означает наличие отчётов; замечания импорта — в контроле качества.','muted small'));
 }
-function usualStatusClass(status){return status==='high'?'positive':status==='low'?'negative':status==='insufficient'?'muted':'';}
+function usualStatusClass(status){return status==='high'||status==='low'?'numeric-change':status==='insufficient'?'muted':'';}
 function renderUsual(index=analyticsIndex()){
   const root=$('usualResults');root.replaceChildren();
   const orgs=[...state.selectedOrganizations],period=$('usualPeriod').value,windowSize=Number($('usualWindow').value),percent=Number($('usualPercent').value);
@@ -3266,7 +3292,7 @@ function overviewDifference(current,previous,metric){
 }
 function overviewTrendClass(current,previous){
   if(current===null||previous===null||!Number.isFinite(current)||!Number.isFinite(previous))return '';
-  return current>previous?'positive':current<previous?'negative':'';
+  return current!==previous?'numeric-change':'';
 }
 
 function printReportTable(root,title,headings,rows){
@@ -3390,7 +3416,7 @@ function renderOverview(index){
     for(const entry of sorted.slice(0,2)){
       const line=elem('div',null,'overview-line');
       const delta=entry[metric].delta;
-      line.append(elem('strong',entry.name+(entry.kind==='group'?' (группа)':'')+': '+(delta>0?'+':'')+formatMetric(delta,metric),delta>0?'positive':'negative'));
+      line.append(elem('strong',entry.name+(entry.kind==='group'?' (группа)':'')+': '+(delta>0?'+':'')+formatMetric(delta,metric),'numeric-change'));
       line.append(elem('small','Один из крупнейших вкладов в изменение '+(metric==='amount'?'суммы':'количества')));
       insights.append(line);
     }
@@ -3424,6 +3450,11 @@ function departmentMetricStyle(metric){
     count:{dash:'8 4',barOpacity:.72,lineName:'штриховая линия'},
     average:{dash:'2 4',barOpacity:.48,lineName:'точечная линия'}
   }[metric]||{dash:null,barOpacity:1,lineName:'сплошная линия'};
+}
+function workSeriesColor(key){
+  // Stable across ordering and filters; separate mapping from department identities.
+  let hash=0;for(const character of String(key))hash=(Math.imul(hash,31)+character.codePointAt(0))>>>0;
+  return COLORS[(hash+4)%COLORS.length];
 }
 function departmentSeriesColor(organization,orgIndex=0){
   const position=state.settings.orgNames.indexOf(organization);
@@ -3565,7 +3596,7 @@ function renderDepartmentTrend(index,orgs,metrics){
       const section=elem('section',null,'metric-chart'),plot=elem('div',null,'metric-plot');
       section.append(elem('h3',metricTitle(metric)+' по подразделениям'),plot);
       charts.append(section);
-      drawChart(periods,new Set(organizations),metric,plot,{chart:state.chart,categories:organizations,data});
+      drawChart(periods,new Set(organizations),metric,plot,{chart:state.chart,seriesType:'organizations',categories:organizations,data});
     }
   }
   const all=aggregateReportRange(index,{from,to,organizations,names});
@@ -3653,6 +3684,9 @@ function ruPlural(number,one,few,many){
   return many;
 }
 let calendarOffset=0,calendarViewInitialized=false;
+function reportNoticeCount(report){
+  return new Set([...(report.warnings||[]),...(report.issues||[]).map(issue=>issue.reason)].filter(Boolean)).size;
+}
 function calendarReportStatus(reports,period,organizations){
   const matching=reports.filter(r=>r.start===period.start&&r.end===period.end);
   const overlapping=reports.filter(r=>r.start<=period.end&&r.end>=period.start);
@@ -3662,8 +3696,10 @@ function calendarReportStatus(reports,period,organizations){
   const report=matching[0];
   const present=new Set(report.organizations||report.rows?.map(x=>x.organization)||[]);
   const missing=organizations.filter(org=>!present.has(org));
-  if(missing.length)return {kind:'partial',matching,label:'Неполный',missing};
-  if(report.warnings?.length||report.issues?.length)return {kind:'warn',matching,label:'Замечания'};
+  const notices=reportNoticeCount(report);
+  const suffix=notices?' · '+notices+' '+ruPlural(notices,'замечание','замечания','замечаний'):'';
+  if(missing.length)return {kind:'partial',matching,label:'Неполный'+suffix,missing};
+  if(notices)return {kind:'warn',matching,label:notices+' '+ruPlural(notices,'замечание','замечания','замечаний')};
   return {kind:'complete',matching,label:'Загружен'};
 }
 function renderReportCalendar(){
@@ -3710,7 +3746,7 @@ function renderReportCalendar(){
       for(const r of status.matching){
         details.append(elem('p','Источник: '+(r.fileName||'не сохранён')+' · '+
           (r.sheetName||'лист не указан')+' · Подразделения: '+(r.organizations||[]).join(', ')+
-          '. Замечаний: '+(r.warnings||[]).length+'.'));
+          '. Замечаний: '+reportNoticeCount(r)+'.'));
       }
       if(status.matching.some(r=>r.start===start&&r.end===period.end)){
         const action=elem('button','Открыть контроль качества','button secondary');
@@ -4401,7 +4437,7 @@ function renderChangeTable(root,rows,metric) {
     const value=row[metric];
     [fmtNumber(value.base,metric),fmtNumber(value.current,metric),(value.delta>0?'+':'')+fmtNumber(value.delta,metric),
       value.percent===null?'— (база 0)':(value.percent>0?'+':'')+fmtNumber(value.percent,'count')+'%'].forEach((text,i)=>{
-      const cell=elem('td',text);if(i===2&&!value.negative)cell.className=value.delta>0?'positive':value.delta<0?'negative':'';tr.append(cell);
+      const cell=elem('td',text);if(i===2&&!value.negative)cell.className=value.delta!==0?'numeric-change':'';tr.append(cell);
     });
     const direction=elem('td',changeDirection(row,metric));
     if(value.smallBase&&value.delta!==0)direction.append(elem('small','Малая база'));
