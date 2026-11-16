@@ -38,3 +38,52 @@ test('native command bridge is absent from the original browser-only HTML',()=>{
   assert.equal(html.includes('tauri-bridge.js'),false);
   assert.ok(html.includes('indexedDB.open(DB_NAME,DB_VERSION)'));
 });
+
+test('Tauri build copies the current HTML-test interface and current Excel importer without divergence',()=>{
+  const os=require('node:os');
+  const root=path.resolve(__dirname,'../..');
+  const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'tauri-parity-'));
+  try{
+    const {prepare}=require('../prepare.cjs');
+    const prepared=prepare({base:root,output:tmp});
+    const source=fs.readFileSync(path.join(root,'index.html'),'utf8');
+    const desktop=fs.readFileSync(path.join(root,'desktop/renderer.js'),'utf8');
+    const built=fs.readFileSync(path.join(tmp,'index.html'),'utf8');
+    const adapted=fs.readFileSync(path.join(tmp,'tauri-desktop.js'),'utf8');
+    assert.equal(built,prepareHtml(source),'Tauri must use the complete latest HTML');
+    assert.equal(prepared.sourceBytes,Buffer.byteLength(source,'utf8'));
+    assert.equal(adapted,desktop.replace(
+      'Резервная копия: reports.json.bak. Данные не находятся в браузере.',
+      'Используется SQLite. Исходный reports.json сохраняется после переноса; делайте отдельные резервные копии.'
+    ),'Tauri must use the complete latest Excel folder importer');
+    assert.ok(fs.existsSync(path.join(tmp,'tauri-bridge.js')));
+  }finally{fs.rmSync(tmp,{recursive:true,force:true});}
+});
+
+test('all HTML-test reporting period types are supported by native Tauri SQLite',()=>{
+  const root=path.resolve(__dirname,'../..');
+  const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
+  const rust=fs.readFileSync(path.join(root,'tauri/src-tauri/src/storage.rs'),'utf8');
+  const htmlList=html.match(/const REPORT_TYPES\s*=\s*\[([^\]]+)\]/);
+  const rustList=rust.match(/const REPORT_TYPES:\s*\[&str;\s*\d+\]\s*=\s*\[([^\]]+)\]/);
+  assert.ok(htmlList,'Cannot locate the HTML reporting types');
+  assert.ok(rustList,'Cannot locate the native reporting types');
+  const values=m=>[...m[1].matchAll(/['"]([^'"]+)['"]/g)].map(x=>x[1]).sort();
+  assert.deepEqual(values(rustList),values(htmlList),'SQLite is missing a type supported by HTML');
+  assert.ok(values(htmlList).includes('day'));
+  assert.match(rust,/REPORT_TYPES\.contains\(&rule\.kind\.as_str\(\)\)/);
+  assert.match(rust,/REPORT_TYPES\.contains\(&x\)/);
+});
+
+test('watched-folder importer suggests correct dates for daily, weekly and monthly Excel',()=>{
+  const root=path.resolve(__dirname,'../..');
+  const renderer=fs.readFileSync(path.join(root,'desktop/renderer.js'),'utf8');
+  const fn=renderer.match(/function suggestedRule\(name\)\{([\s\S]*?)\n  \}\n  function dateInput/);
+  assert.ok(fn,'Cannot find the shared importer date guess');
+  const suggest=new Function('name',fn[1]);
+  assert.equal(suggest('День-2026-11-16.xlsx').type,'day');
+  assert.equal(suggest('Дневной-2026-11-16.xlsx').start,'2026-11-16');
+  assert.equal(suggest('week_2026-11-09.xlsx').type,'week');
+  assert.equal(suggest('Месяц-2026-11.xlsx').start,'2026-11-01');
+  assert.match(renderer,/shiftPeriod\(rule\.type,rule\.start,i\)/);
+});
