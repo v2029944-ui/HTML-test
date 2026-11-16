@@ -78,13 +78,15 @@ test('all HTML-test reporting period types are supported by native Tauri SQLite'
 test('watched-folder importer suggests correct dates for daily, weekly and monthly Excel',()=>{
   const root=path.resolve(__dirname,'../..');
   const renderer=fs.readFileSync(path.join(root,'desktop/renderer.js'),'utf8');
-  const fn=renderer.match(/function suggestedRule\(name\)\{([\s\S]*?)\n  \}\n  function dateInput/);
-  assert.ok(fn,'Cannot find the shared importer date guess');
-  const suggest=new Function('name',fn[1]);
-  assert.equal(suggest('День-2026-11-16.xlsx').type,'day');
-  assert.equal(suggest('Дневной-2026-11-16.xlsx').start,'2026-11-16');
-  assert.equal(suggest('week_2026-11-09.xlsx').type,'week');
-  assert.equal(suggest('Месяц-2026-11.xlsx').start,'2026-11-01');
+  for(const source of [renderer.replace(/\r\n/g,'\n'),renderer.replace(/\r?\n/g,'\r\n')]){
+    const fn=source.match(/function suggestedRule\(name\)\{([\s\S]*?)\r?\n  \}\r?\n  function dateInput/);
+    assert.ok(fn,'Cannot find the shared importer date guess');
+    const suggest=new Function('name',fn[1]);
+    assert.equal(suggest('День-2026-11-16.xlsx').type,'day');
+    assert.equal(suggest('Дневной-2026-11-16.xlsx').start,'2026-11-16');
+    assert.equal(suggest('week_2026-11-09.xlsx').type,'week');
+    assert.equal(suggest('Месяц-2026-11.xlsx').start,'2026-11-01');
+  }
   assert.match(renderer,/shiftPeriod\(rule\.type,rule\.start,i\)/);
 });
 
@@ -199,3 +201,4 @@ test('folder watcher syncs on recovery even without a file change',async()=>{
   assert.equal(changes,3,'Recovery after valid scan must sync');
   unsubscribe();
 });
+

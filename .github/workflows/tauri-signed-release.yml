@@ -3,8 +3,6 @@ name: Tauri signed Windows release
 on:
   push:
     branches: [build/tauri-signed-20261116]
-    paths:
-      - '.github/workflows/tauri-signed-release.yml'
   workflow_dispatch:
 
 permissions:
