@@ -47,8 +47,10 @@
     return el;
   }
   function suggestedRule(name){
+    const day=name.match(/(?:day|день|дневн(?:ой|ая|ые|ое))[\s_-]*(\d{4}-\d{2}-\d{2})/i);
     const week=name.match(/(?:week|неделя)[\s_-]*(\d{4}-\d{2}-\d{2})/i);
     const month=name.match(/(?:month|месяц)[\s_-]*(\d{4}-\d{2})/i);
+    if(day)return {type:'day',start:day[1],sheet:''};
     if(week)return {type:'week',start:week[1],sheet:''};
     if(month)return {type:'month',start:month[1]+'-01',sheet:''};
     if(name.toLocaleLowerCase('ru-RU')==='анализ.xlsx')
