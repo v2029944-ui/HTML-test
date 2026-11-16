@@ -9,6 +9,76 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ImportControls(unittest.TestCase):
+    def test_calendar_and_uploaded_reports_share_one_section(self):
+        self.load_analytics_fixture()
+        self.page.locator('[data-view=upload]').click()
+        reports=self.page.locator('#reportPeriods #uploadedReports')
+        self.assertEqual(reports.count(),1)
+        self.assertFalse(self.page.locator('#reports').is_visible())
+        self.assertEqual(self.page.locator('#reportPeriods #reportCalendar').count(),1)
+        navigation=self.page.locator('#reportPeriods .calendar-toolbar').evaluate('''root=>[...root.querySelectorAll('button')].map(node=>({y:node.getBoundingClientRect().y,height:node.getBoundingClientRect().height}))''')
+        self.assertAlmostEqual(navigation[0]['y'],navigation[1]['y'],delta=1)
+        self.assertAlmostEqual(navigation[0]['height'],navigation[1]['height'],delta=1)
+        self.assertIn('2 периода',reports.locator('summary').inner_text())
+        reports.locator('summary').focus()
+        self.page.keyboard.press('Space')
+        self.assertTrue(self.page.locator('#reports').is_visible())
+        self.assertEqual(reports.locator('.report-row').count(),2)
+        self.page.locator('#calendarType').select_option('month')
+        self.assertIn('Добавьте',self.page.locator('#reportCalendar').inner_text())
+        self.assertEqual(reports.locator('.report-row').count(),2)
+        self.page.locator('#calendarType').select_option('week')
+        self.page.locator('#reportCalendar button').filter(has_text='26.10.2026').click()
+        self.page.locator('#calendarDetails button').click()
+        self.assertEqual(self.page.locator('#qualityPeriod').input_value(),'week:2026-10-26')
+        self.page.once('dialog',lambda dialog:dialog.dismiss())
+        reports.locator('button').first.click()
+        self.assertEqual(self.page.evaluate('state.reports.length'),2)
+        self.page.once('dialog',lambda dialog:dialog.accept())
+        reports.locator('button').first.click()
+        self.page.wait_for_function('state.reports.length===1')
+        self.assertIn('1 период',reports.locator('summary').inner_text())
+        self.assertEqual(reports.locator('.report-row').count(),1)
+        self.page.reload()
+        self.page.wait_for_function('state.db!==null')
+        self.assertEqual(self.page.evaluate('state.reports.length'),1)
+
+    def test_analytics_headings_controls_and_collapsed_help(self):
+        self.load_analytics_fixture()
+        self.assertEqual(self.page.locator('#overviewHeading').inner_text(),'Итоги за период')
+        self.assertEqual(self.page.locator('#structurePanel>summary').inner_text(),'Состав работ и доли')
+        self.assertEqual(self.page.locator('#usualPanel>summary').inner_text(),'Отклонения от обычного уровня')
+        self.assertEqual(self.page.locator('#regularityPanel>summary').inner_text(),'Частота выполнения работ')
+        self.assertFalse(self.page.locator('.overview-footnote').is_visible())
+        self.page.locator('#overviewPanel .quick-help>summary').click()
+        self.assertTrue(self.page.locator('.overview-footnote').is_visible())
+        self.page.locator('#chartBreakdown').select_option('organizations')
+        self.assertFalse(self.page.locator('#chartReadGuide').is_visible())
+        self.page.locator('#chartNotes>summary').click()
+        self.assertTrue(self.page.locator('#chartReadGuide').is_visible())
+        self.page.locator('#chartBreakdown').select_option('works')
+        self.assertFalse(self.page.locator('#chartNotes').is_visible())
+        for width in [320,390,1024,1440]:
+            self.page.set_viewport_size({'width':width,'height':900})
+            for design in ['modern','classic','compact','neon','glass','corporate','paper','industrial']:
+                for size in ['standard','large','xlarge']:
+                    result=self.page.evaluate('''({design,size})=>{
+                      Object.assign(document.documentElement.dataset,{design,uiSize:size});
+                      const selectors=['#overviewHeading','#chartHeading','#comparisonHeading','#structurePanel>summary','#usualPanel>summary','#regularityPanel>summary'];
+                      const headings=selectors.map(selector=>getComputedStyle(document.querySelector(selector)).fontSize);
+                      return {headings,overflow:document.documentElement.scrollWidth>innerWidth};
+                    }''',{'design':design,'size':size})
+                    self.assertEqual(len(set(result['headings'])),1,(width,design,size,result))
+                    self.assertFalse(result['overflow'],(width,design,size))
+        self.page.set_viewport_size({'width':1440,'height':900})
+        self.page.evaluate('Object.assign(document.documentElement.dataset,{design:"modern",uiSize:"standard"})')
+        self.page.locator('#chartBreakdown').select_option('organizations')
+        positions=self.page.locator('#chartPanel .chart-view-controls').evaluate('''root=>[...root.querySelectorAll('select,.multi-dropdown>summary')].filter(node=>node.getClientRects().length).map(node=>({y:node.getBoundingClientRect().y,height:node.getBoundingClientRect().height,font:getComputedStyle(node).fontSize}))''')
+        self.assertGreaterEqual(len(positions),3)
+        self.assertLessEqual(max(item['y'] for item in positions)-min(item['y'] for item in positions),1)
+        self.assertEqual(len(set(item['font'] for item in positions)),1)
+        self.assertLessEqual(max(item['height'] for item in positions)-min(item['height'] for item in positions),1)
+
     def load_analytics_fixture(self):
         self.page.evaluate('''async()=>{
           const orgs=DEFAULT_ORGS.slice(0,2),works=Array.from({length:10},(_,i)=>'Работа '+(i+1));
@@ -44,7 +114,7 @@ class ImportControls(unittest.TestCase):
         self.page.locator('#chartSeriesLayout').select_option('separate')
         self.assertTrue(self.page.evaluate('''()=>[...document.querySelectorAll('#chartsContainer .chart-legend span')].every(node=>node.style.getPropertyValue('--series')===departmentSeriesColor(node.textContent))'''))
 
-    def test_partial_calendar_neutral_changes_and_average_explanation(self):
+    def test_partial_calendar_direction_colors_and_average_explanation(self):
         self.load_analytics_fixture()
         result=self.page.evaluate('''()=>{
           const root=document.querySelector('#chartsContainer');
@@ -57,7 +127,8 @@ class ImportControls(unittest.TestCase):
         self.assertNotIn('Нет отчёта',result['text'])
         self.assertEqual(result['marks'],8)
         self.assertEqual(result['calendar'],'Неполный · 1 замечание')
-        for key in ['up','down','high','low']:self.assertEqual(result[key],'numeric-change')
+        for key in ['up','high']:self.assertEqual(result[key],'numeric-rise')
+        for key in ['down','low']:self.assertEqual(result[key],'numeric-fall')
         self.assertIn('сопоставимых единицах',result['average'])
 
     def test_series_pages_are_accessible_and_fit_mobile_and_desktop(self):

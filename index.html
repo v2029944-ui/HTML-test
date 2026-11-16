@@ -1229,6 +1229,39 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 .chart-series-control select{width:auto;min-width:100px;max-width:100%}
 .metric-plot>.chart-legend{max-height:none;overflow:visible;flex-wrap:wrap}
 .filter-scope-title{font-size:var(--ui-legend-font,14px);margin:0 0 12px}
+
+/* Shared section hierarchy and control alignment; appearance choices stay independent. */
+:root{--section-title-size:18px;--section-note-size:var(--ui-small-font,13px)}
+:root[data-design="corporate"]{--section-title-size:13px}
+:root[data-design="paper"]{--section-title-size:24px}
+:root:is([data-ui-size="large"],[data-ui-size="xlarge"]){--section-title-size:var(--ui-heading-font)}
+:root :is(#dashboard,#reportPeriods) :is(.panel>.sectionbar h2,.panel>h2,.panel>summary),:root #reportPeriods h2{font-family:var(--font-heading);font-size:var(--section-title-size);font-weight:700;line-height:1.4}
+:root #dashboard .panel>.sectionbar h2,:root #reportPeriods h2{margin:0}
+#dashboard .panel>.sectionbar,#reportPeriods>.sectionbar{align-items:flex-start;gap:16px}
+#dashboard :is(.muted.small,.quick-help,.quick-help>summary,.chart-read-guide,.chart-comparison-hint),#reportPeriods :is(.muted.small,.calendar-period small){font-size:var(--section-note-size);line-height:1.55}
+#dashboard details.panel>summary{min-height:44px;cursor:pointer;padding:8px 0}
+#dashboard .extended-section>summary{font-family:var(--font-heading);font-size:var(--ui-legend-font,15px);line-height:1.4;min-height:44px}
+:root[data-design="corporate"] #dashboard details.panel>summary{text-transform:uppercase;letter-spacing:.065em}
+:root[data-design="industrial"] #dashboard details.panel>summary{background:var(--band-surface);color:var(--band-text);padding:12px 16px;border-left:3px solid var(--band-accent)}
+#chartPanel>.sectionbar{display:block}
+#chartPanel .chart-view-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));align-items:end;gap:12px;margin-top:16px;width:100%}
+#chartPanel .chart-view-controls>label,#chartPanel .chart-metric-control{min-width:0;max-width:none;width:100%}
+:root #dashboard :is(.chart-view-controls>label,.chart-metric-control>span,.sectionbar>label),:root #reportPeriods .sectionbar>label{font-size:var(--label-size);font-weight:600;line-height:var(--label-leading)}
+#dashboard .extended-filters{align-items:end}
+#dashboard .analysis-scope-note{margin-bottom:0}
+#dashboard .quick-help{margin:12px 0}
+#dashboard .quick-help .chart-comparison-hint{background:none;border:0;padding:0;margin:8px 0}
+.uploaded-reports{border-top:1px solid var(--border);margin-top:16px;padding-top:8px}
+.uploaded-reports>summary{display:flex;align-items:center;gap:12px;min-height:48px;cursor:pointer;font-size:var(--label-size);line-height:1.4;font-weight:650;list-style:none}
+.uploaded-reports>summary::-webkit-details-marker{display:none}
+.uploaded-reports>summary>span:first-child{flex:1;min-width:0}
+.uploaded-reports>summary::after{content:'';width:7px;height:7px;flex:0 0 7px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(45deg);margin-right:4px}
+.uploaded-reports[open]>summary::after{transform:rotate(225deg)}
+.uploaded-reports>summary:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+#reportPeriods .calendar-toolbar{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center}
+#reportPeriods .calendar-toolbar strong{text-align:center;min-width:0;line-height:1.5}
+@media(max-width:740px){#reportPeriods .calendar-toolbar{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}#calendarRange{grid-column:1/-1;grid-row:1}#reportPeriods .calendar-toolbar button{width:100%}}
+@media(max-width:740px){#dashboard .panel>.sectionbar,#reportPeriods>.sectionbar{gap:12px}#dashboard .panel>.sectionbar>label,#reportPeriods>.sectionbar>label{width:100%}.uploaded-reports>summary{gap:8px}}
 </style>
   
 </head>
@@ -1253,9 +1286,9 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
     <p class="mobile-help muted">Широкие таблицы и большие диапазоны графиков можно прокручивать по горизонтали.</p>
 
     <section id="dashboard" class="view active">
-      <div class="panel dashboard-filter-panel"><h2 class="filter-scope-title">Общие фильтры аналитики</h2>
+      <div class="panel dashboard-filter-panel"><h2 class="filter-scope-title">Данные для анализа</h2>
         <div class="filters">
-          <label>Период<select id="periodType"><option value="week">Недели</option><option value="month">Месяцы</option></select></label>
+          <label>Тип периода<select id="periodType"><option value="week">Недели</option><option value="month">Месяцы</option></select></label>
           <fieldset class="multi-filter"><legend>Подразделения</legend><div id="orgFilter" class="multi-choices"></div></fieldset>
           <fieldset class="multi-filter"><legend>Показатели обзора и работ</legend><div id="metric" class="multi-choices"></div></fieldset>
           <details class="categories category-filter" id="categoryFilter">
@@ -1271,7 +1304,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
                 <button type="button" id="clearAll" class="text-button" title="Убрать все отметки работ; основные показатели обзора не изменятся">Снять всё</button>
                 <button type="button" id="selectTop" class="text-button" title="Отметить восемь крупнейших работ по выбранному показателю">8 крупнейших</button>
               </div>
-              <p class="muted small category-explainer">Отметки применяются к детальным графикам и анализу выбранных работ. Основные итоги обзора по-прежнему охватывают все выполненные работы.</p>
+
               <div id="categories" class="category-list"></div>
             </div>
           </details>
@@ -1284,16 +1317,16 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
             <div class="period-pair"><select id="rangeStart"></select><select id="rangeEnd"></select></div>
           </fieldset>
         </div>
-        <details class="quick-help"><summary>Как выбрать данные для отчёта?</summary><p>Выберите недели или месяцы, подразделения и один период либо диапазон. Фильтр «Работы и группы» находится рядом с показателями: открой его, чтобы искать и отмечать нужные услуги. Обзор показывает итоги <strong>всех выполненных работ</strong> выбранных подразделений; отметки работ и переключатель показателей влияют на подробную аналитику.</p></details>
+        <p class="muted small analysis-scope-note">Итоги охватывают все выполненные работы. Выбор в фильтре «Работы и группы» применяется к подробной аналитике; у графика подразделений есть отдельная настройка состава работ.</p>
       </div>
       <section class="panel overview-panel" id="overviewPanel" aria-labelledby="overviewHeading">
-        <div class="sectionbar"><div><h2 id="overviewHeading">Обзор работы</h2><p id="overviewPeriodText" class="muted small">Выберите период для анализа.</p></div>
+        <div class="sectionbar"><div><h2 id="overviewHeading">Итоги за период</h2><p id="overviewPeriodText" class="muted small">Выберите период для анализа.</p></div>
           <button type="button" id="printSummary" class="button secondary" title="Распечатать итоговую сводку или сохранить её в PDF через диалог печати браузера">Печать сводки / PDF</button></div>
         <div id="overviewAlerts" role="status" aria-live="polite"></div>
         <div class="kpis overview-kpis" id="overviewKpis" aria-live="polite"></div>
         <div class="overview-sections">
           <section class="overview-section" aria-labelledby="overviewInsightsHeading">
-            <h3 id="overviewInsightsHeading">Что изменилось?</h3>
+            <h3 id="overviewInsightsHeading">Изменения к предыдущему интервалу</h3>
             <div id="overviewInsights"></div>
             <button type="button" id="overviewShowComparison" class="button secondary" title="Перейти к сравнению за выбранный период; в подробном отчёте действуют отметки работ">Сравнить выбранные работы подробнее</button>
           </section>
@@ -1302,12 +1335,12 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
             <div id="overviewOrganizations"></div>
           </section>
         </div>
-        <p class="muted small overview-footnote">Сумма и количество показываются отдельно. Средняя сумма на работу = общая сумма / суммарное количество. Показатель имеет смысл только при сопоставимых единицах количества выбранных работ. Изменения — относительно предшествующего интервала той же длительности. <span class="numeric-rise">Синий — рост</span>, <span class="numeric-fall">фиолетовый — снижение</span>: это направления, а не оценка эффективности. Зелёный и красный используются для подтверждённого состояния качества данных.</p>
+        <details class="quick-help"><summary>Как рассчитываются итоги и изменения?</summary><p class="muted small overview-footnote">Средняя сумма на работу = общая сумма / суммарное количество. Показатель имеет смысл только при сопоставимых единицах количества выбранных работ. Изменения — относительно предшествующего интервала той же длительности. <span class="numeric-rise">Синий — рост</span>, <span class="numeric-fall">фиолетовый — снижение</span>: это направления, а не оценка эффективности. Зелёный и красный используются для подтверждённого состояния качества данных.</p></details>
       </section>
       <details class="analytics-details-container" id="advancedAnalytics">
-        <summary><span><strong>Подробный анализ</strong><small>Графики, таблицы, причины изменений, структура и регулярность услуг</small></span><span class="details-toggle-text" aria-hidden="true">Открыть</span></summary>
-      <div class="panel">
-        <div class="sectionbar"><div><h2>Графики и сравнение подразделений</h2><p id="chartDescription" class="muted small">Динамика отмеченных работ и групп за выбранный диапазон.</p></div>
+        <summary><span><strong>Подробная аналитика</strong><small>Динамика, сравнение, состав и регулярность работ</small></span><span class="details-toggle-text" aria-hidden="true">Открыть</span></summary>
+      <section class="panel" id="chartPanel" aria-labelledby="chartHeading">
+        <div class="sectionbar"><div><h2 id="chartHeading">Динамика работ и подразделений</h2><p id="chartDescription" class="muted small">Динамика отмеченных работ и групп за выбранный диапазон.</p></div>
           <div class="chart-view-controls">
             <label>Что сравнивать<select id="chartBreakdown"><option value="works">Работы и группы</option><option value="organizations">Подразделения по показателям</option></select></label>
             <label id="chartOrgScopeLabel" hidden>Какие услуги учитывать<select id="chartOrgScope"><option value="all">Все выполненные работы</option><option value="selected">Только отмеченные работы и группы</option></select></label>
@@ -1315,14 +1348,17 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
             <label id="chartSeriesLayoutLabel" hidden>Как расположить показатели<select id="chartSeriesLayout"><option value="combined">Вместе — относительная шкала (%)</option><option value="separate">Отдельно — исходные значения</option></select></label>
           </div>
         </div>
-        <div id="chartComparisonHint" class="chart-comparison-hint" hidden></div>
+        <details class="quick-help" id="chartNotes" hidden><summary>Настройки и шкалы графика</summary>
+          <div id="chartComparisonHint" class="chart-comparison-hint" hidden></div>
+          <div id="chartReadGuide" class="chart-read-guide" hidden></div>
+        </details>
         <div class="segmented chart-mode-controls"><button data-chart="line" class="active" title="Показывать изменение значений по периодам линиями">Линейный график</button><button data-chart="bar" title="Сравнивать значения столбцами">Столбцы</button><button data-chart="table" title="Показывать точные значения по периодам">Таблица значений</button></div>
         <div class="chart-and-filter">
-          <div class="chart-wrap"><div id="chartReadGuide" class="chart-read-guide" hidden></div><div id="chartsContainer"></div><div id="dataTable" class="table-scroll" hidden></div><div id="chartOrgTotals"></div><p id="chartHelp" class="muted small"></p></div>
+          <div class="chart-wrap"><div id="chartsContainer"></div><div id="dataTable" class="table-scroll" hidden></div><div id="chartOrgTotals"></div><p id="chartHelp" class="muted small"></p></div>
         </div>
-      </div>
+      </section>
       <section class="panel" id="comparison" aria-labelledby="comparisonHeading">
-        <div class="sectionbar"><div><h2 id="comparisonHeading">Сравнение</h2><p class="muted small">Учитываются выбранные выше подразделения, показатели и работы.</p></div>
+        <div class="sectionbar"><div><h2 id="comparisonHeading">Сравнение периодов и подразделений</h2><p class="muted small">Сопоставьте два периода или подразделения за общий интервал.</p></div>
           <label>Сравниваем<select id="comparisonMode"><option value="periods">Периоды</option><option value="organizations">Подразделения</option></select></label>
         </div>
         <div id="periodComparisonFilters" class="comparison-filters">
@@ -1343,25 +1379,27 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         </div>
         <div class="kpis" id="kpis"></div>
         <p id="comparisonHelp" class="muted small"></p>
-        <details class="quick-help"><summary>Что показывают «Сравнение» и «Разница»?</summary>
+        <details class="quick-help"><summary>Как читать сравнение?</summary>
           <p>При сравнении периодов первое значение — база, второе — анализируемый период. При сравнении подразделений даты общие для всех, а базовое подразделение задаётся в дополнительных параметрах. Прочерк означает отсутствие сопоставимых данных, а не ноль.</p>
         </details>
         <div id="comparisonCoverage" role="status" aria-live="polite"></div>
         <div id="comparisonTable"></div><div id="comparisonCharts"></div>
         <details id="comparisonDynamics" class="extended-section" hidden><summary>Динамика выбранного диапазона</summary><p class="muted small">Итоги отмеченных работ. Пропуски — разрывы линий; средняя сумма рассчитана отдельно для каждого периода.</p><div id="comparisonDynamicsPlots"></div></details>
         <details id="contributions" class="extended-section">
-          <summary>Какие работы изменили общий результат?</summary>
-          <p class="muted small">Все услуги выбранных подразделений, независимо от отметок работ на графике. Группы учитываются один раз. Процент услуги рассчитан от модуля её базы; доля вклада — от общего изменения и может быть отрицательной или больше 100%. При нуле процент не рассчитывается.</p>
+          <summary>Вклад работ в изменение итогов</summary>
+          <p class="muted small">Учитываются все услуги выбранных подразделений. Группы входят в общий результат один раз.</p>
+          <details class="quick-help"><summary>Как рассчитывается вклад?</summary><p class="muted small">Процент услуги рассчитан от модуля её базы; доля вклада — от общего изменения и может быть отрицательной или больше 100%. При нуле процент не рассчитывается.</p>
+
+          <p class="muted small">Сверка вкладов проверяет согласованность расчёта, а не корректность исходного Excel. Замечания источника смотрите в контроле качества.</p></details>
           <div id="contributionCheck"></div>
-          <p class="muted small">Сверка вкладов проверяет согласованность расчёта, а не корректность исходного Excel. Замечания источника смотрите в контроле качества.</p>
           <div id="contributionResults"></div>
           <div class="change-pagination"><button id="contributionPrev" class="button secondary" title="Предыдущая страница: Вклад работ">← Предыдущая</button><span id="contributionPage" class="muted small" aria-live="polite"></span><button id="contributionNext" class="button secondary" title="Следующая страница: Вклад работ">Следующая →</button></div>
         </details>
 
       </section>
       <details class="panel" id="structurePanel">
-        <summary>Какие услуги формируют основную сумму и количество?</summary>
-        <p class="muted small">Показывает, какие услуги дают наибольшую часть количества или суммы за выбранный период. По умолчанию учитываются только отмеченные выше работы и группы. Для полного состава переключите режим на «Все выполненные работы». Справочник услуг не участвует.</p>
+        <summary>Состав работ и доли</summary>
+        <p class="muted small">Доли и накопленный вклад ведущих услуг по выбранному показателю. Состав работ задаётся ниже; по умолчанию учитываются отмеченные услуги и группы.</p>
         <div class="extended-filters">
           <label>Базовый период<select id="structureBase"></select></label>
           <label>Анализируемый период<select id="structureCurrent"></select></label>
@@ -1372,12 +1410,12 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <div id="structureResults"></div>
       </details>
       <details class="panel" id="usualPanel">
-        <summary>Что изменилось относительно предыдущих 4–8 периодов?</summary>
-        <p class="muted small">Сравнивает текущую неделю или месяц с обычным уровнем за предыдущие 4 либо 8 периодов. Учитываются подразделения и отмеченные работы/группы из фильтров выше. Например, если раньше выполняли в среднем 10 работ за неделю, а сейчас 15, отклонение составляет +5 (+50%).</p>
-        <details class="quick-help"><summary>Как рассчитываются обычный уровень, отклонение и оценка?</summary>
+        <summary>Отклонения от обычного уровня</summary>
+        <p class="muted small">Сравнение выбранных работ с обычным уровнем за предыдущие 4 или 8 недель либо месяцев.</p>
+        <details class="quick-help"><summary>Как рассчитывается обычный уровень?</summary>
           <p><strong>Обычный уровень:</strong> для количества и суммы — среднее по доступным полным предыдущим периодам, без анализируемого. Например, 10, 20, 10 и 20 работ дают среднее 15. Средняя сумма на работу вычисляется отдельно: вся сумма за полные предыдущие периоды / всё количество работ в этих периодах. Для интерпретации нужны сопоставимые единицы количества выбранных работ.</p>
           <p><strong>Отклонение:</strong> значение сейчас − обычный уровень. <strong>Отклонение, %:</strong> отклонение / модуль обычного уровня × 100%. При нулевом обычном уровне процент не вычисляется.</p>
-          <p><strong>Необычно выше/ниже:</strong> числовое отклонение достигает указанного процентного порога (по умолчанию 30%); при нулевой базе любое ненулевое отклонение отмечается отдельно, без процента. Для оценки нужны не менее двух полных предыдущих периодов. Это простой порог, а не статистический прогноз.</p>
+          <p><strong>Необычно выше/ниже:</strong> числовое отклонение достигает указанного процентного порога (по умолчанию 30%); при нулевой базе любое ненулевое отклонение отмечается отдельно, без процента. Для оценки нужны не менее двух полных предыдущих периодов. Это простой порог, а не статистический прогноз.</p><p><span class="numeric-rise">Синий — необычно выше</span>, <span class="numeric-fall">фиолетовый — необычно ниже</span>. Цвет обозначает направление, а не оценку эффективности.</p>
           <p><strong>Пропуски:</strong> период без полного отчёта хотя бы одного выбранного подразделения исключается из среднего, а не считается нулём. Если услуга отсутствует в полном отчёте, её значение за этот период — ноль. Отрицательные значения могут быть корректировками: «выше» и «ниже» означают направление числа, не оценку эффективности.</p>
         </details>
         <div class="extended-filters">
@@ -1386,14 +1424,14 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <label>Необычное отклонение, %<input title="Порог для статуса «Необычно выше/ниже». Например, 30 означает отклонение на 30% или больше от модуля среднего." id="usualPercent" type="number" min="0" step="any" value="30"></label>
           <fieldset class="multi-filter"><legend>Показатели отклонений</legend><div id="usualMetrics" class="multi-choices"></div></fieldset>
         </div>
-        <p class="muted small">Оценка по процентному порогу, от модуля базы; это не статистический прогноз. При нулевой базе процент не рассчитан. Для выделения нужны хотя бы 2 фактических периода. <span class="numeric-rise">Синий — необычно выше</span>, <span class="numeric-fall">фиолетовый — необычно ниже</span>. При отрицательных значениях выше/ниже означает числовое отклонение, а не хорошую или плохую работу.</p>
+
         <div id="usualCoverage" role="status" aria-live="polite"></div><div id="usualResults"></div>
 <div class="change-pagination"><button id="usualPrev" class="button secondary" title="Предыдущая страница: Отклонения от среднего">← Предыдущая</button><span id="usualPage" class="muted small" aria-live="polite"></span><button id="usualNext" class="button secondary" title="Следующая страница: Отклонения от среднего">Следующая →</button></div>
       </details>
       <details class="panel" id="regularityPanel">
-        <summary>Какие услуги выполняются редко или давно не выполнялись?</summary>
-        <p class="muted small">Здесь показано, в скольких неделях или месяцах выполнялась каждая отмеченная работа, а не сколько раз её сделали. Например, если услуга была в 1 из 4 полных недель, её частота — 25%. Подразделения, работы и диапазон берутся из фильтров выше.</p>
-        <details class="quick-help"><summary>Как понимать «редко», «исчезла» и другие признаки?</summary>
+        <summary>Частота выполнения работ</summary>
+        <p class="muted small">Частота — доля полных периодов с выполнением услуги, а не число выполненных работ. Подразделения, работы и диапазон берутся из общих фильтров.</p>
+        <details class="quick-help"><summary>Как определяются признаки активности?</summary>
           <p><strong>Часто</strong> — выполнялась в 75% или более полных периодов (нужны хотя бы 2). <strong>Редко</strong> — в 25% или менее (нужны хотя бы 4 полных периода и хотя бы одно выполнение). <strong>Заметно реже</strong> — частота упала минимум вдвое относительно предыдущего равного диапазона; нужны хотя бы по 2 полных периода в обоих диапазонах и хотя бы 2 периода с прежней активностью. <strong>Перестала встречаться</strong> — была в предыдущем диапазоне, но ни разу в полностью загруженном текущем. <strong>Долго без выполнений</strong> — после последней отмеченной активности прошло 4 или 8 полных периодов подряд.</p>
           <p><strong>Важно:</strong> отсутствие отчёта не означает отсутствие услуги. Пропуски не считаются нулём и мешают подтвердить исчезновение. «Впервые» означает только первое появление в загруженной истории. Активность — ненулевое количество или сумма, в том числе корректировки, а не оценка важности услуги.</p>
         </details>
@@ -1402,7 +1440,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <label>Долгое отсутствие<select id="regularityGap"><option value="4">4 периода подряд</option><option value="8">8 периодов подряд</option></select></label>
           <label>Поиск услуги или группы<input id="regularitySearch" type="search" placeholder="Введите часть названия"></label>
         </div>
-        <p class="muted small">«Признак» фильтрует услуги по типу активности, а «Долгое отсутствие» задаёт, сколько полных периодов подряд считать длительным перерывом. «Все услуги» показывает все отмеченные выше работы.</p>
+
         <div id="regularityCoverage" role="status" aria-live="polite"></div><div id="regularityResults"></div>
 <div class="change-pagination"><button id="regularityPrev" class="button secondary" title="Предыдущая страница: Редкость услуг">← Предыдущая</button><span id="regularityPage" class="muted small" aria-live="polite"></span><button id="regularityNext" class="button secondary" title="Следующая страница: Редкость услуг">Следующая →</button></div>
       </details>
@@ -1493,11 +1531,10 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <div class="actions"><button id="inspectFile" class="button secondary" title="Разобрать Excel, показать найденные периоды и замечания до сохранения" disabled>Проверить Excel</button><button id="saveImport" class="button primary" disabled>Сохранить отчёты</button></div>
         <div id="importPreview" class="preview muted">Выберите файл и проверьте структуру перед сохранением.</div>
       </div>
-      <div class="panel"><div class="sectionbar"><h2>Загруженные периоды</h2><span id="reportCount" class="muted small"></span></div><div id="reports" class="reports-list"></div></div>
-      <section class="panel" aria-labelledby="calendarHeading">
-        <div class="sectionbar"><div><h2 id="calendarHeading">Календарь отчётов</h2>
+      <section class="panel" id="reportPeriods" aria-labelledby="calendarHeading">
+        <div class="sectionbar"><div><h2 id="calendarHeading">Отчёты по периодам</h2>
           <p class="muted small">Полнота всех подразделений, замечания и пропущенные периоды. Отсутствующий отчёт не считается нулём.</p></div>
-          <label>Масштаб<select id="calendarType"><option value="week">Недели</option><option value="month">Месяцы</option></select></label>
+          <label>Тип периода<select id="calendarType"><option value="week">Недели</option><option value="month">Месяцы</option></select></label>
         </div>
         <div class="calendar-toolbar">
           <button type="button" class="button secondary" id="calendarPrev">← Раньше</button>
@@ -1506,6 +1543,10 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         </div>
         <div id="reportCalendar" class="report-calendar"></div>
         <div id="calendarDetails" class="calendar-details muted small" role="status" aria-live="polite"></div>
+        <details id="uploadedReports" class="uploaded-reports">
+          <summary><span>Загруженные отчёты</span><span id="reportCount" class="muted small"></span></summary>
+          <div id="reports" class="reports-list"></div>
+        </details>
       </section>
       <section class="panel" aria-labelledby="qualityHeading">
         <h2 id="qualityHeading">Контроль качества данных</h2>
@@ -3693,13 +3734,14 @@ function renderDashboard(sync=true){
   $('chartMetricsWrap').hidden=!byDepartments;
   $('chartSeriesLayoutLabel').hidden=!byDepartments||metrics.length<2;
   const hint=$('chartComparisonHint'),guide=$('chartReadGuide');
+  $('chartNotes').hidden=!byDepartments;
   hint.hidden=!byDepartments;
   guide.hidden=!byDepartments||state.chart==='table';
   if(byDepartments){
     const lineMeaning=metrics.map(metric=>metricTitle(metric).toLowerCase()+' — '+departmentMetricStyle(metric).lineName).join('; ');
     hint.replaceChildren(
       elem('strong','Как настроить'),
-      elem('span','Подразделения выбираются в фильтре вверху страницы. Здесь выберите показатели именно для этих графиков — верхний фильтр «Показатели» влияет на остальные разделы.')
+      elem('span','Подразделения выбираются в фильтре вверху страницы. Показатели этого графика выбираются независимо от фильтра «Показатели обзора и работ».')
     );
     const combined=metrics.length>1&&$('chartSeriesLayout').value==='combined';
     guide.replaceChildren(
@@ -3712,8 +3754,8 @@ function renderDashboard(sync=true){
     );
   }
   $('chartDescription').textContent=byDepartments?
-    'Сравнение выбранных подразделений по неделям или месяцам. Для каждого сочетания подразделения и показателя создаётся отдельная серия.':
-    'Отмечайте работы и группы в верхнем фильтре «Работы и группы», чтобы показать их на графике и в таблице.';
+    'Показатели подразделений за общий период. Настройки этого графика — ниже.':
+    'Отмеченные работы и группы из общих фильтров.';
   const index=analyticsIndex();
   if(byDepartments)renderDepartmentTrend(index,orgs,metrics);
   else if(state.chart==='table')renderTable(orgs,metrics);
@@ -3729,9 +3771,7 @@ function renderDashboard(sync=true){
   $('chartHelp').textContent=byDepartments?
     'Сравниваются '+orgs.size+' из '+state.settings.orgNames.length+' подразделений. Учитываются '+
       ($('chartOrgScope').value==='all'?'все выполненные работы.':'только отмеченные работы и группы.')+
-      ' Отсутствующие отчёты дают разрывы на графике и прочерки в таблице; итоги диапазона доступны только для полных данных. '+
-      (metrics.length>1&&$('chartSeriesLayout').value==='combined'&&state.chart!=='table'?
-        ' При совместном сравнении 100% — максимум каждого показателя, а не процент роста.':' При раздельном сравнении используются исходные единицы показателей.'):
+      ' Прочерк в итогах — нет полного набора отчётов или не рассчитано среднее.':
     'Выбрано подразделений: '+orgs.size+' из '+state.settings.orgNames.length+
       '. '+(metrics.length===2?'Сумма и количество показаны отдельно.':'');
 }
