@@ -12,6 +12,7 @@ def diagnostics(error):
     (output/'windows-error.txt').write_text(str(error),encoding='utf-8')
     # Record software/runtime facts only; never dump process environments or full command lines.
     script=r"""
+    [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)
     $ErrorActionPreference='Continue'
     Get-Process analiz-rabot-tauri,msedgewebview2 -ErrorAction SilentlyContinue | Select-Object ProcessName,Id,MainWindowTitle | ConvertTo-Json
     Get-CimInstance Win32_Process -Filter "name='msedgewebview2.exe'" | ForEach-Object {
@@ -29,8 +30,8 @@ def diagnostics(error):
     $graphics.Dispose();$bitmap.Dispose()
     """
     env=dict(os.environ,ANALIZ_SMOKE_SCREENSHOT=str(output/'windows-desktop-diagnostic.png'))
-    result=subprocess.run(['powershell','-NoProfile','-Command',script],env=env,capture_output=True,text=True,timeout=30)
-    (output/'windows-runtime.txt').write_text(result.stdout+'\n'+result.stderr,encoding='utf-8')
+    result=subprocess.run(['powershell','-NoProfile','-Command',script],env=env,capture_output=True,encoding='utf-8',errors='replace',timeout=30)
+    (output/'windows-runtime.txt').write_text((result.stdout or '')+'\n'+(result.stderr or ''),encoding='utf-8')
 
 def run():
     if sys.platform!='win32' or os.environ.get('GITHUB_ACTIONS')!='true':raise RuntimeError('Run only on an isolated Windows GitHub Actions runner')
@@ -46,11 +47,20 @@ def run():
     print('INSTALLER_PATH='+report['installer'],flush=True);print('INSTALLER_BYTES='+str(report['bytes']),flush=True)
     with tempfile.TemporaryDirectory(prefix='analiz-webview2-') as tmp:
         tmp=Path(tmp);destination=tmp/'installed'
-        subprocess.run([str(installer),'/S','/D='+str(destination)],check=True,timeout=240)
-        executables=list(destination.rglob('analiz-rabot-tauri.exe'))
-        if len(executables)!=1:raise RuntimeError('Installed application executable not found')
         env=dict(os.environ,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--remote-debugging-port=9227',WEBVIEW2_USER_DATA_FOLDER=str(tmp/'webview'))
         env['NO_PROXY']=env.get('NO_PROXY','')+',127.0.0.1,localhost'
+        subprocess.run([str(installer),'/S','/D='+str(destination)],check=True,timeout=240,env=env)
+        executables=list(destination.rglob('analiz-rabot-tauri.exe'))
+        if len(executables)!=1:raise RuntimeError('Installed application executable not found')
+        # NSIS may launch the application before the test starts its own instance.
+        # Stop only instances installed in our disposable test directory, together with their WebView2 children.
+        find_owned="@(Get-Process analiz-rabot-tauri -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $env:ANALIZ_SMOKE_BINARY} | ForEach-Object {$_.Id}) | ConvertTo-Json -Compress"
+        own_env=dict(env,ANALIZ_SMOKE_BINARY=str(executables[0]))
+        result=subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command',find_owned],env=own_env,capture_output=True,check=True)
+        owned=json.loads(result.stdout.decode('utf-8').strip() or '[]')
+        if isinstance(owned,int):owned=[owned]
+        print('INSTALLER_AUTOSTART_INSTANCES='+str(len(owned)),flush=True)
+        for pid in owned:subprocess.run(['taskkill','/PID',str(pid),'/T','/F'],check=True,capture_output=True)
         direct=urllib.request.build_opener(urllib.request.ProxyHandler({}))
         def start():
             process=subprocess.Popen([str(executables[0])],env=env)
@@ -65,8 +75,9 @@ def run():
                     except (OSError,ValueError):time.sleep(.5)
                 raise RuntimeError('WebView2 DevTools endpoint did not become available')
             except BaseException as error:
-                diagnostics(error)
-                if process.poll() is None:subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],check=False,capture_output=True)
+                try:diagnostics(error)
+                finally:
+                    if process.poll() is None:subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],check=True,capture_output=True)
                 raise
         def stop(process):
             if process.poll() is None:subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],check=True,capture_output=True)

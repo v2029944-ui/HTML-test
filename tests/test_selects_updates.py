@@ -57,3 +57,16 @@ class SelectsUpdates(unittest.TestCase):
             self.page.locator('#periodType option[value=week]').evaluate("node=>node.textContent='Очень длинное название отчётного периода для проверки переноса и границ'" )
             self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth'))
             self.assertTrue(self.page.locator('#noticeInstallUpdate').is_visible())
+
+    def test_update_indicator_contrasts_with_industrial_navigation(self):
+        self.updates()
+        for theme in ['light','dark']:
+            self.page.evaluate("theme=>{document.documentElement.dataset.theme=theme;document.documentElement.dataset.design='industrial'}",theme)
+            self.page.wait_for_timeout(300)
+            ratio=self.page.evaluate("""()=>{
+              const rgb=value=>value.match(/[\d.]+/g).slice(0,3).map(Number).map(x=>{x/=255;return x<=.04045?x/12.92:((x+.055)/1.055)**2.4});
+              const lum=value=>{const c=rgb(value);return .2126*c[0]+.7152*c[1]+.0722*c[2]};
+              const a=lum(getComputedStyle(document.querySelector('#appUpdateBadge')).color),b=lum(getComputedStyle(document.querySelector('.tabs')).backgroundColor);
+              return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+            }""")
+            self.assertGreaterEqual(ratio,3)
