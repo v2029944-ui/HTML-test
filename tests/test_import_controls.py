@@ -67,7 +67,7 @@ class ImportControls(unittest.TestCase):
             onFilesChanged:()=>()=>{}
           };
         }""",list(buffer.getvalue()))
-        self.page.add_script_tag(content=(ROOT/'desktop/renderer.js').read_text())
+        self.page.add_script_tag(content=(ROOT/'tauri/folder-importer.js').read_text())
         open_view(self.page,'upload')
         self.page.wait_for_function("document.querySelector('.desktop-file-row')&&document.querySelector('#upload').textContent.includes('Есть замечания к Excel')")
         self.assertEqual(self.page.evaluate('nativeWrites'),0)

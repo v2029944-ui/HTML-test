@@ -11,7 +11,7 @@ test('generated frontend preserves original HTML and inserts bridge before inlin
   const out=prepareHtml(html);
   assert.equal(html.includes('tauri-bridge'),false);
   assert.ok(out.indexOf('tauri-bridge.js')<out.indexOf('window.appReady=main();'));
-  assert.ok(out.indexOf('tauri-desktop.js')>out.indexOf('window.appReady=main();'));
+  assert.ok(out.indexOf('tauri-folder-importer.js')>out.indexOf('window.appReady=main();'));
   assert.throws(()=>prepareHtml(out),/уже присутствуют/);
 });
 
@@ -47,12 +47,12 @@ test('Tauri build copies the current HTML-test interface and current Excel impor
     const {prepare}=require('../prepare.cjs');
     const prepared=prepare({base:root,output:tmp});
     const source=fs.readFileSync(path.join(root,'index.html'),'utf8');
-    const desktop=fs.readFileSync(path.join(root,'desktop/renderer.js'),'utf8');
+    const importer=fs.readFileSync(path.join(root,'tauri/folder-importer.js'),'utf8');
     const built=fs.readFileSync(path.join(tmp,'index.html'),'utf8');
-    const adapted=fs.readFileSync(path.join(tmp,'tauri-desktop.js'),'utf8');
+    const adapted=fs.readFileSync(path.join(tmp,'tauri-folder-importer.js'),'utf8');
     assert.equal(built,prepareHtml(source),'Tauri must use the complete latest HTML');
     assert.equal(prepared.sourceBytes,Buffer.byteLength(source,'utf8'));
-    assert.equal(adapted,desktop.replace(
+    assert.equal(adapted,importer.replace(
       'Резервная копия: reports.json.bak. Данные не находятся в браузере.',
       'Используется SQLite. Исходный reports.json сохраняется после переноса; делайте отдельные резервные копии.'
     ),'Tauri must use the complete latest Excel folder importer');
@@ -77,7 +77,7 @@ test('all HTML-test reporting period types are supported by native Tauri SQLite'
 
 test('watched-folder importer suggests correct dates for daily, weekly and monthly Excel',()=>{
   const root=path.resolve(__dirname,'../..');
-  const renderer=fs.readFileSync(path.join(root,'desktop/renderer.js'),'utf8');
+  const renderer=fs.readFileSync(path.join(root,'tauri/folder-importer.js'),'utf8');
   for(const source of [renderer.replace(/\r\n/g,'\n'),renderer.replace(/\r?\n/g,'\r\n')]){
     const fn=source.match(/function suggestedRule\(name\)\{([\s\S]*?)\r?\n  \}\r?\n  function dateInput/);
     assert.ok(fn,'Cannot find the shared importer date guess');

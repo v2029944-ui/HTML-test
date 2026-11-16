@@ -3,7 +3,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const source=fs.readFileSync(require('node:path').join(__dirname,'../desktop/renderer.js'),'utf8');
+const source=fs.readFileSync(require('node:path').join(__dirname,'../tauri/folder-importer.js'),'utf8');
 const functions=source.slice(source.indexOf('  function parseExcel('),source.indexOf('  function scheduleSync('));
 const draft=(date='2024-01-01')=>({type:'day',start:date,end:date,fileName:'year.xlsx',sheetName:'Q1',rows:[{work:'A',count:0,amount:0}],issues:[],warnings:[],hasMismatch:false,count:0,amount:0});
 function setup(options={}){
