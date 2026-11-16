@@ -217,7 +217,7 @@ class ImportControls(unittest.TestCase):
 
     def test_daily_missing_dates_calendar_baseline_and_changes(self):
         self.page.evaluate('''async()=>{
-          const organizations=DEFAULT_ORGS.slice(0,2),reports=Array.from({length:8},(_,i)=>{const start=addDays('2026-11-01',i);return {id:start,type:'day',start,end:start,organizations,totals:[],warnings:[],rows:organizations.map(organization=>({organization,work:'Дневная работа',count:i+0.5,amount:(i+1)*100}))};}).filter((_,i)=>i!==4);
+          const organizations=DEFAULT_ORGS.slice(0,2),reports=Array.from({length:8},(_,i)=>{const start=addDays('2026-11-01',i);return {id:start,type:'day',start,end:start,sourceCoverage:{start:'2026-11-01',end:'2026-11-08'},organizations,totals:[],warnings:[],rows:organizations.map(organization=>({organization,work:'Дневная работа',count:i+0.5,amount:(i+1)*100}))};}).filter((_,i)=>i!==4);
           await storeReports(reports);state.settings.groups=[];state.selectionInitialized=false;renderAll();
         }''')
         self.page.locator('#periodType').select_option('day')

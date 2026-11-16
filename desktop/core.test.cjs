@@ -153,3 +153,16 @@ test('invalid rules and failed atomic writes preserve the last saved configurati
     assert.equal(fs.readdirSync(root).some(name=>name.endsWith('.tmp')),false);
   }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('explicit auto and legacy format rules survive disk round trips while old rules retain their shape',()=>{
+ const root=create();
+ try{
+  const store=new DiskStore(root);store.setFolder(root);const old={type:'week',start:'2024-01-01',sheet:'Legacy'};
+  for(const format of ['auto','legacy']){
+   const rule={...old,format};store.setRule(format+'.xlsx',rule);
+   assert.deepEqual(new DiskStore(root).getInfo().rules[format+'.xlsx'],rule);
+  }
+  assert.deepEqual(normalizeRule(old),old);
+  assert.throws(()=>normalizeRule({...old,format:'unknown'}));
+ }finally{fs.rmSync(root,{recursive:true,force:true});}
+});

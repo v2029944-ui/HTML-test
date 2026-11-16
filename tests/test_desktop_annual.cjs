@@ -27,8 +27,8 @@ test('daily-wide passes selected sheets/year/mappings and attaches source metada
  assert.equal(result[0].count,0);assert.equal(result[0].desktopSignature,'sig');assert.equal(result[0].desktopHash,'hash');
  assert.equal(result[0].desktopRule,JSON.stringify(rule));assert.ok(result[0].importedAt);
 });
-test('structural detection enables daily route for a migrated rule',()=>{
- const {ctx}=setup();assert.equal(ctx.parseExcel({name:'year.xlsx'},{type:'week',start:'2024-01-01'},[],'sig','hash').length,2);
+test('structural detection enables daily route only in automatic mode',()=>{
+ const {ctx}=setup();assert.equal(ctx.parseExcel({name:'year.xlsx'},{format:'auto',type:'week',start:'2024-01-01'},[],'sig','hash').length,2);
 });
 for(const result of [{reports:[{...draft(),warnings:['blank amount']}]},{reports:[draft()],issues:['source total']},{reports:[draft()],hasMismatch:true},{reports:[draft(),draft()]},{reports:[]}]){
  test('unsafe daily result is rejected atomically: '+JSON.stringify(result).slice(0,80),()=>{
@@ -63,4 +63,14 @@ test('same file name in a different folder cannot replace another source without
 });
 test('proven zero day without detail rows is accepted as a report',()=>{
  const {ctx,rule}=setup({result:{reports:[{...draft(),rows:[],explicitZero:true}]}});assert.equal(ctx.parseExcel({name:'year.xlsx'},rule,[],'sig','hash')[0].count,0);
+});
+
+for(const format of [undefined,'legacy'])test('legacy selection wins in a mixed workbook: '+format,()=>{
+ const {ctx,calls}=setup();let parsedSheet;
+ ctx.window.XLSX.read=()=>({SheetNames:['Wide','Legacy'],Sheets:{Wide:{name:'Wide'},Legacy:{name:'Legacy'}}});
+ ctx.parseSheet=sheet=>{parsedSheet=sheet.name;return [{rows:[{work:'A',count:2,amount:10}],warnings:[],issues:[],count:2,amount:10}];};
+ ctx.shiftPeriod=(_type,start)=>start;ctx.addMonths=start=>start;ctx.periodEnd=()=> '2024-01-07';
+ const rule={type:'week',start:'2024-01-01',sheet:'Legacy',...(format?{format}:{})};
+ const reports=ctx.parseExcel({name:'mixed.xlsx'},rule,[],'sig','hash');
+ assert.equal(calls.length,0);assert.equal(parsedSheet,'Legacy');assert.equal(reports.length,1);assert.equal(reports[0].type,'week');
 });

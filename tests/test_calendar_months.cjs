@@ -69,3 +69,14 @@ test('local day diagnostics and source-period diagnostics have separate quality 
  assert.equal(buttons.length,2);buttons[0].listeners.click();assert.equal(nodes.get('qualityPeriod').value,'day:2024-02-15');
  buttons[1].listeners.click();assert.equal(nodes.get('qualityPeriod').value,'day:2024-01-01');
 });
+
+test('separate declared quarters do not invent coverage for the intervening quarter',()=>{
+ const result=run(`(()=>{const reports=[calendarFixture('2024-01-01',['A'],{sourceCoverage:{start:'2024-01-01',end:'2024-03-31'}}),calendarFixture('2024-07-01',['A'],{sourceCoverage:{start:'2024-07-01',end:'2024-09-30'}})];return [0,3,4,5].map(month=>calendarMonthModel(reports,2024,month,['A'],'2024-10-01'));})()`);
+ assert.equal(result[0].missing,30);
+ for(const model of result.slice(1)){assert.equal(model.missing,0);assert.equal(model.kind,'missing');}
+});
+test('legacy coverage is inferred only within the same identified source and sheet',()=>{
+ const result=run(`(()=>{const get=reports=>calendarMonthModel(reports,2024,1,['A'],'2024-03-01');return {same:get([calendarFixture('2024-02-01',['A'],{fileName:'a.xlsx',sheetName:'one'}),calendarFixture('2024-02-03',['A'],{fileName:'a.xlsx',sheetName:'one'})]),different:get([calendarFixture('2024-01-01',['A'],{fileName:'a.xlsx'}),calendarFixture('2024-03-01',['A'],{fileName:'b.xlsx'})]),sheets:get([calendarFixture('2024-01-01',['A'],{fileName:'a.xlsx',sheetName:'Q1'}),calendarFixture('2024-03-01',['A'],{fileName:'a.xlsx',sheetName:'Q3'})]),anonymous:get([calendarFixture('2024-01-01'),calendarFixture('2024-03-01')])};})()`);
+ assert.equal(result.same.missing,1);
+ for(const key of ['different','sheets','anonymous'])assert.equal(result[key].missing,0,key);
+});

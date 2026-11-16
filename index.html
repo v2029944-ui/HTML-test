@@ -4353,9 +4353,19 @@ function calendarMonthModel(reports,year,month,organizations,today=reportToday()
   const start=String(year).padStart(4,'0')+'-'+String(month+1).padStart(2,'0')+'-01',end=lastDayOfMonth(start);
   const sources=reports.filter(r=>validReportDate(r.start)&&validReportDate(r.end)&&r.start<=end&&r.end>=start);
   const daily=calendarDailyData(sources,organizations),allDaily=reports.filter(r=>r.type==='day'&&validReportDate(r.start)&&validReportDate(r.end));
-  const spans=allDaily.map(r=>r.sourceCoverage).filter(span=>span&&validReportDate(span.start)&&validReportDate(span.end)&&span.start<=span.end);
-  // Legacy daily files have no declared span: only gaps between loaded days are confirmed.
-  if(allDaily.length){const dates=allDaily.map(r=>r.start).sort();spans.push({start:dates[0],end:dates.at(-1)});}
+  const spans=[],legacySources=new Map();
+  for(const report of allDaily){
+    const span=report.sourceCoverage;
+    if(span&&validReportDate(span.start)&&validReportDate(span.end)&&span.start<=report.start&&span.end>=report.end){spans.push(span);continue;}
+    // Without declared coverage, infer internal gaps only within one identifiable source snapshot and sheet.
+    const name=report.desktopSource||report.fileName;
+    if(!name)continue;
+    const key=JSON.stringify([report.desktopFolder||'',name,report.sheetName||'',report.desktopHash||report.desktopSignature||'',report.desktopRule||'']);
+    const previous=legacySources.get(key);
+    if(previous){if(report.start<previous.start)previous.start=report.start;if(report.end>previous.end)previous.end=report.end;}
+    else legacySources.set(key,{start:report.start,end:report.end});
+  }
+  spans.push(...legacySources.values());
   const expected=date=>date<=today&&spans.some(span=>span.start<=date&&span.end>=date);
   let missing=0,loaded=0,count=0,amount=0,available=0,allComplete=true;
   for(let date=start;date<=end;date=addDays(date,1)){

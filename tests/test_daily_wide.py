@@ -129,3 +129,23 @@ class DailyWideImport(unittest.TestCase):
         self.page.wait_for_function('writes===2&&state.folderImport===null')
         self.assertEqual(self.page.evaluate('state.reports.length'),365)
         self.assertFalse(self.page.evaluate("state.reports.some(r=>r.start==='2024-02-05')"))
+
+    def test_explicit_legacy_format_in_mixed_workbook_and_manual_preview(self):
+        self.page.evaluate('''payload=>{
+          const read=XLSX.read;
+          XLSX.read=(...args)=>{const book=read(...args);book.SheetNames.push('Legacy');book.Sheets.Legacy=[['Работа','Количество','Сумма'],['СМУ16',2,20],['Альфа',2,20]];return book;};
+          window.rule={format:'legacy',type:'week',start:'2024-01-01',sheet:'Legacy'};window.writes=0;
+          window.desktopAPI={list:async()=>({folder:'C:/Reports',files:[{name:'mixed.xlsx',size:payload.length,signature:'1',tooLarge:false}],rules:{'mixed.xlsx':rule}}),info:async()=>({dataFile:'C:/Db/reports.sqlite3'}),
+            readExcel:async()=>({bytes:payload,signature:'1',sha256:'hash'}),checkExcel:async()=>true,
+            save:async()=>{writes++},onFilesChanged:()=>()=>{},setRule:async(name,value)=>{rule=value;return value}};
+        }''',list(wide_xlsx(2024)))
+        self.page.add_script_tag(content=(ROOT/'desktop/renderer.js').read_text())
+        self.page.wait_for_function('writes===1&&state.reports.length===1')
+        self.assertEqual(self.page.evaluate('state.reports[0].type'),'week')
+        self.assertEqual(self.page.evaluate('state.reports[0].sheetName'),'Legacy')
+        self.page.get_by_role('button',name='Проверить и сохранить вручную',exact=True).click()
+        self.page.wait_for_function('state.pending.length===1')
+        self.assertEqual(self.page.locator('#importFormat').input_value(),'legacy')
+        self.assertTrue(self.page.locator('#importType').is_visible())
+        self.assertTrue(self.page.locator('#sheetSelect').is_visible())
+        self.assertEqual(self.page.locator('#sheetSelect').input_value(),'Legacy')

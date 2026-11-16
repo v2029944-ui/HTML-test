@@ -23,13 +23,13 @@ function normalizeRule(rule){
   if(!rule||!['week','month','day'].includes(rule.type))throw Error('Укажите тип отчётов: дни, недели или месяцы.');
   const has=key=>Object.prototype.hasOwnProperty.call(rule,key);
   const wide=rule.format==='daily-wide';
-  if((has('format')&&!wide)||(wide&&rule.type!=='day'))throw Error('Некорректный формат импорта.');
+  if((has('format')&&!['auto','legacy','daily-wide'].includes(rule.format))||(wide&&rule.type!=='day'))throw Error('Некорректный формат импорта.');
   if(!(wide&&rule.start==='')&&(!validDate(rule.start)||(rule.type==='month'&&!rule.start.endsWith('-01'))))
     throw Error('Укажите корректную дату дня, начала недели или первого дня месяца.');
   const sheet=typeof rule.sheet==='string'?rule.sheet.trim():'';
   if(sheet.length>120)throw Error('Название листа Excel слишком длинное.');
   const result={type:rule.type,start:rule.start,sheet};
-  if(wide)result.format='daily-wide';
+  if(has('format'))result.format=rule.format;
   const invalid=()=>{throw Error('Некорректные параметры годового импорта.');};
   for(const key of ['year','sheets','mappings'])if(has(key)&&!wide)invalid();
   if(has('year')){

@@ -92,7 +92,7 @@
       for(const [value,label] of [['auto','Автоматически'],['legacy','Обычные периоды'],['daily-wide','Дневные данные за квартал / год']]){
         const option=node('option',label);option.value=value;format.append(option);
       }
-      format.value=initial.format==='daily-wide'?'daily-wide':rule?'legacy':'auto';
+      format.value=initial.format||(rule?'legacy':'auto');
       field('Формат Excel',format);
       const type=node('select');
       for(const [key,label] of [['week','Недели'],['month','Месяцы'],['day','Дни']]){
@@ -167,7 +167,7 @@
             nextRule={format:'daily-wide',type:'day',start:'',...options};
           }else{
             const raw=start.value,day=type.value==='month'?raw+'-01':raw;
-            nextRule={type:type.value,start:day,sheet:sheet.value};
+            nextRule={type:type.value,start:day,sheet:sheet.value,format:format.value};
           }
           await api.setRule(file.name,nextRule);
           message('Правило для '+file.name+' сохранено.');
@@ -191,6 +191,7 @@
           await selectWorkbook(new Uint8Array(source.bytes),file.name);
           if(format.value==='daily-wide')$('importFormat').value='daily-wide';
           if(format.value==='legacy')$('importFormat').value='legacy';
+          syncImportFormat();
           let selected='';
           if($('importFormat').value==='daily-wide'){
             configureDailyImport(dailyOptions());
@@ -229,7 +230,7 @@
   function parseExcel(file,rule,bytes,signature,sha256){
     if(!window.XLSX)throw Error('Встроенный разбор Excel не загрузился.');
     const workbook=window.XLSX.read(bytes,{type:'array',cellDates:true});
-    if(rule.format==='daily-wide'||findDailySheets(workbook).length>0){
+    if(rule.format==='daily-wide'||(rule.format==='auto'&&findDailySheets(workbook).length>0)){
       const result=parseDailyWorkbook(workbook,{year:rule.year,sheets:rule.sheets,mappings:rule.mappings,fileName:file.name});
       const reports=result.reports;
       if(!Array.isArray(reports)||!reports.length)throw Error('Не найдены дневные отчёты. Предыдущие данные сохранены.');

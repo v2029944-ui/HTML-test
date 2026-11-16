@@ -122,7 +122,7 @@ fn validate_rule(rule: &Rule) -> Result<(), String> {
         return Err("Тип отчёта должен быть «Дни», «Недели» или «Месяцы».".into());
     }
     let wide = rule.format.as_deref() == Some("daily-wide");
-    if (rule.format.is_some() && !wide) || (wide && rule.kind != "day") {
+    if (rule.format.is_some() && !matches!(rule.format.as_deref(), Some("auto" | "legacy" | "daily-wide"))) || (wide && rule.kind != "day") {
         return Err("Некорректный формат импорта.".into());
     }
     if !(wide && rule.start.is_empty())
@@ -714,6 +714,20 @@ mod tests {
         invalid.year = Some(1899);
         assert!(reopened.set_rule("annual.xlsx".into(), invalid).is_err());
         assert_eq!(reopened.info().unwrap()["rules"]["annual.xlsx"], wide);
+    }
+
+    #[test]
+    fn explicit_import_format_survives_sqlite_round_trip() {
+        let tmp = tempdir().unwrap();
+        let store = Storage::new(tmp.path().to_path_buf()).unwrap();
+        store.set_folder(tmp.path().to_string_lossy().to_string()).unwrap();
+        for format in ["auto", "legacy"] {
+            let value = json!({"type":"week","start":"2024-01-01","sheet":"Legacy","format":format});
+            let rule: Rule = serde_json::from_value(value.clone()).unwrap();
+            store.set_rule(format!("{format}.xlsx"), rule).unwrap();
+            let reopened = Storage::new(tmp.path().to_path_buf()).unwrap();
+            assert_eq!(reopened.info().unwrap()["rules"][format!("{format}.xlsx")], value);
+        }
     }
 
     #[test]
