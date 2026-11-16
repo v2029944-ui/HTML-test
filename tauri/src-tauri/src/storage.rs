@@ -82,7 +82,7 @@ fn safe_excel_name(name: &str) -> bool {
         && name.len() <= 240
         && name.to_ascii_lowercase().ends_with(".xlsx")
         && !name.starts_with("~$")
-        && !name.contains(['/', '\\', ':'])
+        && !name.chars().any(|c| c == '/' || c == '\\' || c == ':')
         && !name.chars().any(|c| c.is_control())
         && name != "."
         && name != ".."
