@@ -3,6 +3,7 @@ import io,zipfile,datetime,json,unittest
 from pathlib import Path
 from xml.sax.saxutils import escape
 from playwright.sync_api import sync_playwright
+from test_navigation import open_view
 ROOT=Path(__file__).resolve().parents[1]
 
 def wide_xlsx(year=2024,quarter_sheets=False,short=False,include_year=True,serial=False,blank_day=None,works_per_org=1):
@@ -62,7 +63,7 @@ class DailyWideImport(unittest.TestCase):
         self.context=self.browser.new_context(viewport={'width':390,'height':844});self.page=self.context.new_page();self.errors=[]
         self.page.on('pageerror',lambda err:self.errors.append(str(err)))
         self.page.route('https://wide.test/index.html',lambda route:route.fulfill(content_type='text/html',body=(ROOT/'index.html').read_text()))
-        self.page.goto('https://wide.test/index.html');self.page.wait_for_function('state.db!==null');self.page.locator('[data-view=upload]').click()
+        self.page.goto('https://wide.test/index.html');self.page.wait_for_function('state.db!==null');open_view(self.page,'upload')
     def tearDown(self):self.context.close();self.assertEqual(self.errors,[])
     def upload(self,payload):
         self.page.locator('#excelFile').set_input_files({'name':'Синтетический.xlsx','mimeType':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','buffer':payload})
@@ -78,7 +79,7 @@ class DailyWideImport(unittest.TestCase):
                 self.assertLessEqual(self.page.locator('#importPreview .import-preview-card').count(),31)
         self.page.locator('#saveImport').click();self.page.wait_for_function('state.reports.length===366')
         self.page.reload();self.page.wait_for_function('state.reports.length===366')
-        self.page.locator('[data-view=upload]').click();self.assertEqual(self.page.locator('#reportCalendar>button').count(),12)
+        open_view(self.page,'upload');self.assertEqual(self.page.locator('#reportCalendar>button').count(),12)
         self.page.locator('[data-month="2024-02"]').click();self.assertEqual(self.page.locator('.calendar-day').count(),29)
         self.assertLessEqual(self.page.locator('#reports .report-row').count(),50)
     def test_large_year_real_xlsx_has_500_services_and_bounded_preview(self):

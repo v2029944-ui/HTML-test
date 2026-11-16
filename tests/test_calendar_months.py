@@ -2,6 +2,7 @@
 import unittest
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+from test_navigation import open_view
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -23,7 +24,7 @@ class MonthlyCalendar(unittest.TestCase):
                 page.on('pageerror',lambda error:errors.append(str(error)))
                 page.route('https://calendar.local.test/index.html',lambda route:route.fulfill(content_type='text/html',body=(ROOT/'index.html').read_text()))
                 page.goto('https://calendar.local.test/index.html');page.wait_for_function('state.db !== null')
-                page.locator('[data-view=upload]').click()
+                open_view(page,'upload')
                 page.evaluate("""()=>{
                   const organizations=DEFAULT_ORGS.slice();
                   state.reports=Array.from({length:366},(_,i)=>{const start=addDays('2024-01-01',i);return {id:start,type:'day',start,end:start,organizations,rows:organizations.map(organization=>({organization,work:'Работа',count:0,amount:0})),warnings:[],issues:[],totals:[],fileName:'Год.xlsx',sheetName:'2024',amount:0,count:0};});

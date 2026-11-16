@@ -7,6 +7,7 @@ from xml.sax.saxutils import escape
 import unittest
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+from test_navigation import open_view
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -67,7 +68,7 @@ class ImportControls(unittest.TestCase):
           };
         }""",list(buffer.getvalue()))
         self.page.add_script_tag(content=(ROOT/'desktop/renderer.js').read_text())
-        self.page.locator('[data-view=upload]').click()
+        open_view(self.page,'upload')
         self.page.wait_for_function("document.querySelector('.desktop-file-row')&&document.querySelector('#upload').textContent.includes('Есть замечания к Excel')")
         self.assertEqual(self.page.evaluate('nativeWrites'),0)
         self.page.get_by_role('button',name='Проверить и сохранить вручную').click()
@@ -109,7 +110,7 @@ class ImportControls(unittest.TestCase):
           })}};
         }""")
         self.page.add_script_tag(content=(ROOT/'tauri/updates.js').read_text())
-        self.page.locator('[data-view=storage]').click()
+        open_view(self.page,'storage')
         self.page.wait_for_function("document.querySelector('#appUpdateStatus').textContent.includes('0.2.0')")
         for width in [390,1280]:
             self.page.set_viewport_size({'width':width,'height':900})
@@ -131,13 +132,13 @@ class ImportControls(unittest.TestCase):
         policy=policy.replace("script-src 'self'","script-src 'self' "+' '.join(hashes))
         self.page.route('https://html.local.test/index.html',lambda route:route.fulfill(content_type='text/html',body=html,headers={'Content-Security-Policy':policy}))
         self.page.reload();self.page.locator('#storageModeInfo').filter(has_text='IndexedDB').wait_for(state='attached')
-        self.page.locator('[data-view=upload]').click()
+        open_view(self.page,'upload')
         self.page.locator('#excelFile').set_input_files({'name':'daily.xlsx','mimeType':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','buffer':daily_workbook_bytes()})
         self.page.locator('#excelFileStatus').filter(has_text='Файл загружен').wait_for()
         self.page.locator('#importType').select_option('day');self.page.locator('#importWeek').fill('2026-11-10')
         self.page.locator('#inspectFile').click();self.page.locator('#importPreview strong').filter(has_text='Найдено отчётных периодов: 6').wait_for()
         self.page.locator('#saveImport').click();self.page.locator('#reportCount').filter(has_text='6').wait_for(state='attached')
-        self.page.locator('[data-view=dashboard]').click()
+        open_view(self.page,'dashboard')
         self.page.locator('#periodType').select_option('day')
         self.assertGreater(self.page.locator('svg').count(),0)
 
@@ -156,17 +157,17 @@ class ImportControls(unittest.TestCase):
                     scope=self.page.locator('#comparisonScope').bounding_box()
                     period=self.page.locator('#comparisonPeriod').bounding_box()
                     self.assertGreaterEqual(period['y'],scope['y']+scope['height'])
-            self.page.locator('[data-view=upload]').click()
+            open_view(self.page,'upload')
             header=self.page.locator('#reportPeriods>.sectionbar').bounding_box()
             field=self.page.locator('#calendarType').bounding_box()
             self.assertGreaterEqual(field['y'],header['y']+header['height'])
             self.assertAlmostEqual(field['x'],header['x'],delta=1)
             self.assertEqual(self.page.locator('#reportPeriods>.sectionbar select').count(),0)
             self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth'))
-            self.page.locator('[data-view=dashboard]').click()
+            open_view(self.page,'dashboard')
 
     def test_daily_excel_import_comparison_csv_and_mixed_backup(self):
-        self.page.locator('[data-view=upload]').click();self.page.locator('#importType').select_option('day')
+        open_view(self.page,'upload');self.page.locator('#importType').select_option('day')
         self.assertEqual(self.page.locator('#importDateCaption').inner_text(),'Первый день')
         self.page.locator('#importWeek').fill('2026-11-10')
         self.page.locator('#excelFile').set_input_files({'name':'Дневные.xlsx','mimeType':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','buffer':daily_workbook_bytes()})
@@ -182,7 +183,7 @@ class ImportControls(unittest.TestCase):
         self.assertTrue(self.page.locator('#saveImport').is_disabled())
         second.fill('2026-11-11');self.page.locator('#inspectFile').click();self.page.wait_for_function('state.pending.length===6')
         self.page.locator('#saveImport').click();self.page.wait_for_function('state.reports.length===6')
-        self.page.locator('[data-view=dashboard]').click();self.page.locator('#periodType').select_option('day')
+        open_view(self.page,'dashboard');self.page.locator('#periodType').select_option('day')
         self.page.evaluate("state.selectedOrganizations=new Set(DEFAULT_ORGS.slice(0,2));state.selectedMetrics=new Set(['amount','count']);document.querySelector('#advancedAnalytics').open=true;renderDashboard(false)")
         self.page.locator('#periodComparisonScope').select_option('range')
         self.assertEqual(self.page.locator('#comparisonCoverage').inner_text().count('3 дня'),2)
@@ -198,7 +199,7 @@ class ImportControls(unittest.TestCase):
           await storeReports([...state.reports,make('week','2026-11-09',9999),make('month','2026-11-01',8888)]);renderAll();
         }''')
         self.assertEqual(self.page.evaluate('aggregateReportRange(analyticsIndex(),{from:"2026-11-10",to:"2026-11-15",organizations:DEFAULT_ORGS.slice(0,2)}).total.amount'),2730)
-        self.page.locator('[data-view=storage]').click()
+        open_view(self.page,'storage')
         with self.page.expect_download() as download:self.page.locator('#exportBackup').click()
         backup=Path(download.value.path()).read_bytes();data=json.loads(backup)
         self.assertEqual(data['version'],1);self.assertEqual({report['type'] for report in data['reports']},{'day','week','month'})
@@ -230,14 +231,14 @@ class ImportControls(unittest.TestCase):
         self.page.locator('#regularityPanel>summary').click()
         self.page.wait_for_function('document.querySelector("#regularityCoverage").textContent.includes("Фактических периодов")')
         self.assertIn('Фактических периодов: 7 из 8',self.page.locator('#regularityCoverage').inner_text())
-        self.page.locator('[data-view=upload]').click();self.page.locator('#calendarType').select_option('day')
+        open_view(self.page,'upload');self.page.locator('#calendarType').select_option('day')
         self.assertEqual(self.page.locator('#reportCalendar button').count(),12)
         self.page.locator('#reportCalendar [data-month=\"2026-11\"]').click()
         missing=self.page.locator('[data-date=\"2026-11-05\"]')
         self.assertIn('Нет отчёта',missing.get_attribute('aria-label'))
         self.page.locator('#qualityPeriod').select_option('day:2026-11-05');self.page.locator('#qualityOrg').select_option('СМУ16');self.page.locator('#qualityType').select_option('missing')
         self.assertIn('05.11.2026',self.page.locator('#qualityTable').inner_text())
-        self.page.locator('[data-view=changes]').click();self.page.locator('#changesType').select_option('day');self.page.locator('#changesMode').select_option('all')
+        open_view(self.page,'changes');self.page.locator('#changesType').select_option('day');self.page.locator('#changesMode').select_option('all')
         self.assertTrue(self.page.evaluate("changeState.analysis.rows.length===2 && changeState.analysis.rows.every(row=>row.basePeriod.start==='2026-11-07'&&row.currentPeriod.start==='2026-11-08')"))
         self.page.locator('#changesMethod').select_option('range')
         self.assertTrue(self.page.evaluate('changeState.analysis.rows.length>0'))
@@ -252,7 +253,7 @@ class ImportControls(unittest.TestCase):
         }''')
 
     def test_group_coverage_search_and_marked_options(self):
-        self.load_large_group_fixture();self.page.locator('[data-view=groups]').click()
+        self.load_large_group_fixture();open_view(self.page,'groups')
         self.assertIn('Названий в группах: 2 из 304',self.page.locator('#groupCoverage').inner_text())
         self.assertIn('Без группы: 302',self.page.locator('#groupCoverage').inner_text())
         self.page.locator('#groupSearch').press_sequentially('ди')
@@ -268,7 +269,7 @@ class ImportControls(unittest.TestCase):
         self.assertEqual(self.page.locator('#groupList details').count(),2)
         self.page.locator('#groupAuditPanel>summary').click()
         self.assertEqual(self.page.locator('#groupAuditResults option[value=g1]').first.inner_text(),'▦ Датчики (группа)')
-        self.page.locator('[data-view=dashboard]').click();self.page.locator('#categoryFilter>summary').click()
+        open_view(self.page,'dashboard');self.page.locator('#categoryFilter>summary').click()
         labels=self.page.locator('#categories .category-row span').all_text_contents()
         self.assertIn('▦ Датчики (группа)',labels);self.assertIn('Датчик 002',labels)
         self.assertTrue(self.page.evaluate("state.selectedCategories.has('Датчики') && ![...state.selectedCategories].some(name=>name.startsWith('▦'))"))
@@ -343,7 +344,7 @@ class ImportControls(unittest.TestCase):
         self.page.locator('#categoryFilter>summary').click()
         self.page.locator('#regularityPanel>summary').click()
         query('#regularitySearch','#regularityResults tbody tr td:first-child')
-        self.page.locator('[data-view=groups]').click();self.page.locator('#createGroup').click()
+        open_view(self.page,'groups');self.page.locator('#createGroup').click()
         self.page.evaluate("state.selectedWorks.add('Автомобиль');renderWorkList()")
         query('#workSearch','#worksList .work-row span')
         self.assertTrue(self.page.evaluate("state.selectedWorks.has('Автомобиль')"))
@@ -353,7 +354,7 @@ class ImportControls(unittest.TestCase):
         self.assertEqual(self.page.locator('#worksList .work-row span').first.inner_text(),'Автомобиль')
         self.page.locator('#groupAuditPanel>summary').click()
         query('#groupAuditSearch','#groupAuditResults tbody tr td:first-child')
-        self.page.locator('[data-view=changes]').click();self.page.locator('#changesMode').select_option('all')
+        open_view(self.page,'changes');self.page.locator('#changesMode').select_option('all')
         query('#changesSearch','#changesResults .change-open')
 
     def load_large_group_fixture(self):
@@ -371,7 +372,7 @@ class ImportControls(unittest.TestCase):
     def test_group_workspace_search_selection_and_manual_save(self):
         self.load_large_group_fixture()
         before=self.page.evaluate('JSON.stringify(state.reports)')
-        self.page.locator('[data-view=groups]').click()
+        open_view(self.page,'groups')
         self.assertEqual(self.page.locator('#groups>.panel').count(),1)
         self.assertEqual(self.page.locator('#groupWorkspace #groupAuditPanel').count(),1)
         self.assertFalse(self.page.locator('#groupEditor').evaluate('(node)=>node.open'))
@@ -416,7 +417,7 @@ class ImportControls(unittest.TestCase):
         self.page.evaluate('''async()=>{
           await saveSettings({...state.settings,groups:[...state.settings.groups,{id:'legacy',name:'Архивная группа',works:['Датчик из старой копии']}]});renderAll();
         }''')
-        self.page.locator('[data-view=groups]').click()
+        open_view(self.page,'groups')
         legacy=self.page.locator('#groupList details[data-group=legacy]')
         legacy.locator('summary').click();legacy.get_by_role('button',name='Изменить группу',exact=True).click()
         self.page.locator('#workSearch').fill('датчик из')
@@ -425,7 +426,7 @@ class ImportControls(unittest.TestCase):
 
     def test_direct_page_jumps_and_search_across_analytics_lists(self):
         self.load_large_group_fixture()
-        self.page.locator('[data-view=groups]').click()
+        open_view(self.page,'groups')
         self.page.locator('#groupAuditPanel>summary').click()
         self.page.locator('#groupAuditPageSelect').select_option(value='13')
         self.assertIn('Проверка датчика',self.page.locator('#groupAuditResults').inner_text())
@@ -433,7 +434,7 @@ class ImportControls(unittest.TestCase):
         self.assertEqual(self.page.locator('#groupAuditPageSelect').input_value(),'1')
         self.assertTrue(self.page.locator('#groupAuditPageSelect').is_disabled())
         self.assertIn('Диагностика',self.page.locator('#groupAuditResults').inner_text())
-        self.page.locator('[data-view=dashboard]').click()
+        open_view(self.page,'dashboard')
         self.page.locator('#categoryFilter>summary').click()
         self.page.locator('#categorySearch').fill('ди')
         self.assertEqual(self.page.locator('#categories .category-row span').all_text_contents(),['▦ Диагностика (группа)'])
@@ -450,10 +451,10 @@ class ImportControls(unittest.TestCase):
         self.page.locator('#contributions>summary').click()
         self.page.locator('#contributionPageSelect').select_option(value='11')
         self.assertEqual(self.page.locator('#contributionPageSelect').input_value(),'11')
-        self.page.locator('[data-view=upload]').click()
+        open_view(self.page,'upload')
         self.page.locator('#qualityPageSelect').select_option(value='3')
         self.assertEqual(self.page.locator('#qualityPageSelect').input_value(),'3')
-        self.page.locator('[data-view=changes]').click()
+        open_view(self.page,'changes')
         self.page.locator('#changesMode').select_option('all')
         self.page.locator('#changesPageSelect').select_option(value='11')
         self.assertEqual(self.page.locator('#changesPageSelect').input_value(),'11')
@@ -467,7 +468,7 @@ class ImportControls(unittest.TestCase):
 
     def test_group_workspace_and_page_controls_fit_phone(self):
         self.load_large_group_fixture()
-        self.page.locator('[data-view=groups]').click();self.page.locator('#createGroup').click()
+        open_view(self.page,'groups');self.page.locator('#createGroup').click()
         self.page.locator('#groupAuditPanel>summary').click()
         for width in [320,390,1024]:
             self.page.set_viewport_size({'width':width,'height':900})
@@ -487,7 +488,7 @@ class ImportControls(unittest.TestCase):
 
     def test_calendar_and_uploaded_reports_share_one_section(self):
         self.load_analytics_fixture()
-        self.page.locator('[data-view=upload]').click()
+        open_view(self.page,'upload')
         reports=self.page.locator('#reportPeriods #uploadedReports')
         self.assertEqual(reports.count(),1)
         self.assertFalse(self.page.locator('#reports').is_visible())
@@ -653,7 +654,7 @@ class ImportControls(unittest.TestCase):
         self.assertEqual(errors, [], 'Browser runtime errors')
 
     def test_native_date_and_month_fit_empty_and_filled(self):
-        self.page.locator('[data-view=upload]').click()
+        open_view(self.page,'upload')
         for width in [320,375,390,428,1024]:
             self.page.set_viewport_size({'width':width,'height':844})
             for kind,selector,value,start in [('week','#importWeek','2026-10-19','2026-10-19'),('month','#importMonth','2026-11','2026-11-01')]:

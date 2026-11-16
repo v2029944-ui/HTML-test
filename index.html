@@ -1345,13 +1345,51 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 
 .daily-sheet-option{padding:12px;border-bottom:1px solid var(--border)}#dailyWideOptions{margin:16px 0}#dailyYear{max-width:280px}.daily-sheet-option>.checkline{font-weight:600}
 
+
+/* Primary analysis views and the existing management views share one navigation. */
+.tabs{position:relative;overflow:visible}
+.management-mobile-label{display:none}
+.management-nav{position:relative;margin-left:auto;min-width:0}
+.management-nav>summary{display:flex;align-items:center;justify-content:center;gap:8px;list-style:none;cursor:pointer;padding:12px 16px 13px;min-height:48px;border-bottom:3px solid var(--transparent);font-size:inherit;font-weight:600;color:var(--muted)}
+.management-nav>summary::-webkit-details-marker{display:none}
+.management-nav>summary::after{content:'▾';font-size:.8em}
+.management-nav[open]>summary::after{content:'▴'}
+.management-nav>summary:hover{background:var(--hover);color:var(--text)}
+.management-nav>summary.active{color:var(--accent);border-bottom-color:var(--accent)}
+.management-menu{position:absolute;right:0;top:100%;z-index:30;width:320px;max-width:calc(100vw - 32px);padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-panel);box-shadow:var(--shadow-menu)}
+.management-menu .tab{display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:4px;width:100%;min-height:64px;padding:12px;text-align:left;white-space:normal;overflow-wrap:anywhere;border:0;border-radius:var(--radius-control);color:var(--text);background:var(--surface);line-height:1.4}
+.management-menu .tab:hover{background:var(--hover)}
+.management-menu .tab.active{background:var(--selected);color:var(--accent)}
+.management-menu small{font-weight:400;font-size:12px;color:var(--muted)}
+:root[data-design="industrial"] .management-nav>summary{color:var(--band-text)}
+:root[data-design="industrial"] .management-nav>summary:hover{background:var(--band-hover)}
+:root[data-design="industrial"] .management-nav>summary.active{color:var(--band-accent);border-bottom-color:var(--band-accent)}
+:root[data-design="industrial"] .management-menu .tab{color:var(--text);background:var(--surface)}
+:root[data-design="industrial"] .management-menu .tab:hover{background:var(--hover)}
+:root[data-design="industrial"] .management-menu .tab.active{background:var(--selected);color:var(--accent)}
+@media(max-width:740px){
+  .tabs{grid-template-columns:minmax(0,1fr) minmax(0,1.4fr) auto;gap:5px}
+  .management-label{display:none}.management-mobile-label{display:inline}
+  .tabs>.tab,.tabs>.tab:nth-last-child(-n+2){grid-column:auto;font-size:13px;overflow-wrap:normal}
+  .management-nav{position:static;margin:0;min-width:64px;align-self:stretch}
+  .management-nav>summary{height:100%;min-height:48px;padding:8px 5px;gap:4px;font-size:13px;line-height:1.25;border:1px solid var(--border);border-bottom-width:3px;border-radius:var(--radius-control);background:var(--surface);overflow-wrap:anywhere}
+  .management-menu{right:0;width:100%;max-width:none}
+  .header-actions{flex:1 1 100%;max-width:none;margin-left:0;justify-content:space-between}
+  .header-actions .theme-picker{width:auto;flex:0 1 180px}
+  .reports-shortcut{width:auto;min-width:0;white-space:normal;flex:1 1 90px}
+  :root[data-design="industrial"] .management-nav>summary{background:var(--band-bg);border-color:var(--band-surface)}
+  :root:is([data-ui-size="large"],[data-ui-size="xlarge"]) .tabs{grid-template-columns:repeat(2,minmax(0,1fr))}
+  :root:is([data-ui-size="large"],[data-ui-size="xlarge"]) .management-nav{grid-column:1/-1}
+  :root:is([data-ui-size="large"],[data-ui-size="xlarge"]) .management-nav>summary{font-size:var(--ui-nav-font)}
+}
+
 </style>
   
 </head>
 <body>
   <header class="topbar">
     <div class="brand"><span class="brand-icon">▥</span><div><strong>Анализ работ</strong><small>Локальная аналитика · 4 подразделения</small></div></div>
-    <div class="header-actions"><span class="privacy">Данные остаются в этом браузере</span><label class="theme-picker"><span>Тема</span><select id="themeToggle" aria-label="Светлая или тёмная тема"><option value="system">Как на устройстве</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label></div>
+    <div class="header-actions"><button id="reportsShortcut" class="button secondary reports-shortcut" title="Открыть отчёты, импорт и синхронизацию">Обновить отчёты</button><span class="privacy">Данные остаются в этом браузере</span><label class="theme-picker"><span>Тема</span><select id="themeToggle" aria-label="Светлая или тёмная тема"><option value="system">Как на устройстве</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label></div>
   </header>
   <main class="container">
     <div id="flash" class="flash" role="status" aria-live="polite" hidden></div>
@@ -1362,9 +1400,14 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
     <nav class="tabs" aria-label="Разделы приложения">
       <button class="tab active" data-view="dashboard" aria-current="page">Аналитика</button>
       <button class="tab" data-view="changes">Анализ изменений</button>
-      <button class="tab" data-view="upload">Импорт Excel</button>
-      <button class="tab" data-view="groups">Группы работ</button>
-      <button class="tab" data-view="storage">Данные и настройки</button>
+      <details id="managementNav" class="management-nav">
+        <summary id="managementToggle" aria-controls="managementMenu" aria-label="Управление"><span class="management-label">Управление</span><span class="management-mobile-label" aria-hidden="true">Ещё</span></summary>
+        <div id="managementMenu" class="management-menu">
+          <button class="tab" data-view="upload"><span>Отчёты</span><small>Excel, календарь, качество данных</small></button>
+          <button class="tab" data-view="groups"><span>Группы работ</span><small>Справочник и объединение работ</small></button>
+          <button class="tab" data-view="storage"><span>Настройки</span><small>Хранение, резервные копии, оформление</small></button>
+        </div>
+      </details>
     </nav>
     <p class="mobile-help muted">Широкие таблицы и большие диапазоны графиков можно прокручивать по горизонтали.</p>
 
@@ -5314,6 +5357,26 @@ function initChartTooltip() {
   document.addEventListener('keydown',event=>{if(event.key==='Escape')hide();});
   document.documentElement.addEventListener('pointerleave',hide);
 }
+const VIEW_KEY='work-reports-view-v1';
+function selectView(view,remember=true){
+  const tabs=[...document.querySelectorAll('.tabs .tab')],tab=tabs.find(node=>node.dataset.view===view);
+  if(!tab||!$(view)?.classList.contains('view'))return false;
+  const menu=$('managementNav'),returnFocus=menu.open&&menu.contains(document.activeElement);
+  tabs.forEach(node=>{const active=node===tab;node.classList.toggle('active',active);if(active)node.setAttribute('aria-current','page');else node.removeAttribute('aria-current');});
+  document.querySelectorAll('.view').forEach(node=>node.classList.toggle('active',node.id===view));
+  $('managementToggle').classList.toggle('active',menu.contains(tab));
+  menu.open=false;if(returnFocus)$('managementToggle').focus();
+  if(remember)try{localStorage.setItem(VIEW_KEY,view);}catch{/* Navigation remains available when preferences cannot be stored. */}
+  if(view==='changes')renderChanges();
+  if(view==='upload')renderQuality();
+  if(view==='groups')renderGroupAudit();
+  redrawCharts();return true;
+}
+function restoreView(){
+  let view='dashboard';try{view=localStorage.getItem(VIEW_KEY)||view;}catch{/* Use the initial analysis view when storage is unavailable. */}
+  if(!selectView(view,false))selectView('dashboard',false);
+}
+
 function wire() {
   $('printSummary').addEventListener('click',()=>{
     try{buildPrintReport();$('printReport').hidden=false;window.print();}
@@ -5337,14 +5400,12 @@ function wire() {
       node.open=false;node.querySelector('summary').focus();
     });
   });
-  document.querySelectorAll('.tab').forEach(tab=>tab.addEventListener('click',()=>{
-    document.querySelectorAll('.tab').forEach(t=>{t.classList.toggle('active',t===tab);t.setAttribute('aria-current',t===tab?'page':'false');});
-    document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===tab.dataset.view));
-    if(tab.dataset.view==='changes')renderChanges();
-    if(tab.dataset.view==='upload')renderQuality();
-    if(tab.dataset.view==='groups')renderGroupAudit();
-    redrawCharts();
-  }));
+  document.querySelectorAll('.tabs .tab').forEach(tab=>tab.addEventListener('click',()=>selectView(tab.dataset.view)));
+  $('reportsShortcut').addEventListener('click',()=>selectView('upload'));
+  document.addEventListener('click',event=>{if(!$('managementNav').contains(event.target))$('managementNav').open=false;});
+  document.addEventListener('keydown',event=>{
+    if(event.key==='Escape'&&$('managementNav').open){$('managementNav').open=false;$('managementToggle').focus();}
+  });
   $('periodType').addEventListener('change',()=>{state.selectionInitialized=false;syncPeriods();renderDashboard(false);});
   // Фильтры подразделений и показателей обрабатываются через чекбоксы.
   ['basePeriod','currentPeriod','periodComparisonScope','comparisonMode','comparisonPeriod','comparisonBaseOrg'].forEach(id=>$(id).addEventListener('change',()=>{extendedState.contributionPage=0;renderDashboard(false);}));
@@ -5480,7 +5541,7 @@ async function main(){
       notice('Не удалось открыть данные настольной программы: '+err.message+
         '. Запись заблокирована во избежание потери данных.',true);
     }
-    renderAll();
+    renderAll();restoreView();
     return;
   }
   try {
@@ -5491,7 +5552,7 @@ async function main(){
     await loadData();
     notice('Браузер запретил IndexedDB. Используется запасное хранилище браузера с ограниченным объёмом. Делайте резервные копии.',true);
   }
-  renderAll();
+  renderAll();restoreView();
 }
 window.appReady=main();
 

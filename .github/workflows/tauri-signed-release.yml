@@ -57,7 +57,7 @@ jobs:
       - name: Install Tauri CLI
         run: npm install --prefix tauri --no-audit --no-fund
       - name: Verify frontend and calculation regressions
-        run: node --test tauri/tests/*.test.cjs desktop/core.test.cjs tests/test_department_metrics.cjs
+        run: node --test tests/*.cjs tauri/tests/*.test.cjs desktop/core.test.cjs
       - name: Prepare frontend for Rust tests
         run: |
           npm --prefix tauri run prepare:frontend
