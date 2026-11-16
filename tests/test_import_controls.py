@@ -44,6 +44,103 @@ def daily_workbook_bytes():
 
 
 class ImportControls(unittest.TestCase):
+    def test_folder_manual_import_keeps_auto_rejection_and_checks_source(self):
+        good=daily_workbook_bytes()
+        original=zipfile.ZipFile(io.BytesIO(good))
+        buffer=io.BytesIO()
+        with zipfile.ZipFile(buffer,'w',zipfile.ZIP_STORED) as result:
+            for name in original.namelist():
+                data=original.read(name)
+                if name.endswith('sheet1.xml'):
+                    data=data.replace(b'<c r="B3"><v>0.5</v></c>',b'<c r="B3"/>')
+                result.writestr(name,data)
+        self.page.evaluate("""payload=>{
+          window.folderBytes=payload;window.folderSignature='one';window.nativeWrites=0;
+          window.nativeRule={type:'day',start:'2026-11-10',sheet:''};
+          window.desktopAPI={
+            list:async()=>({folder:'C:/Test',files:[{name:'daily.xlsx',size:payload.length,signature:folderSignature,tooLarge:false}],rules:{'daily.xlsx':nativeRule}}),
+            info:async()=>({dataFile:'C:/Db/reports.sqlite3'}),
+            readExcel:async()=>({bytes:folderBytes,signature:folderSignature,sha256:'hash'}),
+            checkExcel:async(name,signature)=>signature===folderSignature,
+            save:async data=>{window.nativeWrites++;window.savedNative=structuredClone(data);},
+            onFilesChanged:()=>()=>{}
+          };
+        }""",list(buffer.getvalue()))
+        self.page.add_script_tag(content=(ROOT/'desktop/renderer.js').read_text())
+        self.page.locator('[data-view=upload]').click()
+        self.page.wait_for_function("document.querySelector('.desktop-file-row')&&document.querySelector('#upload').textContent.includes('Есть замечания к Excel')")
+        self.assertEqual(self.page.evaluate('nativeWrites'),0)
+        self.page.get_by_role('button',name='Проверить и сохранить вручную').click()
+        self.page.wait_for_function('state.pending.length===6')
+        self.assertIn('daily.xlsx',self.page.locator('#excelFileStatus').inner_text())
+        self.assertGreater(self.page.evaluate('state.pending[0].warnings.length'),0)
+        self.assertEqual(self.page.evaluate('nativeWrites'),0)
+        self.page.evaluate('window.confirm=async()=>false')
+        self.page.locator('#saveImport').click()
+        self.page.wait_for_timeout(100)
+        self.assertEqual(self.page.evaluate('nativeWrites'),0)
+        self.assertEqual(self.page.evaluate('state.reports.length'),0)
+        self.page.evaluate("window.confirm=async()=>true;folderSignature='changed'")
+        self.page.locator('#saveImport').click()
+        self.page.wait_for_function("document.querySelector('#flash').textContent.includes('Файл, папка или правило')")
+        self.assertEqual(self.page.evaluate('nativeWrites'),0)
+        self.page.evaluate("folderSignature='one'")
+        self.page.locator('#saveImport').click()
+        self.page.wait_for_function('nativeWrites===1&&state.folderImport===null')
+        self.assertEqual(self.page.evaluate('savedNative.reports.length'),6)
+        self.assertEqual(self.page.evaluate('savedNative.reports[0].desktopSource'),'daily.xlsx')
+        self.assertGreater(self.page.evaluate('savedNative.reports[0].warnings.length'),0)
+        self.page.get_by_role('button',name='Проверить файлы сейчас',exact=True).click()
+        self.page.wait_for_function("!state.desktopSyncing&&document.querySelector('#upload').textContent.includes('Есть замечания к Excel')")
+        self.assertEqual(self.page.evaluate('nativeWrites'),1)
+        self.page.evaluate("bytes=>{folderBytes=bytes;folderSignature='two'}",list(good))
+        self.page.get_by_role('button',name='Проверить файлы сейчас',exact=True).click()
+        self.page.wait_for_function('nativeWrites===2&&!state.desktopSyncing')
+        self.assertEqual(self.page.evaluate('state.reports.length'),6)
+        self.assertEqual(self.page.evaluate('state.reports[0].warnings.length'),0)
+        self.assertEqual(self.page.evaluate('state.reports[0].desktopSignature'),'two')
+
+    def test_tauri_update_controls_wait_for_confirmation(self):
+        self.page.evaluate("""()=>{
+          window.updateDownloads=0;window.confirm=async()=>false;
+          window.__TAURI__={core:{invoke:async()=>true},updater:{check:async()=>({
+            version:'0.2.0',currentVersion:'0.1.0',close:async()=>{},
+            downloadAndInstall:async callback=>{updateDownloads++;callback({event:'Finished'});}
+          })}};
+        }""")
+        self.page.add_script_tag(content=(ROOT/'tauri/updates.js').read_text())
+        self.page.locator('[data-view=storage]').click()
+        self.page.wait_for_function("document.querySelector('#appUpdateStatus').textContent.includes('0.2.0')")
+        for width in [390,1280]:
+            self.page.set_viewport_size({'width':width,'height':900})
+            self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth'))
+        self.page.locator('#installAppUpdate').click()
+        self.page.wait_for_timeout(100)
+        self.assertEqual(self.page.evaluate('updateDownloads'),0)
+        self.page.evaluate('window.confirm=async()=>true')
+        self.page.locator('#installAppUpdate').click()
+        self.page.wait_for_function('updateDownloads===1&&!state.appUpdating')
+        self.assertFalse(self.page.locator('main').evaluate('node=>node.inert'))
+
+    def test_local_csp_preserves_inline_app_and_xlsx_import(self):
+        import hashlib,base64,re
+        html=(ROOT/'index.html').read_text()
+        config=json.loads((ROOT/'tauri/src-tauri/tauri.conf.json').read_text())
+        policy=config['app']['security']['csp']
+        hashes=['\'sha256-'+base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()+'\'' for script in re.findall(r'<script>([\s\S]*?)</script>',html)]
+        policy=policy.replace("script-src 'self'","script-src 'self' "+' '.join(hashes))
+        self.page.route('https://html.local.test/index.html',lambda route:route.fulfill(content_type='text/html',body=html,headers={'Content-Security-Policy':policy}))
+        self.page.reload();self.page.locator('#storageModeInfo').filter(has_text='IndexedDB').wait_for(state='attached')
+        self.page.locator('[data-view=upload]').click()
+        self.page.locator('#excelFile').set_input_files({'name':'daily.xlsx','mimeType':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','buffer':daily_workbook_bytes()})
+        self.page.locator('#excelFileStatus').filter(has_text='Файл загружен').wait_for()
+        self.page.locator('#importType').select_option('day');self.page.locator('#importWeek').fill('2026-11-10')
+        self.page.locator('#inspectFile').click();self.page.locator('#importPreview strong').filter(has_text='Найдено отчётных периодов: 6').wait_for()
+        self.page.locator('#saveImport').click();self.page.locator('#reportCount').filter(has_text='6').wait_for(state='attached')
+        self.page.locator('[data-view=dashboard]').click()
+        self.page.locator('#periodType').select_option('day')
+        self.assertGreater(self.page.locator('svg').count(),0)
+
     def test_comparison_and_calendar_filters_are_below_their_headings(self):
         self.load_six_week_fixture()
         for width in [320,390,1280]:
@@ -120,7 +217,7 @@ class ImportControls(unittest.TestCase):
 
     def test_daily_missing_dates_calendar_baseline_and_changes(self):
         self.page.evaluate('''async()=>{
-          const organizations=DEFAULT_ORGS.slice(0,2),reports=Array.from({length:8},(_,i)=>{const start=addDays('2026-11-01',i);return {id:start,type:'day',start,end:start,organizations,totals:[],warnings:[],rows:organizations.map(organization=>({organization,work:'Дневная работа',count:i+0.5,amount:(i+1)*100}))};}).filter((_,i)=>i!==4);
+          const organizations=DEFAULT_ORGS.slice(0,2),reports=Array.from({length:8},(_,i)=>{const start=addDays('2026-11-01',i);return {id:start,type:'day',start,end:start,sourceCoverage:{start:'2026-11-01',end:'2026-11-08'},organizations,totals:[],warnings:[],rows:organizations.map(organization=>({organization,work:'Дневная работа',count:i+0.5,amount:(i+1)*100}))};}).filter((_,i)=>i!==4);
           await storeReports(reports);state.settings.groups=[];state.selectionInitialized=false;renderAll();
         }''')
         self.page.locator('#periodType').select_option('day')
@@ -135,8 +232,9 @@ class ImportControls(unittest.TestCase):
         self.assertIn('Фактических периодов: 7 из 8',self.page.locator('#regularityCoverage').inner_text())
         self.page.locator('[data-view=upload]').click();self.page.locator('#calendarType').select_option('day')
         self.assertEqual(self.page.locator('#reportCalendar button').count(),12)
-        missing=self.page.locator('#reportCalendar button').filter(has_text='05.11.2026')
-        self.assertIn('Нет отчёта',missing.inner_text())
+        self.page.locator('#reportCalendar [data-month=\"2026-11\"]').click()
+        missing=self.page.locator('[data-date=\"2026-11-05\"]')
+        self.assertIn('Нет отчёта',missing.get_attribute('aria-label'))
         self.page.locator('#qualityPeriod').select_option('day:2026-11-05');self.page.locator('#qualityOrg').select_option('СМУ16');self.page.locator('#qualityType').select_option('missing')
         self.assertIn('05.11.2026',self.page.locator('#qualityTable').inner_text())
         self.page.locator('[data-view=changes]').click();self.page.locator('#changesType').select_option('day');self.page.locator('#changesMode').select_option('all')
@@ -403,11 +501,12 @@ class ImportControls(unittest.TestCase):
         self.assertTrue(self.page.locator('#reports').is_visible())
         self.assertEqual(reports.locator('.report-row').count(),2)
         self.page.locator('#calendarType').select_option('month')
-        self.assertIn('Добавьте',self.page.locator('#reportCalendar').inner_text())
+        self.assertEqual(self.page.locator('#reportCalendar>button').count(),12)
         self.assertEqual(reports.locator('.report-row').count(),2)
         self.page.locator('#calendarType').select_option('week')
-        self.page.locator('#reportCalendar button').filter(has_text='26.10.2026').click()
-        self.page.locator('#calendarDetails button').click()
+        self.page.locator('#reportCalendar [data-month=\"2026-10\"]').click()
+        self.page.locator('#calendarDetails details').last.locator('summary').click()
+        self.page.get_by_role('button',name='Контроль качества: 26.10.2026',exact=False).click()
         self.assertEqual(self.page.locator('#qualityPeriod').input_value(),'week:2026-10-26')
         self.page.once('dialog',lambda dialog:dialog.dismiss())
         reports.locator('button').first.click()
@@ -612,3 +711,4 @@ class ImportControls(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

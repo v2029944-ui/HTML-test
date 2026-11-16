@@ -1,6 +1,6 @@
 [package]
 name = "analiz-rabot-tauri"
-version = "0.1.0"
+version = "0.1.1"
 description = "Анализ выполненных работ — Tauri и SQLite"
 authors = ["HTML-test contributors"]
 edition = "2021"
@@ -14,6 +14,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.37", features = ["bundled"] }
@@ -22,3 +23,4 @@ sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"
+

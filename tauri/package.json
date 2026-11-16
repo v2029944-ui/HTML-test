@@ -1,13 +1,14 @@
 {
   "name": "analiz-rabot-tauri",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "scripts": {
     "prepare:frontend": "node prepare.cjs",
     "icons": "tauri icon assets/icon.svg --output src-tauri/icons",
     "dev": "npm run prepare:frontend && npm run icons && tauri dev",
     "build:windows": "npm run prepare:frontend && npm run icons && tauri build",
-    "test:frontend": "node --test tests/*.test.cjs"
+    "test:frontend": "node --test tests/*.test.cjs",
+    "build:signed:windows": "node release.cjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"
