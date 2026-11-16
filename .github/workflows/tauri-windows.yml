@@ -37,7 +37,7 @@ jobs:
           npm --prefix tauri run prepare:frontend
           npm --prefix tauri run icons
       - name: Test SQLite migration and safe folder access
-        run: cargo test --manifest-path tauri/src-tauri/Cargo.toml --locked
+        run: cargo test --manifest-path tauri/src-tauri/Cargo.toml
       - name: Build Windows installer
         run: npm --prefix tauri run build:windows
       - name: Upload experimental installer
