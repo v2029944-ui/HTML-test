@@ -10,6 +10,89 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ImportControls(unittest.TestCase):
+    def load_six_week_fixture(self):
+        self.page.evaluate('''async()=>{
+          const organizations=DEFAULT_ORGS.slice(0,2);
+          const reports=Array.from({length:6},(_,i)=>{const start=addDays('2026-09-07',7*i),k=i+1;return {id:start,type:'week',start,end:periodEnd(start,'week'),organizations,totals:[],warnings:[],rows:[{organization:organizations[0],work:'Альфа',count:k/2,amount:10*k*k},{organization:organizations[1],work:'Бета',count:1.5*k,amount:20*k*k}]};});
+          await storeReports(reports);await saveSettings({...state.settings,groups:[{id:'g',name:'Общая группа',works:['Альфа','Бета']}]});
+          state.selectedMetrics=new Set(['count','amount']);state.selectionInitialized=false;renderAll();state.selectedOrganizations=new Set(organizations);state.selectedCategories=new Set(['Общая группа']);
+          document.querySelector('#advancedAnalytics').open=true;renderDashboard(false);
+        }''')
+
+    def test_group_coverage_search_and_marked_options(self):
+        self.load_large_group_fixture();self.page.locator('[data-view=groups]').click()
+        self.assertIn('Названий в группах: 2 из 304',self.page.locator('#groupCoverage').inner_text())
+        self.assertIn('Без группы: 302',self.page.locator('#groupCoverage').inner_text())
+        self.page.locator('#groupSearch').press_sequentially('ди')
+        self.assertEqual(self.page.locator('#groupList details').count(),1)
+        self.assertIn('Диагностика',self.page.locator('#groupList summary').inner_text())
+        self.assertIn('1 из 304 наименований',self.page.locator('#groupList summary').inner_text())
+        self.assertIn('2 из 304',self.page.locator('#groupCoverage').inner_text())
+        self.page.locator('#groupList summary').click()
+        self.assertEqual(self.page.locator('#groupList option[value=g1]').inner_text(),'▦ Датчики (группа)')
+        self.page.locator('#groupSearch').fill('нет совпадений')
+        self.assertIn('не найдены',self.page.locator('#groupList').inner_text())
+        self.page.locator('#groupSearch').fill('')
+        self.assertEqual(self.page.locator('#groupList details').count(),2)
+        self.page.locator('#groupAuditPanel>summary').click()
+        self.assertEqual(self.page.locator('#groupAuditResults option[value=g1]').first.inner_text(),'▦ Датчики (группа)')
+        self.page.locator('[data-view=dashboard]').click();self.page.locator('#categoryFilter>summary').click()
+        labels=self.page.locator('#categories .category-row span').all_text_contents()
+        self.assertIn('▦ Датчики (группа)',labels);self.assertIn('Датчик 002',labels)
+        self.assertTrue(self.page.evaluate("state.selectedCategories.has('Датчики') && ![...state.selectedCategories].some(name=>name.startsWith('▦'))"))
+        self.assertEqual(self.page.evaluate("state.settings.groups.find(group=>group.id==='g1').name"),'Датчики')
+
+    def test_three_weeks_versus_three_totals_contributions_and_csv(self):
+        self.load_six_week_fixture()
+        self.page.locator('#periodComparisonScope').select_option('range')
+        self.assertTrue(self.page.locator('#periodComparisonRanges').is_visible())
+        self.assertFalse(self.page.locator('#periodComparisonSingle').is_visible())
+        expected={'baseRangeStart':'2026-09-07','baseRangeEnd':'2026-09-21','currentRangeStart':'2026-09-28','currentRangeEnd':'2026-10-12'}
+        for key,value in expected.items():self.assertEqual(self.page.locator('#'+key).input_value(),value)
+        totals=self.page.evaluate('''()=>{
+          const {before,after}=periodComparisonRanges(analyticsIndex(),[...state.selectedOrganizations],state.selectedCategories),changes=analyzeContributions(before,after);
+          return {before:before.total,after:after.total,sizes:[before.periods.length,after.periods.length],entries:before.by.size,delta:changes.amount.delta,reconciled:changes.amount.reconciled};
+        }''')
+        self.assertEqual(totals['sizes'],[3,3]);self.assertEqual(totals['entries'],1)
+        self.assertEqual(totals['before'],{'count':12,'amount':420,'average':35})
+        self.assertEqual(totals['after'],{'count':30,'amount':2310,'average':77})
+        self.assertEqual(totals['delta'],1890);self.assertTrue(totals['reconciled'])
+        self.assertEqual(self.page.locator('#comparisonCoverage').inner_text().count('3 недели'),2)
+        self.assertIn('27.09.2026',self.page.locator('#comparisonTable').inner_text())
+        self.assertIn('18.10.2026',self.page.locator('#comparisonTable').inner_text())
+        amount=self.page.locator('#comparisonTable .metric-table').filter(has=self.page.get_by_role('heading',name='Сумма',exact=True))
+        with self.page.expect_download() as download:amount.locator('.table-export').click()
+        rows=list(csv.reader(io.StringIO(Path(download.value.path()).read_text(encoding='utf-8-sig')),delimiter=';'))
+        self.assertEqual(next(row[1:] for row in rows if row and row[0]=='Итого по выбранным работам'),['420','2310','1890','450'])
+        self.assertIn('27.09.2026',next(row[1] for row in rows if row and row[0]=='Первый интервал'))
+        self.page.locator('#periodComparisonScope').select_option('single')
+        self.page.locator('#basePeriod').select_option('2026-09-07');self.page.locator('#currentPeriod').select_option('2026-09-14')
+        single=self.page.evaluate('''()=>{const {before,after}=periodComparisonRanges(analyticsIndex(),[...state.selectedOrganizations],state.selectedCategories);return [before.periods.length,after.periods.length,before.total.amount,after.total.amount];}''')
+        self.assertEqual(single,[1,1,30,120])
+
+    def test_range_comparison_missing_department_and_mobile_controls(self):
+        self.load_six_week_fixture();self.page.locator('#periodComparisonScope').select_option('range')
+        self.page.evaluate('''async()=>{
+          const reports=state.reports.map((report,i)=>i===1?{...report,organizations:[DEFAULT_ORGS[0]],rows:report.rows.filter(row=>row.organization===DEFAULT_ORGS[0])}:report);
+          await storeReports(reports);renderAll();
+        }''')
+        self.assertIn('АВТО: нет полного отчёта за 14.09.2026',self.page.locator('#comparisonCoverage').inner_text())
+        result=self.page.evaluate('''()=>{const {before,after}=periodComparisonRanges(analyticsIndex(),[...state.selectedOrganizations],state.selectedCategories);return [before.complete,before.total.amount,after.complete,after.total.amount];}''')
+        self.assertEqual(result,[False,None,True,2310])
+        self.page.evaluate("state.selectedOrganizations=new Set([DEFAULT_ORGS[0]]);renderDashboard(false)")
+        self.assertEqual(self.page.evaluate('''()=>{const {before,after}=periodComparisonRanges(analyticsIndex(),[...state.selectedOrganizations],state.selectedCategories);return [before.complete,before.total.count,before.total.amount,after.total.count,after.total.amount];}'''),[True,3,140,7.5,770])
+        for width in [320,390,1024]:
+            self.page.set_viewport_size({'width':width,'height':900})
+            self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth'))
+            for key in ['baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd']:
+                box=self.page.locator('#'+key).bounding_box()
+                self.assertGreaterEqual(box['height'],44)
+                self.assertGreaterEqual(box['x'],0);self.assertLessEqual(box['x']+box['width'],width+1)
+        self.page.locator('#baseRangeEnd').select_option('2026-09-07')
+        self.assertIn('разной длительности',self.page.locator('#comparisonCoverage').inner_text())
+        self.page.locator('#currentRangeStart').select_option('2026-09-07')
+        self.assertIn('пересекаются',self.page.locator('#comparisonCoverage').inner_text())
+
     def test_go_prefix_precedes_inside_matches_in_all_five_search_fields(self):
         self.page.evaluate('''async()=>{
           const names=['Автомобиль','Агрегат горелки','Головка блока','Горелка','Гофра','Замена головки','Ремонт горелки'],orgs=DEFAULT_ORGS.slice(0,2);
@@ -121,7 +204,7 @@ class ImportControls(unittest.TestCase):
         self.page.locator('[data-view=dashboard]').click()
         self.page.locator('#categoryFilter>summary').click()
         self.page.locator('#categorySearch').fill('ди')
-        self.assertEqual(self.page.locator('#categories .category-row span').all_text_contents(),['Диагностика'])
+        self.assertEqual(self.page.locator('#categories .category-row span').all_text_contents(),['▦ Диагностика (группа)'])
         self.page.locator('#categoryFilter>summary').click()
         self.page.locator('#regularityPanel>summary').click()
         self.page.locator('#regularityPageSelect').select_option(value='11')

@@ -1281,6 +1281,17 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
   .change-pagination .page-jump{grid-row:3;grid-column:1/-1;justify-content:center}
   .group-section .actions{gap:8px}
 }
+
+.group-coverage{padding:12px 14px;background:var(--subtle);border:1px solid var(--border);border-radius:var(--radius-control);font-size:var(--label-size);font-weight:650;font-variant-numeric:tabular-nums}
+.group-search{display:block;max-width:640px;font-size:var(--label-size);line-height:var(--label-leading)}
+.comparison-two-ranges{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;grid-column:1/-1}
+.comparison-interval{min-width:0;margin:0;padding:12px;border:1px solid var(--border);border-radius:var(--radius-control)}
+.comparison-interval>legend{font-size:var(--label-size);font-weight:650;padding:0 4px}
+:root .comparison-interval label{font-size:var(--label-size);line-height:var(--label-leading)}
+:root #periodComparisonRanges .period-pair select{font-size:var(--control-size);height:var(--control-height);min-height:var(--control-height)}
+.comparison-filters>#periodComparisonSingle,.comparison-filters>#periodComparisonRanges{min-width:0;grid-column:1/-1}
+#periodComparisonSingle[hidden],#periodComparisonRanges[hidden]{display:none}
+@media(max-width:740px){.comparison-two-ranges{grid-template-columns:minmax(0,1fr)}.comparison-interval .period-pair{grid-template-columns:minmax(0,1fr)}.group-details>summary{flex-wrap:wrap;gap:6px}}
 </style>
   
 </head>
@@ -1381,8 +1392,13 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <label>Сравниваем<select id="comparisonMode"><option value="periods">Периоды</option><option value="organizations">Подразделения</option></select></label>
         </div>
         <div id="periodComparisonFilters" class="comparison-filters">
-          <div class="period-pair-comparison period-pair"><label>С чем сравниваем<select id="basePeriod"></select></label>
+          <label>Интервалы сравнения<select id="periodComparisonScope"><option value="single">Два отдельных периода</option><option value="range">Два диапазона</option></select></label>
+          <div id="periodComparisonSingle" class="period-pair-comparison period-pair"><label>С чем сравниваем<select id="basePeriod"></select></label>
           <label>Какой период анализируем<select id="currentPeriod"></select></label></div>
+          <div id="periodComparisonRanges" class="comparison-two-ranges" hidden>
+            <fieldset class="comparison-interval"><legend>Первый интервал — база</legend><div class="period-pair"><label>С периода<select id="baseRangeStart"></select></label><label>По период включительно<select id="baseRangeEnd"></select></label></div></fieldset>
+            <fieldset class="comparison-interval"><legend>Второй интервал</legend><div class="period-pair"><label>С периода<select id="currentRangeStart"></select></label><label>По период включительно<select id="currentRangeEnd"></select></label></div></fieldset>
+          </div>
         </div>
         <div id="orgComparisonFilters" class="comparison-filters" hidden>
           <label>Временной интервал<select id="comparisonScope"><option value="single">Один период</option><option value="range">Диапазон периодов</option></select></label>
@@ -1587,7 +1603,11 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <h2 id="groupHeading">Группы работ</h2>
         <p class="muted small">Общие группы действуют для всех подразделений. Раскройте группу, чтобы посмотреть состав или перенести работу. Исходные показатели не меняются.</p>
         <div class="actions"><button id="createGroup" class="button primary" type="button">Создать группу</button><button id="exportGroups" class="button secondary" title="Скачать список групп без отчётов">Скачать группы (JSON)</button><label class="button secondary file-label">Импорт групп JSON<input type="file" id="importGroups" accept=".json,application/json" hidden></label></div>
-<p class="muted small">Файл JSON содержит названия групп и входящие работы, без отчётов. Импорт заменяет текущий список групп после подтверждения.</p><div id="groupList"></div>
+<p class="muted small">Файл JSON содержит названия групп и входящие работы, без отчётов. Импорт заменяет текущий список групп после подтверждения.</p>
+        <p id="groupCoverage" class="group-coverage" role="status" aria-live="polite"></p>
+        <label class="group-search">Найти группу<input id="groupSearch" type="search" placeholder="Название группы"></label>
+        <p id="groupSearchCount" class="muted small" role="status" aria-live="polite"></p>
+        <div id="groupList"></div>
       <details class="group-section" id="groupEditor">
         <summary>Создание и изменение группы</summary>
         <p class="muted">Задайте название и отметьте работы. Одна работа входит максимум в одну группу; отметки сохраняются при поиске и смене страницы.</p>
@@ -2731,6 +2751,9 @@ function syncPeriods() {
   const prev={base:$('basePeriod').value,current:$('currentPeriod').value,from:$('rangeStart').value,to:$('rangeEnd').value,overview:$('overviewPeriod').value};
   selectFill('basePeriod',opts,prev.base,opts.length>1?opts[opts.length-2].value:opts.at(-1)?.value);
   selectFill('currentPeriod',opts,prev.current,opts.at(-1)?.value);
+  const split=Math.max(1,Math.floor(opts.length/2));
+  for(const [id,fallback] of [['baseRangeStart',opts[0]?.value],['baseRangeEnd',opts[split-1]?.value],['currentRangeStart',opts[split]?.value||opts.at(-1)?.value],['currentRangeEnd',opts.at(-1)?.value]])
+    selectFill(id,opts,$(id).value,fallback);
   selectFill('rangeStart',opts,prev.from,opts[0]?.value);
   selectFill('rangeEnd',opts,prev.to,opts.at(-1)?.value);
   selectFill('overviewPeriod',opts,prev.overview,opts.at(-1)?.value);
@@ -2754,6 +2777,12 @@ function categoryOf(work) {
 }
 function chosenMetrics(){return ['amount','count'].filter(x=>state.selectedMetrics.has(x));}
 function rankMetric(){return state.selectedMetrics.has('amount')?'amount':'count';}
+function groupDisplayName(name){return '▦ '+name+' (группа)';}
+function categoryDisplayName(name){return state.settings.groups.some(group=>group.name===name)?groupDisplayName(name):name;}
+function groupingCoverage(){
+  const grouped=new Set(state.settings.groups.flatMap(group=>group.works)),all=new Set([...distinctWorks(),...grouped]);
+  return {grouped:grouped.size,total:all.size,ungrouped:all.size-grouped.size};
+}
 function renderMultiFilter(id,items,selected,onChange) {
   const root=$(id),wasOpen=!!root.querySelector('details[open]');root.replaceChildren();
   const dropdown=elem('details',null,'multi-dropdown');dropdown.open=wasOpen;
@@ -2813,7 +2842,7 @@ function setCategories(periods) {
       if(box.checked)state.selectedCategories.add(name);else state.selectedCategories.delete(name);
       renderDashboard(false);
     });
-    row.append(box,elem('span',name));root.append(row);
+    row.append(box,elem('span',categoryDisplayName(name)));root.append(row);
   });
   if(!shown.length)root.append(elem('p','Совпадений нет','muted small'));
   $('categoryCount').textContent=state.selectedCategories.size+' из '+arr.length;
@@ -2984,10 +3013,10 @@ function renderKpis(now,base,orgs,metrics) {
   const root=$('kpis');root.replaceChildren();
   for(const metric of metrics){
     const current=now.complete?now.total[metric]:null,previous=base.complete?base.total[metric]:null;
-    const card=elem('div',null,'kpi');card.append(elem('span',metricTitle(metric)+' · второй период'),elem('strong',formatMetric(current,metric)),elem('small',rangeCaption(now)));root.append(card);
+    const card=elem('div',null,'kpi');card.append(elem('span',metricTitle(metric)+' · второй интервал'),elem('strong',formatMetric(current,metric)),elem('small',rangeCaption(now)));root.append(card);
     const change=elem('div',null,'kpi'),difference=differenceCells(current,previous,metric);
     const changeStyle=current===null||previous===null?'':numericChangeClass(current-previous);
-    change.append(elem('span','Изменение · '+metricTitle(metric).toLowerCase()),elem('strong',difference[0],changeStyle),elem('small',difference[1]==='—'?'Нет сопоставимой ненулевой базы':difference[1]+' относительно первого периода',changeStyle));root.append(change);
+    change.append(elem('span','Изменение · '+metricTitle(metric).toLowerCase()),elem('strong',difference[0],changeStyle),elem('small',difference[1]==='—'?'Нет сопоставимой ненулевой базы':difference[1]+' относительно первого интервала',changeStyle));root.append(change);
   }
 }
 const extendedState={workPage:0,usualPage:0,regularityPage:0,groupAuditPage:0,usualMetrics:new Set(['count','amount','average']),qualityPage:0,contributionPage:0,comparisonMetrics:new Set(['amount']),customMetrics:false};
@@ -3098,13 +3127,18 @@ function renderQuality(sync=true){
         issue.report?[issue.report.fileName,issue.report.sheetName,issue.report.sourceBlock?'Блок '+issue.report.sourceBlock:null].filter(Boolean).join(' · '):'Отчёт отсутствует',issue.row||null,qualityCellLabel(issue)==='—'?null:qualityCellLabel(issue),
         issue.reason+(issue.raw?' | Значения при чтении: '+issue.raw.map(x=>x??'[нет значения]').join(' | '):'')+(issue.expected&&issue.actual?' | Итог Excel: '+JSON.stringify(issue.expected)+' | Факт: '+JSON.stringify(issue.actual):'')])});
 }
+function periodComparisonRanges(index,organizations,names=null){
+  const ranges=$('periodComparisonScope').value==='range';
+  const before=aggregateReportRange(index,{from:$(ranges?'baseRangeStart':'basePeriod').value,to:$(ranges?'baseRangeEnd':'basePeriod').value,organizations,names});
+  const after=aggregateReportRange(index,{from:$(ranges?'currentRangeStart':'currentPeriod').value,to:$(ranges?'currentRangeEnd':'currentPeriod').value,organizations,names});
+  return {before,after};
+}
 function renderContributions(index,orgs,metrics){
   const root=$('contributionResults');root.replaceChildren();$('contributionCheck').replaceChildren();
   if($('comparisonMode').value!=='periods'){$('contributions').hidden=true;return;}$('contributions').hidden=false;
-  const before=aggregateReportRange(index,{from:$('basePeriod').value,to:$('basePeriod').value,organizations:orgs});
-  const after=aggregateReportRange(index,{from:$('currentPeriod').value,to:$('currentPeriod').value,organizations:orgs});
+  const {before,after}=periodComparisonRanges(index,orgs);
   const result=analyzeContributions(before,after);
-  if(!result.complete){empty(root,'Нет полного набора отчётов выбранных подразделений для обоих периодов. Причины общего изменения не рассчитываются.');updatePager('contribution',0,0);return;}
+  if(!result.complete){empty(root,'Нет полного набора отчётов выбранных подразделений для обоих интервалов. Причины общего изменения не рассчитываются.');updatePager('contribution',0,0);return;}
   const changed=result.rows.filter(row=>metrics.some(metric=>row[metric].delta!==0)).sort((a,b)=>Math.abs(b[rankMetric()].delta)-Math.abs(a[rankMetric()].delta));
   extendedState.contributionPage=updatePager('contribution',extendedState.contributionPage,changed.length);
   for(const metric of metrics){
@@ -3316,7 +3350,7 @@ function renderRegularity(index=analyticsIndex()){
 }
 function workGroupSelect(work,groupId){
   const select=elem('select');select.setAttribute('aria-label','Группа для работы '+work);const none=elem('option','Без группы');none.value='';select.append(none);
-  for(const group of state.settings.groups){const option=elem('option',group.name);option.value=group.id;select.append(option);}select.value=groupId;
+  for(const group of state.settings.groups){const option=elem('option',groupDisplayName(group.name));option.value=group.id;select.append(option);}select.value=groupId;
   select.addEventListener('change',async()=>{select.disabled=true;try{await moveWork(work,select.value);}catch(err){select.disabled=false;select.value=groupId;notice(err.message,true);}});return select;
 }
 function renderGroupAudit(index=analyticsIndex()){
@@ -3335,6 +3369,7 @@ function renderGroupAudit(index=analyticsIndex()){
     const status=result.complete?'Нет выполнений в выбранных отчётах':'Не встречается в доступных; есть пропуски';
     const rows=groups.slice(extendedState.groupAuditPage*25,(extendedState.groupAuditPage+1)*25).map(group=>{
       const button=elem('button',group.name,'text-button group-audit-open');button.addEventListener('click',()=>{
+        if($('groupSearch').value){$('groupSearch').value='';renderGroups();}
         const details=[...$('groupList').querySelectorAll('details[data-group]')].find(x=>x.dataset.group===group.id);if(details){details.open=true;details.querySelector('summary').focus();details.scrollIntoView({block:'nearest',behavior:'smooth'});}
       });return [button,group.works.length,status];
     });
@@ -3349,7 +3384,7 @@ function renderGroupAudit(index=analyticsIndex()){
 }
 
 function wireExtendedAnalytics(){
-  for(const id of ['categorySearch','workSearch','groupAuditSearch','regularitySearch','changesSearch']){
+  for(const id of ['categorySearch','workSearch','groupSearch','groupAuditSearch','regularitySearch','changesSearch']){
     $(id).title='Сначала начало названия, затем совпадения внутри, по алфавиту — при любой длине запроса.';
     $(id).setAttribute('aria-describedby','nameSearchHelp');
   }
@@ -3379,7 +3414,9 @@ function wireExtendedAnalytics(){
 function renderComparison(index=analyticsIndex()) {
   const orgMode=$('comparisonMode').value==='organizations',orgs=[...state.selectedOrganizations],metrics=chosenMetrics();
   $('periodComparisonFilters').hidden=orgMode;$('orgComparisonFilters').hidden=!orgMode;$('kpis').hidden=orgMode;
-  $('comparisonCharts').hidden=!orgMode;$('comparisonDynamics').hidden=!orgMode;$('comparisonCoverage').hidden=!orgMode;
+  $('comparisonCharts').hidden=!orgMode;$('comparisonDynamics').hidden=!orgMode;$('comparisonCoverage').hidden=false;
+  const ranges=$('periodComparisonScope').value==='range';
+  $('periodComparisonSingle').hidden=ranges;$('periodComparisonRanges').hidden=!ranges;
   selectFill('comparisonBaseOrg',orgs.map(x=>({value:x,label:x})),$('comparisonBaseOrg').value);
   renderContributions(index,orgs,metrics);
   $('analyticsDetails').hidden=true;
@@ -3388,10 +3425,20 @@ function renderComparison(index=analyticsIndex()) {
       '; процент — от модуля базы. При базе 0 процент не рассчитывается. Среднее = общая сумма / общее количество. Неполные данные — прочерк.';
     renderDepartmentComparison(index,orgs);return;
   }
-  $('comparisonHelp').textContent='Второй период сравнивается с первым по отмеченным работам. Прочерк — неполный отчёт; при нулевой базе процент не рассчитывается.';
+  $('comparisonHelp').textContent='Второй интервал сравнивается с первым по суммарным показателям отмеченных работ. Даты общие для выбранных подразделений. Прочерк — неполные данные; при нулевой базе процент не рассчитывается.';
   const root=$('comparisonTable');root.replaceChildren();$('comparisonCharts').replaceChildren();$('comparisonCoverage').replaceChildren();
-  const before=aggregateReportRange(index,{from:$('basePeriod').value,to:$('basePeriod').value,organizations:orgs,names:state.selectedCategories});
-  const after=aggregateReportRange(index,{from:$('currentPeriod').value,to:$('currentPeriod').value,organizations:orgs,names:state.selectedCategories});
+  const {before,after}=periodComparisonRanges(index,orgs,state.selectedCategories);
+  const coverage=$('comparisonCoverage');
+  if(ranges||!before.complete||!after.complete){
+    for(const [label,range] of [['Первый интервал',before],['Второй интервал',after]]){
+      const n=range.periods.length,unit=index.type==='week'?ruPlural(n,'неделя','недели','недель'):ruPlural(n,'месяц','месяца','месяцев');
+      coverage.append(elem('p',label+': '+rangeCaption(range)+' · '+n+' '+unit,'muted small'));
+      for(const [org,item] of range.orgs)if(!item.complete)coverage.append(elem('p',label+' · '+org+': нет полного отчёта'+(item.missing.length?' за '+item.missing.map(displayDay).join(', '):'')+'. Пропуски не считаются нулём.','warn small'));
+    }
+    if(before.periods.length!==after.periods.length)coverage.append(elem('p','Интервалы разной длительности. Сравниваются общие суммы и количества, без пересчёта на один период.','warn small'));
+    if(before.periods.length&&after.periods.length&&before.from<=after.periods.at(-1).end&&after.from<=before.periods.at(-1).end)
+      coverage.append(elem('p','Интервалы пересекаются: общие отчётные периоды входят в каждый из сравниваемых итогов один раз.','warn small'));
+  }
   renderKpis(after,before,new Set(orgs),metrics);
   if(!state.selectedCategories.size||!before.periods.length||!after.periods.length){empty(root,'Выберите периоды и работы для сравнения.');return;}
   const entries=comparisonEntries([before,after],state.selectedCategories);
@@ -3400,7 +3447,7 @@ function renderComparison(index=analyticsIndex()) {
       const key=entry?.key??null,old=rangeMetric(before,null,key,metric),now=rangeMetric(after,null,key,metric);
       return [entry?entry.name+(entry.kind==='group'?' (группа)':''):'Итого по выбранным работам',formatMetric(old,metric),formatMetric(now,metric),...differenceCells(now,old,metric)];
     });
-    makeTable(root,metric,orgs.join(', '),['Работа / группа',displayPeriod(before.periods[0]),displayPeriod(after.periods[0]),'Разница','Изменение, %'],rows,{csvRows:entries.map(entry=>{
+    makeTable(root,metric,orgs.join(', '),['Работа / группа',rangeCaption(before),rangeCaption(after),'Разница','Изменение, %'],rows,{csvContext:[['Подразделения',orgs.join(', ')],['Первый интервал',rangeCaption(before)],['Второй интервал',rangeCaption(after)],['Число периодов',before.periods.length+' / '+after.periods.length]],csvRows:entries.map(entry=>{
       const key=entry?.key??null,old=rangeMetric(before,null,key,metric),now=rangeMetric(after,null,key,metric);
       return [entry?entry.name+(entry.kind==='group'?' (группа)':''):'Итого по выбранным работам',old,now,...csvDifferences(now,old)];
     })});
@@ -3992,10 +4039,15 @@ function renderGroups() {
   $('catalogStatus').textContent='В общем списке '+distinctWorks().length+' уникальных названий из отчётов и справочника.';
   renderWorkList();
   const root=$('groupList'),open=new Set([...root.querySelectorAll('details[open]')].map(x=>x.dataset.group));root.replaceChildren();
+  const coverage=groupingCoverage();
+  $('groupCoverage').textContent='Названий в группах: '+coverage.grouped+' из '+coverage.total+' · Без группы: '+coverage.ungrouped;
+  const groups=searchNames(state.settings.groups,$('groupSearch').value,group=>group.name);
+  $('groupSearchCount').textContent='Показано групп: '+groups.length+' из '+state.settings.groups.length;
   if(!state.settings.groups.length){empty(root,'Групп пока нет. Нажмите «Создать группу».');return;}
-  state.settings.groups.forEach(g=>{
+  if(!groups.length){empty(root,'Группы по этому запросу не найдены.');return;}
+  groups.forEach(g=>{
     const details=elem('details',null,'group-details');details.dataset.group=g.id;details.open=open.has(g.id);
-    const heading=elem('summary',g.name);heading.append(elem('small',g.works.length+' '+ruPlural(g.works.length,'работа','работы','работ')));details.append(heading);
+    const heading=elem('summary',g.name);heading.append(elem('small',new Set(g.works).size+' из '+coverage.total+' наименований'));details.append(heading);
     const actions=elem('div',null,'actions'),edit=elem('button','Изменить группу','icon-button'),del=elem('button','Удалить группу','icon-button');
     edit.addEventListener('click',()=>{
       $('groupEditor').open=true;extendedState.workPage=0;state.editingGroup=g.id;state.selectedWorks=new Set(g.works);$('groupName').value=g.name;$('workSearch').value='';renderWorkList();
@@ -4015,7 +4067,7 @@ function renderGroups() {
         const row=elem('div',null,'group-member'),label=elem('label','Переместить в'),select=elem('select');
         select.setAttribute('aria-label','Группа для работы '+work);
         const none=elem('option','Без группы');none.value='';select.append(none);
-        state.settings.groups.forEach(target=>{const option=elem('option',target.name);option.value=target.id;select.append(option);});select.value=g.id;
+        state.settings.groups.forEach(target=>{const option=elem('option',groupDisplayName(target.name));option.value=target.id;select.append(option);});select.value=g.id;
         select.addEventListener('change',async()=>{
           select.disabled=true;
           try{await moveWork(work,select.value);}catch(err){select.disabled=false;select.value=g.id;notice(err.message,true);}
@@ -4767,7 +4819,9 @@ function wire() {
   }));
   $('periodType').addEventListener('change',()=>{state.selectionInitialized=false;syncPeriods();renderDashboard(false);});
   // Фильтры подразделений и показателей обрабатываются через чекбоксы.
-  ['basePeriod','currentPeriod','comparisonMode','comparisonPeriod','comparisonBaseOrg'].forEach(id=>$(id).addEventListener('change',()=>renderDashboard(false)));
+  ['basePeriod','currentPeriod','periodComparisonScope','comparisonMode','comparisonPeriod','comparisonBaseOrg'].forEach(id=>$(id).addEventListener('change',()=>{extendedState.contributionPage=0;renderDashboard(false);}));
+  for(const [start,end] of [['baseRangeStart','baseRangeEnd'],['currentRangeStart','currentRangeEnd']])
+    for(const id of [start,end])$(id).addEventListener('change',()=>{clampDatePair(start,end,id);extendedState.contributionPage=0;renderDashboard(false);});
   $('overviewMode').addEventListener('change',()=>{
     if($('overviewMode').value==='single'&&$('overviewPeriod').value){
       $('rangeStart').value=$('overviewPeriod').value;$('rangeEnd').value=$('overviewPeriod').value;
@@ -4799,6 +4853,7 @@ function wire() {
     }else{
       const current=$('overviewPeriod').value,prior=shiftPeriod($('periodType').value,current,-1);
       if([...$('basePeriod').options].some(opt=>opt.value===prior)&&current){
+        $('periodComparisonScope').value='single';
         $('comparisonMode').value='periods';$('basePeriod').value=prior;$('currentPeriod').value=current;
       }else{
         $('comparisonMode').value='organizations';
@@ -4857,6 +4912,7 @@ function wire() {
   $('inspectFile').addEventListener('click',()=>{try{inspectImport();}catch(err){notice(err.message,true);}});
   $('saveImport').addEventListener('click',async()=>{try{await saveImport();}catch(err){notice(err.message,true);}});
   $('workSearch').addEventListener('input',()=>{extendedState.workPage=0;renderWorkList();});
+  $('groupSearch').addEventListener('input',renderGroups);
   $('createGroup').addEventListener('click',()=>{resetGroup();$('groupEditor').open=true;$('groupName').focus();});
   $('catalogFile').addEventListener('change',async e=>{
     try{await importCatalogFile(e.target.files?.[0]);}

@@ -38,6 +38,53 @@ const run=(expression,values={})=>{
   return vm.runInContext(expression,context);
 };
 
+test('group coverage counts unique names from all sources, including saved groups',()=>{
+  const result=run(`(()=>{
+    const oldReports=state.reports,oldSettings=state.settings;
+    try{
+      state.reports=[{rows:[{work:'Альфа',organization:'СМУ16'},{work:'Альфа',organization:'АВТО'},{work:'Бета',organization:'АВТО'}]}];
+      state.settings={...oldSettings,catalog:[{work:'Альфа'},{work:'Каталог'}],groups:[{id:'a',name:'Группа',works:['Альфа','Бета']},{id:'b',name:'Архив',works:['Старая работа']}]};
+      return groupingCoverage();
+    }finally{state.reports=oldReports;state.settings=oldSettings;}
+  })()`);
+  assert.equal(result.total,4);assert.equal(result.grouped,3);assert.equal(result.ungrouped,1);
+});
+
+test('three periods versus three reuse grouped weighted totals for weeks and months',()=>{
+  for(const type of ['week','month']){
+    const result=run(`(()=>{
+      const organizations=['СМУ16','АВТО'],groups=[{id:'g',name:'Общая группа',works:['Альфа','Бета']}];
+      const reports=Array.from({length:6},(_,i)=>{
+        const start=shiftPeriod(type,type==='week'?'2026-09-07':'2026-01-01',i),k=i+1;
+        return {id:start,type,start,end:periodEnd(start,type),organizations,totals:[],warnings:[],rows:[{organization:organizations[0],work:'Альфа',count:k/2,amount:10*k*k},{organization:organizations[1],work:'Бета',count:1.5*k,amount:20*k*k}]};
+      });
+      const index=buildReportIndex(reports,groups,{type,organizations});
+      const before=aggregateReportRange(index,{from:reports[0].start,to:reports[2].start,organizations,names:new Set(['Общая группа'])});
+      const after=aggregateReportRange(index,{from:reports[3].start,to:reports[5].start,organizations,names:new Set(['Общая группа'])});
+      const changes=analyzeContributions(before,after);
+      return {before,after,changes,groups:before.by.size};
+    })()`,{type});
+    assert.equal(result.before.complete,true);assert.equal(result.after.complete,true);assert.equal(result.groups,1);
+    assert.equal(result.before.total.count,12);assert.equal(result.before.total.amount,420);assert.equal(result.before.total.average,35);
+    assert.equal(result.after.total.count,30);assert.equal(result.after.total.amount,2310);assert.equal(result.after.total.average,77);
+    assert.equal(result.changes.amount.delta,1890);assert.equal(result.changes.amount.reconciled,true);assert.equal(result.changes.count.delta,18);
+  }
+});
+
+test('range comparisons do not turn missing, duplicate or overlapping reports into zero',()=>{
+  const result=run(`(()=>{
+    const organizations=['СМУ16','АВТО'];
+    const make=i=>{const start=shiftPeriod('week','2026-09-07',i);return {id:String(i),type:'week',start,end:periodEnd(start,'week'),organizations,rows:organizations.map(organization=>({organization,work:'Работа',count:0,amount:0})),totals:[],warnings:[]};};
+    const reports=Array.from({length:6},(_,i)=>make(i));
+    const get=items=>{const index=buildReportIndex(items,[],{type:'week',organizations});return aggregateReportRange(index,{from:reports[0].start,to:reports[2].start,organizations});};
+    const zero=get(reports),missing=get(reports.filter((_,i)=>i!==1)),duplicate=get([...reports,{...reports[1],id:'copy'}]);
+    const start=addDays(reports[1].start,1),overlap=get([...reports,{...reports[1],id:'overlap',start,end:periodEnd(start,'week')}]);
+    return {zero,missing,duplicate,overlap,zeroPercent:changeMeasure(0,12,0,0).percent};
+  })()`);
+  assert.equal(result.zero.complete,true);assert.equal(result.zero.total.count,0);assert.equal(result.zero.total.amount,0);assert.equal(result.zero.total.average,null);assert.equal(result.zeroPercent,null);
+  for(const key of ['missing','duplicate','overlap']){assert.equal(result[key].complete,false,key);assert.equal(result[key].total.amount,null,key);}
+});
+
 test('name search puts prefixes before substrings for every query length',()=>{
   const names=['Проверка датчика','Датчик Б','Замена датчика','Демонтаж','Датчик А','Диагностика'];
   assert.deepEqual(Array.from(run("searchNames(names,' д ')",{names})),['Датчик А','Датчик Б','Демонтаж','Диагностика','Замена датчика','Проверка датчика']);
