@@ -13,6 +13,8 @@ use std::{
 
 const MAX_EXCEL_BYTES: u64 = 30 * 1024 * 1024;
 const MAX_PAYLOAD_BYTES: usize = 200 * 1024 * 1024;
+// Keep synchronized with REPORT_TYPES in the root index.html.
+const REPORT_TYPES: [&str; 3] = ["week", "month", "day"];
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -90,8 +92,8 @@ fn safe_excel_name(name: &str) -> bool {
 }
 
 fn validate_rule(rule: &Rule) -> Result<(), String> {
-    if rule.kind != "week" && rule.kind != "month" {
-        return Err("Тип отчёта должен быть «Недели» или «Месяцы».".into());
+    if !REPORT_TYPES.contains(&rule.kind.as_str()) {
+        return Err("Тип отчёта должен быть «Дни», «Недели» или «Месяцы».".into());
     }
     if !valid_date(&rule.start) || (rule.kind == "month" && !rule.start.ends_with("-01")) {
         return Err("Некорректная дата первого периода.".into());
@@ -115,7 +117,7 @@ fn validate_data(data: &Value) -> Result<(), String> {
     for report in reports {
         if !report.get("id").is_some_and(Value::is_string)
             || !report.get("type").and_then(Value::as_str)
-                .is_some_and(|x| x == "week" || x == "month")
+                .is_some_and(|x| REPORT_TYPES.contains(&x))
             || !report.get("start").and_then(Value::as_str).is_some_and(valid_date)
             || !report.get("end").and_then(Value::as_str).is_some_and(valid_date)
         {
@@ -489,6 +491,78 @@ mod tests {
         assert!(safe_excel_name("Анализ.xlsx"));
         assert!(!valid_date("2026-02-30"));
         assert!(valid_date("2026-10-19"));
+    }
+
+    #[test]
+    fn daily_period_saves_in_sqlite_and_rule_matches_browser_import() {
+        let tmp = tempdir().unwrap();
+        let folder = tmp.path().join("Excel");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("День-2026-11-16.xlsx"), b"sample").unwrap();
+        let store = Storage::new(tmp.path().join("database")).unwrap();
+        let mut data = example();
+        data["reports"][0]["type"] = json!("day");
+        data["reports"][0]["start"] = json!("2026-11-16");
+        data["reports"][0]["end"] = json!("2026-11-16");
+        store.save(data).unwrap();
+        assert_eq!(store.load().unwrap()["reports"][0]["type"], "day");
+        store.set_folder(folder.to_string_lossy().to_string()).unwrap();
+        let rule=Rule {
+            kind: "day".into(), start: "2026-11-16".into(), sheet: String::new()
+        };
+        store.set_rule("День-2026-11-16.xlsx".into(), rule).unwrap();
+        let info=store.info().unwrap();
+        assert_eq!(info["rules"]["День-2026-11-16.xlsx"]["type"], "day");
+        assert_eq!(info["rules"]["День-2026-11-16.xlsx"]["start"], "2026-11-16");
+        assert_eq!(store.list_excel().unwrap()["files"].as_array().unwrap().len(),1);
+    }
+
+    #[test]
+    fn legacy_daily_monthly_and_weekly_reports_migrate_without_modifying_json() {
+        let tmp = tempdir().unwrap();
+        let mut old = example();
+        let mut day=old["reports"][0].clone();
+        day["id"]=json!("day");
+        day["type"]=json!("day");
+        day["start"]=json!("2026-11-16");
+        day["end"]=json!("2026-11-16");
+        let mut month=old["reports"][0].clone();
+        month["id"]=json!("month");
+        month["type"]=json!("month");
+        month["start"]=json!("2026-11-01");
+        month["end"]=json!("2026-11-30");
+        old["reports"].as_array_mut().unwrap().extend([day,month]);
+        let source=old.to_string();
+        fs::write(tmp.path().join("reports.json"),&source).unwrap();
+        let config=json!({
+            "version":1,
+            "folder":null,
+            "rules":{"Дневной.xlsx":{
+                "type":"day","start":"2026-11-16","sheet":""
+            }}
+        }).to_string();
+        fs::write(tmp.path().join("desktop-config.json"),&config).unwrap();
+        let store=Storage::new(tmp.path().to_path_buf()).unwrap();
+        let loaded=store.load().unwrap();
+        assert_eq!(loaded["reports"].as_array().unwrap().len(),3);
+        assert_eq!(store.info().unwrap()["rules"]["Дневной.xlsx"]["type"],"day");
+        assert_eq!(fs::read_to_string(tmp.path().join("reports.json")).unwrap(),source);
+        assert_eq!(fs::read_to_string(tmp.path().join("desktop-config.json")).unwrap(),config);
+        assert_eq!(store.load().unwrap()["reports"].as_array().unwrap().len(),3);
+    }
+
+    #[test]
+    fn unknown_report_type_does_not_change_saved_data() {
+        let tmp = tempdir().unwrap();
+        let store=Storage::new(tmp.path().to_path_buf()).unwrap();
+        store.save(example()).unwrap();
+        let mut unknown=example();
+        unknown["reports"][0]["type"]=json!("quarter");
+        assert!(store.save(unknown).is_err());
+        assert_eq!(store.load().unwrap()["reports"][0]["type"],"week");
+        assert!(validate_rule(&Rule {
+            kind:"quarter".into(),start:"2026-11-16".into(),sheet:String::new()
+        }).is_err());
     }
 
     #[test]
