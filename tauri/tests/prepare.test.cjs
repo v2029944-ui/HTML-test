@@ -150,7 +150,7 @@ test('Tauri dialog permission and all seven confirmations guard writes until ans
 
   const pending={id:'next',type:'day',start:'2026-11-16',end:'2026-11-16',rows:[{work:'Работа',organization:'СМУ16',count:1,amount:10}],warnings:['incomplete']};
   const importContext={
-    confirm,inspectImport:async()=>{},state:{pending:[pending],reports:[],settings:{catalog:[]},
+    withExcelImport:action=>action(),confirm,inspectImport:async()=>{},state:{pending:[pending],reports:[],settings:{catalog:[]},
       catalogPreview:[]},$:()=>({checked:false}),
     displayPeriod:x=>x.start,storeReports:async()=>{writes++;},
     storeAllData:async()=>{writes++;},catalogWithEntries:()=>[],renderAll:noop,notice:noop,

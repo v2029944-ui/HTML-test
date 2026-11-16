@@ -1,6 +1,8 @@
 name: Tauri 2 Windows (experimental)
 
 on:
+  push:
+    branches: [work/tauri-dropdown-updates-20261117]
   pull_request:
     paths:
       - "tauri/**"
@@ -40,7 +42,32 @@ jobs:
       - name: Test SQLite migration and safe folder access
         run: cargo test --manifest-path tauri/src-tauri/Cargo.toml
       - name: Build Windows installer
+        if: github.ref != 'refs/heads/work/tauri-dropdown-updates-20261117'
         run: npm --prefix tauri run build:windows
+      - name: Build signed preview without publishing a release
+        if: github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          ANALIZ_UPDATER_PUBLIC_KEY: ${{ secrets.ANALIZ_UPDATER_PUBLIC_KEY }}
+        run: npm --prefix tauri run build:signed:windows
+      - uses: actions/setup-python@v5
+        if: github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
+        with:
+          python-version: '3.12'
+      - name: Run installed Windows application with real WebView2
+        if: github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
+        run: |
+          python -m pip install playwright==1.62.0
+          python tauri/tests/windows_smoke.py
+      - name: Upload preview EXE and Windows verification
+        if: always() && github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tauri-Windows-preview
+          path: tauri/test-artifacts/*
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload experimental installer
         uses: actions/upload-artifact@v4
         with:
