@@ -2552,6 +2552,20 @@ function importStart() {
   if(!validReportDate(date))throw Error($('importType').value==='day'?'Укажите дату первого дневного отчёта':'Укажите дату начала первой недели');
   return date;
 }
+function folderImportMetadata(type,date,index,sheet,manual){
+  const source=state.folderImport,rule=source?.rule;
+  if(!rule||manual||type!==rule.type||sheet!==source.sheet||
+    date!==shiftPeriod(rule.type,rule.start,index)||(rule.sheet&&rule.sheet!==sheet))return {};
+  return {desktopSource:source.name,desktopSignature:source.signature,
+    desktopHash:source.sha256,desktopRule:JSON.stringify(rule)};
+}
+async function checkFolderImport(){
+  const source=state.folderImport;if(!source)return;
+  const listing=await window.desktopAPI.list();
+  if(listing.folder!==source.folder||JSON.stringify(listing.rules[source.name])!==JSON.stringify(source.rule)||
+    !await window.desktopAPI.checkExcel(source.name,source.signature))
+    throw Error('Файл, папка или правило импорта изменились. Откройте новую проверку из «Папка Excel».');
+}
 function buildPending() {
   if(!state.workbook)throw Error('Сначала выберите файл');
   const type=$('importType').value,start=importStart(),sheetName=$('sheetSelect').value;
@@ -2573,6 +2587,7 @@ function buildPending() {
     }
     seen.add(date+'|'+end);
     return {id:uuid(),type,start:date,end:periodEnd(date,type),fileName:state.fileName,
+      ...folderImportMetadata(type,date,i,sheetName,manual),
       sheetName,sourceBlock:x.index,sourceCol:x.col,sourceCountCol:x.countCol,sourceAmountCol:x.amountCol,rows:x.rows,warnings:x.warnings,issues:x.issues,totals:x.totals,
       count:x.count,amount:x.amount,hasMismatch:x.hasMismatch,organizations:x.organizations,importedAt:new Date().toISOString()};
   });
@@ -2719,6 +2734,7 @@ async function importCatalogFile(file) {
 }
 
 function resetWorkbookSelection(){
+  state.folderImport=null;
   state.workbook=null;state.fileName='';state.pending=[];state.catalogPreview=[];
   const select=$('sheetSelect');
   select.replaceChildren(elem('option','Сначала выберите файл'));
@@ -2732,6 +2748,7 @@ function resetWorkbookSelection(){
   $('excelFile').title='';
 }
 async function selectWorkbook(buffer,fileName) {
+  state.folderImport=null;
   if(!window.XLSX)throw Error('Модуль чтения Excel недоступен');
   const workbook=window.XLSX.read(buffer,{type:'array',cellDates:true});
   state.workbook=workbook;state.fileName=fileName;state.pending=[];
@@ -2768,11 +2785,13 @@ async function saveImport() {
   pending.forEach(item=>{overlaps+=state.reports.filter(x=>x.type!==item.type && x.start<=item.end && x.end>=item.start).length;});
   if(pending.some(x=>x.warnings.length) && !await confirm('Обнаружены неполные строки или расхождения с итогами Excel. Сохранение таких отчётов может исказить аналитику. Сначала проверьте предупреждения в предпросмотре. Сохранить с ошибками?'))return;
   if(overlaps && !await confirm('У новых отчётов есть пересечения с отчётами другого типа периода. Дневные, недельные и месячные отчёты в аналитике учитываются раздельно. Сохранить?'))return;
+  await checkFolderImport();
   const oldCatalog=state.settings.catalog||[];
   const catalog=catalogWithEntries(oldCatalog,state.catalogPreview.filter(entry=>entry.sheet!==$('sheetSelect').value));
   const catalogAdded=catalog.length-oldCatalog.length;
   if(catalogAdded)await storeAllData(next,{...state.settings,catalog});
   else await storeReports(next);
+  state.folderImport=null;
   state.selectionInitialized=false;$('qualitySource').value='saved';renderAll();
   notice('Сохранено периодов: '+pending.length+'. Добавлено услуг в справочник: '+catalogAdded+
     (window.desktopAPI?'. Данные сохранены на диске компьютера.':'. Данные находятся только в этом браузере.'));
@@ -5001,4 +5020,5 @@ window.appReady=main();
 </script>
 </body>
 </html>
+
 

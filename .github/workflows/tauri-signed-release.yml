@@ -1,0 +1,85 @@
+name: Tauri signed Windows release
+
+on:
+  push:
+    branches: [build/tauri-signed-20261116]
+    paths:
+      - '.github/workflows/tauri-signed-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tauri-signed-release
+  cancel-in-progress: false
+
+jobs:
+  signing-ready:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      configured: ${{ steps.keys.outputs.configured }}
+    steps:
+      - name: Check signing secrets without disclosing them
+        id: keys
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          ANALIZ_UPDATER_PUBLIC_KEY: ${{ secrets.ANALIZ_UPDATER_PUBLIC_KEY }}
+        shell: python
+        run: |
+          import os
+          required = ['TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'ANALIZ_UPDATER_PUBLIC_KEY']
+          missing = [name for name in required if not os.environ.get(name, '').strip()]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('configured=' + ('false' if missing else 'true') + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              if missing:
+                  summary.write('## Signing is not configured\nAdd repository secrets: ' + ', '.join(missing) + '.\nThen use Re-run all jobs. No Windows runner was started.\n')
+              else:
+                  summary.write('Signing secrets are configured. Values were not printed.\n')
+
+  build-and-publish:
+    needs: signing-ready
+    if: needs.signing-ready.outputs.configured == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 65
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'tauri/src-tauri -> target'
+      - name: Install Tauri CLI
+        run: npm install --prefix tauri --no-audit --no-fund
+      - name: Verify frontend and calculation regressions
+        run: node --test tauri/tests/*.test.cjs desktop/core.test.cjs tests/test_department_metrics.cjs
+      - name: Prepare frontend for Rust tests
+        run: |
+          npm --prefix tauri run prepare:frontend
+          npm --prefix tauri run icons
+      - name: Verify SQLite migration
+        run: cargo test --manifest-path tauri/src-tauri/Cargo.toml
+      - name: Build and sign Windows update
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          ANALIZ_UPDATER_PUBLIC_KEY: ${{ secrets.ANALIZ_UPDATER_PUBLIC_KEY }}
+        run: npm --prefix tauri run build:signed:windows
+      - name: Preserve signed installer and update manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tauri-signed-Windows
+          path: tauri/release/tauri-v*/*
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish installer, then update channel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tauri/publish.cjs

@@ -5,14 +5,14 @@ const path=require('node:path');
 function prepareHtml(source){
   if(!source.includes('window.appReady=main();'))
     throw Error('Недостаточно совместимая версия index.html: точка запуска не обнаружена.');
-  if(source.includes('tauri-bridge.js')||source.includes('tauri-desktop.js'))
+  if(source.includes('tauri-bridge.js')||source.includes('tauri-desktop.js')||source.includes('tauri-updates.js'))
     throw Error('Tauri-скрипты уже присутствуют в исходном HTML.');
   if((source.match(/<\/head>/g)||[]).length!==1||(source.match(/<\/body>/g)||[]).length!==1)
     throw Error('Не найдены однозначные границы HTML.');
   // Keep the original HTML unchanged; inject Tauri access only into the generated copy.
   return source
     .replace('</head>','<script src="tauri-bridge.js"></script>\n</head>')
-    .replace('</body>','<script src="tauri-desktop.js"></script>\n</body>');
+    .replace('</body>','<script src="tauri-desktop.js"></script>\n<script src="tauri-updates.js"></script>\n</body>');
 }
 
 function prepare(options={}){
@@ -22,6 +22,7 @@ function prepare(options={}){
   fs.mkdirSync(output,{recursive:true});
   fs.writeFileSync(path.join(output,'index.html'),prepareHtml(source));
   fs.copyFileSync(path.join(__dirname,'bridge.js'),path.join(output,'tauri-bridge.js'));
+  fs.copyFileSync(path.join(__dirname,'updates.js'),path.join(output,'tauri-updates.js'));
   const renderer=fs.readFileSync(path.join(base,'desktop/renderer.js'),'utf8');
   // Shared renderer works with Tauri's compatible API; adjust only storage hints.
   const adapted=renderer.replace(
@@ -37,3 +38,4 @@ if(require.main===module){
   process.stdout.write('Prepared Tauri HTML from original ('+result.sourceBytes+' bytes)\n');
 }
 module.exports={prepareHtml,prepare};
+

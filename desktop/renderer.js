@@ -20,7 +20,12 @@
   refresh.className='button secondary';refresh.textContent='Проверить файлы сейчас';
   const openData=document.createElement('button');
   openData.className='button secondary';openData.textContent='Папка базы данных';
-  buttons.append(choose,refresh,openData);
+  const closeManual=document.createElement('button');
+  closeManual.className='button secondary';closeManual.textContent='Закрыть ручную проверку';closeManual.hidden=true;
+  closeManual.addEventListener('click',async()=>{
+    resetWorkbookSelection();renderQuality();closeManual.hidden=true;await syncFiles();
+  });
+  buttons.append(choose,refresh,openData,closeManual);
   const location=document.createElement('p');location.className='muted small';
   const status=document.createElement('p');status.setAttribute('role','status');
   status.setAttribute('aria-live','polite');status.className='muted small';
@@ -84,7 +89,7 @@
       for(const [key,label] of [['week','Недели'],['month','Месяцы'],['day','Дни']]){
         const opt=node('option',label);opt.value=key;type.append(opt);
       }
-      type.value=initial.type;type.setAttribute('aria-label','Масштаб '+file.name);
+      type.value=initial.type;type.setAttribute('aria-label','Тип периода '+file.name);
       let start=dateInput(initial.type,initial.start);
       type.addEventListener('change',()=>{
         const fresh=dateInput(type.value,'');
@@ -106,7 +111,41 @@
           await syncFiles();
         }catch(err){message(file.name+': '+err.message,true);}
       });
-      line.append(filename,type,start,sheet,save);
+      const manual=node('button','Проверить и сохранить вручную','button secondary');
+      manual.type='button';manual.disabled=file.tooLarge;
+      manual.addEventListener('click',async()=>{
+        if(running){message('Дождитесь завершения синхронизации.',true);return;}
+        running=true;state.desktopSyncing=true;manual.disabled=true;
+        try{
+          const raw=start.value,first=type.value==='month'?raw+'-01':raw;
+          if(!validReportDate(first))throw Error('Укажите дату первого периода файла.');
+          const folder=latest.folder;
+          const source=await api.readExcel(file.name);
+          const listing=await api.list();
+          if(listing.folder!==folder||source.signature!==file.signature||!await api.checkExcel(file.name,source.signature))
+            throw Error('Файл изменился. Обновите список файлов и повторите проверку.');
+          await selectWorkbook(new Uint8Array(source.bytes),file.name);
+          $('importType').value=type.value;$('importType').dispatchEvent(new Event('change'));
+          $(type.value==='month'?'importMonth':'importWeek').value=type.value==='month'?first.slice(0,7):first;
+          let selected=sheet.value.trim();
+          if(!selected)selected=state.workbook.SheetNames.find(name=>{
+            try{return parseSheet(state.workbook.Sheets[name]).some(x=>x.rows.length);}catch{return false;}
+          });
+          if(!selected||!state.workbook.Sheets[selected])throw Error('Отчётный лист не найден. Выберите его в обычном импорте.');
+          $('sheetSelect').value=selected;
+          $('importPeriodDates').replaceChildren();renderImportDateFields();
+          state.folderImport={name:file.name,folder:listing.folder,signature:source.signature,
+            sha256:source.sha256,rule:listing.rules[file.name],sheet:selected};
+          $('excelFileStatus').textContent='Из папки: '+file.name;
+          $('excelFileStatus').title=file.name;
+          closeManual.hidden=false;
+          await inspectImport();
+          message('Предпросмотр открыт ниже. Проверьте замечания, затем нажмите «Сохранить отчёты». Автоимпорт приостановлен до сохранения или закрытия ручной проверки.');
+          $('importPreview').scrollIntoView({behavior:'smooth',block:'start'});
+        }catch(err){message(file.name+': '+err.message,true);}
+        finally{running=false;state.desktopSyncing=false;manual.disabled=file.tooLarge;if(rerun){rerun=false;scheduleSync();}}
+      });
+      line.append(filename,type,start,sheet,save,manual);
       if(!rule)line.append(node('small','Требуется подтвердить первую дату.','warn small'));
       if(file.tooLarge)line.append(node('small','Слишком большой файл (максимум 30 МБ).','warn small'));
       list.append(line);
@@ -148,9 +187,10 @@
     return reports;
   }
   async function syncFiles(force=false){
+    if(state.folderImport||state.appUpdating)return;
     if(state.desktopBlocked){message('Сохранение на диск заблокировано из-за ошибки чтения базы.',true);return;}
     if(running){rerun=true;return;}
-    running=true;choose.disabled=true;refresh.disabled=true;
+    running=true;state.desktopSyncing=true;choose.disabled=true;refresh.disabled=true;
     try{
       const listing=await api.list();
       if(!listing.folder){message('Сначала выберите папку.');return;}
@@ -199,7 +239,7 @@
       // Не перезаписываем чужие отчёты; удаление источника не стирает данные.
     }catch(err){message('Ошибка синхронизации: '+err.message,true);}
     finally{
-      running=false;choose.disabled=false;refresh.disabled=false;
+      running=false;state.desktopSyncing=false;choose.disabled=false;refresh.disabled=false;
       if(rerun){rerun=false;scheduleSync();}
     }
   }
@@ -224,4 +264,5 @@
     await syncFiles();
   }catch(err){message('Не удалось прочитать папку Excel: '+err.message,true);}
 })();
+
 

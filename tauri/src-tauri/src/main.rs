@@ -51,8 +51,16 @@ fn open_data_folder(store: State<'_, Storage>) -> Result<String, String> {
     Ok(String::new())
 }
 
+#[tauri::command]
+fn updater_configured() -> bool {
+    !option_env!("ANALIZ_UPDATER_PUBLIC_KEY").unwrap_or("").trim().is_empty()
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new()
+            .pubkey(option_env!("ANALIZ_UPDATER_PUBLIC_KEY").unwrap_or(""))
+            .build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -63,9 +71,10 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            load_data, save_data, get_info, set_folder, set_rule,
+            updater_configured, load_data, save_data, get_info, set_folder, set_rule,
             list_excel, read_excel, check_excel, open_data_folder
         ])
         .run(tauri::generate_context!())
         .expect("Failed to start Tauri application");
 }
+
