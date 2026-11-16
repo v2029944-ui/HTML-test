@@ -11,7 +11,7 @@ const DEFAULT_CONFIG=()=>({version:1,folder:null,rules:{}});
 
 function safeExcelName(name){
   return typeof name==='string'&&name.length<=240&&/\.xlsx$/i.test(name)&&
-    !name.startsWith('~$')&&!/[\/\\\u0000-\u001f]/.test(name)&&
+    !name.startsWith('~$')&&!/[\/\\:\u0000-\u001f]/.test(name)&&
     name!=='.'&&name!=='..'&&path.basename(name)===name;
 }
 function validDate(value){

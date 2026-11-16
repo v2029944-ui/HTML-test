@@ -182,7 +182,7 @@
       }
       if(updated){
         await storeReports(next);
-        state.selectionInitialized=false;
+        // Automatic sync must not discard the user's selected work filters.
         renderAll();
       }
       message('Синхронизация: обновлено файлов '+updated+
