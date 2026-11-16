@@ -1,0 +1,49 @@
+name: Tauri 2 Windows (experimental)
+
+on:
+  pull_request:
+    paths:
+      - "tauri/**"
+      - "index.html"
+      - "desktop/renderer.js"
+      - ".github/workflows/tauri-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-build:
+    runs-on: windows-latest
+    timeout-minutes: 65
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "tauri/src-tauri -> target"
+      - name: Install Tauri CLI
+        run: npm install --prefix tauri --no-audit --no-fund
+      - name: Check frontend bridge and prepare HTML
+        run: |
+          node --test tauri/tests/prepare.test.cjs
+          npm --prefix tauri run prepare:frontend
+          npm --prefix tauri run icons
+      - name: Test SQLite migration and safe folder access
+        run: cargo test --manifest-path tauri/src-tauri/Cargo.toml --locked
+      - name: Build Windows installer
+        run: npm --prefix tauri run build:windows
+      - name: Upload experimental installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tauri-Windows-experimental
+          path: tauri/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14
