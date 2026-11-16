@@ -20,13 +20,39 @@ fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
+// An omitted option is valid; an explicit null is a malformed import option.
+fn present_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where D: serde::Deserializer<'de>, T: Deserialize<'de> {
+    T::deserialize(deserializer).map(Some)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SheetMapping {
+    pub work_col: u32,
+    pub header_row: u32,
+    pub first_day_col: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_count_col: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_amount_col: Option<u32>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Rule {
     #[serde(rename = "type")]
     pub kind: String,
     pub start: String,
     #[serde(default)]
     pub sheet: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "present_option")]
+    pub format: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "present_option")]
+    pub year: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "present_option")]
+    pub sheets: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "present_option")]
+    pub mappings: Option<HashMap<String, SheetMapping>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -95,11 +121,36 @@ fn validate_rule(rule: &Rule) -> Result<(), String> {
     if !REPORT_TYPES.contains(&rule.kind.as_str()) {
         return Err("Тип отчёта должен быть «Дни», «Недели» или «Месяцы».".into());
     }
-    if !valid_date(&rule.start) || (rule.kind == "month" && !rule.start.ends_with("-01")) {
+    let wide = rule.format.as_deref() == Some("daily-wide");
+    if (rule.format.is_some() && !wide) || (wide && rule.kind != "day") {
+        return Err("Некорректный формат импорта.".into());
+    }
+    if !(wide && rule.start.is_empty())
+        && (!valid_date(&rule.start) || (rule.kind == "month" && !rule.start.ends_with("-01"))) {
         return Err("Некорректная дата первого периода.".into());
     }
-    if rule.sheet.len() > 120 {
+    if rule.sheet.encode_utf16().count() > 120 {
         return Err("Название листа Excel слишком длинное.".into());
+    }
+    if (!wide && (rule.year.is_some() || rule.sheets.is_some() || rule.mappings.is_some()))
+        || rule.year.is_some_and(|year| !(1900..=9999).contains(&year)) {
+        return Err("Некорректные параметры годового импорта.".into());
+    }
+    let valid_sheet = |name: &str| !name.trim().is_empty() && name.encode_utf16().count() <= 120;
+    if let Some(sheets) = &rule.sheets {
+        if sheets.len() > 12 || sheets.iter().any(|name| !valid_sheet(name)) {
+            return Err("Некорректный список листов Excel.".into());
+        }
+    }
+    if let Some(mappings) = &rule.mappings {
+        for (name, mapping) in mappings {
+            if !valid_sheet(name) || mapping.work_col > 2047 || mapping.first_day_col > 2047
+                || mapping.header_row > 59999
+                || mapping.total_count_col.is_some_and(|col| col > 2047)
+                || mapping.total_amount_col.is_some_and(|col| col > 2047) {
+                return Err("Некорректное сопоставление столбцов Excel.".into());
+            }
+        }
     }
     Ok(())
 }
@@ -443,6 +494,49 @@ mod tests {
         }],"settings":default_settings()})
     }
 
+    fn leap_year_source() -> Value {
+        let first = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let organizations = ["СМУ16", "АВТО", "ТРАК", "ЦЕНТР"];
+        let reports: Vec<Value> = (0..366).map(|offset| {
+            let date = (first + chrono::Duration::days(offset)).format("%Y-%m-%d").to_string();
+            let rows: Vec<Value> = organizations.iter().enumerate().map(|(index, organization)| {
+                json!({"work":"Дробная работа","organization":organization,
+                    "count":index as f64 + 0.25,"amount":100.125 + index as f64})
+            }).collect();
+            json!({"id":format!("annual-{date}"),"type":"day","start":date,"end":date,
+                "desktopSource":"Год-2024.xlsx","rows":rows})
+        }).collect();
+        json!({"reports":reports,"settings":default_settings()})
+    }
+
+    #[test]
+    fn full_leap_year_round_trips_and_duplicate_replacement_rolls_back() {
+        let tmp = tempdir().unwrap();
+        let original = leap_year_source();
+        let store = Storage::new(tmp.path().to_path_buf()).unwrap();
+        store.save(original.clone()).unwrap();
+        drop(store);
+        let reopened = Storage::new(tmp.path().to_path_buf()).unwrap();
+        let saved = reopened.load().unwrap();
+        assert_eq!(saved, original);
+        assert_eq!(saved["reports"].as_array().unwrap().len(), 366);
+        assert_eq!(saved["reports"][59]["start"], "2024-02-29");
+        assert_eq!(saved["reports"][365]["end"], "2024-12-31");
+        assert_eq!(saved["reports"][365]["rows"][3]["count"], 3.25);
+        assert_eq!(saved["reports"][365]["rows"][3]["amount"], 103.125);
+
+        let mut replacement = original.clone();
+        replacement["reports"][0]["rows"][0]["amount"] = json!(999.875);
+        replacement["settings"]["catalog"] = json!(["replacement"]);
+        // Fail at the final insert after DELETE and 365 successful new inserts.
+        let duplicate_id = replacement["reports"][0]["id"].clone();
+        replacement["reports"][365]["id"] = duplicate_id;
+        assert!(reopened.save(replacement).is_err());
+        assert_eq!(reopened.load().unwrap(), original);
+        drop(reopened);
+        assert_eq!(Storage::new(tmp.path().to_path_buf()).unwrap().load().unwrap(), original);
+    }
+
     #[test]
     fn sqlite_round_trip_and_reopen() {
         let tmp = tempdir().unwrap();
@@ -537,7 +631,7 @@ mod tests {
         assert_eq!(store.load().unwrap()["reports"][0]["type"], "day");
         store.set_folder(folder.to_string_lossy().to_string()).unwrap();
         let rule=Rule {
-            kind: "day".into(), start: "2026-11-16".into(), sheet: String::new()
+            kind: "day".into(), start: "2026-11-16".into(), sheet: String::new(), ..Rule::default()
         };
         store.set_rule("День-2026-11-16.xlsx".into(), rule).unwrap();
         let info=store.info().unwrap();
@@ -590,8 +684,67 @@ mod tests {
         assert!(store.save(unknown).is_err());
         assert_eq!(store.load().unwrap()["reports"][0]["type"],"week");
         assert!(validate_rule(&Rule {
-            kind:"quarter".into(),start:"2026-11-16".into(),sheet:String::new()
+            kind:"quarter".into(),start:"2026-11-16".into(),sheet:String::new(),..Rule::default()
         }).is_err());
+    }
+
+    #[test]
+    fn daily_wide_config_migrates_and_round_trips_with_legacy_rules() {
+        let tmp = tempdir().unwrap();
+        let excel = tmp.path().join("Excel");
+        fs::create_dir_all(&excel).unwrap();
+        let legacy = json!({"type":"week","start":"2026-11-16","sheet":""});
+        let wide = json!({"type":"day","start":"","sheet":"","format":"daily-wide","year":2026,
+            "sheets":["Январь"],"mappings":{"Январь":{
+                "workCol":0,"headerRow":3,"firstDayCol":1,"totalAmountCol":64
+            }}});
+        fs::write(tmp.path().join("desktop-config.json"), json!({
+            "version":1,"folder":excel.to_string_lossy(),
+            "rules":{"legacy.xlsx":legacy,"annual.xlsx":wide}
+        }).to_string()).unwrap();
+        let store = Storage::new(tmp.path().to_path_buf()).unwrap();
+        assert_eq!(store.info().unwrap()["rules"]["legacy.xlsx"], legacy);
+        assert_eq!(store.info().unwrap()["rules"]["annual.xlsx"], wide);
+        let rule: Rule = serde_json::from_value(wide.clone()).unwrap();
+        store.set_rule("annual.xlsx".into(), rule).unwrap();
+        let reopened = Storage::new(tmp.path().to_path_buf()).unwrap();
+        assert_eq!(reopened.info().unwrap()["rules"]["annual.xlsx"], wide);
+        assert_eq!(reopened.info().unwrap()["rules"]["legacy.xlsx"], legacy);
+        let mut invalid: Rule = serde_json::from_value(wide.clone()).unwrap();
+        invalid.year = Some(1899);
+        assert!(reopened.set_rule("annual.xlsx".into(), invalid).is_err());
+        assert_eq!(reopened.info().unwrap()["rules"]["annual.xlsx"], wide);
+    }
+
+    #[test]
+    fn malformed_daily_wide_options_are_rejected() {
+        let base = json!({"type":"day","start":"","sheet":"","format":"daily-wide"});
+        for extra in [
+            json!({"format":"annual"}), json!({"type":"month"}),
+            json!({"start":"2026-02-30"}), json!({"year":1899}), json!({"year":10000}),
+            json!({"year":2026.5}), json!({"year":null}), json!({"sheets":[""]}),
+            json!({"sheets":vec!["Лист";13]}), json!({"sheets":"Лист"}),
+            json!({"mappings":[]}), json!({"mappings":null}),
+            json!({"mappings":{"Sheet":{"workCol":0,"headerRow":60000,"firstDayCol":1}}}),
+            json!({"mappings":{"Sheet":{"workCol":2048,"headerRow":0,"firstDayCol":1}}}),
+            json!({"mappings":{"Sheet":{"workCol":-1,"headerRow":0,"firstDayCol":1}}}),
+            json!({"mappings":{"Sheet":{"headerRow":0,"firstDayCol":1}}}),
+            json!({"mappings":{"Sheet":{"workCol":0,"headerRow":0,"firstDayCol":1,"totalCountCol":"2"}}}),
+        ] {
+            let mut value = base.clone();
+            value.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            let rejected = match serde_json::from_value::<Rule>(value.clone()) {
+                Err(_) => true,
+                Ok(rule) => validate_rule(&rule).is_err(),
+            };
+            assert!(rejected, "accepted malformed rule: {value}");
+        }
+        let boundary: Rule = serde_json::from_value(json!({
+            "type":"day","start":"","sheet":"","format":"daily-wide","year":9999,
+            "mappings":{"Sheet":{"workCol":2047,"headerRow":59999,"firstDayCol":2047,
+                "totalCountCol":null,"totalAmountCol":2047}}
+        })).unwrap();
+        assert!(validate_rule(&boundary).is_ok());
     }
 
     #[test]
@@ -610,3 +763,4 @@ mod tests {
         assert!(store.check_excel("Анализ.xlsx".into(),bytes.signature));
     }
 }
+

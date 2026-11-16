@@ -21,11 +21,45 @@ function validDate(value){
 }
 function normalizeRule(rule){
   if(!rule||!['week','month','day'].includes(rule.type))throw Error('Укажите тип отчётов: дни, недели или месяцы.');
-  if(!validDate(rule.start)||(rule.type==='month'&&!rule.start.endsWith('-01')))
+  const has=key=>Object.prototype.hasOwnProperty.call(rule,key);
+  const wide=rule.format==='daily-wide';
+  if((has('format')&&!wide)||(wide&&rule.type!=='day'))throw Error('Некорректный формат импорта.');
+  if(!(wide&&rule.start==='')&&(!validDate(rule.start)||(rule.type==='month'&&!rule.start.endsWith('-01'))))
     throw Error('Укажите корректную дату дня, начала недели или первого дня месяца.');
   const sheet=typeof rule.sheet==='string'?rule.sheet.trim():'';
   if(sheet.length>120)throw Error('Название листа Excel слишком длинное.');
-  return {type:rule.type,start:rule.start,sheet};
+  const result={type:rule.type,start:rule.start,sheet};
+  if(wide)result.format='daily-wide';
+  const invalid=()=>{throw Error('Некорректные параметры годового импорта.');};
+  for(const key of ['year','sheets','mappings'])if(has(key)&&!wide)invalid();
+  if(has('year')){
+    if(!Number.isInteger(rule.year)||rule.year<1900||rule.year>9999)invalid();
+    result.year=rule.year;
+  }
+  const sheetName=name=>typeof name==='string'&&name.trim().length>0&&name.length<=120;
+  if(has('sheets')){
+    if(!Array.isArray(rule.sheets)||rule.sheets.length>12||!rule.sheets.every(sheetName))invalid();
+    result.sheets=[...rule.sheets];
+  }
+  if(has('mappings')){
+    if(!rule.mappings||typeof rule.mappings!=='object'||Array.isArray(rule.mappings))invalid();
+    result.mappings={};
+    for(const [name,mapping] of Object.entries(rule.mappings)){
+      if(!sheetName(name)||!mapping||typeof mapping!=='object'||Array.isArray(mapping))invalid();
+      const fields=['workCol','headerRow','firstDayCol','totalCountCol','totalAmountCol'];
+      if(Object.keys(mapping).some(key=>!fields.includes(key)))invalid();
+      const copy={};
+      for(const key of fields){
+        const optional=key==='totalCountCol'||key==='totalAmountCol';
+        if(optional&&!Object.prototype.hasOwnProperty.call(mapping,key))continue;
+        const value=mapping[key];
+        if(!(optional&&value===null)&&(!Number.isInteger(value)||value<0||value>(key==='headerRow'?59999:2047)))invalid();
+        copy[key]=value;
+      }
+      Object.defineProperty(result.mappings,name,{value:copy,enumerable:true,writable:true,configurable:true});
+    }
+  }
+  return result;
 }
 function validateData(data){
   if(!data||!Array.isArray(data.reports)||!data.settings||!Array.isArray(data.settings.orgNames)||
@@ -144,4 +178,5 @@ class DiskStore {
   }
 }
 module.exports={DiskStore,safeExcelName,normalizeRule,validateData,validDate,fileSignature};
+
 

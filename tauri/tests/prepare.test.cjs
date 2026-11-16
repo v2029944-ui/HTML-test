@@ -148,7 +148,7 @@ test('Tauri dialog permission and all seven confirmations guard writes until ans
   await compileHandler(clear[1],clearContext)();
   assert.equal(writes,0,'Cancelling delete-all must not write');
 
-  const pending={id:'next',type:'day',start:'2026-11-16',end:'2026-11-16',warnings:['incomplete']};
+  const pending={id:'next',type:'day',start:'2026-11-16',end:'2026-11-16',rows:[{work:'Работа',organization:'СМУ16',count:1,amount:10}],warnings:['incomplete']};
   const importContext={
     confirm,inspectImport:async()=>{},state:{pending:[pending],reports:[],settings:{catalog:[]},
       catalogPreview:[]},$:()=>({checked:false}),

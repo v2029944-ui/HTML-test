@@ -5,7 +5,8 @@ on:
     paths:
       - "tauri/**"
       - "index.html"
-      - "desktop/renderer.js"
+      - "desktop/**"
+      - "tests/**"
       - ".github/workflows/tauri-windows.yml"
   workflow_dispatch:
 
@@ -33,7 +34,7 @@ jobs:
         run: npm install --prefix tauri --no-audit --no-fund
       - name: Check frontend bridge and prepare HTML
         run: |
-          node --test tauri/tests/prepare.test.cjs
+          node --test tauri/tests/*.test.cjs tests/*.cjs desktop/core.test.cjs
           npm --prefix tauri run prepare:frontend
           npm --prefix tauri run icons
       - name: Test SQLite migration and safe folder access

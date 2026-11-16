@@ -104,3 +104,52 @@ test('daily reports and rules persist alongside weekly and monthly data',()=>{
     assert.equal(saved.reports[1].rows[0].count,1.5);
   }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+
+const wideRule=()=>({type:'day',start:'',sheet:'',format:'daily-wide',year:2026,
+  sheets:['Январь','Февраль'],mappings:{'Январь':{workCol:0,headerRow:3,firstDayCol:1,totalCountCol:null,totalAmountCol:64}}});
+test('daily-wide rules round-trip without adding properties to legacy rules',()=>{
+  const root=create(),folder=path.join(root,'Excel');
+  try{
+    fs.mkdirSync(folder);
+    const store=new DiskStore(root);store.setFolder(folder);
+    const legacy={type:'week',start:'2026-11-16',sheet:''};
+    store.setRule('legacy.xlsx',legacy);
+    store.setRule('annual.xlsx',wideRule());
+    const saved=new DiskStore(root).getInfo().rules;
+    assert.deepEqual(saved['legacy.xlsx'],legacy);
+    assert.deepEqual(saved['annual.xlsx'],wideRule());
+    assert.deepEqual(normalizeRule({type:'day',start:'',sheet:'',format:'daily-wide'}),
+      {type:'day',start:'',sheet:'',format:'daily-wide'});
+    assert.deepEqual(normalizeRule({...wideRule(),year:9999,mappings:{'Январь':{workCol:2047,headerRow:59999,firstDayCol:2047}}}).year,9999);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+test('daily-wide options reject malformed types, years, sheets and mappings',()=>{
+  const mapping={workCol:0,headerRow:0,firstDayCol:1};
+  const invalid=[{format:'annual'},{type:'month'},{start:'2026-02-30'},
+    {year:1899},{year:10000},{year:2026.5},{year:'2026'},{year:null},
+    {sheets:'Январь'},{sheets:Array(13).fill('Лист')},{sheets:['']},{sheets:[2]},
+    {sheets:['a'.repeat(121)]},{sheets:null},{mappings:[]},{mappings:null},
+    {mappings:{'':mapping}},{mappings:{Sheet:{...mapping,workCol:-1}}},
+    {mappings:{Sheet:{...mapping,firstDayCol:2048}}},
+    {mappings:{Sheet:{...mapping,headerRow:60000}}},
+    {mappings:{Sheet:{...mapping,totalAmountCol:2.5}}},
+    {mappings:{Sheet:{...mapping,totalCountCol:'2'}}},
+    {mappings:{Sheet:{headerRow:0,firstDayCol:1}}}];
+  for(const extra of invalid)assert.throws(()=>normalizeRule({...wideRule(),...extra}),JSON.stringify(extra));
+  assert.throws(()=>normalizeRule({type:'day',start:'2026-11-16',year:2026}));
+});
+test('invalid rules and failed atomic writes preserve the last saved configuration',()=>{
+  const root=create(),folder=path.join(root,'Excel');
+  try{
+    fs.mkdirSync(folder);const store=new DiskStore(root);store.setFolder(folder);
+    store.setRule('annual.xlsx',wideRule());
+    const before=fs.readFileSync(store.configFile,'utf8');
+    assert.throws(()=>store.setRule('annual.xlsx',{...wideRule(),year:10000}));
+    assert.equal(fs.readFileSync(store.configFile,'utf8'),before);
+    // A directory at the backup path forces an actual filesystem write failure.
+    fs.rmSync(store.configFile+'.bak',{force:true});fs.mkdirSync(store.configFile+'.bak');
+    assert.throws(()=>store.setRule('annual.xlsx',{...wideRule(),year:2027}));
+    assert.equal(fs.readFileSync(store.configFile,'utf8'),before);
+    assert.equal(fs.readdirSync(root).some(name=>name.endsWith('.tmp')),false);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
