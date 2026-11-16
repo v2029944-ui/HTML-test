@@ -2265,6 +2265,12 @@ function fallbackSave(reports=state.reports,settings=state.settings){
   }
 }
 async function loadData() {
+  if(window.desktopAPI){
+    const data=await window.desktopAPI.load();
+    state.reports=data.reports;
+    state.settings=data.settings;
+    return;
+  }
   if(!state.db) {
     try {
       const v=JSON.parse(localStorage.getItem(FALLBACK_KEY)||'null');
@@ -2285,18 +2291,33 @@ async function loadData() {
     catalog:Array.isArray(saved.value.catalog) ? saved.value.catalog : [] };
 }
 async function saveSettings(next=state.settings) {
+  if(window.desktopAPI){
+    if(state.desktopBlocked)throw Error('Запись запрещена: не удалось открыть данные на диске.');
+    await window.desktopAPI.save({reports:state.reports,settings:next});
+    state.settings=next;return;
+  }
   if(!state.db){fallbackSave(state.reports,next);state.settings=next;return;}
   const tx=state.db.transaction('settings','readwrite');
   tx.objectStore('settings').put({key:'main',value:next});
   await txDone(tx);state.settings=next;
 }
 async function storeReports(next) {
+  if(window.desktopAPI){
+    if(state.desktopBlocked)throw Error('Запись запрещена: не удалось открыть данные на диске.');
+    await window.desktopAPI.save({reports:next,settings:state.settings});
+    state.reports=next;return;
+  }
   if(!state.db){fallbackSave(next,state.settings);state.reports=next;return;}
   const tx=state.db.transaction('reports','readwrite'),store=tx.objectStore('reports');
   store.clear(); for(const r of next) store.put(r);
   await txDone(tx); state.reports=next;
 }
 async function storeAllData(reports,settings){
+  if(window.desktopAPI){
+    if(state.desktopBlocked)throw Error('Запись запрещена: не удалось открыть данные на диске.');
+    await window.desktopAPI.save({reports,settings});
+    state.reports=reports;state.settings=settings;return;
+  }
   if(!state.db){fallbackSave(reports,settings);state.reports=reports;state.settings=settings;return;}
   const tx=state.db.transaction(['reports','settings'],'readwrite'),store=tx.objectStore('reports');
   store.clear();for(const report of reports)store.put(report);
@@ -2735,7 +2756,8 @@ async function saveImport() {
   if(catalogAdded)await storeAllData(next,{...state.settings,catalog});
   else await storeReports(next);
   state.selectionInitialized=false;$('qualitySource').value='saved';renderAll();
-  notice('Сохранено периодов: '+pending.length+'. Добавлено услуг в справочник: '+catalogAdded+'. Данные находятся только в этом браузере.');
+  notice('Сохранено периодов: '+pending.length+'. Добавлено услуг в справочник: '+catalogAdded+
+    (window.desktopAPI?'. Данные сохранены на диске компьютера.':'. Данные находятся только в этом браузере.'));
 }
 function currentTypeReports() {
   return state.reports.filter(r=>r.type===$('periodType').value).slice().sort((a,b)=>a.start.localeCompare(b.start));
@@ -4696,6 +4718,10 @@ function wireChanges() {
 
 function renderStorageModeInfo(){
   const target=$('storageModeInfo');if(!target)return;
+  if(window.desktopAPI){
+    target.textContent='Настольная версия: отчёты и настройки сохраняются в папке «Документы / Анализ работ» на диске, а не в IndexedDB. Нужны резервные копии.';
+    return;
+  }
   if(state.db){target.textContent='Хранилище: IndexedDB этого браузера. Данные не синхронизируются с другими устройствами. Регулярно скачивайте резервную копию.';return;}
   let readable=true;
   try{localStorage.getItem(FALLBACK_KEY);}catch(err){readable=false;}
@@ -4926,10 +4952,21 @@ function wire() {
   $('importGroups').addEventListener('change',async e=>{try{await importGroupFile(e.target.files?.[0]);}catch(err){notice(err.message,true);}e.target.value='';});
   $('exportBackup').addEventListener('click',()=>downloadJson('reports-backup.json',{format:'work-reports-backup',version:1,exportedAt:new Date().toISOString(),reports:state.reports,settings:state.settings}));
   $('importBackup').addEventListener('change',async e=>{try{await importBackupFile(e.target.files?.[0]);}catch(err){notice(err.message,true);}e.target.value='';});
-  $('clearReports').addEventListener('click',async()=>{if(!confirm('Безвозвратно удалить все отчёты из этого браузера?'))return;try{await storeReports([]);state.selectionInitialized=false;renderAll();notice('Отчёты удалены.');}catch(err){notice(err.message,true);}});
+  $('clearReports').addEventListener('click',async()=>{if(!confirm(window.desktopAPI?
+    'Удалить все сохранённые отчёты с диска компьютера?':'Безвозвратно удалить все отчёты из этого браузера?'))return;try{await storeReports([]);state.selectionInitialized=false;renderAll();notice('Отчёты удалены.');}catch(err){notice(err.message,true);}});
 }
 async function main(){
   wire();
+  if(window.desktopAPI){
+    try{await loadData();}
+    catch(err){
+      state.desktopBlocked=true;
+      notice('Не удалось открыть данные настольной программы: '+err.message+
+        '. Запись заблокирована во избежание потери данных.',true);
+    }
+    renderAll();
+    return;
+  }
   try {
     state.db=('indexedDB' in window)?await openDb():null;
     await loadData();
@@ -4940,7 +4977,7 @@ async function main(){
   }
   renderAll();
 }
-main();
+window.appReady=main();
 
 </script>
 </body>

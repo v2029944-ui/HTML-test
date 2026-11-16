@@ -1,0 +1,42 @@
+{
+  "name": "analiz-rabot-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Автономная аналитика выполненных работ, работающая с папкой Excel на диске",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test:desktop": "node --test desktop/*.test.cjs",
+    "build:win": "electron-builder --win portable --x64"
+  },
+  "devDependencies": {
+    "electron": "45.3.3",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "local.analiz.rabot",
+    "productName": "Анализ работ",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "index.html",
+      "desktop/main.cjs",
+      "desktop/core.cjs",
+      "desktop/preload.cjs",
+      "desktop/renderer.js"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Анализ-работ-${version}-${arch}.exe"
+    }
+  }
+}
