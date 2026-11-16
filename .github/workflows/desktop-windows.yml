@@ -21,6 +21,8 @@ permissions:
 
 jobs:
   build-windows:
+    permissions:
+      contents: write
     runs-on: windows-latest
     timeout-minutes: 35
     steps:
@@ -49,3 +51,19 @@ jobs:
           path: dist/*.exe
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish standalone EXE in GitHub Releases
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = node -p "require('./package.json').version"
+          $tag = "desktop-v$version"
+          gh release view "$tag" --repo "$env:GITHUB_REPOSITORY" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "$tag" "dist/Analiz-rabot-Windows-x64.exe" --repo "$env:GITHUB_REPOSITORY" --target "$env:GITHUB_SHA" --title "Анализ работ $version — Windows" --notes "Один portable EXE для Windows x64. Откройте файл после загрузки: он не требует распаковки ZIP или установки Node.js. Программа хранит отчёты на локальном диске. Сборка без цифровой подписи." --latest
+            if ($LASTEXITCODE -ne 0) { throw "GitHub Release не был опубликован." }
+          } else {
+            Write-Host "Версия $tag уже опубликована, повторная публикация не нужна."
+          }
