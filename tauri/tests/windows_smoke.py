@@ -6,6 +6,32 @@ ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests'))
 from test_daily_wide import wide_xlsx
 
+def diagnostics(error):
+    output=ROOT/'tauri/test-artifacts';output.mkdir(exist_ok=True)
+    if (output/'windows-runtime.txt').exists():return
+    (output/'windows-error.txt').write_text(str(error),encoding='utf-8')
+    # Record software/runtime facts only; never dump process environments or full command lines.
+    script=r"""
+    $ErrorActionPreference='Continue'
+    Get-Process analiz-rabot-tauri,msedgewebview2 -ErrorAction SilentlyContinue | Select-Object ProcessName,Id,MainWindowTitle | ConvertTo-Json
+    Get-CimInstance Win32_Process -Filter "name='msedgewebview2.exe'" | ForEach-Object {
+      $port='';if($_.CommandLine -match '--remote-debugging-port=(\d+)'){$port=$Matches[1]}
+      [PSCustomObject]@{ProcessId=$_.ProcessId;RemoteDebuggingPort=$port}
+    } | ConvertTo-Json
+    Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft\EdgeWebView\Application" -ErrorAction SilentlyContinue | Select-Object Name | ConvertTo-Json
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    $area=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $bitmap=New-Object System.Drawing.Bitmap($area.Width,$area.Height)
+    $graphics=[System.Drawing.Graphics]::FromImage($bitmap)
+    $graphics.CopyFromScreen($area.Location,[System.Drawing.Point]::Empty,$area.Size)
+    $bitmap.Save($env:ANALIZ_SMOKE_SCREENSHOT)
+    $graphics.Dispose();$bitmap.Dispose()
+    """
+    env=dict(os.environ,ANALIZ_SMOKE_SCREENSHOT=str(output/'windows-desktop-diagnostic.png'))
+    result=subprocess.run(['powershell','-NoProfile','-Command',script],env=env,capture_output=True,text=True,timeout=30)
+    (output/'windows-runtime.txt').write_text(result.stdout+'\n'+result.stderr,encoding='utf-8')
+
 def run():
     if sys.platform!='win32' or os.environ.get('GITHUB_ACTIONS')!='true':raise RuntimeError('Run only on an isolated Windows GitHub Actions runner')
     installers=list((ROOT/'tauri/src-tauri/target/release/bundle/nsis').glob('*.exe'))
@@ -24,6 +50,8 @@ def run():
         executables=list(destination.rglob('analiz-rabot-tauri.exe'))
         if len(executables)!=1:raise RuntimeError('Installed application executable not found')
         env=dict(os.environ,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--remote-debugging-port=9227',WEBVIEW2_USER_DATA_FOLDER=str(tmp/'webview'))
+        env['NO_PROXY']=env.get('NO_PROXY','')+',127.0.0.1,localhost'
+        direct=urllib.request.build_opener(urllib.request.ProxyHandler({}))
         def start():
             process=subprocess.Popen([str(executables[0])],env=env)
             try:
@@ -31,12 +59,13 @@ def run():
                 while time.monotonic()<deadline:
                     if process.poll() is not None:raise RuntimeError('Tauri exited before creating its WebView2')
                     try:
-                        with urllib.request.urlopen('http://127.0.0.1:9227/json/version',timeout=2) as response:
+                        with direct.open('http://127.0.0.1:9227/json/version',timeout=2) as response:
                             data=json.load(response)
                         return process,data
                     except (OSError,ValueError):time.sleep(.5)
                 raise RuntimeError('WebView2 DevTools endpoint did not become available')
-            except BaseException:
+            except BaseException as error:
+                diagnostics(error)
                 if process.poll() is None:subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],check=False,capture_output=True)
                 raise
         def stop(process):
@@ -72,6 +101,8 @@ def run():
                 report['checks'].append('leap February calendar')
                 page.screenshot(path=str(output/'windows-webview2.png'))
                 assert not errors,errors
+            except BaseException as error:
+                diagnostics(error);raise
             finally:stop(process)
             process,_=start()
             try:
@@ -80,8 +111,14 @@ def run():
                 assert len(page.evaluate('window.desktopAPI.load()')['reports'])==366
                 assert page.locator('.view.active').get_attribute('id')=='upload'
                 report['checks'].append('SQLite and last view survive application restart')
+            except BaseException as error:
+                diagnostics(error);raise
             finally:stop(process)
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(report,ensure_ascii=False),flush=True)
 
-if __name__=='__main__':run()
+if __name__=='__main__':
+    try:run()
+    except BaseException as error:
+        diagnostics(error)
+        raise

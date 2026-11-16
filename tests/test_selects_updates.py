@@ -24,8 +24,8 @@ class SelectsUpdates(unittest.TestCase):
             self.page.set_viewport_size({'width':width,'height':900})
             for theme in ['light','dark']:
                 self.page.evaluate('(theme)=>document.documentElement.dataset.theme=theme',theme)
-                properties=self.page.evaluate('''()=>{const get=node=>{const s=getComputedStyle(node);return [s.fontSize,s.borderRadius,s.borderColor,s.backgroundColor,node.getBoundingClientRect().height]};return [get(document.querySelector('#periodType')),get(document.querySelector('#orgFilter summary'))]}''')
-                self.assertEqual(properties[0],properties[1])
+                properties=self.page.evaluate('''()=>{const get=node=>{const s=getComputedStyle(node);return [s.fontSize,s.borderRadius,s.borderColor,s.backgroundColor,node.getBoundingClientRect().height]};return [get(document.querySelector('#periodType')),get(document.querySelector('#orgFilter summary')),get(document.querySelector('#categoryFilter .category-filter-control'))]}''')
+                self.assertEqual(properties[0],properties[1]);self.assertEqual(properties[0],properties[2])
                 self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth'))
         self.page.locator('#periodType').click();self.page.keyboard.press('End');self.page.keyboard.press('Enter')
         self.assertEqual(self.page.locator('#periodType').input_value(),'day')
