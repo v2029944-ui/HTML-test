@@ -1596,7 +1596,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <div class="group-filters">
             <label>Поиск работ<input id="workSearch" type="search" placeholder="Введите часть названия"></label>
           </div>
-          <p id="nameSearchHelp" class="muted small">Поиск: 1–2 буквы — начало названия. От 3 букв — сначала начало, затем совпадения внутри; в каждой части названия идут по алфавиту.</p>
+          <p id="nameSearchHelp" class="muted small">Поиск: сначала названия, начинающиеся с введённого текста, затем совпадения внутри. В каждой части — по алфавиту, при любой длине запроса.</p>
           <div class="works-list" id="worksList" aria-label="Выбор работ"></div>
           <div class="change-pagination"><button id="workPrev" class="button secondary" type="button">← Предыдущая</button><span id="workPage" class="muted small" aria-live="polite"></span><button id="workNext" class="button secondary" type="button">Следующая →</button></div>
           <div class="actions"><button id="saveGroup" class="button primary">Сохранить группу</button><button id="resetGroup" class="button secondary" title="Сбросить только форму, не удаляя сохранённые группы">Сбросить форму</button></div>
@@ -2200,13 +2200,13 @@ function fmtNumber(value, metric) {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: metric === 'count' ? 3 : 2, minimumFractionDigits: ['amount','average'].includes(metric) ? 2 : 0 }).format(value);
 }
 function normalized(s) { return String(s || '').toLocaleLowerCase('ru-RU').replace(/[.,;:]+$/g,'').replace(/\s+/g,' ').trim(); }
-// Short queries match the beginning only; longer queries put prefixes before substrings.
+// Prefixes precede substrings for every nonempty query; empty search retains the list order.
 function searchNames(items,query,nameOf=item=>item,extraOf=()=>[]){
   const term=normalized(query);if(!term)return [...items];
   const short=[...term].length<3;
   return items.filter(item=>{
     const name=normalized(nameOf(item));
-    return name.startsWith(term)||(!short&&(name.includes(term)||extraOf(item).some(value=>normalized(value).includes(term))));
+    return name.includes(term)||(!short&&extraOf(item).some(value=>normalized(value).includes(term)));
   }).sort((a,b)=>Number(!normalized(nameOf(a)).startsWith(term))-Number(!normalized(nameOf(b)).startsWith(term))||String(nameOf(a)).localeCompare(String(nameOf(b)),'ru'));
 }
 function uuid() { return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(36).slice(2); }
@@ -3350,7 +3350,7 @@ function renderGroupAudit(index=analyticsIndex()){
 
 function wireExtendedAnalytics(){
   for(const id of ['categorySearch','workSearch','groupAuditSearch','regularitySearch','changesSearch']){
-    $(id).title='1–2 буквы — начало названия; от 3 — сначала начало, затем совпадения внутри, по алфавиту.';
+    $(id).title='Сначала начало названия, затем совпадения внутри, по алфавиту — при любой длине запроса.';
     $(id).setAttribute('aria-describedby','nameSearchHelp');
   }
   for(const [prefix,render] of [['usual',renderUsual],['regularity',renderRegularity],['groupAudit',renderGroupAudit],['work',renderWorkList],['quality',()=>renderQuality(false)],['contribution',()=>renderDashboard(false)],['changes',()=>renderChanges(false)]])

@@ -10,6 +10,37 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ImportControls(unittest.TestCase):
+    def test_go_prefix_precedes_inside_matches_in_all_five_search_fields(self):
+        self.page.evaluate('''async()=>{
+          const names=['Автомобиль','Агрегат горелки','Головка блока','Горелка','Гофра','Замена головки','Ремонт горелки'],orgs=DEFAULT_ORGS.slice(0,2);
+          const reports=['2026-10-19','2026-10-26'].map((start,i)=>({id:start,type:'week',start,end:periodEnd(start,'week'),organizations:orgs,totals:[],warnings:[],rows:orgs.flatMap(organization=>names.map((work,j)=>({organization,work,count:j+1,amount:(j+1)*(i+1)*100})))}));
+          await storeReports(reports);state.settings.groups=[];state.selectionInitialized=false;renderAll();
+          state.selectedOrganizations=new Set(orgs);state.selectedCategories=new Set(names);document.querySelector('#overviewMode').value='range';document.querySelector('#rangeStart').value=reports[0].start;document.querySelector('#rangeEnd').value=reports[1].start;document.querySelector('#advancedAnalytics').open=true;renderDashboard(false);
+        }''')
+        expected=['Головка блока','Горелка','Гофра','Агрегат горелки','Замена головки','Ремонт горелки']
+        def query(field,rows):
+            self.page.locator(field).press_sequentially('го')
+            if field=='#changesSearch':self.page.wait_for_function('document.querySelector("#changesSort").disabled')
+            actual=list(dict.fromkeys(self.page.locator(rows).all_text_contents()))
+            self.assertEqual(actual,expected,(field,actual))
+        self.page.locator('#categoryFilter>summary').click()
+        query('#categorySearch','#categories .category-row span')
+        self.page.locator('#categoryFilter>summary').click()
+        self.page.locator('#regularityPanel>summary').click()
+        query('#regularitySearch','#regularityResults tbody tr td:first-child')
+        self.page.locator('[data-view=groups]').click();self.page.locator('#createGroup').click()
+        self.page.evaluate("state.selectedWorks.add('Автомобиль');renderWorkList()")
+        query('#workSearch','#worksList .work-row span')
+        self.assertTrue(self.page.evaluate("state.selectedWorks.has('Автомобиль')"))
+        self.page.locator('#workSearch').press('Backspace')
+        self.assertEqual(self.page.locator('#worksList .work-row span').all_text_contents(),expected)
+        self.page.locator('#workSearch').fill('')
+        self.assertEqual(self.page.locator('#worksList .work-row span').first.inner_text(),'Автомобиль')
+        self.page.locator('#groupAuditPanel>summary').click()
+        query('#groupAuditSearch','#groupAuditResults tbody tr td:first-child')
+        self.page.locator('[data-view=changes]').click();self.page.locator('#changesMode').select_option('all')
+        query('#changesSearch','#changesResults .change-open')
+
     def load_large_group_fixture(self):
         self.page.evaluate('''async()=>{
           const orgs=DEFAULT_ORGS.slice(0,2),works=[...Array.from({length:300},(_,i)=>'Датчик '+String(i+1).padStart(3,'0')),'Диагностика','Демонтаж','Замена датчика','Проверка датчика'];
