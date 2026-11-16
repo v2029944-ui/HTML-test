@@ -1,5 +1,5 @@
-// Выполняется только внутри Electron; обычный index.html работает без этого файла.
-(async function desktopWorkspace(){
+// Выполняется в Tauri через совместимый API; самостоятельный index.html работает без этого модуля.
+(async function tauriFolderWorkspace(){
   'use strict';
   if(!window.desktopAPI)return;
   await window.appReady;
