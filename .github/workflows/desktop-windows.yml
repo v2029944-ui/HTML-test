@@ -1,0 +1,51 @@
+name: Windows desktop executable
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "package.json"
+      - "index.html"
+      - ".github/workflows/desktop-windows.yml"
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "package.json"
+      - "index.html"
+      - ".github/workflows/desktop-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install desktop build dependencies
+        run: npm install --no-audit --no-fund
+      - name: Verify JavaScript and storage tests
+        run: |
+          node --check desktop/core.cjs
+          node --check desktop/main.cjs
+          node --check desktop/preload.cjs
+          node --check desktop/renderer.js
+          npm run test:desktop
+          node --test tests/test_department_metrics.cjs
+      - name: Build portable Windows program
+        run: npm run build:win
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: Analiz-rabot-Windows-x64
+          path: dist/*.exe
+          if-no-files-found: error
+          retention-days: 30
