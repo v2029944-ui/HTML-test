@@ -182,7 +182,7 @@
       }
       if(updated){
         await storeReports(next);
-        state.selectionInitialized=false;
+        // Keep active filters when a watched file refreshes its contents.
         renderAll();
       }
       message('Синхронизация: обновлено файлов '+updated+
