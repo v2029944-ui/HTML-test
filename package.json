@@ -36,7 +36,7 @@
           ]
         }
       ],
-      "artifactName": "Анализ-работ-${version}-${arch}.exe"
+      "artifactName": "Analiz-rabot-Windows-x64.exe"
     }
   }
 }
