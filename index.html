@@ -1292,6 +1292,14 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 .comparison-filters>#periodComparisonSingle,.comparison-filters>#periodComparisonRanges{min-width:0;grid-column:1/-1}
 #periodComparisonSingle[hidden],#periodComparisonRanges[hidden]{display:none}
 @media(max-width:740px){.comparison-two-ranges{grid-template-columns:minmax(0,1fr)}.comparison-interval .period-pair{grid-template-columns:minmax(0,1fr)}.group-details>summary{flex-wrap:wrap;gap:6px}}
+
+/* Filters belong below their section headings, with captions above controls. */
+.section-filter-row{display:grid;grid-template-columns:minmax(0,520px);gap:12px;margin:14px 0}
+:root .section-filter-row>label{display:block;min-width:0;font-size:var(--label-size);line-height:var(--label-leading)}
+.section-filter-row select{max-width:100%;width:100%}
+#comparisonPeriodLabel{grid-column:1/-1;max-width:640px}
+:root #comparison .period-pair select{font-size:var(--control-size);height:var(--control-height);min-height:var(--control-height)}
+@media(max-width:740px){#periodComparisonSingle{grid-template-columns:minmax(0,1fr)}#periodComparisonSingle>label+label{border-left:0;border-top:1px solid var(--field-border)}}
 </style>
   
 </head>
@@ -1303,7 +1311,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
   <main class="container">
     <div id="flash" class="flash" role="status" aria-live="polite" hidden></div>
     <section class="pagehead">
-      <div><p class="eyebrow">ОТЧЁТНОСТЬ</p><h1>Анализ выполненных работ</h1><p class="muted">Количество и сумма по неделям и месяцам, подразделениям и группам работ.</p></div>
+      <div><p class="eyebrow">ОТЧЁТНОСТЬ</p><h1>Анализ выполненных работ</h1><p class="muted">Количество и сумма по дням, неделям и месяцам, подразделениям и группам работ.</p></div>
       <button id="sampleBtn" class="button secondary">Выбрать Excel</button>
     </section>
     <nav class="tabs" aria-label="Разделы приложения">
@@ -1318,7 +1326,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
     <section id="dashboard" class="view active">
       <div class="panel dashboard-filter-panel"><h2 class="filter-scope-title">Данные для анализа</h2>
         <div class="filters">
-          <label>Тип периода<select id="periodType"><option value="week">Недели</option><option value="month">Месяцы</option></select></label>
+          <label>Тип периода<select id="periodType"><option value="week">Недели</option><option value="month">Месяцы</option><option value="day">Дни</option></select></label>
           <fieldset class="multi-filter"><legend>Подразделения</legend><div id="orgFilter" class="multi-choices"></div></fieldset>
           <fieldset class="multi-filter"><legend>Показатели обзора и работ</legend><div id="metric" class="multi-choices"></div></fieldset>
           <details class="categories category-filter" id="categoryFilter">
@@ -1388,9 +1396,8 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         </div>
       </section>
       <section class="panel" id="comparison" aria-labelledby="comparisonHeading">
-        <div class="sectionbar"><div><h2 id="comparisonHeading">Сравнение периодов и подразделений</h2><p class="muted small">Сопоставьте два периода или подразделения за общий интервал.</p></div>
-          <label>Сравниваем<select id="comparisonMode"><option value="periods">Периоды</option><option value="organizations">Подразделения</option></select></label>
-        </div>
+        <div class="sectionbar"><div><h2 id="comparisonHeading">Сравнение периодов и подразделений</h2><p class="muted small">Сопоставьте два интервала или подразделения за общий период.</p></div></div>
+        <div class="section-filter-row"><label>Что сравниваем<select id="comparisonMode"><option value="periods">Периоды</option><option value="organizations">Подразделения</option></select></label></div>
         <div id="periodComparisonFilters" class="comparison-filters">
           <label>Интервалы сравнения<select id="periodComparisonScope"><option value="single">Два отдельных периода</option><option value="range">Два диапазона</option></select></label>
           <div id="periodComparisonSingle" class="period-pair-comparison period-pair"><label>С чем сравниваем<select id="basePeriod"></select></label>
@@ -1446,7 +1453,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
       </details>
       <details class="panel" id="usualPanel">
         <summary>Отклонения от обычного уровня</summary>
-        <p class="muted small">Сравнение выбранных работ с обычным уровнем за предыдущие 4 или 8 недель либо месяцев.</p>
+        <p class="muted small">Сравнение выбранных работ с обычным уровнем за предыдущие 4 или 8 отчётных периодов.</p>
         <details class="quick-help"><summary>Как рассчитывается обычный уровень?</summary>
           <p><strong>Обычный уровень:</strong> для количества и суммы — среднее по доступным полным предыдущим периодам, без анализируемого. Например, 10, 20, 10 и 20 работ дают среднее 15. Средняя сумма на работу вычисляется отдельно: вся сумма за полные предыдущие периоды / всё количество работ в этих периодах. Для интерпретации нужны сопоставимые единицы количества выбранных работ.</p>
           <p><strong>Отклонение:</strong> значение сейчас − обычный уровень. <strong>Отклонение, %:</strong> отклонение / модуль обычного уровня × 100%. При нулевом обычном уровне процент не вычисляется.</p>
@@ -1455,7 +1462,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         </details>
         <div class="extended-filters">
           <label>Анализируемый период<select id="usualPeriod"></select></label>
-          <label>Окно среднего<select id="usualWindow" title="Сколько предыдущих недель или месяцев учитывать при расчёте среднего. Неполные отчётные периоды исключаются."><option value="4">4 предыдущих периода</option><option value="8">8 предыдущих периодов</option></select></label>
+          <label>Окно среднего<select id="usualWindow" title="Сколько предыдущих дней, недель или месяцев учитывать при расчёте среднего. Неполные отчётные периоды исключаются."><option value="4">4 предыдущих периода</option><option value="8">8 предыдущих периодов</option></select></label>
           <label>Необычное отклонение, %<input title="Порог для статуса «Необычно выше/ниже». Например, 30 означает отклонение на 30% или больше от модуля среднего." id="usualPercent" type="number" min="0" step="any" value="30"></label>
           <fieldset class="multi-filter"><legend>Показатели отклонений</legend><div id="usualMetrics" class="multi-choices"></div></fieldset>
         </div>
@@ -1492,7 +1499,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <p class="muted small">Изменения услуг по каждому подразделению. Группы учитываются совместно, остальные работы — отдельно.</p>
         <details class="quick-help"><summary>Как читать результаты изменений?</summary><p>«Сильные изменения» показывает заметные отклонения с учётом процентного и абсолютного порога. «Все работы» показывает полный список. Рост числа — это изменение показателя, а не оценка эффективности. Нажмите на название услуги, чтобы увидеть её историю.</p></details>
         <div class="changes-filters">
-          <label>Период<select id="changesType"><option value="week">Недели</option><option value="month">Месяцы</option></select></label>
+          <label>Тип периода<select id="changesType"><option value="week">Недели</option><option value="month">Месяцы</option><option value="day">Дни</option></select></label>
           <label>Способ сравнения<select id="changesMethod"><option value="previous">С предыдущим периодом</option><option value="range">Внутри диапазона</option></select></label>
           <div id="changeDatePair" class="period-pair change-date-pair single">
             <label id="changesFromLabel" hidden>С периода<select id="changesFrom"></select></label>
@@ -1544,12 +1551,12 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
               <span id="excelFileStatus" class="import-file-button" aria-live="polite">Выберите файл</span>
             </div>
           </div>
-          <label>Тип отчётов<select id="importType"><option value="week">Недели</option><option value="month">Месяцы</option></select></label>
-          <label id="weekStartLabel">Начало первой недели<input id="importWeek" type="date"></label>
+          <label>Тип отчётов<select id="importType"><option value="week">Недели</option><option value="month">Месяцы</option><option value="day">Дни</option></select></label>
+          <label id="weekStartLabel"><span id="importDateCaption">Начало первой недели</span><input id="importWeek" type="date"></label>
           <label id="monthStartLabel" hidden>Первый месяц<input id="importMonth" type="month"></label>
           <label>Лист<select id="sheetSelect" disabled><option value="">Сначала выберите файл</option></select></label>
         </div>
-        <p class="muted small">Для <code>Анализ.xlsx</code> первая неделя начинается 19.10.2026. Для других файлов укажите собственные даты. Можно открыть этот HTML двойным нажатием на компьютере, интернет не требуется.</p>
+        <p class="muted small">Для недельного <code>Анализ.xlsx</code> первая неделя начинается 19.10.2026. Для дневного отчёта каждый набор столбцов относится к отдельной дате; недельные суммы автоматически по дням не распределяются. Для других файлов укажите собственные даты. Можно открыть этот HTML двойным нажатием на компьютере, интернет не требуется.</p>
         <details class="quick-help import-advanced" id="importAdvanced">
           <summary>Столбцы и даты каждого набора</summary>
           <p>Обычно столбцы распознаются автоматически, а периоды идут подряд. Для другого формата Excel включите ручную настройку: укажите буквы столбцов работы, количества и суммы и номер строки заголовка для каждого набора. Даты ниже можно изменить по отдельности без изменения первого периода.</p>
@@ -1569,8 +1576,8 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
       <section class="panel" id="reportPeriods" aria-labelledby="calendarHeading">
         <div class="sectionbar"><div><h2 id="calendarHeading">Отчёты по периодам</h2>
           <p class="muted small">Полнота всех подразделений, замечания и пропущенные периоды. Отсутствующий отчёт не считается нулём.</p></div>
-          <label>Тип периода<select id="calendarType"><option value="week">Недели</option><option value="month">Месяцы</option></select></label>
         </div>
+        <div class="section-filter-row"><label>Тип периода<select id="calendarType"><option value="week">Недели</option><option value="month">Месяцы</option><option value="day">Дни</option></select></label></div>
         <div class="calendar-toolbar">
           <button type="button" class="button secondary" id="calendarPrev">← Раньше</button>
           <strong id="calendarRange"></strong>
@@ -2191,6 +2198,7 @@ length_base[28] = 258;
 
 const $ = (id) => document.getElementById(id);
 const DEFAULT_ORGS = ['СМУ16', 'АВТО', 'ТРАК', 'ЦЕНТР'];
+const REPORT_TYPES = ['week','month','day'];
 const DB_NAME = 'work-reports-local-v1';
 const DB_VERSION = 1;
 const COLORS = Array.from({length:8},(_,index)=>'var(--plot-'+index+')');
@@ -2233,9 +2241,19 @@ function uuid() { return typeof crypto !== 'undefined' && crypto.randomUUID ? cr
 function addDays(iso, n) { const dt = new Date(iso + 'T12:00:00Z'); dt.setUTCDate(dt.getUTCDate() + n); return dt.toISOString().slice(0,10); }
 function addMonths(iso, n) { const dt = new Date(iso.slice(0,7) + '-01T12:00:00Z'); dt.setUTCMonth(dt.getUTCMonth()+n); return dt.toISOString().slice(0,10); }
 function lastDayOfMonth(iso) { return addDays(addMonths(iso,1),-1); }
-function periodEnd(start, type) { return type === 'month' ? lastDayOfMonth(start) : addDays(start,6); }
+function periodEnd(start, type) { return type==='day'?start:type==='month'?lastDayOfMonth(start):addDays(start,6); }
+function periodTitle(type){return {day:'День',week:'Неделя',month:'Месяц'}[type]||'Период';}
+function periodScale(type){return {day:'дни',week:'недели',month:'месяцы'}[type]||'периоды';}
+function periodUnit(type,count){
+  const forms={day:['день','дня','дней'],week:['неделя','недели','недель'],month:['месяц','месяца','месяцев']}[type]||['период','периода','периодов'];
+  return ruPlural(count,...forms);
+}
+function plotPeriodLabel(period){
+  return period.type==='day'?displayDay(period.start).slice(0,5):period.type==='week'?displayDay(period.start).slice(0,5)+'–'+displayDay(period.end).slice(0,5):period.start.slice(0,7);
+}
 function displayDay(iso) { if (!iso) return '—'; const a=iso.split('-'); return a[2]+'.'+a[1]+'.'+a[0]; }
 function displayPeriod(r) {
+  if(r.type==='day')return displayDay(r.start);
   return r.type === 'month' ? new Intl.DateTimeFormat('ru-RU', { month:'long', year:'numeric', timeZone:'UTC' }).format(new Date(r.start+'T12:00:00Z'))
     : displayDay(r.start)+' — '+displayDay(r.end);
 }
@@ -2497,13 +2515,13 @@ function renderImportDateFields(){
   let blocks;
   try{blocks=importBlockMappings();}catch(err){root.append(elem('p',err.message,'warn small'));return;}
   if(!blocks.length){root.append(elem('p','Наборы столбцов не найдены. Включите ручное распознавание.','warn small'));return;}
-  const isMonth=$('importType').value==='month';
+  const type=$('importType').value,isMonth=type==='month';
   const rawStart=isMonth?$('importMonth').value:$('importWeek').value;
   const first=isMonth?(/^\d{4}-\d{2}$/.test(rawStart)?rawStart+'-01':null):validReportDate(rawStart)?rawStart:null;
   for(let i=0;i<blocks.length;i++){
     const block=blocks[i],label=elem('label','Набор '+(i+1)+' · '+excelColumnName(block.col)+' / '+excelColumnName(block.countCol??block.col+1)+' / '+excelColumnName(block.amountCol??block.col+2));
     const input=elem('input');input.type=isMonth?'month':'date';input.dataset.importDate=String(i);
-    const prior=previous[i],defaultDate=first?(isMonth?addMonths(first,i):addDays(first,7*i)):'';
+    const prior=previous[i],defaultDate=first?shiftPeriod(type,first,i):'';
     input.value=prior?.manual?prior.value:(defaultDate?(isMonth?defaultDate.slice(0,7):defaultDate):'');
     input.dataset.manual=prior?.manual?'1':'0';
     input.addEventListener('change',()=>{input.dataset.manual='1';state.pending=[];$('saveImport').disabled=true;});
@@ -2530,9 +2548,9 @@ function importStart() {
     if(!/^\d{4}-\d{2}$/.test(month)) throw Error('Укажите первый месяц для импорта');
     return month+'-01';
   }
-  const week=$('importWeek').value;
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(week))throw Error('Укажите дату начала первой недели');
-  return week;
+  const date=$('importWeek').value;
+  if(!validReportDate(date))throw Error($('importType').value==='day'?'Укажите дату первого дневного отчёта':'Укажите дату начала первой недели');
+  return date;
 }
 function buildPending() {
   if(!state.workbook)throw Error('Сначала выберите файл');
@@ -2544,7 +2562,7 @@ function buildPending() {
   const inputs=[...$('importPeriodDates').querySelectorAll('[data-import-date]')];
   const seen=new Set();
   return sheets.map((x,i)=>{
-    const suggested=type==='month'?addMonths(start,i):addDays(start,7*i);
+    const suggested=shiftPeriod(type,start,i);
     const raw=inputs[i]?.value;
     const date=raw?(type==='month'?raw+'-01':raw):suggested;
     if(!validReportDate(date))throw Error('Набор '+(i+1)+': укажите корректную дату периода.');
@@ -2718,7 +2736,7 @@ async function selectWorkbook(buffer,fileName) {
   const workbook=window.XLSX.read(buffer,{type:'array',cellDates:true});
   state.workbook=workbook;state.fileName=fileName;state.pending=[];
   state.catalogPreview=detectCatalogWorkbook(workbook);
-  if(fileName.toLocaleLowerCase('ru-RU')==='анализ.xlsx' && !$('importWeek').value){$('importWeek').value='2026-10-19';}
+  if(fileName.toLocaleLowerCase('ru-RU')==='анализ.xlsx' && $('importType').value==='week' && !$('importWeek').value){$('importWeek').value='2026-10-19';}
   const select=$('sheetSelect');select.replaceChildren();
   workbook.SheetNames.forEach(name=>{const option=elem('option',name);option.value=name;select.append(option);});
   select.disabled=false;$('inspectFile').disabled=false;$('saveImport').disabled=true;
@@ -2749,7 +2767,7 @@ async function saveImport() {
   let overlaps=0;
   pending.forEach(item=>{overlaps+=state.reports.filter(x=>x.type!==item.type && x.start<=item.end && x.end>=item.start).length;});
   if(pending.some(x=>x.warnings.length) && !confirm('Обнаружены неполные строки или расхождения с итогами Excel. Сохранение таких отчётов может исказить аналитику. Сначала проверьте предупреждения в предпросмотре. Сохранить с ошибками?'))return;
-  if(overlaps && !confirm('У новых отчётов есть пересечения с отчётами другого типа периода. В аналитике недельные и месячные данные считаются раздельно. Сохранить?'))return;
+  if(overlaps && !confirm('У новых отчётов есть пересечения с отчётами другого типа периода. Дневные, недельные и месячные отчёты в аналитике учитываются раздельно. Сохранить?'))return;
   const oldCatalog=state.settings.catalog||[];
   const catalog=catalogWithEntries(oldCatalog,state.catalogPreview.filter(entry=>entry.sheet!==$('sheetSelect').value));
   const catalogAdded=catalog.length-oldCatalog.length;
@@ -2889,7 +2907,7 @@ const chartRenders=new WeakMap();
 function redrawCharts(root=document){
   for(const plot of root.querySelectorAll('.metric-plot'))if(plot.clientWidth>0)chartRenders.get(plot)?.();
 }
-// Записи соседних точек могут относиться к несмежным неделям или месяцам.
+// Записи соседних точек могут относиться к несмежным дням, неделям или месяцам.
 // Разрыв нельзя изображать непрерывной линией (отсутствующий период не равен нулю).
 function chartTimelineGaps(periods){
   const gaps=[];
@@ -2948,7 +2966,7 @@ function drawChart(periods,orgs,metric,root,options={}) {
   });
   periods.forEach((p,i)=>{
     const label=svgEl('text',{x:px(i),y:height-49,'text-anchor':'middle',fill:'var(--plot-label)','font-size':11},
-      p.type==='week'?displayDay(p.start).slice(0,5)+'–'+displayDay(p.end).slice(0,5):p.start.slice(0,7));
+      plotPeriodLabel(p));
     label.append(svgEl('title',{},displayPeriod(p)));svg.append(label);
     svg.append(svgEl('text',{x:px(i),y:height-32,'text-anchor':'middle',fill:'var(--plot-label)','font-size':10},p.start.slice(0,4)));
     if(!data[i]){
@@ -3049,7 +3067,7 @@ function differenceCells(now,base,metric){
   const measure=changeMeasure(base,now,0,0);return [formatMetric(measure.delta,metric),measure.percent===null?'—':fmtNumber(measure.percent,'count')+'%'];
 }
 function analyticsIndex(){return buildReportIndex(state.reports,state.settings.groups,{type:$('periodType').value,organizations:[...state.selectedOrganizations]});}
-function rangeCaption(range){return range.periods.length?displayDay(range.periods[0].start)+' — '+displayDay(range.periods.at(-1).end):'Некорректный диапазон';}
+function rangeCaption(range){return range.periods.length===1&&range.periods[0].type==='day'?displayDay(range.periods[0].start):range.periods.length?displayDay(range.periods[0].start)+' — '+displayDay(range.periods.at(-1).end):'Некорректный диапазон';}
 function serviceButton(index,entry,orgs,before,after,metrics=chosenMetrics()){
   const button=elem('button',entry.name+(entry.kind==='group'?' (группа)':''),'text-button service-open');
   button.addEventListener('click',()=>openAnalyticsHistory(index,entry,orgs,before,after,metrics));return button;
@@ -3093,7 +3111,7 @@ function renderQuality(sync=true){
   if(sync){
     const periods=new Map();for(const report of reports)if(validReportDate(report.start))periods.set(report.type+':'+report.start,report);
     for(const issue of issues)if(issue.period&&validReportDate(issue.period.start))periods.set(issue.period.type+':'+issue.period.start,issue.period);
-    selectFill('qualityPeriod',[{value:'all',label:'Все периоды'},...[...periods].sort((a,b)=>a[1].start.localeCompare(b[1].start)).map(([value,p])=>({value,label:(p.type==='week'?'Неделя: ':'Месяц: ')+displayPeriod(p)}))],$('qualityPeriod').value,'all');
+    selectFill('qualityPeriod',[{value:'all',label:'Все периоды'},...[...periods].sort((a,b)=>a[1].start.localeCompare(b[1].start)).map(([value,p])=>({value,label:periodTitle(p.type)+': '+displayPeriod(p)}))],$('qualityPeriod').value,'all');
     selectFill('qualityOrg',[{value:'all',label:'Все подразделения'},...state.settings.orgNames.map(x=>({value:x,label:x}))],$('qualityOrg').value,'all');
     selectFill('qualityType',[{value:'all',label:'Все проблемы'},...Object.entries(QUALITY_TYPES).map(([value,label])=>({value,label}))],$('qualityType').value,'all');
   }
@@ -3256,7 +3274,7 @@ function renderDepartmentComparison(index,orgs){
   const coverage=$('comparisonCoverage');coverage.replaceChildren();
   for(const org of orgs){const item=all.orgs.get(org);coverage.append(elem('p',org+': '+(item.complete?'Полные данные':'Неполные данные')+' · '+item.available.length+'/'+all.periods.length+' периодов'+
     (item.missing.length?' · отсутствуют: '+item.missing.map(displayDay).join(', '):''),item.complete?'muted small':'warn small'));}
-  if(!all.periods.length){empty(root,'Выберите корректный общий диапазон непересекающихся недель или месяцев.');return;}
+  if(!all.periods.length){empty(root,'Выберите корректный общий диапазон непересекающихся дней, недель или месяцев.');return;}
   const title=rangeCaption(all)+' · разница относительно '+baseOrg;
   for(const metric of metrics){
     const rows=entries.map(entry=>{
@@ -3286,7 +3304,7 @@ function analysisCoverage(root,index,organizations,text,missing=[]){
   root.replaceChildren(elem('p',text,'small'));
   if(missing.length)root.append(elem('p','Пропуски или исключённые конфликты: '+missing.map(displayDay).join(', ')+'. Нулём не считаются.','warn small'));
   if(index.issues.length)root.append(elem('p','Есть исключённые некорректные, повторные или пересекающиеся отчёты. Подробности — в контроле качества.','warn small'));
-  root.append(elem('p','Подразделения: '+organizations.join(', ')+'. Период: '+(index.type==='week'?'недели':'месяцы')+'. Полнота означает наличие отчётов; замечания импорта — в контроле качества.','muted small'));
+  root.append(elem('p','Подразделения: '+organizations.join(', ')+'. Период: '+periodScale(index.type)+'. Полнота означает наличие отчётов; замечания импорта — в контроле качества.','muted small'));
 }
 // Синий/фиолетовый — направление числа; красный/зелёный — только качество данных.
 function numericChangeClass(delta){
@@ -3358,14 +3376,14 @@ function renderRegularity(index=analyticsIndex()){
     {title:'Как часто выполнялись услуги',totalRow:false,
       headerHelp:[
         'Название отмеченной услуги или группы. Одна группа считается как единая услуга.',
-        'Количество полных недель или месяцев в выбранном диапазоне, в которых была ненулевая активность этой услуги.',
+        'Количество полных дней, недель или месяцев в выбранном диапазоне, в которых была ненулевая активность этой услуги.',
         'Количество периодов с активностью / количество всех полных периодов выбранного диапазона × 100%.',
         'Количество полных периодов с активностью в непосредственно предыдущем равном диапазоне.',
         'Частота активности в предыдущем диапазоне, рассчитанная только по полным отчётам.',
         'Частота сейчас минус частота раньше. Отрицательное значение показывает снижение частоты в процентных пунктах.',
         'Первое появление в загруженных отчётах (не дата первого выполнения в реальности).',
         'Последнее появление в загруженных отчётах.',
-        'Число полных недель или месяцев подряд без активности с момента последнего появления. Пропуск отчёта прерывает подсчёт.',
+        'Число полных дней, недель или месяцев подряд без активности с момента последнего появления. Пропуск отчёта прерывает подсчёт.',
         'Простой вывод по частоте: часто, редко, заметно реже, перестала встречаться и другие признаки. Один случай может соответствовать нескольким признакам.'
       ],
       csvRows:rows.map(raw),csvMetric:'Регулярность услуг',csvUnit:'периоды; частоты — проценты; даты',csvContext:[['Подразделения',orgs.join(', ')],['Пропуски',result.missing.map(displayDay).join(', ')],['Фильтр признака',status==='all'?'Все':REGULARITY_LABELS[status]],['Поиск',$('regularitySearch').value],['Долгое отсутствие, периодов',$('regularityGap').value]]});
@@ -3453,7 +3471,7 @@ function renderComparison(index=analyticsIndex()) {
   const coverage=$('comparisonCoverage');
   if(ranges||!before.complete||!after.complete){
     for(const [label,range] of [['Первый интервал',before],['Второй интервал',after]]){
-      const n=range.periods.length,unit=index.type==='week'?ruPlural(n,'неделя','недели','недель'):ruPlural(n,'месяц','месяца','месяцев');
+      const n=range.periods.length,unit=periodUnit(index.type,n);
       coverage.append(elem('p',label+': '+rangeCaption(range)+' · '+n+' '+unit,'muted small'));
       for(const [org,item] of range.orgs)if(!item.complete)coverage.append(elem('p',label+' · '+org+': нет полного отчёта'+(item.missing.length?' за '+item.missing.map(displayDay).join(', '):'')+'. Пропуски не считаются нулём.','warn small'));
     }
@@ -3526,7 +3544,7 @@ function buildPrintReport(){
   const {current,previous,drivers}=overviewSnapshot(index,$('rangeStart').value,$('rangeEnd').value,orgs);
   root.append(elem('h1','Сводка выполненных работ'));
   const period=current.periods.length?(current.periods.length===1?displayPeriod(current.periods[0]):rangeCaption(current)):'Не выбран';
-  root.append(elem('p','Период: '+period+' · Масштаб: '+(index.type==='week'?'недели':'месяцы')));
+  root.append(elem('p','Период: '+period+' · Тип отчётов: '+periodScale(index.type)));
   root.append(elem('p','Подразделения: '+orgs.join(', ')));
   root.append(elem('p','Дата подготовки: '+new Date().toLocaleDateString('ru-RU')));
   if(!current.periods.length){root.append(elem('p','Нет отчётов за выбранный период.'));return;}
@@ -3729,7 +3747,7 @@ function drawDepartmentMultiChart(periods,organizations,metrics,data,root){
   svg.append(svgEl('line',{x1:left,y1:py(0),x2:width-right,y2:py(0),stroke:'var(--axis)'}));
   periods.forEach((period,i)=>{
     const label=svgEl('text',{x:px(i),y:height-49,'text-anchor':'middle',fill:'var(--plot-label)','font-size':11},
-      period.type==='week'?displayDay(period.start).slice(0,5)+'–'+displayDay(period.end).slice(0,5):period.start.slice(0,7));
+      plotPeriodLabel(period));
     label.append(svgEl('title',{},displayPeriod(period)));svg.append(label);
     svg.append(svgEl('text',{x:px(i),y:height-32,'text-anchor':'middle',fill:'var(--plot-label)','font-size':10},period.start.slice(0,4)));
     if(series.every(entry=>entry.values[i]===null))
@@ -3794,7 +3812,7 @@ function renderDepartmentTrend(index,orgs,metrics){
   }
   const {periods,data}=departmentTrendData(index,from,to,organizations,names);
   if(!periods.length){
-    empty(state.chart==='table'?table:charts,'Выберите корректный диапазон недель или месяцев для сравнения подразделений.');
+    empty(state.chart==='table'?table:charts,'Выберите корректный диапазон дней, недель или месяцев для сравнения подразделений.');
     return;
   }
   if(state.chart==='table'){
@@ -3931,8 +3949,8 @@ function renderReportCalendar(){
   if(!calendarViewInitialized&&state.reports.length){
     calendarViewInitialized=true;
     if(!reports.length){
-      const fallback=type==='week'?'month':'week';
-      if(state.reports.some(r=>r.type===fallback&&validReportDate(r.start))){
+      const fallback=REPORT_TYPES.find(candidate=>state.reports.some(r=>r.type===candidate&&validReportDate(r.start)));
+      if(fallback){
         type=fallback;select.value=fallback;calendarOffset=0;
         reports=state.reports.filter(r=>r.type===type&&validReportDate(r.start)&&validReportDate(r.end));
       }
@@ -3941,10 +3959,10 @@ function renderReportCalendar(){
   if(!reports.length){
     $('calendarRange').textContent='Нет загруженных периодов';
     $('calendarPrev').disabled=$('calendarNext').disabled=true;
-    root.append(elem('p','Добавьте недельные или месячные отчёты, чтобы увидеть календарь.','muted small'));
+    root.append(elem('p','Добавьте дневные, недельные или месячные отчёты, чтобы увидеть календарь.','muted small'));
     return;
   }
-  const size=12,step=type==='month'?addMonths:addDays,move=(value,n)=>step(value,type==='month'?n:7*n);
+  const size=12,move=(value,n)=>shiftPeriod(type,value,n);
   const starts=reports.map(r=>r.start).sort(),latest=starts.at(-1),earliest=starts[0];
   const first=move(latest,-(size-1)-size*calendarOffset);
   const last=move(first,size-1);
@@ -3987,7 +4005,7 @@ function renderReports() {
   if(!sorted.length){empty(root,'Отчёты ещё не загружены');return;}
   sorted.forEach(r=>{
     const row=elem('div',null,'report-row'),main=elem('div');
-    main.append(elem('strong',displayPeriod(r)+' · '+(r.type==='week'?'Неделя':'Месяц')));
+    main.append(elem('strong',displayPeriod(r)+' · '+periodTitle(r.type)));
     main.append(elem('small',r.organizations.join(', ')+' · '+r.rows.length+' '+ruPlural(r.rows.length,'запись','записи','записей')+
       ' · Сумма: '+fmtNumber(r.amount,'amount')));
     if(r.warnings?.length)main.append(elem('small','Есть замечания к данным: '+r.warnings.length,'warn'));
@@ -4152,7 +4170,7 @@ async function importBackupFile(file) {
   const data=await readJsonFile(file);if(!data)return;
   if(data.format!=='work-reports-backup'||data.version!==1||!Array.isArray(data.reports)||!data.settings||!Array.isArray(data.settings.orgNames)||data.settings.orgNames.length!==4)throw Error('Неверный формат резервной копии');
   const groups=checkedGroups(data.settings.groups||[]);
-  if(!data.reports.every(r=>r&&typeof r.id==='string'&&['week','month'].includes(r.type)&&/^\d{4}-\d{2}-\d{2}$/.test(r.start)&&Array.isArray(r.rows)&&r.rows.every(x=>typeof x.work==='string'&&typeof x.organization==='string'&&Number.isFinite(x.count)&&Number.isFinite(x.amount))))throw Error('В резервной копии обнаружены некорректные записи');
+  if(!data.reports.every(r=>r&&typeof r.id==='string'&&REPORT_TYPES.includes(r.type)&&/^\d{4}-\d{2}-\d{2}$/.test(r.start)&&Array.isArray(r.rows)&&r.rows.every(x=>typeof x.work==='string'&&typeof x.organization==='string'&&Number.isFinite(x.count)&&Number.isFinite(x.amount))))throw Error('В резервной копии обнаружены некорректные записи');
   if(!confirm('Восстановить резервную копию? Все текущие отчёты и настройки будут заменены.'))return;
   const catalog=Array.isArray(data.settings.catalog)?data.settings.catalog.filter(x=>x && typeof x.organization==='string' && typeof x.work==='string'):[];
   const nextSettings={orgNames:data.settings.orgNames,groups,catalog};
@@ -4195,7 +4213,7 @@ function buildReportIndex(reports,groups,{type,organizations}) {
   }
   result.periods=[...periods.values()].sort((a,b)=>a.start.localeCompare(b.start));
   for(const [org,list] of candidates){
-    if(!list.length)warnings.add(org+': нет '+(type==='week'?'недельных':'месячных')+' отчётов. Сравнение неполное.');
+    if(!list.length)warnings.add(org+': нет '+({day:'дневных',week:'недельных',month:'месячных'}[type]||'сопоставимых')+' отчётов. Сравнение неполное.');
     list.sort((a,b)=>a.start.localeCompare(b.start));const invalid=new Set();
     for(let i=0;i<list.length;i++)for(let j=i+1;j<list.length&&list[j].start<=list[i].end;j++){
       invalid.add(list[i]);invalid.add(list[j]);const kind=list[i].start===list[j].start&&list[i].end===list[j].end?'duplicate':'overlap';
@@ -4218,9 +4236,9 @@ function buildReportIndex(reports,groups,{type,organizations}) {
   result.warnings=[...warnings];return result;
 }
 function rangePeriods(type,from,to) {
-  if(!validReportDate(from)||!validReportDate(to)||from>to||(type==='month'&&(from.slice(8)!=='01'||to.slice(8)!=='01')))return [];
+  if(!REPORT_TYPES.includes(type)||!validReportDate(from)||!validReportDate(to)||from>to||(type==='month'&&(from.slice(8)!=='01'||to.slice(8)!=='01')))return [];
   const periods=[];
-  for(let date=from;date<=to;date=type==='month'?addMonths(date,1):addDays(date,7))periods.push({type,start:date,end:periodEnd(date,type)});
+  for(let date=from;date<=to;date=shiftPeriod(type,date,1))periods.push({type,start:date,end:periodEnd(date,type)});
   // A shifted weekly endpoint is not a full sequence of calendar windows.
   return periods.at(-1)?.start===to?periods:[];
 }
@@ -4258,7 +4276,7 @@ function rangeMetric(range,organization,key,metric) {
   const value=scope.by.get(key)||{count:0,amount:0};
   return metric==='average'?(value.count>0?value.amount/value.count:null):value[metric];
 }
-function shiftPeriod(type,start,steps){return type==='month'?addMonths(start,steps):addDays(start,steps*7);}
+function shiftPeriod(type,start,steps){return type==='month'?addMonths(start,steps):addDays(start,steps*(type==='day'?1:7));}
 function periodSamples(index,periods,organizations,names=null){
   return periods.map(period=>({...aggregateReportRange(index,{from:period.start,to:period.start,organizations,names}),period}));
 }
@@ -4445,13 +4463,13 @@ function collectQualityIssues(reports,organizations) {
     if(report.hasMismatch&&!local.some(x=>x.type==='mismatch'))local.push(reportIssue('mismatch','Отчёт помечен как имеющий расхождения; подробности не сохранены.',report));
     result.push(...local);
   }
-  for(const type of ['week','month']){
+  for(const type of REPORT_TYPES){
     if(!reports.some(r=>r.type===type))continue;
     const index=buildReportIndex(reports,[],{type,organizations});result.push(...index.issues);
     const expected=new Map(index.periods.map(period=>[period.start,period]));
     for(let i=1;i<index.periods.length;i++){
       const previous=index.periods[i-1],current=index.periods[i];
-      for(let start=addDays(previous.end,1);start<current.start;start=type==='month'?addMonths(start,1):addDays(start,7))
+      for(let start=addDays(previous.end,1);start<current.start;start=shiftPeriod(type,start,1))
         expected.set(start,{type,start,end:periodEnd(start,type)});
     }
     // Check actual report starts too: an offset last week must not erase gap diagnostics.
@@ -4470,7 +4488,7 @@ function analyzeWorkChanges(reports,groups,options) {
   const result={rows:[],warnings:[],series:new Map(),periods:[]};
   const warnings=new Set(),warn=text=>warnings.add(text);
   const {type,from,to,method,organizations,percent,minCount,minAmount}=options;
-  if(!['week','month'].includes(type)||!['previous','range'].includes(method)||
+  if(!REPORT_TYPES.includes(type)||!['previous','range'].includes(method)||
     ![percent,minCount,minAmount].every(x=>Number.isFinite(x)&&x>=0)){
     result.warnings=['Проверьте тип периода, способ сравнения и неотрицательные числовые пороги.'];return result;
   }
@@ -4480,7 +4498,7 @@ function analyzeWorkChanges(reports,groups,options) {
   result.warnings.forEach(warn);const wanted=new Set(organizations);
   const currents=method==='previous'?[{type,start:to,end:periodEnd(to,type)}]:result.periods.filter(p=>p.start>=from&&p.start<=to);
   for(const currentPeriod of currents){
-    const previousStart=type==='month'?addMonths(currentPeriod.start,-1):addDays(currentPeriod.start,-7);
+    const previousStart=shiftPeriod(type,currentPeriod.start,-1);
     if(method==='range'&&previousStart<from)continue;
     const basePeriod={type,start:previousStart,end:periodEnd(previousStart,type)};
     for(const org of wanted){
@@ -4584,7 +4602,7 @@ function renderChangeWarnings(analysis,options,root) {
   root.append(elem('strong',analysis.rows.length?'Часть данных требует проверки':'Недостаточно данных для сравнения','warn'));
   const current=analysis.periods.find(p=>p.start===options.to);
   if(options.method==='previous'&&current){
-    const start=options.type==='month'?addMonths(current.start,-1):addDays(current.start,-7);
+    const start=shiftPeriod(options.type,current.start,-1);
     if(options.organizations.every(org=>!analysis.series.get(org)?.has(start))){
       root.append(elem('p','Выбран период '+displayPeriod(current)+'. Для сравнения нужен предыдущий период '+
         displayPeriod({type:options.type,start,end:periodEnd(start,options.type)})+
@@ -4899,7 +4917,8 @@ function wire() {
   $('clearAll').addEventListener('click',()=>{state.selectedCategories.clear();renderDashboard(false);});
   $('selectTop').addEventListener('click',()=>{state.selectedCategories=new Set(categoryOrder(currentTypeReports(),state.selectedOrganizations,rankMetric()).slice(0,8));renderDashboard(false);});
   $('importType').addEventListener('change',()=>{
-    $('weekStartLabel').hidden=$('importType').value!=='week';
+    $('weekStartLabel').hidden=$('importType').value==='month';
+    $('importDateCaption').textContent=$('importType').value==='day'?'Первый день':'Начало первой недели';
     $('monthStartLabel').hidden=$('importType').value!=='month';
     state.pending=[];$('saveImport').disabled=true;
     $('importPeriodDates').replaceChildren();renderImportDateFields();
@@ -4935,7 +4954,7 @@ function wire() {
     }
   });
   $('sampleBtn').addEventListener('click',()=>{$('excelFile').click();});
-  $('inspectFile').addEventListener('click',()=>{try{inspectImport();}catch(err){notice(err.message,true);}});
+  $('inspectFile').addEventListener('click',async()=>{try{await inspectImport();}catch(err){notice(err.message,true);}});
   $('saveImport').addEventListener('click',async()=>{try{await saveImport();}catch(err){notice(err.message,true);}});
   $('workSearch').addEventListener('input',()=>{extendedState.workPage=0;renderWorkList();});
   $('groupSearch').addEventListener('input',renderGroups);
@@ -4982,3 +5001,4 @@ window.appReady=main();
 </script>
 </body>
 </html>
+

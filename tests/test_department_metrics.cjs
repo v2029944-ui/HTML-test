@@ -50,8 +50,8 @@ test('group coverage counts unique names from all sources, including saved group
   assert.equal(result.total,4);assert.equal(result.grouped,3);assert.equal(result.ungrouped,1);
 });
 
-test('three periods versus three reuse grouped weighted totals for weeks and months',()=>{
-  for(const type of ['week','month']){
+test('three periods versus three reuse grouped weighted totals for days, weeks and months',()=>{
+  for(const type of ['day','week','month']){
     const result=run(`(()=>{
       const organizations=['СМУ16','АВТО'],groups=[{id:'g',name:'Общая группа',works:['Альфа','Бета']}];
       const reports=Array.from({length:6},(_,i)=>{
@@ -103,6 +103,44 @@ test('long queries can match related group names while short queries match the d
   assert.deepEqual(Array.from(run("searchNames(entries,'да',x=>x.name,x=>[x.group]).map(x=>x.name)",{entries})),['Датчик А','Датчик Б']);
 });
 const nodes=root=>[root,...root.children.flatMap(nodes)];
+
+test('daily dates, leap days and missing day diagnostics use one-day steps',()=>{
+  assert.equal(run("periodEnd('2024-02-28','day')"),'2024-02-28');
+  assert.equal(run("shiftPeriod('day','2024-02-28',1)"),'2024-02-29');
+  assert.equal(run("shiftPeriod('day','2024-03-01',-1)"),'2024-02-29');
+  assert.equal(run("displayPeriod({type:'day',start:'2026-11-16',end:'2026-11-16'})"),'16.11.2026');
+  assert.equal(run("plotPeriodLabel({type:'day',start:'2026-11-16',end:'2026-11-16'})"),'16.11');
+  assert.deepEqual(Array.from(run("rangePeriods('day','2024-02-28','2024-03-01').map(p=>p.start)")),['2024-02-28','2024-02-29','2024-03-01']);
+  const result=run(`(()=>{
+    const organizations=['СМУ16'],report=start=>({id:start,type:'day',start,end:start,organizations,rows:[{organization:'СМУ16',work:'Работа',count:0.5,amount:10}],totals:[],warnings:[]});
+    const reports=[report('2026-11-01'),report('2026-11-03')],index=buildReportIndex(reports,[],{type:'day',organizations}),range=aggregateReportRange(index,{from:'2026-11-01',to:'2026-11-03',organizations});
+    const gaps=collectQualityIssues(reports,organizations).filter(issue=>issue.type==='missing'&&issue.period?.type==='day');
+    const duplicate=buildReportIndex([...reports,{...reports[0],id:'copy'}],[],{type:'day',organizations});
+    return {range,gaps,duplicate};
+  })()`);
+  assert.equal(result.range.complete,false);assert.equal(result.range.total.amount,null);
+  assert.ok(result.gaps.some(issue=>issue.period.start==='2026-11-02'));
+  assert.ok(result.duplicate.issues.some(issue=>issue.type==='duplicate'));
+});
+
+test('daily baseline and changes ignore overlapping week and month totals',()=>{
+  const result=run(`(()=>{
+    const organizations=['СМУ16'],report=(start,i,type='day')=>({id:start+type,type,start,end:periodEnd(start,type),organizations,rows:[{organization:'СМУ16',work:'Работа',count:i,amount:i*i*10}],totals:[],warnings:[]});
+    const days=Array.from({length:6},(_,i)=>report(addDays('2026-11-01',i),i+1));
+    const reports=[...days,report('2026-11-01',1000,'week'),report('2026-11-01',2000,'month')];
+    const index=buildReportIndex(reports,[],{type:'day',organizations}),total=aggregateReportRange(index,{from:'2026-11-01',to:'2026-11-06',organizations});
+    const usual=analyzeUsual(index,{period:'2026-11-06',window:4,organizations});
+    const regularity=analyzeRegularity(index,{from:'2026-11-01',to:'2026-11-06',organizations,longGap:4});
+    const changes=analyzeWorkChanges(reports,[],{type:'day',method:'previous',from:'2026-11-06',to:'2026-11-06',organizations,percent:0,minCount:0,minAmount:0});
+    const pairs=analyzeWorkChanges(reports,[],{type:'day',method:'range',from:'2026-11-01',to:'2026-11-03',organizations,percent:0,minCount:0,minAmount:0});
+    return {total,usual,regularity,changes,pairs};
+  })()`);
+  assert.equal(result.total.total.count,21);assert.equal(result.total.total.amount,910);
+  assert.equal(result.usual.used,4);assert.equal(result.usual.rows[0].count.base,3.5);assert.equal(result.usual.rows[0].amount.base,135);
+  assert.equal(result.regularity.used,6);assert.equal(result.regularity.expected,6);
+  assert.equal(result.changes.rows.length,1);assert.equal(result.changes.rows[0].basePeriod.start,'2026-11-05');assert.equal(result.changes.rows[0].amount.delta,110);
+  assert.equal(result.pairs.rows.length,2);
+});
 const organizations=['СМУ16','АВТО'];
 const metrics=['amount','count','average'];
 const periods=[
@@ -312,3 +350,4 @@ test('comparison KPI cards display blue and purple numeric directions',()=>{
   assert.equal(root.children[3].children[1].className,'numeric-fall');
   context.document.getElementById=undefined;
 });
+

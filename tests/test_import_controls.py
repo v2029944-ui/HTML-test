@@ -2,6 +2,8 @@
 import csv
 import io
 import json
+import zipfile
+from xml.sax.saxutils import escape
 import unittest
 from pathlib import Path
 from playwright.sync_api import sync_playwright
@@ -9,7 +11,139 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def daily_workbook_bytes():
+    matrix=[['Работа','Количество','Сумма']*6]
+    for name,factor in [('СМУ16',0.5),('Альфа',0.5),('АВТО',1.5),('Бета',1.5),('Итого',2)]:
+        row=[]
+        for k in range(1,7):
+            amount=(30 if name=='Итого' else 10 if factor==0.5 else 20)*k*k
+            row.extend([name,factor*k,amount])
+        matrix.append(row)
+    def column(n):
+        result=''
+        while n:n,r=divmod(n-1,26);result=chr(65+r)+result
+        return result
+    rows=[]
+    for i,row in enumerate(matrix,1):
+        cells=[]
+        for j,value in enumerate(row,1):
+            ref=column(j)+str(i)
+            cells.append(f'<c r="{ref}" t="inlineStr"><is><t>{escape(value)}</t></is></c>' if isinstance(value,str) else f'<c r="{ref}"><v>{value}</v></c>')
+        rows.append(f'<row r="{i}">'+''.join(cells)+'</row>')
+    files={
+        '[Content_Types].xml':'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>',
+        '_rels/.rels':'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+        'xl/workbook.xml':'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Дневные" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        'xl/_rels/workbook.xml.rels':'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+        'xl/worksheets/sheet1.xml':'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'+''.join(rows)+'</sheetData></worksheet>'
+    }
+    buffer=io.BytesIO()
+    with zipfile.ZipFile(buffer,'w',zipfile.ZIP_STORED) as workbook:
+        for name,value in files.items():workbook.writestr(name,value)
+    return buffer.getvalue()
+
+
 class ImportControls(unittest.TestCase):
+    def test_comparison_and_calendar_filters_are_below_their_headings(self):
+        self.load_six_week_fixture()
+        for width in [320,390,1280]:
+            self.page.set_viewport_size({'width':width,'height':900})
+            for mode in ['periods','organizations']:
+                self.page.locator('#comparisonMode').select_option(mode)
+                header=self.page.locator('#comparison>.sectionbar').bounding_box()
+                field=self.page.locator('#comparisonMode').bounding_box()
+                self.assertGreaterEqual(field['y'],header['y']+header['height'])
+                self.assertAlmostEqual(field['x'],header['x'],delta=1)
+                self.assertEqual(self.page.locator('#comparison>.sectionbar select').count(),0)
+                if mode=='organizations':
+                    scope=self.page.locator('#comparisonScope').bounding_box()
+                    period=self.page.locator('#comparisonPeriod').bounding_box()
+                    self.assertGreaterEqual(period['y'],scope['y']+scope['height'])
+            self.page.locator('[data-view=upload]').click()
+            header=self.page.locator('#reportPeriods>.sectionbar').bounding_box()
+            field=self.page.locator('#calendarType').bounding_box()
+            self.assertGreaterEqual(field['y'],header['y']+header['height'])
+            self.assertAlmostEqual(field['x'],header['x'],delta=1)
+            self.assertEqual(self.page.locator('#reportPeriods>.sectionbar select').count(),0)
+            self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth'))
+            self.page.locator('[data-view=dashboard]').click()
+
+    def test_daily_excel_import_comparison_csv_and_mixed_backup(self):
+        self.page.locator('[data-view=upload]').click();self.page.locator('#importType').select_option('day')
+        self.assertEqual(self.page.locator('#importDateCaption').inner_text(),'Первый день')
+        self.page.locator('#importWeek').fill('2026-11-10')
+        self.page.locator('#excelFile').set_input_files({'name':'Дневные.xlsx','mimeType':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','buffer':daily_workbook_bytes()})
+        self.page.wait_for_function('state.workbook!==null')
+        self.page.locator('#inspectFile').click();self.page.wait_for_function('state.pending.length===6')
+        self.assertEqual(self.page.evaluate('state.pending.map(report=>[report.type,report.start,report.end])'),[['day',f'2026-11-{i}',f'2026-11-{i}'] for i in range(10,16)])
+        self.assertTrue(self.page.evaluate('state.pending.every(report=>report.warnings.length===0)'))
+        self.page.locator('#importPeriodDates').evaluate('(node)=>node.closest("details").open=true')
+        second=self.page.locator('#importPeriodDates input').nth(1)
+        second.fill('2026-11-10');self.page.locator('#inspectFile').click()
+        self.page.wait_for_function('document.querySelector("#flash").textContent.includes("Даты наборов пересекаются")')
+        self.assertIn('Даты наборов пересекаются',self.page.locator('#flash').inner_text())
+        self.assertTrue(self.page.locator('#saveImport').is_disabled())
+        second.fill('2026-11-11');self.page.locator('#inspectFile').click();self.page.wait_for_function('state.pending.length===6')
+        self.page.locator('#saveImport').click();self.page.wait_for_function('state.reports.length===6')
+        self.page.locator('[data-view=dashboard]').click();self.page.locator('#periodType').select_option('day')
+        self.page.evaluate("state.selectedOrganizations=new Set(DEFAULT_ORGS.slice(0,2));state.selectedMetrics=new Set(['amount','count']);document.querySelector('#advancedAnalytics').open=true;renderDashboard(false)")
+        self.page.locator('#periodComparisonScope').select_option('range')
+        self.assertEqual(self.page.locator('#comparisonCoverage').inner_text().count('3 дня'),2)
+        self.assertEqual(self.page.evaluate('''()=>{const {before,after}=periodComparisonRanges(analyticsIndex(),[...state.selectedOrganizations],state.selectedCategories);return [before.total.count,before.total.amount,after.total.count,after.total.amount];}'''),[12,420,30,2310])
+        axis=self.page.locator('#chartsContainer svg text').evaluate_all('(nodes)=>nodes.map(node=>[...node.childNodes].filter(child=>child.nodeType===Node.TEXT_NODE).map(child=>child.textContent).join(""))')
+        self.assertIn('15.11',axis);self.assertNotIn('2026-11',axis)
+        amount=self.page.locator('#comparisonTable .metric-table').filter(has=self.page.get_by_role('heading',name='Сумма',exact=True))
+        with self.page.expect_download() as download:amount.locator('.table-export').click()
+        rows=list(csv.reader(io.StringIO(Path(download.value.path()).read_text(encoding='utf-8-sig')),delimiter=';'))
+        self.assertEqual(next(row[1:] for row in rows if row and row[0]=='Итого по выбранным работам'),['420','2310','1890','450'])
+        self.page.evaluate('''async()=>{
+          const organizations=DEFAULT_ORGS.slice(0,2),make=(type,start,amount)=>({id:type,type,start,end:periodEnd(start,type),organizations,totals:[],warnings:[],rows:organizations.map(organization=>({organization,work:'Старый отчёт',count:1,amount}))});
+          await storeReports([...state.reports,make('week','2026-11-09',9999),make('month','2026-11-01',8888)]);renderAll();
+        }''')
+        self.assertEqual(self.page.evaluate('aggregateReportRange(analyticsIndex(),{from:"2026-11-10",to:"2026-11-15",organizations:DEFAULT_ORGS.slice(0,2)}).total.amount'),2730)
+        self.page.locator('[data-view=storage]').click()
+        with self.page.expect_download() as download:self.page.locator('#exportBackup').click()
+        backup=Path(download.value.path()).read_bytes();data=json.loads(backup)
+        self.assertEqual(data['version'],1);self.assertEqual({report['type'] for report in data['reports']},{'day','week','month'})
+        self.page.evaluate('async()=>{await storeReports([]);renderAll()}')
+        self.page.once('dialog',lambda dialog:dialog.accept())
+        self.page.locator('#importBackup').set_input_files({'name':'backup.json','mimeType':'application/json','buffer':backup})
+        self.page.wait_for_function('state.reports.length===8');self.page.reload();self.page.wait_for_function('state.reports.length===8')
+        self.assertEqual(self.page.evaluate('state.reports.filter(report=>report.type==="day").length'),6)
+        self.assertTrue(self.page.evaluate('state.reports.filter(report=>report.type==="day").every(report=>report.start===report.end)'))
+        self.assertEqual(self.page.evaluate('state.db.version'),1)
+        totals=self.page.evaluate('''()=>{
+          const organizations=DEFAULT_ORGS.slice(0,2);
+          return ['day','week','month'].map(type=>{const index=buildReportIndex(state.reports,[],{type,organizations}),start=type==='day'?'2026-11-10':type==='week'?'2026-11-09':'2026-11-01';return aggregateReportRange(index,{from:start,to:type==='day'?'2026-11-15':start,organizations}).total.amount;});
+        }''')
+        self.assertEqual(totals,[2730,19998,17776])
+
+    def test_daily_missing_dates_calendar_baseline_and_changes(self):
+        self.page.evaluate('''async()=>{
+          const organizations=DEFAULT_ORGS.slice(0,2),reports=Array.from({length:8},(_,i)=>{const start=addDays('2026-11-01',i);return {id:start,type:'day',start,end:start,organizations,totals:[],warnings:[],rows:organizations.map(organization=>({organization,work:'Дневная работа',count:i+0.5,amount:(i+1)*100}))};}).filter((_,i)=>i!==4);
+          await storeReports(reports);state.settings.groups=[];state.selectionInitialized=false;renderAll();
+        }''')
+        self.page.locator('#periodType').select_option('day')
+        self.page.evaluate("state.selectedOrganizations=new Set(DEFAULT_ORGS.slice(0,2));document.querySelector('#advancedAnalytics').open=true;renderDashboard(false)")
+        self.page.locator('#overviewMode').select_option('range');self.page.locator('#rangeStart').select_option('2026-11-01')
+        self.assertIn('Пропуск',self.page.locator('#chartsContainer').inner_text())
+        self.page.locator('#usualPanel>summary').click()
+        self.page.wait_for_function('document.querySelector("#usualCoverage").textContent.includes("Среднее основано")')
+        self.assertIn('Среднее основано на 3 из 4',self.page.locator('#usualCoverage').inner_text())
+        self.page.locator('#regularityPanel>summary').click()
+        self.page.wait_for_function('document.querySelector("#regularityCoverage").textContent.includes("Фактических периодов")')
+        self.assertIn('Фактических периодов: 7 из 8',self.page.locator('#regularityCoverage').inner_text())
+        self.page.locator('[data-view=upload]').click();self.page.locator('#calendarType').select_option('day')
+        self.assertEqual(self.page.locator('#reportCalendar button').count(),12)
+        missing=self.page.locator('#reportCalendar button').filter(has_text='05.11.2026')
+        self.assertIn('Нет отчёта',missing.inner_text())
+        self.page.locator('#qualityPeriod').select_option('day:2026-11-05');self.page.locator('#qualityOrg').select_option('СМУ16');self.page.locator('#qualityType').select_option('missing')
+        self.assertIn('05.11.2026',self.page.locator('#qualityTable').inner_text())
+        self.page.locator('[data-view=changes]').click();self.page.locator('#changesType').select_option('day');self.page.locator('#changesMode').select_option('all')
+        self.assertTrue(self.page.evaluate("changeState.analysis.rows.length===2 && changeState.analysis.rows.every(row=>row.basePeriod.start==='2026-11-07'&&row.currentPeriod.start==='2026-11-08')"))
+        self.page.locator('#changesMethod').select_option('range')
+        self.assertTrue(self.page.evaluate('changeState.analysis.rows.length>0'))
+
     def load_six_week_fixture(self):
         self.page.evaluate('''async()=>{
           const organizations=DEFAULT_ORGS.slice(0,2);

@@ -79,7 +79,7 @@
       const filename=node('strong',file.name+' ('+Math.ceil(file.size/1024)+' КБ)');
       filename.style.cssText='flex:1 1 230px;min-width:160px;overflow-wrap:anywhere';
       const type=node('select');
-      for(const [key,label] of [['week','Недели'],['month','Месяцы']]){
+      for(const [key,label] of [['week','Недели'],['month','Месяцы'],['day','Дни']]){
         const opt=node('option',label);opt.value=key;type.append(opt);
       }
       type.value=initial.type;type.setAttribute('aria-label','Масштаб '+file.name);
@@ -133,7 +133,7 @@
     }
     const when=new Date().toISOString(),key=JSON.stringify(rule);
     const reports=selected.parsed.map((item,i)=>{
-      const start=rule.type==='month'?addMonths(rule.start,i):addDays(rule.start,7*i);
+      const start=rule.type==='month'?addMonths(rule.start,i):shiftPeriod(rule.type,rule.start,i);
       return {id:uuid(),type:rule.type,start,end:periodEnd(start,rule.type),
         fileName:file.name,sheetName:selected.sheetName,sourceBlock:item.index,
         sourceCol:item.col,sourceCountCol:item.countCol,sourceAmountCol:item.amountCol,
@@ -222,3 +222,4 @@
     await syncFiles();
   }catch(err){message('Не удалось прочитать папку Excel: '+err.message,true);}
 })();
+

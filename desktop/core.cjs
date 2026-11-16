@@ -20,9 +20,9 @@ function validDate(value){
   return Number.isFinite(date.getTime())&&date.toISOString().slice(0,10)===value;
 }
 function normalizeRule(rule){
-  if(!rule||!['week','month'].includes(rule.type))throw Error('Укажите тип отчётов: недели или месяцы.');
+  if(!rule||!['week','month','day'].includes(rule.type))throw Error('Укажите тип отчётов: дни, недели или месяцы.');
   if(!validDate(rule.start)||(rule.type==='month'&&!rule.start.endsWith('-01')))
-    throw Error('Укажите корректную дату начала недели или первый день месяца.');
+    throw Error('Укажите корректную дату дня, начала недели или первого дня месяца.');
   const sheet=typeof rule.sheet==='string'?rule.sheet.trim():'';
   if(sheet.length>120)throw Error('Название листа Excel слишком длинное.');
   return {type:rule.type,start:rule.start,sheet};
@@ -32,7 +32,7 @@ function validateData(data){
     data.settings.orgNames.length!==4||!Array.isArray(data.settings.groups)||!Array.isArray(data.settings.catalog))
     throw Error('Некорректные данные для сохранения.');
   for(const r of data.reports){
-    if(!r||typeof r.id!=='string'||!['week','month'].includes(r.type)||
+    if(!r||typeof r.id!=='string'||!['week','month','day'].includes(r.type)||
       !validDate(r.start)||!validDate(r.end)||!Array.isArray(r.rows)||
       !r.rows.every(x=>x&&typeof x.work==='string'&&typeof x.organization==='string'&&
         Number.isFinite(x.count)&&Number.isFinite(x.amount)))
@@ -144,3 +144,4 @@ class DiskStore {
   }
 }
 module.exports={DiskStore,safeExcelName,normalizeRule,validateData,validDate,fileSignature};
+

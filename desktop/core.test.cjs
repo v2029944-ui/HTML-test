@@ -88,3 +88,19 @@ test('invalid dates and corrupted saved JSON never silently reset the data',()=>
     assert.throws(()=>store.loadData());
   }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
+
+
+test('daily reports and rules persist alongside weekly and monthly data',()=>{
+  const root=create();
+  try{
+    const store=new DiskStore(root),data=testData();
+    data.reports.push({...data.reports[0],id:'daily',type:'day',start:'2026-11-10',end:'2026-11-10'});
+    data.reports.push({...data.reports[0],id:'monthly',type:'month',start:'2026-11-01',end:'2026-11-30'});
+    assert.deepEqual(normalizeRule({type:'day',start:'2026-11-10'}),{type:'day',start:'2026-11-10',sheet:''});
+    assert.throws(()=>normalizeRule({type:'day',start:'2026-02-30'}));
+    store.saveData(data);
+    const saved=new DiskStore(root).loadData();
+    assert.deepEqual(saved.reports.map(r=>r.type),['week','day','month']);
+    assert.equal(saved.reports[1].rows[0].count,1.5);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
