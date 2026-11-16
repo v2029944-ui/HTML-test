@@ -53,7 +53,7 @@ test('Excel inputs cannot escape the selected folder or read temporary XLSX file
   assert.ok(safeExcelName('2026-10-19.xlsx'));
   assert.ok(safeExcelName('Анализ.xlsx'));
   for(const unsafe of ['../secret.xlsx','..\\secret.xlsx','~$Работа.xlsx',
-    'report.xls','image.png','../a.xlsx','x\u0000.xlsx']){
+    'report.xls','image.png','../a.xlsx','report:stream.xlsx','x\u0000.xlsx']){
     assert.equal(safeExcelName(unsafe),false,unsafe);
   }
 });
