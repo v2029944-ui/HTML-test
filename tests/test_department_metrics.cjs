@@ -37,6 +37,22 @@ const run=(expression,values={})=>{
   Object.assign(context,values);
   return vm.runInContext(expression,context);
 };
+
+test('name search uses prefixes for one/two letters and ranks longer matches alphabetically',()=>{
+  const names=['Проверка датчика','Датчик Б','Замена датчика','Демонтаж','Датчик А','Диагностика'];
+  assert.deepEqual(Array.from(run("searchNames(names,' д ')",{names})),['Датчик А','Датчик Б','Демонтаж','Диагностика']);
+  assert.deepEqual(Array.from(run("searchNames(names,'ДИ')",{names})),['Диагностика']);
+  assert.deepEqual(Array.from(run("searchNames(names,'ДАТ')",{names})),['Датчик А','Датчик Б','Замена датчика','Проверка датчика']);
+  assert.deepEqual(Array.from(run("searchNames(names,'   ')",{names})),names,'Empty query retains the original order');
+  assert.equal(names[0],'Проверка датчика','Search never mutates the input');
+  assert.equal(run("searchNames(names,'нет совпадений').length",{names}),0);
+});
+
+test('long queries can match related group names while short queries match the displayed name',()=>{
+  const entries=[{name:'Замена узла',group:'Датчики'},{name:'Датчик Б',group:''},{name:'Датчик А',group:''}];
+  assert.deepEqual(Array.from(run("searchNames(entries,'дат',x=>x.name,x=>[x.group]).map(x=>x.name)",{entries})),['Датчик А','Датчик Б','Замена узла']);
+  assert.deepEqual(Array.from(run("searchNames(entries,'да',x=>x.name,x=>[x.group]).map(x=>x.name)",{entries})),['Датчик А','Датчик Б']);
+});
 const nodes=root=>[root,...root.children.flatMap(nodes)];
 const organizations=['СМУ16','АВТО'];
 const metrics=['amount','count','average'];

@@ -1,6 +1,7 @@
 """Local Chromium checks; run python -m unittest discover -s tests -v. No server/Actions."""
 import csv
 import io
+import json
 import unittest
 from pathlib import Path
 from playwright.sync_api import sync_playwright
@@ -9,6 +10,135 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ImportControls(unittest.TestCase):
+    def load_large_group_fixture(self):
+        self.page.evaluate('''async()=>{
+          const orgs=DEFAULT_ORGS.slice(0,2),works=[...Array.from({length:300},(_,i)=>'Датчик '+String(i+1).padStart(3,'0')),'Диагностика','Демонтаж','Замена датчика','Проверка датчика'];
+          const reports=['2026-10-19','2026-10-26'].map((start,i)=>({id:start,type:'week',start,end:periodEnd(start,'week'),organizations:orgs,totals:[],warnings:[],
+            issues:i?Array.from({length:60},(_,j)=>({type:'invalid',reason:'Проверочная проблема '+j,row:j+2,organization:orgs[0],raw:['Тест']})):[],
+            rows:orgs.flatMap(organization=>works.map((work,j)=>({organization,work,count:j+0.5,amount:(i+1)*(j+1)*100})))}));
+          await storeReports(reports);await saveSettings({...state.settings,groups:[{id:'g1',name:'Датчики',works:['Датчик 001']},{id:'g2',name:'Диагностика',works:['Диагностика']}]});
+          state.selectionInitialized=false;renderAll();state.selectedOrganizations=new Set(orgs);state.selectedCategories=new Set(categoryOrder(currentTypeReports(),new Set(orgs),'amount'));
+          document.querySelector('#overviewMode').value='range';document.querySelector('#rangeStart').value=reports[0].start;document.querySelector('#rangeEnd').value=reports[1].start;
+          document.querySelector('#advancedAnalytics').open=true;renderDashboard(false);
+        }''')
+
+    def test_group_workspace_search_selection_and_manual_save(self):
+        self.load_large_group_fixture()
+        before=self.page.evaluate('JSON.stringify(state.reports)')
+        self.page.locator('[data-view=groups]').click()
+        self.assertEqual(self.page.locator('#groups>.panel').count(),1)
+        self.assertEqual(self.page.locator('#groupWorkspace #groupAuditPanel').count(),1)
+        self.assertFalse(self.page.locator('#groupEditor').evaluate('(node)=>node.open'))
+        self.page.locator('#createGroup').click()
+        self.page.locator('#workPageSelect').select_option(value='12')
+        self.assertIn('Датчик 300',self.page.locator('#worksList').inner_text())
+        self.page.locator('#worksList label').filter(has_text='Датчик 300').locator('input').check()
+        self.assertTrue(self.page.locator('#worksList label').filter(has_text='Датчик 300').locator('input').is_checked())
+        self.page.locator('#workSearch').fill('ди')
+        self.assertEqual(self.page.locator('#worksList .work-row span').all_text_contents(),['Диагностика'])
+        self.assertTrue(self.page.evaluate("state.selectedWorks.has('Датчик 300')"))
+        self.page.locator('#worksList input').check()
+        self.page.locator('#workSearch').fill('дат')
+        self.assertEqual(self.page.locator('#workPageSelect').input_value(),'1')
+        self.page.locator('#workPageSelect').select_option(value='13')
+        self.assertEqual(self.page.locator('#worksList .work-row span').all_text_contents(),['Замена датчика','Проверка датчика'])
+        self.page.locator('#groupName').fill('Общая проверочная группа')
+        self.page.locator('#saveGroup').click()
+        self.page.wait_for_function("state.settings.groups.some(group=>group.name==='Общая проверочная группа')")
+        self.assertEqual(self.page.evaluate("state.settings.groups.find(group=>group.name==='Общая проверочная группа').works.slice().sort((a,b)=>a.localeCompare(b,'ru'))"),['Датчик 300','Диагностика'])
+        self.assertEqual(self.page.evaluate('JSON.stringify(state.reports)'),before)
+        group=self.page.locator('#groupList details').filter(has_text='Общая проверочная группа')
+        group.locator('summary').click()
+        group.get_by_role('button',name='Изменить группу',exact=True).click()
+        self.assertTrue(self.page.locator('#groupEditor').evaluate('(node)=>node.open'))
+        self.assertEqual(self.page.locator('#groupName').input_value(),'Общая проверочная группа')
+        self.assertEqual(self.page.evaluate('state.selectedWorks.size'),2)
+        with self.page.expect_download() as download:self.page.locator('#exportGroups').click()
+        backup_bytes=Path(download.value.path()).read_bytes()
+        backup=json.loads(backup_bytes)
+        self.assertEqual(backup['format'],'work-groups')
+        self.assertEqual(len(backup['groups']),2)
+        group.locator('.group-member').filter(has_text='Датчик 300').locator('select').select_option('g1')
+        self.page.wait_for_function("state.settings.groups.find(group=>group.id==='g1').works.includes('Датчик 300')")
+        self.assertEqual(self.page.evaluate("state.settings.groups.find(group=>group.name==='Общая проверочная группа').works"),['Диагностика'])
+        self.page.once('dialog',lambda dialog:dialog.accept())
+        self.page.locator('#importGroups').set_input_files({'name':'groups.json','mimeType':'application/json','buffer':backup_bytes})
+        self.page.wait_for_function("state.settings.groups.some(group=>group.name==='Общая проверочная группа'&&group.works.length===2)")
+        self.assertEqual(self.page.evaluate('JSON.stringify(state.reports)'),before)
+        self.page.reload();self.page.wait_for_function('state.db!==null')
+        self.assertTrue(self.page.evaluate("state.settings.groups.some(group=>group.name==='Общая проверочная группа'&&group.works.length===2)"))
+        self.page.evaluate('''async()=>{
+          await saveSettings({...state.settings,groups:[...state.settings.groups,{id:'legacy',name:'Архивная группа',works:['Датчик из старой копии']}]});renderAll();
+        }''')
+        self.page.locator('[data-view=groups]').click()
+        legacy=self.page.locator('#groupList details[data-group=legacy]')
+        legacy.locator('summary').click();legacy.get_by_role('button',name='Изменить группу',exact=True).click()
+        self.page.locator('#workSearch').fill('датчик из')
+        self.assertEqual(self.page.locator('#worksList .work-row span').all_text_contents(),['Датчик из старой копии'])
+        self.assertTrue(self.page.locator('#worksList input').is_checked())
+
+    def test_direct_page_jumps_and_search_across_analytics_lists(self):
+        self.load_large_group_fixture()
+        self.page.locator('[data-view=groups]').click()
+        self.page.locator('#groupAuditPanel>summary').click()
+        self.page.locator('#groupAuditPageSelect').select_option(value='13')
+        self.assertIn('Проверка датчика',self.page.locator('#groupAuditResults').inner_text())
+        self.page.locator('#groupAuditSearch').fill('ди')
+        self.assertEqual(self.page.locator('#groupAuditPageSelect').input_value(),'1')
+        self.assertTrue(self.page.locator('#groupAuditPageSelect').is_disabled())
+        self.assertIn('Диагностика',self.page.locator('#groupAuditResults').inner_text())
+        self.page.locator('[data-view=dashboard]').click()
+        self.page.locator('#categoryFilter>summary').click()
+        self.page.locator('#categorySearch').fill('ди')
+        self.assertEqual(self.page.locator('#categories .category-row span').all_text_contents(),['Диагностика'])
+        self.page.locator('#categoryFilter>summary').click()
+        self.page.locator('#regularityPanel>summary').click()
+        self.page.locator('#regularityPageSelect').select_option(value='11')
+        self.assertEqual(self.page.locator('#regularityPageSelect').input_value(),'11')
+        self.page.locator('#regularitySearch').fill('дат')
+        names=self.page.locator('#regularityResults tbody tr td:first-child').all_text_contents()
+        self.assertTrue(all(name.startswith('Датч') for name in names),names)
+        self.page.locator('#usualPanel>summary').click()
+        self.page.locator('#usualPageSelect').select_option(value='11')
+        self.assertEqual(self.page.locator('#usualPageSelect').input_value(),'11')
+        self.page.locator('#contributions>summary').click()
+        self.page.locator('#contributionPageSelect').select_option(value='11')
+        self.assertEqual(self.page.locator('#contributionPageSelect').input_value(),'11')
+        self.page.locator('[data-view=upload]').click()
+        self.page.locator('#qualityPageSelect').select_option(value='3')
+        self.assertEqual(self.page.locator('#qualityPageSelect').input_value(),'3')
+        self.page.locator('[data-view=changes]').click()
+        self.page.locator('#changesMode').select_option('all')
+        self.page.locator('#changesPageSelect').select_option(value='11')
+        self.assertEqual(self.page.locator('#changesPageSelect').input_value(),'11')
+        self.page.locator('#changesSearch').fill('ди')
+        self.page.wait_for_function("changeState.page===0 && document.querySelector('#changesResults').textContent.includes('Диагностика')")
+        self.assertTrue(self.page.locator('#changesPageSelect').is_disabled())
+        self.assertEqual(self.page.locator('#changesResults .change-open').all_text_contents(),['Диагностика']*4)
+        self.assertTrue(self.page.locator('#changesSort').is_disabled())
+        self.page.locator('#changesSearch').fill('')
+        self.page.wait_for_function('!document.querySelector("#changesSort").disabled')
+
+    def test_group_workspace_and_page_controls_fit_phone(self):
+        self.load_large_group_fixture()
+        self.page.locator('[data-view=groups]').click();self.page.locator('#createGroup').click()
+        self.page.locator('#groupAuditPanel>summary').click()
+        for width in [320,390,1024]:
+            self.page.set_viewport_size({'width':width,'height':900})
+            for theme in ['light','dark']:
+                self.page.evaluate('(theme)=>document.documentElement.dataset.theme=theme',theme)
+                self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth'))
+                for selector in ['#workPageSelect','#groupAuditPageSelect']:
+                    box=self.page.locator(selector).evaluate('(node)=>{const r=node.getBoundingClientRect();return {x:r.x,width:r.width,height:r.height};}')
+                    self.assertGreaterEqual(box['x'],0)
+                    self.assertLessEqual(box['x']+box['width'],width+1)
+                    self.assertGreaterEqual(box['height'],44)
+                if width<580:
+                    for selector in ['#workPrev','#workNext','#groupAuditPrev','#groupAuditNext']:
+                        box=self.page.locator(selector).bounding_box()
+                        self.assertGreaterEqual(box['width'],100)
+                        self.assertLessEqual(box['height'],100)
+
     def test_calendar_and_uploaded_reports_share_one_section(self):
         self.load_analytics_fixture()
         self.page.locator('[data-view=upload]').click()

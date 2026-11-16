@@ -1262,6 +1262,25 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 #reportPeriods .calendar-toolbar strong{text-align:center;min-width:0;line-height:1.5}
 @media(max-width:740px){#reportPeriods .calendar-toolbar{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}#calendarRange{grid-column:1/-1;grid-row:1}#reportPeriods .calendar-toolbar button{width:100%}}
 @media(max-width:740px){#dashboard .panel>.sectionbar,#reportPeriods>.sectionbar{gap:12px}#dashboard .panel>.sectionbar>label,#reportPeriods>.sectionbar>label{width:100%}.uploaded-reports>summary{gap:8px}}
+
+/* Group tasks share one workspace; page selection remains local to each list. */
+#groupWorkspace h2{font-size:var(--section-title-size);font-family:var(--font-heading)}
+.group-section{border-top:1px solid var(--border);margin-top:18px;padding-top:10px;min-width:0}
+.group-section>summary{cursor:pointer;font-size:var(--ui-legend-font,15px);font-weight:700;line-height:1.4;min-height:44px;padding:10px 0}
+#groupWorkspace .group-section>summary{font-family:var(--font-heading);font-size:var(--ui-legend-font,15px);font-weight:700;line-height:1.4}
+:root[data-design="industrial"] #groupWorkspace .group-section>summary{background:var(--band-surface);color:var(--band-text);padding:12px 16px;border-left:3px solid var(--band-accent)}
+.page-jump{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--label-size)}
+:root .page-jump select{width:auto;min-width:72px;max-width:130px;margin:0;min-height:var(--control-height);font-size:var(--control-size)}
+.change-pagination>span{font-variant-numeric:tabular-nums}
+@media(max-width:580px){
+  .change-pagination{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:stretch}
+  .change-pagination>.button{max-width:none;width:100%;min-width:0;white-space:normal;word-break:normal}
+  .change-pagination>button:first-child{grid-row:1;grid-column:1}
+  .change-pagination>button:last-child{grid-row:1;grid-column:2}
+  .change-pagination>span{grid-row:2;grid-column:1/-1;text-align:center;font-size:var(--ui-small-font,12px)}
+  .change-pagination .page-jump{grid-row:3;grid-column:1/-1;justify-content:center}
+  .group-section .actions{gap:8px}
+}
 </style>
   
 </head>
@@ -1564,7 +1583,27 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
     </section>
 
     <section id="groups" class="view">
-      <details class="panel" id="groupAuditPanel">
+      <section class="panel" id="groupWorkspace" aria-labelledby="groupHeading">
+        <h2 id="groupHeading">Группы работ</h2>
+        <p class="muted small">Общие группы действуют для всех подразделений. Раскройте группу, чтобы посмотреть состав или перенести работу. Исходные показатели не меняются.</p>
+        <div class="actions"><button id="createGroup" class="button primary" type="button">Создать группу</button><button id="exportGroups" class="button secondary" title="Скачать список групп без отчётов">Скачать группы (JSON)</button><label class="button secondary file-label">Импорт групп JSON<input type="file" id="importGroups" accept=".json,application/json" hidden></label></div>
+<p class="muted small">Файл JSON содержит названия групп и входящие работы, без отчётов. Импорт заменяет текущий список групп после подтверждения.</p><div id="groupList"></div>
+      <details class="group-section" id="groupEditor">
+        <summary>Создание и изменение группы</summary>
+        <p class="muted">Задайте название и отметьте работы. Одна работа входит максимум в одну группу; отметки сохраняются при поиске и смене страницы.</p>
+        <div class="group-edit">
+          <label>Название группы<input id="groupName" placeholder="Например, Ремонт форсунок" maxlength="120"></label>
+          <div class="group-filters">
+            <label>Поиск работ<input id="workSearch" type="search" placeholder="Введите часть названия"></label>
+          </div>
+          <p id="nameSearchHelp" class="muted small">Поиск: 1–2 буквы — начало названия. От 3 букв — сначала начало, затем совпадения внутри; в каждой части названия идут по алфавиту.</p>
+          <div class="works-list" id="worksList" aria-label="Выбор работ"></div>
+          <div class="change-pagination"><button id="workPrev" class="button secondary" type="button">← Предыдущая</button><span id="workPage" class="muted small" aria-live="polite"></span><button id="workNext" class="button secondary" type="button">Следующая →</button></div>
+          <div class="actions"><button id="saveGroup" class="button primary">Сохранить группу</button><button id="resetGroup" class="button secondary" title="Сбросить только форму, не удаляя сохранённые группы">Сбросить форму</button></div>
+          <p class="muted small">При переносе работы из другой группы предыдущая группа автоматически теряет эту работу.</p>
+        </div>
+      </details>
+      <details class="group-section" id="groupAuditPanel">
         <summary>Проверка справочника и групп</summary>
         <p class="muted small">Все уникальные названия из отчётов, справочника и существующих групп. Тип периода и подразделения для проверки выполнений задаются в аналитике. Они не ограничивают общий список названий или правила группировки.</p>
         <div class="extended-filters">
@@ -1575,13 +1614,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <div id="groupAuditCoverage" role="status" aria-live="polite"></div><div id="groupAuditResults"></div>
 <div class="change-pagination"><button id="groupAuditPrev" class="button secondary" title="Предыдущая страница: Проверка групп">← Предыдущая</button><span id="groupAuditPage" class="muted small" aria-live="polite"></span><button id="groupAuditNext" class="button secondary" title="Следующая страница: Проверка групп">Следующая →</button></div>
       </details>
-
-      <div class="panel"><h2>Группы работ</h2><p class="muted small">Нажмите на группу, чтобы увидеть все работы и перенести их в другую группу.</p>
-        <div class="actions"><button id="exportGroups" class="button secondary" title="Скачать список групп без отчётов">Скачать группы (JSON)</button><label class="button secondary file-label">Импорт групп JSON<input type="file" id="importGroups" accept=".json,application/json" hidden></label></div>
-<p class="muted small">Файл JSON содержит названия групп и входящие работы, без отчётов. Импорт заменяет текущий список групп после подтверждения.</p><div id="groupList"></div></div>
-      <div class="panel">
-        <h2>Создание и изменение группы</h2>
-        <p class="muted">Общие группы действуют для всех подразделений. В списке — уникальные названия из всех отчётов и справочника. Одна работа относится максимум к одной группе; исходные цифры не меняются.</p>
+        <details class="group-section" id="groupCatalog"><summary>Справочник услуг</summary>
         <div class="catalog-toolbar">
           <label class="button secondary file-label">Добавить справочник услуг из Excel
             <input id="catalogFile" type="file" accept=".xlsx" hidden>
@@ -1589,16 +1622,8 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <span id="catalogStatus" class="muted small">Справочник пока не загружен.</span>
         </div>
         <p class="muted small">Если второй лист файла содержит услуги по подразделениям, он будет добавлен при импорте отчёта. Список услуг также можно загрузить отдельно — это не изменит суммы и количество в отчётах.</p>
-        <div class="group-edit">
-          <label>Название группы<input id="groupName" placeholder="Например, Ремонт форсунок" maxlength="120"></label>
-          <div class="group-filters">
-            <label>Поиск работ<input id="workSearch" type="search" placeholder="Введите часть названия"></label>
-          </div>
-          <div class="works-list" id="worksList" aria-label="Выбор работ"></div>
-          <div class="actions"><button id="saveGroup" class="button primary">Сохранить группу</button><button id="resetGroup" class="button secondary" title="Сбросить только форму, не удаляя сохранённые группы">Сбросить форму</button></div>
-          <p class="muted small">При переносе работы из другой группы предыдущая группа автоматически теряет эту работу.</p>
-        </div>
-      </div>
+        </details>
+      </section>
     </section>
 
     <section id="storage" class="view">
@@ -2175,6 +2200,15 @@ function fmtNumber(value, metric) {
   return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: metric === 'count' ? 3 : 2, minimumFractionDigits: ['amount','average'].includes(metric) ? 2 : 0 }).format(value);
 }
 function normalized(s) { return String(s || '').toLocaleLowerCase('ru-RU').replace(/[.,;:]+$/g,'').replace(/\s+/g,' ').trim(); }
+// Short queries match the beginning only; longer queries put prefixes before substrings.
+function searchNames(items,query,nameOf=item=>item,extraOf=()=>[]){
+  const term=normalized(query);if(!term)return [...items];
+  const short=[...term].length<3;
+  return items.filter(item=>{
+    const name=normalized(nameOf(item));
+    return name.startsWith(term)||(!short&&(name.includes(term)||extraOf(item).some(value=>normalized(value).includes(term))));
+  }).sort((a,b)=>Number(!normalized(nameOf(a)).startsWith(term))-Number(!normalized(nameOf(b)).startsWith(term))||String(nameOf(a)).localeCompare(String(nameOf(b)),'ru'));
+}
 function uuid() { return typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(36).slice(2); }
 function addDays(iso, n) { const dt = new Date(iso + 'T12:00:00Z'); dt.setUTCDate(dt.getUTCDate() + n); return dt.toISOString().slice(0,10); }
 function addMonths(iso, n) { const dt = new Date(iso.slice(0,7) + '-01T12:00:00Z'); dt.setUTCMonth(dt.getUTCMonth()+n); return dt.toISOString().slice(0,10); }
@@ -2771,7 +2805,7 @@ function setCategories(periods) {
   }
   const root=$('categories'),search=normalized($('categorySearch').value);
   root.replaceChildren();
-  const shown=arr.filter(x=>normalized(x).includes(search));
+  const shown=searchNames(arr,search);
   shown.forEach(name=>{
     const row=elem('label',null,'category-row'),box=elem('input');box.type='checkbox';
     box.checked=state.selectedCategories.has(name);
@@ -2956,7 +2990,7 @@ function renderKpis(now,base,orgs,metrics) {
     change.append(elem('span','Изменение · '+metricTitle(metric).toLowerCase()),elem('strong',difference[0],changeStyle),elem('small',difference[1]==='—'?'Нет сопоставимой ненулевой базы':difference[1]+' относительно первого периода',changeStyle));root.append(change);
   }
 }
-const extendedState={usualPage:0,regularityPage:0,groupAuditPage:0,usualMetrics:new Set(['count','amount','average']),qualityPage:0,contributionPage:0,comparisonMetrics:new Set(['amount']),customMetrics:false};
+const extendedState={workPage:0,usualPage:0,regularityPage:0,groupAuditPage:0,usualMetrics:new Set(['count','amount','average']),qualityPage:0,contributionPage:0,comparisonMetrics:new Set(['amount']),customMetrics:false};
 function metricTitle(metric){return {count:'Количество',amount:'Сумма',average:'Средняя сумма на одну работу'}[metric]||metric;}
 function formatMetric(value,metric){return value===null||value===undefined?'—':fmtNumber(value,metric);}
 function differenceCells(now,base,metric){
@@ -2969,10 +3003,21 @@ function serviceButton(index,entry,orgs,before,after,metrics=chosenMetrics()){
   const button=elem('button',entry.name+(entry.kind==='group'?' (группа)':''),'text-button service-open');
   button.addEventListener('click',()=>openAnalyticsHistory(index,entry,orgs,before,after,metrics));return button;
 }
+const pagerJumps=new Map();
 function updatePager(prefix,page,count,size=25){
   const pages=Math.max(1,Math.ceil(count/size)),safe=Math.max(0,Math.min(page,pages-1));
   $(prefix+'Page').textContent=(safe+1)+' / '+pages+' · записей: '+count;
-  $(prefix+'Prev').disabled=safe===0;$(prefix+'Next').disabled=safe>=pages-1;return safe;
+  $(prefix+'Prev').disabled=safe===0;$(prefix+'Next').disabled=safe>=pages-1;
+  let select=$(prefix+'PageSelect');
+  if(!select){
+    const label=elem('label','Страница','page-jump');select=elem('select');select.id=prefix+'PageSelect';
+    const title={quality:'Контроль качества',contribution:'Вклад работ',usual:'Отклонения от среднего',regularity:'Частота работ',groupAudit:'Проверка групп',changes:'Анализ изменений',work:'Выбор работ'}[prefix]||prefix;
+    select.setAttribute('aria-label','Страница: '+title);
+    select.addEventListener('change',()=>pagerJumps.get(prefix)?.(Number(select.value)-1));
+    label.append(select);$(prefix+'Page').after(label);
+  }
+  if(select.options.length!==pages){select.replaceChildren();for(let i=0;i<pages;i++){const option=elem('option',String(i+1));option.value=String(i+1);select.append(option);}}
+  select.value=String(safe+1);select.disabled=pages===1;return safe;
 }
 function qualityCellLabel(issue){
   const cells=Array.isArray(issue.cells)?issue.cells.filter(cell=>typeof cell==='string'&&/^[A-Z]{1,3}[1-9]\d{0,5}$/.test(cell)):[];
@@ -3232,7 +3277,7 @@ function renderRegularity(index=analyticsIndex()){
   analysisCoverage($('regularityCoverage'),index,orgs,'Фактических периодов: '+result.used+' из '+result.expected+'. В предыдущем равном календарном диапазоне: '+result.previousUsed+'.'+
     (result.used<2?' Недостаточно данных для оценки частоты.':''),result.missing);
   const search=normalized($('regularitySearch').value),status=$('regularityStatus').value;
-  const rows=result.rows.filter(row=>normalized(row.name).includes(search)&&(status==='all'||row.statuses.includes(status)));
+  const rows=searchNames(result.rows.filter(row=>status==='all'||row.statuses.includes(status)),search,row=>row.name);
   if(!state.selectedCategories.size){empty(root,'Ни одна услуга не отмечена. Выберите работы или группы в списке выше.');updatePager('regularity',0,0);return;}
   const summary=elem('p',null,'muted small');
   summary.textContent='В текущем диапазоне полных периодов: '+result.used+' из '+result.expected+
@@ -3284,7 +3329,7 @@ function renderGroupAudit(index=analyticsIndex()){
   const context=[['Подразделения в проверке выполнения',orgs.join(', ')],['Полнота отчётов',result.complete?'Полные':'Есть пропуски или нет периодов'],['Поиск',$('groupAuditSearch').value],['Режим',$('groupAuditMode').selectedOptions[0].textContent]];
   const caption=(from&&to?displayDay(from)+' — '+displayDay(periodEnd(to,index.type)):'Нет выбранных периодов')+'. Группы общие для всех подразделений.';
   if(mode==='unused'){
-    const groups=result.groups.filter(g=>g.absent&&normalized(g.name+' '+g.works.join(' ')).includes(search));
+    const groups=searchNames(result.groups.filter(g=>g.absent),search,g=>g.name,g=>g.works);
     extendedState.groupAuditPage=updatePager('groupAudit',extendedState.groupAuditPage,groups.length);
     if(!groups.length){empty(root,'Таких групп по выбранным условиям нет.');return;}
     const status=result.complete?'Нет выполнений в выбранных отчётах':'Не встречается в доступных; есть пропуски';
@@ -3295,7 +3340,7 @@ function renderGroupAudit(index=analyticsIndex()){
     });
     makeTable(root,'count',caption,['Группа — открыть состав','Названий работ','Результат проверки'],rows,{title:'Группы без наблюдаемой активности',totalRow:false,csvMetric:'Состав групп',csvUnit:'число названий работ',csvRows:groups.map(g=>[g.name,g.works.length,status]),csvContext:context});
   }else{
-    const works=result.works.filter(work=>(mode!=='ungrouped'||!work.group)&&normalized(work.name+' '+groupName(work.group)).includes(search));
+    const works=searchNames(result.works.filter(work=>mode!=='ungrouped'||!work.group),search,work=>work.name,work=>[groupName(work.group)]);
     extendedState.groupAuditPage=updatePager('groupAudit',extendedState.groupAuditPage,works.length);
     if(!works.length){empty(root,'Названия по выбранным условиям не найдены.');return;}
     const rows=works.slice(extendedState.groupAuditPage*25,(extendedState.groupAuditPage+1)*25).map(work=>[work.name,workGroupSelect(work.name,work.group)]);
@@ -3304,6 +3349,12 @@ function renderGroupAudit(index=analyticsIndex()){
 }
 
 function wireExtendedAnalytics(){
+  for(const id of ['categorySearch','workSearch','groupAuditSearch','regularitySearch','changesSearch']){
+    $(id).title='1–2 буквы — начало названия; от 3 — сначала начало, затем совпадения внутри, по алфавиту.';
+    $(id).setAttribute('aria-describedby','nameSearchHelp');
+  }
+  for(const [prefix,render] of [['usual',renderUsual],['regularity',renderRegularity],['groupAudit',renderGroupAudit],['work',renderWorkList],['quality',()=>renderQuality(false)],['contribution',()=>renderDashboard(false)],['changes',()=>renderChanges(false)]])
+    pagerJumps.set(prefix,page=>{if(prefix==='changes')changeState.page=page;else extendedState[prefix+'Page']=page;render();});
   renderMultiFilter('usualMetrics',[['count','Количество'],['amount','Сумма'],['average','Средняя сумма на работу']],extendedState.usualMetrics,()=>renderUsual());
   for(const [panel,render] of [['usualPanel',renderUsual],['regularityPanel',renderRegularity],['groupAuditPanel',renderGroupAudit]])
     $(panel).addEventListener('toggle',()=>{if($(panel).open)render();});
@@ -3311,7 +3362,7 @@ function wireExtendedAnalytics(){
     for(const id of ids)$(id).addEventListener('change',()=>{extendedState[field]=0;render();});
   for(const [id,render,field] of [['regularitySearch',renderRegularity,'regularityPage'],['groupAuditSearch',renderGroupAudit,'groupAuditPage']])
     $(id).addEventListener('input',()=>{extendedState[field]=0;render();});
-  for(const [prefix,render] of [['usual',renderUsual],['regularity',renderRegularity],['groupAudit',renderGroupAudit]])
+  for(const [prefix,render] of [['usual',renderUsual],['regularity',renderRegularity],['groupAudit',renderGroupAudit],['work',renderWorkList]])
     for(const [suffix,delta] of [['Prev',-1],['Next',1]])$(prefix+suffix).addEventListener('click',()=>{extendedState[prefix+'Page']+=delta;render();});
   for(const id of ['comparisonScope','comparisonRangeStart','comparisonRangeEnd','structureBase','structureCurrent','structureMetric','structureLimit','structureScope'])
     $(id).addEventListener('change',()=>{
@@ -3884,27 +3935,28 @@ function distinctWorks() {
 }
 function renderWorkList() {
   const root=$('worksList');root.replaceChildren();
-  const terms=normalized($('workSearch').value),all=distinctWorks(),filtered=all.filter(x=>normalized(x).includes(terms));
-  // Выбранные работы закреплены сверху, даже если они не попали в первые 220 строк справочника.
+  const terms=normalized($('workSearch').value),all=[...new Set([...distinctWorks(),...state.selectedWorks])],filtered=searchNames(all,terms);
+  // Keep selected works accessible without overriding an active search.
   const pinned=[...state.selectedWorks].filter(x=>typeof x==='string'&&x.trim());
   const pinnedSet=new Set(pinned);
-  const ordered=[...pinned,...filtered.filter(x=>!pinnedSet.has(x))];
-  root.append(elem('p','Выбрано работ: '+state.selectedWorks.size,'muted small'));
-  ordered.slice(0,250).forEach(work=>{
+  const ordered=terms?filtered:[...pinned,...filtered.filter(x=>!pinnedSet.has(x))];
+  extendedState.workPage=updatePager('work',extendedState.workPage,ordered.length);
+  const selectionCount=elem('p','Выбрано работ: '+state.selectedWorks.size,'muted small');root.append(selectionCount);
+  ordered.slice(extendedState.workPage*25,(extendedState.workPage+1)*25).forEach(work=>{
     const row=elem('label',null,'work-row'),check=elem('input');check.type='checkbox';
     check.checked=state.selectedWorks.has(work);
     check.addEventListener('change',()=>{
       if(check.checked)state.selectedWorks.add(work);
       else state.selectedWorks.delete(work);
-      renderWorkList();
+      selectionCount.textContent='Выбрано работ: '+state.selectedWorks.size;
     });
     row.append(check,elem('span',work));root.append(row);
   });
   if(!ordered.length)root.append(elem('p','Работы не найдены','muted small'));
-  if(ordered.length>250)root.append(elem('p','Показаны выбранные и первые совпадения. Для остальных уточните поиск.','muted small'));
+
 }
 function resetGroup() {
-  state.editingGroup=null;state.selectedWorks.clear();$('groupName').value='';$('workSearch').value='';renderWorkList();
+  extendedState.workPage=0;state.editingGroup=null;state.selectedWorks.clear();$('groupName').value='';$('workSearch').value='';renderWorkList();
 }
 async function saveGroup() {
   const name=$('groupName').value.trim(),works=[...state.selectedWorks];
@@ -3940,13 +3992,13 @@ function renderGroups() {
   $('catalogStatus').textContent='В общем списке '+distinctWorks().length+' уникальных названий из отчётов и справочника.';
   renderWorkList();
   const root=$('groupList'),open=new Set([...root.querySelectorAll('details[open]')].map(x=>x.dataset.group));root.replaceChildren();
-  if(!state.settings.groups.length){empty(root,'Групп пока нет — создайте первую ниже.');return;}
+  if(!state.settings.groups.length){empty(root,'Групп пока нет. Нажмите «Создать группу».');return;}
   state.settings.groups.forEach(g=>{
     const details=elem('details',null,'group-details');details.dataset.group=g.id;details.open=open.has(g.id);
     const heading=elem('summary',g.name);heading.append(elem('small',g.works.length+' '+ruPlural(g.works.length,'работа','работы','работ')));details.append(heading);
     const actions=elem('div',null,'actions'),edit=elem('button','Изменить группу','icon-button'),del=elem('button','Удалить группу','icon-button');
     edit.addEventListener('click',()=>{
-      state.editingGroup=g.id;state.selectedWorks=new Set(g.works);$('groupName').value=g.name;$('workSearch').value='';renderWorkList();
+      $('groupEditor').open=true;extendedState.workPage=0;state.editingGroup=g.id;state.selectedWorks=new Set(g.works);$('groupName').value=g.name;$('workSearch').value='';renderWorkList();
       $('groupName').scrollIntoView({behavior:'smooth',block:'center'});$('groupName').focus();
     });
     del.addEventListener('click',async()=>{
@@ -4481,7 +4533,9 @@ function renderChanges(sync=true) {
   $('changeDetails').hidden=true;
   renderChangeWarnings(analysis,options,$('changesWarnings'));
   const search=normalized($('changesSearch').value),direction=$('changesDirection').value;
-  let rows=analysis.rows.filter(row=>normalized(row.name).includes(search)&&changeMatches(row,metrics,direction));
+  $('changesSort').disabled=Boolean(search);
+  $('changesSort').title=search?'При поиске сначала показаны начала названий, затем совпадения внутри, по алфавиту. Очистите поиск для другой сортировки.':'';
+  let rows=searchNames(analysis.rows.filter(row=>changeMatches(row,metrics,direction)),search,row=>row.name);
   renderChangeSummary(rows,metrics);
   const strong=$('changesMode').value==='strong';
   if(strong)rows=rows.filter(row=>{const c=changeRowClass(row,metrics);return c.normal||c.small;});
@@ -4501,12 +4555,11 @@ function renderChanges(sync=true) {
   // Small bases have their own section; sorting applies inside each section.
   const isSmall=row=>changeRowClass(row,metrics).small||(!changeRowClass(row,metrics).normal&&metrics.every(m=>row[m].smallBase));
   const normal=rows.filter(row=>!isSmall(row)).sort(comparator),small=rows.filter(isSmall).sort(comparator);
-  rows=normal.concat(small);
-  const pageSize=25,pages=Math.max(1,Math.ceil(rows.length/pageSize));
-  changeState.page=Math.max(0,Math.min(changeState.page,pages-1));
+  rows=search?searchNames(rows,search,row=>row.name):normal.concat(small);
+  const pageSize=25;
+  changeState.page=updatePager('changes',changeState.page,rows.length,pageSize);
   const page=rows.slice(changeState.page*pageSize,(changeState.page+1)*pageSize);
-  $('changesPage').textContent=(changeState.page+1)+' / '+pages+' · сравнений: '+rows.length;
-  $('changesPrev').disabled=changeState.page===0;$('changesNext').disabled=changeState.page>=pages-1;
+
   const root=$('changesResults');root.replaceChildren();
   if(rows.length){
   const csvFrom=previous?shiftPeriod(options.type,options.to,-1):options.from;
@@ -4517,7 +4570,8 @@ function renderChanges(sync=true) {
     [['Подразделения',options.organizations.join(', ')],['Режим',$('changesMode').selectedOptions[0].textContent],['Поиск',$('changesSearch').value],['Направление',$('changesDirection').selectedOptions[0].textContent],['Пороги, % / количество / сумма',[options.percent,options.minCount,options.minAmount].join(' / ')]],'указаны в каждой строке');
   }
   if(!rows.length){empty(root,analysis.rows.length?'Нет записей по выбранным условиям. Выберите «Все работы», измените поиск или пороги.':'Нет сопоставимых данных. Проверьте периоды и замечания выше.');return;}
-  for(const [label,items] of [['Изменения',page.filter(row=>!isSmall(row))],['Малая база',page.filter(isSmall)]]){
+  const sections=search?[['Результаты поиска',page]]:[['Изменения',page.filter(row=>!isSmall(row))],['Малая база',page.filter(isSmall)]];
+  for(const [label,items] of sections){
     if(!items.length)continue;
     const section=elem('section',null,'change-section');section.append(elem('h3',label));
     if(label==='Малая база')section.append(elem('p','Базовое значение меньше минимального абсолютного изменения либо равно нулю. Большой процент не означает большой объём.','muted small'));
@@ -4802,7 +4856,8 @@ function wire() {
   $('sampleBtn').addEventListener('click',()=>{$('excelFile').click();});
   $('inspectFile').addEventListener('click',()=>{try{inspectImport();}catch(err){notice(err.message,true);}});
   $('saveImport').addEventListener('click',async()=>{try{await saveImport();}catch(err){notice(err.message,true);}});
-  $('workSearch').addEventListener('input',renderWorkList);
+  $('workSearch').addEventListener('input',()=>{extendedState.workPage=0;renderWorkList();});
+  $('createGroup').addEventListener('click',()=>{resetGroup();$('groupEditor').open=true;$('groupName').focus();});
   $('catalogFile').addEventListener('change',async e=>{
     try{await importCatalogFile(e.target.files?.[0]);}
     catch(err){notice(err.message,true);}
