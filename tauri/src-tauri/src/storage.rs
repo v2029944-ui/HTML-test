@@ -81,7 +81,7 @@ fn valid_date(input: &str) -> bool {
 
 fn safe_excel_name(name: &str) -> bool {
     !name.is_empty()
-        && name.len() <= 240
+        && name.encode_utf16().count() <= 240
         && name.to_ascii_lowercase().ends_with(".xlsx")
         && !name.starts_with("~$")
         && !name.chars().any(|c| c == '/' || c == '\\' || c == ':')
@@ -489,8 +489,37 @@ mod tests {
             assert!(!safe_excel_name(unsafe_name));
         }
         assert!(safe_excel_name("Анализ.xlsx"));
+        // Electron uses JavaScript string.length (UTF-16 code units), not UTF-8 bytes.
+        assert!(safe_excel_name(&format!("{}.xlsx", "Я".repeat(235))));
+        assert!(!safe_excel_name(&format!("{}.xlsx", "Я".repeat(236))));
+        assert!(safe_excel_name(&format!("{}.xlsx", "😀".repeat(117))));
+        assert!(!safe_excel_name(&format!("{}.xlsx", "😀".repeat(118))));
         assert!(!valid_date("2026-02-30"));
         assert!(valid_date("2026-10-19"));
+    }
+
+    #[test]
+    fn long_cyrillic_legacy_filename_migrates_and_remains_visible() {
+        let tmp = tempdir().unwrap();
+        let folder = tmp.path().join("Excel");
+        fs::create_dir_all(&folder).unwrap();
+        let name = format!("{}.xlsx", "Я".repeat(121));
+        assert!(name.len() > 240);
+        fs::write(folder.join(&name), b"example").unwrap();
+        let mut rules = serde_json::Map::new();
+        rules.insert(name.clone(), json!({"type":"day","start":"2026-11-16","sheet":""}));
+        let config = json!({
+            "version":1,
+            "folder":folder.to_string_lossy().to_string(),
+            "rules":rules
+        });
+        fs::write(tmp.path().join("desktop-config.json"), config.to_string()).unwrap();
+        let store = Storage::new(tmp.path().to_path_buf()).unwrap();
+        let info = store.info().unwrap();
+        assert_eq!(info["rules"][name.as_str()]["type"], "day");
+        let listing = store.list_excel().unwrap();
+        assert_eq!(listing["files"][0]["name"], name);
+        assert_eq!(store.read_excel(name).unwrap().bytes, b"example");
     }
 
     #[test]

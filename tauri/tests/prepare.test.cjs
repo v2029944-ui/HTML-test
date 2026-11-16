@@ -87,3 +87,115 @@ test('watched-folder importer suggests correct dates for daily, weekly and month
   assert.equal(suggest('Месяц-2026-11.xlsx').start,'2026-11-01');
   assert.match(renderer,/shiftPeriod\(rule\.type,rule\.start,i\)/);
 });
+
+
+test('Tauri dialog permission and all seven confirmations guard writes until answered',async()=>{
+  const root=path.resolve(__dirname,'../..');
+  const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
+  const cap=JSON.parse(fs.readFileSync(path.join(root,'tauri/src-tauri/capabilities/default.json'),'utf8'));
+  assert.ok(cap.permissions.includes('dialog:allow-message'));
+  assert.equal((html.match(/!await confirm\(/g)||[]).length,7);
+  assert.equal((html.match(/\bconfirm\(/g)||[]).length,7,'No confirmation may bypass await');
+
+  const compileFunction=(name,context)=>{
+    const start=html.indexOf('async function '+name+'(');
+    assert.ok(start>=0,'Missing function '+name);
+    const end=html.indexOf('\n}',start);
+    assert.ok(end>start,'Missing function end '+name);
+    return vm.runInNewContext('('+html.slice(start,end+2)+')',context);
+  };
+  const handlers=[...html.matchAll(/del\.addEventListener\('click',async\(\)=>\{([\s\S]*?)\}\);/g)];
+  assert.equal(handlers.length,2,'Expected report and group delete handlers');
+  const compileHandler=(body,context)=>vm.runInNewContext('(async()=>{'+body+'})',context);
+  let writes=0;
+  const confirm=async()=>false,noop=()=>{};
+
+  const report={id:'old',type:'day',start:'2026-11-16',end:'2026-11-16'};
+  const reportContext={confirm,displayPeriod:()=>report.start,r:report,state:{reports:[report]},
+    storeReports:async()=>{writes++;},renderAll:noop,notice:noop};
+  await compileHandler(handlers[0][1],reportContext)();
+  assert.equal(writes,0,'Cancelling report deletion must not write');
+
+  const group={id:'old-group',name:'Старая группа',works:['Работа']};
+  await compileHandler(handlers[1][1],{
+    confirm,g:group,state:{settings:{groups:[group]}},
+    saveSettings:async()=>{writes++;},remapCategorySelection:noop,
+    resetGroup:noop,renderAll:noop,notice:noop
+  })();
+  assert.equal(writes,0,'Cancelling group deletion must not write');
+
+  await compileFunction('importGroupFile',{
+    confirm,readJsonFile:async()=>({format:'work-groups',version:1,groups:[{id:'new',name:'Новая',works:['Работа']}]}),
+    checkedGroups:x=>x,state:{settings:{groups:[]}},
+    saveSettings:async()=>{writes++;},resetGroup:noop,renderAll:noop,notice:noop
+  })({name:'groups.json'});
+  assert.equal(writes,0,'Cancelling group replacement must not write');
+
+  await compileFunction('importBackupFile',{
+    confirm,readJsonFile:async()=>({format:'work-reports-backup',version:1,reports:[],
+      settings:{orgNames:['A','B','C','D'],groups:[],catalog:[]}}),
+    checkedGroups:x=>x,REPORT_TYPES:['day','week','month'],state:{},
+    storeAllData:async()=>{writes++;},resetGroup:noop,renderAll:noop,notice:noop
+  })({name:'backup.json'});
+  assert.equal(writes,0,'Cancelling backup restoration must not write');
+
+  const clear=html.match(/\$\('clearReports'\)\.addEventListener\('click',async\(\)=>\{([\s\S]*?)\}\);/);
+  assert.ok(clear,'Missing all-reports delete handler');
+  const clearContext={confirm,window:{desktopAPI:{}},state:{},storeReports:async()=>{writes++;},
+    renderAll:noop,notice:noop};
+  await compileHandler(clear[1],clearContext)();
+  assert.equal(writes,0,'Cancelling delete-all must not write');
+
+  const pending={id:'next',type:'day',start:'2026-11-16',end:'2026-11-16',warnings:['incomplete']};
+  const importContext={
+    confirm,inspectImport:async()=>{},state:{pending:[pending],reports:[],settings:{catalog:[]},
+      catalogPreview:[]},$:()=>({checked:false}),
+    displayPeriod:x=>x.start,storeReports:async()=>{writes++;},
+    storeAllData:async()=>{writes++;},catalogWithEntries:()=>[],renderAll:noop,notice:noop,
+    window:{desktopAPI:false}
+  };
+  const importReport=compileFunction('saveImport',importContext);
+  await importReport();
+  assert.equal(writes,0,'Cancelling import with warnings must not write');
+  pending.warnings=[];
+  importContext.state.reports=[{type:'month',start:'2026-11-01',end:'2026-11-30'}];
+  await importReport();
+  assert.equal(writes,0,'Cancelling overlapping import must not write');
+
+  clearContext.confirm=async()=>true;
+  await compileHandler(clear[1],clearContext)();
+  assert.equal(writes,1,'Explicit approval still permits deletion');
+});
+
+test('folder watcher syncs on recovery even without a file change',async()=>{
+  let available=false,files=[{name:'День.xlsx',signature:'1'}],poll,changes=0;
+  const window={__TAURI__:{
+    core:{invoke:async name=>{
+      if(name==='list_excel'){
+        if(!available)throw Error('Папка недоступна');
+        return {folder:'C:/Reports',files};
+      }
+      return {ok:true};
+    }},
+    dialog:{open:async()=>null}
+  }};
+  const context={window,setInterval:fn=>{poll=fn;return 1;},clearInterval:()=>{}};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../bridge.js'),'utf8'),context);
+  const unsubscribe=window.desktopAPI.onFilesChanged(()=>changes++);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(changes,0);
+  available=true;
+  await poll();
+  assert.equal(changes,1,'Recovery after failed initial scan must sync');
+  await poll();
+  assert.equal(changes,1,'Unchanged scans must not re-sync');
+  files=[{name:'День.xlsx',signature:'2'}];
+  await poll();
+  assert.equal(changes,2,'File changes must still trigger sync');
+  available=false;
+  await poll();
+  available=true;
+  await poll();
+  assert.equal(changes,3,'Recovery after valid scan must sync');
+  unsubscribe();
+});

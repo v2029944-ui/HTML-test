@@ -20,7 +20,7 @@
     openDataFolder:()=>invoke('open_data_folder'),
     // The webview checks the folder while the program is open. It rescans at startup.
     onFilesChanged:handler=>{
-      let previous=null,active=true,busy=false;
+      let previous=null,hadError=false,active=true,busy=false;
       const poll=async()=>{
         if(!active||busy)return;
         busy=true;
@@ -30,9 +30,13 @@
             result.folder,
             result.files.map(file=>[file.name,file.signature])
           ]);
-          if(previous!==null && fingerprint!==previous)handler();
+          const changed=previous!==null && fingerprint!==previous;
+          const recovered=hadError;
           previous=fingerprint;
+          hadError=false;
+          if(changed||recovered)handler();
         }catch(err){
+          hadError=true;
           // The renderer reports errors during its regular scan.
         }finally{busy=false;}
       };

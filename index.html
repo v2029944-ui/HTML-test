@@ -2766,8 +2766,8 @@ async function saveImport() {
   if(conflicts.length)throw Error('Эти периоды уже загружены: '+conflicts.join('; ')+'. Чтобы заменить их, установите флажок замены.');
   let overlaps=0;
   pending.forEach(item=>{overlaps+=state.reports.filter(x=>x.type!==item.type && x.start<=item.end && x.end>=item.start).length;});
-  if(pending.some(x=>x.warnings.length) && !confirm('Обнаружены неполные строки или расхождения с итогами Excel. Сохранение таких отчётов может исказить аналитику. Сначала проверьте предупреждения в предпросмотре. Сохранить с ошибками?'))return;
-  if(overlaps && !confirm('У новых отчётов есть пересечения с отчётами другого типа периода. Дневные, недельные и месячные отчёты в аналитике учитываются раздельно. Сохранить?'))return;
+  if(pending.some(x=>x.warnings.length) && !await confirm('Обнаружены неполные строки или расхождения с итогами Excel. Сохранение таких отчётов может исказить аналитику. Сначала проверьте предупреждения в предпросмотре. Сохранить с ошибками?'))return;
+  if(overlaps && !await confirm('У новых отчётов есть пересечения с отчётами другого типа периода. Дневные, недельные и месячные отчёты в аналитике учитываются раздельно. Сохранить?'))return;
   const oldCatalog=state.settings.catalog||[];
   const catalog=catalogWithEntries(oldCatalog,state.catalogPreview.filter(entry=>entry.sheet!==$('sheetSelect').value));
   const catalogAdded=catalog.length-oldCatalog.length;
@@ -4010,7 +4010,7 @@ function renderReports() {
       ' · Сумма: '+fmtNumber(r.amount,'amount')));
     if(r.warnings?.length)main.append(elem('small','Есть замечания к данным: '+r.warnings.length,'warn'));
     const del=elem('button','Удалить отчёт','icon-button');del.title='Удалить из браузера отчёт за '+displayPeriod(r);
-    del.addEventListener('click',async()=>{if(!confirm('Удалить отчёт за '+displayPeriod(r)+'?'))return;
+    del.addEventListener('click',async()=>{if(!await confirm('Удалить отчёт за '+displayPeriod(r)+'?'))return;
       try{await storeReports(state.reports.filter(x=>x.id!==r.id));state.selectionInitialized=false;renderAll();notice('Отчёт удалён.');}catch(err){notice(err.message,true);}});
     row.append(main,del);root.append(row);
   });
@@ -4094,7 +4094,7 @@ function renderGroups() {
       $('groupName').scrollIntoView({behavior:'smooth',block:'center'});$('groupName').focus();
     });
     del.addEventListener('click',async()=>{
-      if(!confirm('Удалить группу «'+g.name+'»? Исходные работы останутся.'))return;
+      if(!await confirm('Удалить группу «'+g.name+'»? Исходные работы останутся.'))return;
       const old=state.settings.groups;state.settings.groups=old.filter(x=>x.id!==g.id);
       try{await saveSettings();remapCategorySelection(old);resetGroup();renderAll();}catch(err){state.settings.groups=old;notice(err.message,true);}
     });
@@ -4163,7 +4163,7 @@ async function importGroupFile(file) {
   const data=await readJsonFile(file);if(!data)return;
   if(data.format!=='work-groups' || data.version!==1)throw Error('Неизвестный формат настроек групп');
   const groups=checkedGroups(data.groups);
-  if(!confirm('Заменить текущие группы импортированными ('+groups.length+')?'))return;
+  if(!await confirm('Заменить текущие группы импортированными ('+groups.length+')?'))return;
   await saveSettings({...state.settings,groups});resetGroup();state.selectionInitialized=false;renderAll();notice('Группы импортированы.');
 }
 async function importBackupFile(file) {
@@ -4171,7 +4171,7 @@ async function importBackupFile(file) {
   if(data.format!=='work-reports-backup'||data.version!==1||!Array.isArray(data.reports)||!data.settings||!Array.isArray(data.settings.orgNames)||data.settings.orgNames.length!==4)throw Error('Неверный формат резервной копии');
   const groups=checkedGroups(data.settings.groups||[]);
   if(!data.reports.every(r=>r&&typeof r.id==='string'&&REPORT_TYPES.includes(r.type)&&/^\d{4}-\d{2}-\d{2}$/.test(r.start)&&Array.isArray(r.rows)&&r.rows.every(x=>typeof x.work==='string'&&typeof x.organization==='string'&&Number.isFinite(x.count)&&Number.isFinite(x.amount))))throw Error('В резервной копии обнаружены некорректные записи');
-  if(!confirm('Восстановить резервную копию? Все текущие отчёты и настройки будут заменены.'))return;
+  if(!await confirm('Восстановить резервную копию? Все текущие отчёты и настройки будут заменены.'))return;
   const catalog=Array.isArray(data.settings.catalog)?data.settings.catalog.filter(x=>x && typeof x.organization==='string' && typeof x.work==='string'):[];
   const nextSettings={orgNames:data.settings.orgNames,groups,catalog};
   await storeAllData(data.reports,nextSettings);
@@ -4971,7 +4971,7 @@ function wire() {
   $('importGroups').addEventListener('change',async e=>{try{await importGroupFile(e.target.files?.[0]);}catch(err){notice(err.message,true);}e.target.value='';});
   $('exportBackup').addEventListener('click',()=>downloadJson('reports-backup.json',{format:'work-reports-backup',version:1,exportedAt:new Date().toISOString(),reports:state.reports,settings:state.settings}));
   $('importBackup').addEventListener('change',async e=>{try{await importBackupFile(e.target.files?.[0]);}catch(err){notice(err.message,true);}e.target.value='';});
-  $('clearReports').addEventListener('click',async()=>{if(!confirm(window.desktopAPI?
+  $('clearReports').addEventListener('click',async()=>{if(!await confirm(window.desktopAPI?
     'Удалить все сохранённые отчёты с диска компьютера?':'Безвозвратно удалить все отчёты из этого браузера?'))return;try{await storeReports([]);state.selectionInitialized=false;renderAll();notice('Отчёты удалены.');}catch(err){notice(err.message,true);}});
 }
 async function main(){
