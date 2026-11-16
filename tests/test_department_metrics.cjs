@@ -32,7 +32,7 @@ const context=vm.createContext({
     createElementNS:(_ns,tag)=>new MockNode(tag)
   }
 });
-vm.runInContext(scripts[1][1].replace(/\nmain\(\);\s*$/,'\n'),context);
+vm.runInContext(scripts[1][1].replace(/\n(?:window\.appReady=)?main\(\);\s*$/,'\n'),context);
 const run=(expression,values={})=>{
   Object.assign(context,values);
   return vm.runInContext(expression,context);
