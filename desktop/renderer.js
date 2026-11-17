@@ -58,8 +58,6 @@
     if(day)return {type:'day',start:day[1],sheet:''};
     if(week)return {type:'week',start:week[1],sheet:''};
     if(month)return {type:'month',start:month[1]+'-01',sheet:''};
-    if(name.toLocaleLowerCase('ru-RU')==='анализ.xlsx')
-      return {type:'week',start:'2026-10-19',sheet:''};
     return {type:'week',start:'',sheet:''};
   }
   function dateInput(type,start){
