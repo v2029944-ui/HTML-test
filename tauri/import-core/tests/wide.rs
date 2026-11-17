@@ -80,6 +80,9 @@ fn detects_converts_merges_and_nonstandard_relationship_target() {
     assert!(!p.explicit_zero);
     assert_eq!(p.coverage.start, "2024-02-28");
     assert_eq!(s.report_totals(&r[0].id, 0, 100).unwrap().len(), 2);
+    // C1 must not apply wide reports without preserving source-wide diagnostics.
+    let reason = s.prepare(c.as_ref(), |_| {}).err().unwrap().to_string();
+    assert!(reason.contains("daily-wide"), "{reason}");
 }
 #[test]
 fn blank_days_source_totals_and_zero_are_distinct() {
