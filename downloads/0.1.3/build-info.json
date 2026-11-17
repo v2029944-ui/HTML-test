@@ -1,0 +1,58 @@
+{
+  "version": "0.1.3",
+  "source_commit": "f26e5e6ffddf840eaf53936ef800edcd1945e63d",
+  "installer": "Analiz-rabot-0.1.3-Windows-x64-setup.exe",
+  "bytes": 4497908,
+  "sha256": "03acdf5ad8297df76f33242ec6a71bed908aa16e3ef88578642557f878c695be",
+  "payload_sha256": "f8a6d781dc2697bd84d58a03844ec8e7016273363aec0bda80e848f669ffcd8b",
+  "bundle_marker": "NSIS (NSS)",
+  "payload_pe": "x86_64, Windows GUI, PE32+",
+  "payload_version": [
+    [
+      0,
+      1,
+      3,
+      0
+    ]
+  ],
+  "updater_public_key": "matches previously verified beta signature",
+  "updater_channel": "unchanged",
+  "updater_signature": false,
+  "built_on": "Linux with cargo-xwin/MSVC SDK, LLVM and NSIS; no GitHub Actions",
+  "runtime_windows_tested": false,
+  "tests": {
+    "node": 111,
+    "browser_chromium": 40,
+    "rust_storage_linux": 14
+  },
+  "imported_dlls": [
+    "kernel32.dll",
+    "user32.dll",
+    "ole32.dll",
+    "gdi32.dll",
+    "dwmapi.dll",
+    "shlwapi.dll",
+    "comctl32.dll",
+    "api-ms-win-core-synch-l1-2-0.dll",
+    "shell32.dll",
+    "ws2_32.dll",
+    "ADVAPI32.dll",
+    "bcryptprimitives.dll",
+    "combase.dll",
+    "imm32.dll",
+    "ntdll.dll",
+    "oleaut32.dll",
+    "api-ms-win-core-winrt-error-l1-1-0.dll",
+    "crypt32.dll",
+    "bcrypt.dll",
+    "api-ms-win-crt-runtime-l1-1-0.dll",
+    "api-ms-win-crt-time-l1-1-0.dll",
+    "api-ms-win-crt-heap-l1-1-0.dll",
+    "api-ms-win-crt-convert-l1-1-0.dll",
+    "api-ms-win-crt-string-l1-1-0.dll",
+    "api-ms-win-crt-math-l1-1-0.dll",
+    "api-ms-win-crt-utility-l1-1-0.dll",
+    "api-ms-win-crt-stdio-l1-1-0.dll",
+    "api-ms-win-crt-locale-l1-1-0.dll"
+  ]
+}

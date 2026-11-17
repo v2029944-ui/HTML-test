@@ -1,0 +1,1 @@
+03acdf5ad8297df76f33242ec6a71bed908aa16e3ef88578642557f878c695be  Analiz-rabot-0.1.3-Windows-x64-setup.exe
