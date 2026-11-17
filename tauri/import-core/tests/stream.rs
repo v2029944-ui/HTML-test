@@ -339,3 +339,20 @@ fn descriptor_archives_are_supported_but_bad_descriptors_are_rejected() {
         }
     }
 }
+#[test]
+fn undefined_namespace_prefixes_in_cells_and_elements_are_not_accepted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let source = tmp.path().join("ns.xlsx");
+    let area = StageArea::open(tmp.path().join("stage")).unwrap();
+    for xml in [
+        "<x:worksheet/>",
+        "<worksheet><c r=\"A1\" bad:q=\"1\"><v>0</v></c></worksheet>",
+    ] {
+        book(&source, xml);
+        assert!(
+            area.ingest(&source, Limits::default(), &AtomicBool::new(false), |_| {})
+                .is_err(),
+            "accepted malformed namespace {xml}"
+        );
+    }
+}
