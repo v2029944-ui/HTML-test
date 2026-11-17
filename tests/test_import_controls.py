@@ -60,14 +60,14 @@ class ImportControls(unittest.TestCase):
         self.page.locator('#inspectFile').click()
         self.page.wait_for_function("document.querySelector('#flash').textContent.includes('Укажите дату начала первой недели')")
         self.assertTrue(self.page.locator('#saveImport').is_disabled())
-        # A date explicitly entered by the user must not be overwritten on reselect.
+        # A date explicitly entered by the user must not be overwritten when choosing another file.
         self.page.locator('#importWeek').fill('2026-11-09')
         self.page.locator('#excelFile').set_input_files({
-            'name':'Анализ.xlsx',
+            'name':'Другой.xlsx',
             'mimeType':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'buffer':daily_workbook_bytes()
         })
-        self.page.wait_for_function("state.workbook!==null&&document.querySelector('#excelFileStatus').textContent==='Файл загружен'")
+        self.page.wait_for_function("state.fileName==='Другой.xlsx'")
         self.assertEqual(self.page.locator('#importWeek').input_value(),'2026-11-09')
 
     def test_folder_manual_import_keeps_auto_rejection_and_checks_source(self):
