@@ -78,12 +78,58 @@ mean a cold OS cache. In-child Linux `/proc/self/status` VmHWM measures the Rust
 process, not WebView2. Raw reading and business conversion timings include their
 respective private SQLite work; no separate final live-apply timing is claimed.
 
+## Prepared artifacts and atomic application (C3)
+
+`Stage::prepare` and `prepare_with_mode` now accept wide conversion results. Each
+prepared report exposes frozen `provenance` and retains the ordinary `info`, rows,
+controls and issue APIs. Wide documents retain `sheetName`, `sourceFormat`,
+`sourceBlock`, `sourceCoverage`, `sourceControlDate`, `explicitZero`, zero-based
+legacy source-column aliases, and the existing native sheet/mapping fields.
+`sourceReportId` retains the local conversion ID, linking `SourceIssue.report_id`
+to live documents without guessing issue identity from kind/row.
+
+The common converted-issue schema/API adds optional `scope`, `date` and
+`source_issue_sequence`. Relevant source issues copy those values directly into
+the first imported day per sheet. Preparation verifies unique complete source
+links and identical cells/numeric metadata. `Stage::source_issue_page` and
+`PreparedImport::source_issues` page all sheets (1..100), including future-only
+sheets without a report. `PreparedImport::source_diagnostics()` freezes total,
+relevant and deferred counts plus SHA256 of canonical serialized records followed
+by newline. The complete stage hash binds this manifest before apply.
+
+Complete source diagnostics, including relevance, serialize once in the first
+artifact report's `sourceIssues` and `sourceDiagnostics`; every wide report has a
+`sourceDiagnosticsReport` live-ID anchor. This avoids losing future diagnostics
+when their sheet has no report. Relevant issues remain attached only to the first
+day of their own sheet, and quality `issues` counts them once. The additional
+`source_issues` / `relevant_source_issues` / `deferred_source_issues` quality counts
+are source subsets/metadata, not additional notices to add to `issues`.
+
+A zero-row report is accepted only for a complete native wide conversion with
+explicit-zero provenance, zero report totals, known zero controls and matching
+known organization presence. Incomplete provenance, missing/nullable/nonzero
+controls and ordinary empty reports reject. Apply uses the frozen validation
+result; there is no caller-provided allow-empty flag. The live normalized index
+records a legitimate row_count=0, while JSON and prepared organization summaries
+retain known zero-control organizations without fabricated financial rows.
+
+Comparison aliases retain nullable expected components for source control
+comparisons with known numeric actuals. Ordinary invalid rows without a comparison
+still emit null expected/actual aliases. Controls add legacy type/row/name aliases;
+native fields are retained. Exact warning prose remains separate.
+
+C2 source/hash/revision/generation/conflict/whole-source replacement, explicit
+acknowledgment, rollback and cancellation/commit boundaries remain in place. No
+full document/history Value is introduced into preparation/application, and no
+post-apply full load occurs.
+
 ## Integration still required
 
-Prepared documents/quality preview and atomic live apply must preserve wide
-provenance, source issue scope/date and explicit-zero validity before activation.
-The C foundation predates these APIs. Native UI/IPC, full bounded application
-reads/analytics/export, final apply/load/restart measurements, real cold launches,
-Windows/WebView2 reaction/memory tests and exact warning presentation remain
-separate work. No production compatibility or three-million-cell end-to-end
-safety claim follows from this core path alone.
+Native UI/IPC, bounded live quality/source-diagnostic queries, full bounded
+analytics/export and zero-organization coverage indexing, production restore
+coordination, real cold launches, Windows/WebView2 reaction/memory tests and exact
+warning presentation remain separate work. Relevance is a frozen conversion-time
+snapshot, not recomputed automatically for a long-lived artifact. No production
+compatibility or three-million-cell end-to-end safety claim follows from this
+backend slice. The separately developed analytics branch requires a reviewed
+schema/index integration; this work does not depend on its edits.

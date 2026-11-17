@@ -1,7 +1,9 @@
 //! Disk-backed XLSX ingestion. No report conversion or live-database writes here.
 mod prepared;
 mod report_stage;
-pub use prepared::{ImportMode, QualityCounts, PrepareProgress, PreparedImport, PreparedReport};
+pub use prepared::{
+    ImportMode, PrepareProgress, PreparedImport, PreparedReport, QualityCounts, SourceDiagnostics,
+};
 mod wide;
 pub use wide::{Coverage, ReportProvenance, SourceIssue, WideMapping, WideOptions, WideSheet};
 mod zip_index;

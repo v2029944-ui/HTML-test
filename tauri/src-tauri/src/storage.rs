@@ -796,3 +796,7 @@ mod read_model_tests;
 #[cfg(test)]
 #[path = "import_apply_tests.rs"]
 mod import_apply_tests;
+
+#[cfg(test)]
+#[path = "import_wide_apply_tests.rs"]
+mod import_wide_apply_tests;

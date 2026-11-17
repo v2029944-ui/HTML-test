@@ -507,7 +507,10 @@ fn apply_in_connection_inner(
     let mut all_rows = 0;
     while let Some(report) = prepared.next_report(after).map_err(err)? {
         job.check()?;
-        if report.rows == 0 || report.bytes == 0 || report.bytes > i32::MAX as u64 {
+        if (report.rows == 0 && !report.is_explicit_zero())
+            || report.bytes == 0
+            || report.bytes > i32::MAX as u64
+        {
             return Err("Invalid or empty prepared report.".into());
         }
         if prepared.mode() == ImportMode::Manual && confirmation.replace_exact {

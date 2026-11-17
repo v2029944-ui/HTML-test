@@ -1,9 +1,11 @@
-# C1/C2 prepared import, review and atomic application
+# C1/C2/C3 prepared import, review and atomic application
 
 This is a synchronous Rust foundation, compiled by the GUI-independent storage
 harness. It is **not registered as a Tauri command** and does not switch production
-import/UI paths. Ordinary B2a triples are the current converter. Daily-wide and full multi-source
-UI remain separate work. C2 adds backend quality review and whole-source replacement.
+import/UI paths. Ordinary triples and reviewed daily-wide conversion can prepare and apply through
+this backend. C2 adds quality review/source replacement; C3 preserves wide
+provenance, complete source diagnostics and proven zero-detail days. Worker/IPC/UI
+and full multi-source flows remain separate work.
 
 ## API and ownership
 
@@ -87,9 +89,14 @@ serialize legacy-compatible `type`, `row`, `cells`, `expected` and `actual` alia
 without dropping the native fields. `cells` is an array of at most three present
 addresses in work/count/amount order. `expected` and `actual` are null when no
 complete numeric comparison is present; comparison issues carry numeric
-`{count, amount}` objects. **Exact legacy warning prose and quality-screen
+`{count, amount}` objects. Source-period invalid-control comparisons may retain
+nullable expected components alongside numeric actual values; ordinary invalid
+rows without a comparison keep null aliases. **Exact legacy warning prose and quality-screen
 presentation parity are not claimed**.
-Empty reports and overlapping periods within one prepared artifact fail closed.
+Empty ordinary reports and overlapping periods within one artifact fail closed.
+C3 accepts a zero-detail day only with native-wide explicitZero provenance, zero
+root totals, known zero controls and matching organization presence. Its frozen
+validated-zero bit is private; no confirmation flag can bypass the proof.
 Future converters can reuse the document/preparation/application contract, but
 must supply the same complete report APIs and define additional metadata needs.
 
@@ -282,3 +289,20 @@ Storage-gate/writer waits, long-SQL hook cleanup, 50,000-source cancellation, an
 are recorded in `/workspace/native-work-ledger/c2-report.md`; Linux debug probes
 are evidence for their fixtures, not platform or universal memory/latency promises.
 Whole product D2/E/Windows integration remains unfinished.
+
+## C3 wide preparation
+
+See `../import-core/WIDE_REPORTS.md` for the bounded source/provenance APIs and
+zero proof. Prepared manifest rows add frozen provenance and validated_zero;
+common issue rows add optional scope/date/source sequence. No new live main table
+is needed: complete diagnostics stream into sourceIssues on the first artifact
+report, with a sourceDiagnosticsReport anchor on every wide document. New native
+sourceReportId links source-local report IDs. Both prepared pages and live JSON
+retain relevance and nullable source-control comparisons. Source diagnostics have
+complete frozen counts/digest and the full stage hash is verified before apply.
+
+A live row_count=0 index is complete only for the proven zero case on the native
+import path. Legacy full load and streaming backfill can read those documents;
+organization presence and explicitZero remain in JSON. Bounded live quality and
+analytics organization-presence indexes still require later integration. There
+are no production Tauri commands or automatic UI activation in this milestone.
