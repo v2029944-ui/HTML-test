@@ -1075,18 +1075,6 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 }
 
 /* Work/group filter has a clear filled trigger in every palette and design. */
-.dashboard-filter-panel .category-filter-control{
-  border-color:var(--accent-fill);
-  background:var(--accent-fill);
-  color:var(--on-accent);
-}
-.dashboard-filter-panel .category-filter-arrow{
-  border-color:var(--on-accent);
-}
-.dashboard-filter-panel .category-filter>summary:hover .category-filter-control,
-.dashboard-filter-panel .category-filter[open] .category-filter-control{
-  border-color:var(--accent-hover);background:var(--accent-hover);
-}
 /* Import inputs use one field background; the sheet select is not a different shade. */
 .import-grid :is(#importType,#importWeek,#importMonth,#sheetSelect){
   box-sizing:border-box;width:100%;max-width:100%;min-width:0;
@@ -1382,6 +1370,36 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
   :root:is([data-ui-size="large"],[data-ui-size="xlarge"]) .management-nav{grid-column:1/-1}
   :root:is([data-ui-size="large"],[data-ui-size="xlarge"]) .management-nav>summary{font-size:var(--ui-nav-font)}
 }
+
+
+/* Keep native select semantics, keyboard handling and change events. */
+:root select,:root .multi-dropdown>summary,:root .category-filter-control{font-family:var(--font-body);font-size:var(--control-size);font-weight:var(--control-weight);min-height:var(--control-height);border:1px solid var(--field-border);border-radius:var(--radius-control);background-color:var(--field-bg);color:var(--text)}
+:root select:not([multiple]){appearance:none;padding:10px 36px 10px 12px;background-image:linear-gradient(45deg,var(--transparent) 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,var(--transparent) 50%);background-position:right 18px center,right 12px center;background-size:6px 6px;background-repeat:no-repeat}
+:root select:hover,:root .multi-dropdown>summary:hover,:root .category-filter-control:hover{border-color:var(--accent)}
+:root select:focus-visible,:root .multi-dropdown>summary:focus-visible{outline:2px solid var(--focus);outline-offset:3px}
+:root select:disabled{color:var(--muted);cursor:not-allowed;background-color:var(--subtle)}
+:root option{font-family:var(--font-body);font-size:var(--control-size);color:var(--text);background:var(--surface)}
+:root option:checked,.multi-menu .filter-choice:has(input:checked){background:var(--selected);color:var(--text)}
+:root option:disabled{color:var(--muted)}
+.multi-menu{max-height:min(360px,60vh);overflow:auto;background:var(--surface);border-color:var(--field-border);border-radius:var(--radius-control)}
+.multi-menu .filter-choice{border-radius:var(--radius-control);padding:10px;gap:8px}
+.multi-menu .filter-choice:hover,.multi-menu .filter-choice:focus-within{background:var(--hover)}
+@supports(appearance:base-select){
+  :root select:not([multiple]){appearance:base-select;background-image:none;position:relative;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:36px}
+  ::picker(select){appearance:base-select;background:var(--surface);color:var(--text);border:1px solid var(--field-border);border-radius:var(--radius-control);padding:6px;box-shadow:var(--shadow-menu);max-height:min(360px,60vh);overflow:auto}
+  select::picker-icon{content:'';position:absolute;right:14px;top:50%;width:7px;height:7px;flex:0 0 7px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:translateY(-50%) rotate(45deg)}
+  select:open::picker-icon{transform:translateY(-50%) rotate(225deg)}
+  option{padding:10px;min-height:40px;border-radius:var(--radius-control);white-space:normal;overflow-wrap:anywhere}
+  option:not(:disabled):hover,option:focus-visible{background:var(--hover);outline:2px solid var(--focus);outline-offset:-2px}
+  option::checkmark{color:var(--accent)}
+}
+.update-notice{display:flex;align-items:center;justify-content:space-between;gap:16px;border-color:var(--accent)}
+.update-notice h2{margin:0;font-size:18px}.update-notice[hidden],.update-badge[hidden]{display:none}
+.update-badge{color:inherit;font-size:10px;line-height:1;flex:0 0 auto}
+.update-notes{width:min(640px,calc(100vw - 32px));max-height:80vh;overflow:auto;box-sizing:border-box;padding:24px;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-panel);box-shadow:var(--shadow-menu)}
+.update-notes::backdrop{background:var(--shadow-color)}
+.update-notes-body{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;margin:16px 0}
+@media(max-width:740px){.update-notice{align-items:stretch;flex-direction:column}.update-notice .actions{width:100%;flex-wrap:wrap}.update-notice .button{flex:1 1 auto}.update-notes{padding:16px}::picker(select){max-width:calc(100vw - 24px)}}
 
 </style>
   
@@ -3105,7 +3123,13 @@ function catalogWithEntries(before,entries){
   }
   return merged;
 }
+async function withExcelImport(action){
+  if(state.appUpdating)throw Error('Дождитесь завершения обновления программы.');
+  state.excelImports=(state.excelImports||0)+1;
+  try{return await action();}finally{state.excelImports--;}
+}
 async function importCatalogFile(file) {
+  return withExcelImport(async()=>{
   if(!file)return;
   const workbook=window.XLSX.read(await file.arrayBuffer(),{type:'array'});
   const entries=detectCatalogWorkbook(workbook);
@@ -3113,6 +3137,7 @@ async function importCatalogFile(file) {
   const before=state.settings.catalog||[],catalog=catalogWithEntries(before,entries),added=catalog.length-before.length;
   await saveSettings({...state.settings,catalog});renderAll();
   notice('Справочник загружен: '+entries.length+' услуг, новых '+added+'. Создавайте группы вручную в разделе «Группы работ».');
+  });
 }
 
 function resetWorkbookSelection(){
@@ -3155,6 +3180,7 @@ async function inspectImport() {
   $('saveImport').disabled=!pending.length||pending.some(x=>!x.rows.length&&!x.explicitZero);
 }
 async function saveImport() {
+  return withExcelImport(async()=>{
   await inspectImport();
   const pending=state.pending;
   if(!pending.length)return;
@@ -3185,6 +3211,7 @@ async function saveImport() {
   state.selectionInitialized=false;$('qualitySource').value='saved';renderAll();
   notice('Сохранено периодов: '+pending.length+'. Добавлено услуг в справочник: '+catalogAdded+
     (window.desktopAPI?'. Данные сохранены на диске компьютера.':'. Данные находятся только в этом браузере.'));
+  });
 }
 function currentTypeReports() {
   return state.reports.filter(r=>r.type===$('periodType').value).slice().sort((a,b)=>a.start.localeCompare(b.start));
@@ -5500,7 +5527,7 @@ function wire() {
     resetWorkbookSelection();
     $('excelFileStatus').textContent='Загрузка файла…';
     try{
-      await selectWorkbook(await file.arrayBuffer(),file.name);
+      await withExcelImport(async()=>selectWorkbook(await file.arrayBuffer(),file.name));
       const status=$('excelFileStatus');
       status.textContent='Файл загружен';
       status.title=file.name;

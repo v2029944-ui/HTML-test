@@ -5,3 +5,5 @@ src-tauri/icons/
 src-tauri/gen/
 
 release/
+
+test-artifacts/

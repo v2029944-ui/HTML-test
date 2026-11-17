@@ -1,0 +1,14 @@
+{
+  "app": {
+    "windows": [
+      {
+        "title": "Анализ выполненных работ",
+        "width": 1320,
+        "height": 900,
+        "minWidth": 720,
+        "minHeight": 530,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9227"
+      }
+    ]
+  }
+}

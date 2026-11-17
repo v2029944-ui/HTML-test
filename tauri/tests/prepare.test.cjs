@@ -150,7 +150,7 @@ test('Tauri dialog permission and all seven confirmations guard writes until ans
 
   const pending={id:'next',type:'day',start:'2026-11-16',end:'2026-11-16',rows:[{work:'Работа',organization:'СМУ16',count:1,amount:10}],warnings:['incomplete']};
   const importContext={
-    confirm,inspectImport:async()=>{},state:{pending:[pending],reports:[],settings:{catalog:[]},
+    withExcelImport:action=>action(),confirm,inspectImport:async()=>{},state:{pending:[pending],reports:[],settings:{catalog:[]},
       catalogPreview:[]},$:()=>({checked:false}),
     displayPeriod:x=>x.start,storeReports:async()=>{writes++;},
     storeAllData:async()=>{writes++;},catalogWithEntries:()=>[],renderAll:noop,notice:noop,
@@ -202,3 +202,18 @@ test('folder watcher syncs on recovery even without a file change',async()=>{
   unsubscribe();
 });
 
+
+test('WebView2 DevTools is enabled only in the non-distributable GUI test configuration',()=>{
+  const root=path.resolve(__dirname,'../..');
+  const normal=JSON.parse(fs.readFileSync(path.join(root,'tauri/src-tauri/tauri.conf.json'),'utf8'));
+  const gui=JSON.parse(fs.readFileSync(path.join(root,'tauri/tests/ci-webview2.json'),'utf8'));
+  assert.ok(!JSON.stringify(normal).includes('remote-debugging-port'),'signed installer must not expose DevTools');
+  assert.equal(gui.app.windows.length,1);
+  assert.match(gui.app.windows[0].additionalBrowserArgs,/--remote-debugging-port=9227/);
+  for(const key of ['title','width','height','minWidth','minHeight'])
+    assert.equal(gui.app.windows[0][key],normal.app.windows[0][key]);
+  const workflow=fs.readFileSync(path.join(root,'.github/workflows/tauri-windows.yml'),'utf8');
+  assert.match(workflow,/Preserve signed preview before building test-only WebView2 bundle/);
+  assert.match(workflow,/tauri build --config tests\/ci-webview2\.json/);
+  assert.match(workflow,/if: github\.ref != 'refs\/heads\/work\/tauri-dropdown-updates-20261117'/);
+});
