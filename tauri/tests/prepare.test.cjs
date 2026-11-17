@@ -47,12 +47,12 @@ test('Tauri build copies the current HTML-test interface and current Excel impor
     const {prepare}=require('../prepare.cjs');
     const prepared=prepare({base:root,output:tmp});
     const source=fs.readFileSync(path.join(root,'index.html'),'utf8');
-    const desktop=fs.readFileSync(path.join(root,'tauri/folder-importer.js'),'utf8');
+    const folderImporter=fs.readFileSync(path.join(root,'tauri/folder-importer.js'),'utf8');
     const built=fs.readFileSync(path.join(tmp,'index.html'),'utf8');
     const adapted=fs.readFileSync(path.join(tmp,'tauri-folder-importer.js'),'utf8');
     assert.equal(built,prepareHtml(source),'Tauri must use the complete latest HTML');
     assert.equal(prepared.sourceBytes,Buffer.byteLength(source,'utf8'));
-    assert.equal(adapted,desktop.replace(
+    assert.equal(adapted,folderImporter.replace(
       'Резервная копия: reports.json.bak. Данные не находятся в браузере.',
       'Используется SQLite. Исходный reports.json сохраняется после переноса; делайте отдельные резервные копии.'
     ),'Tauri must use the complete latest Excel folder importer');
@@ -91,13 +91,14 @@ test('watched-folder importer suggests correct dates for daily, weekly and month
 });
 
 
-test('Tauri dialog permission and all seven confirmations guard writes until answered',async()=>{
+test('Tauri dialog permission and every confirmation guard writes until answered',async()=>{
   const root=path.resolve(__dirname,'../..');
   const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
   const cap=JSON.parse(fs.readFileSync(path.join(root,'tauri/src-tauri/capabilities/default.json'),'utf8'));
   assert.ok(cap.permissions.includes('dialog:allow-message'));
-  assert.equal((html.match(/!await confirm\(/g)||[]).length,7);
-  assert.equal((html.match(/\bconfirm\(/g)||[]).length,7,'No confirmation may bypass await');
+  const confirmationCount=(html.match(/\bconfirm\(/g)||[]).length;
+  assert.ok(confirmationCount>=7,'Existing destructive confirmations must remain');
+  assert.equal((html.match(/!await confirm\(/g)||[]).length,confirmationCount,'No confirmation may bypass await');
 
   const compileFunction=(name,context)=>{
     const start=html.indexOf('async function '+name+'(');

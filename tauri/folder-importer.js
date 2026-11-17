@@ -1,5 +1,5 @@
-// Выполняется в Tauri через совместимый API; самостоятельный index.html работает без этого модуля.
-(async function tauriFolderWorkspace(){
+// Выполняется только внутри Electron; обычный index.html работает без этого файла.
+(async function desktopWorkspace(){
   'use strict';
   if(!window.desktopAPI)return;
   await window.appReady;
@@ -58,8 +58,6 @@
     if(day)return {type:'day',start:day[1],sheet:''};
     if(week)return {type:'week',start:week[1],sheet:''};
     if(month)return {type:'month',start:month[1]+'-01',sheet:''};
-    if(name.toLocaleLowerCase('ru-RU')==='анализ.xlsx')
-      return {type:'week',start:'2026-10-19',sheet:''};
     return {type:'week',start:'',sheet:''};
   }
   function dateInput(type,start){
@@ -212,7 +210,7 @@
           $('excelFileStatus').textContent='Из папки: '+file.name;
           $('excelFileStatus').title=file.name;
           closeManual.hidden=false;
-          await inspectImport();
+          if(await inspectImport()===false)throw Error('Проверка даты отменена. Прежние отчёты сохранены.');
           message('Предпросмотр открыт ниже. Проверьте замечания, затем нажмите «Сохранить отчёты». Автоимпорт приостановлен до сохранения или закрытия ручной проверки.');
           $('importPreview').scrollIntoView({behavior:'smooth',block:'start'});
         }catch(err){message(file.name+': '+err.message,true);}
@@ -220,6 +218,10 @@
       });
       const actions=node('div',undefined,'desktop-file-actions');actions.append(save,manual);
       line.append(filename,fields,sheetBox,actions);
+      // Older builds suggested this date for Анализ.xlsx without reading its contents.
+      // Do not silently erase an existing saved rule: 19.10.2026 might be intentional.
+      if(rule?.type==='week'&&rule.start==='2026-10-19'&&file.name.toLocaleLowerCase('ru-RU')==='анализ.xlsx')
+        line.append(node('small','Проверьте начало первой недели: старые версии автоматически предлагали 19.10.2026 для «Анализ.xlsx». Если дата не совпадает с Excel, измените её и сохраните правило.','warn small'));
       const imported=state.reports.filter(r=>r.desktopSource===file.name).map(r=>r.importedAt).filter(x=>x&&Number.isFinite(Date.parse(x))).sort().at(-1);
       if(imported)line.append(node('p','Последнее успешное обновление: '+new Date(imported).toLocaleString('ru-RU'),'muted small'));
       if(!rule)line.append(node('small','Настройте правило для автоматического обновления.','warn small'));
@@ -262,6 +264,9 @@
       }
     }
     if(!selected)throw Error('Не найден подходящий лист с колонками «Работа / Количество / Сумма». Настройте обычный импорт вручную.');
+    const dateEvidence=ordinaryDateEvidence(workbook.Sheets[selected.sheetName],readTripleColumns(workbook.Sheets[selected.sheetName]),rule.type);
+    if(ordinaryDateNeedsConfirmation(dateEvidence,rule.start))
+      throw Error('Дата правила не согласуется однозначно с заголовком Excel: '+(dateEvidence.candidates.map(x=>displayDay(x.date)+' ('+selected.sheetName+'!'+x.dateCell+')').join(', ')||'проверена только часть заголовка')+'. Откройте ручную проверку и подтвердите дату. Правило и прежние отчёты не изменены.');
     if(selected.parsed.some(x=>!x.rows.length||x.warnings.length||x.issues.length||x.hasMismatch)){
       const issues=[...new Set(selected.parsed.flatMap(x=>x.warnings))].slice(0,3).join('; ');
       throw Error('Есть замечания к Excel. Предыдущие данные сохранены. '+(issues||'Проверьте пустые периоды и итоги.'));
@@ -276,7 +281,8 @@
         count:item.count,amount:item.amount,hasMismatch:item.hasMismatch,
         organizations:item.organizations,importedAt:when,
         desktopSource:file.name,desktopSignature:signature,
-        desktopRule:key,desktopHash:sha256};
+        desktopRule:key,desktopHash:sha256,
+        ...(i===0&&dateEvidence.candidates.length?{periodStartEvidence:{sheet:selected.sheetName,candidates:dateEvidence.candidates}}:{})};
     });
     return reports;
   }
@@ -290,7 +296,7 @@
       if(!listing.folder){message('Сначала выберите папку.');return;}
       const previous=state.reports;
       let next=previous.slice(),updated=0,unchanged=0,skipped=0;
-      const errors=[];
+      const errors=[],dateNotes=[];
       for(const file of listing.files){
         const rule=listing.rules[file.name];
         if(!rule){skipped++;continue;}
@@ -306,6 +312,10 @@
           const source=await api.readExcel(file.name);
           if(source.signature!==file.signature)throw Error('Файл меняется, повторим проверку.');
           const parsed=parseExcel(file,rule,new Uint8Array(source.bytes),source.signature,source.sha256);
+          if(dateNotes.length<20&&parsed[0]?.periodStartEvidence){
+            const e=parsed[0].periodStartEvidence;
+            dateNotes.push(file.name+': дата начала '+displayDay(rule.start)+' подтверждена заголовком '+e.sheet+'!'+e.candidates[0].dateCell+'.');
+          }
           for(const report of parsed)report.desktopFolder=listing.folder;
           const existing=next.filter(r=>!sameSource(r));
           const accepted=existing.slice();
@@ -330,6 +340,7 @@
         (errors.length?', ошибок '+errors.length+'.':'.'),errors.length>0);
       log.replaceChildren();
       errors.forEach(error=>log.append(node('p',error,'warn small')));
+      dateNotes.forEach(text=>log.append(node('p',text,'muted small')));
       const stored=new Set(next.map(r=>r.desktopSource).filter(Boolean));
       const present=new Set(listing.files.map(f=>f.name));
       for(const name of stored)if(!present.has(name))

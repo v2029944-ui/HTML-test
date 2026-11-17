@@ -5,7 +5,7 @@ const path=require('node:path');
 function prepareHtml(source){
   if(!source.includes('window.appReady=main();'))
     throw Error('Недостаточно совместимая версия index.html: точка запуска не обнаружена.');
-  if(source.includes('tauri-bridge.js')||source.includes('tauri-folder-importer.js')||source.includes('tauri-updates.js'))
+  if(source.includes('tauri-bridge.js')||source.includes('tauri-folder-importer.js')||source.includes('tauri-desktop.js')||source.includes('tauri-updates.js'))
     throw Error('Tauri-скрипты уже присутствуют в исходном HTML.');
   if((source.match(/<\/head>/g)||[]).length!==1||(source.match(/<\/body>/g)||[]).length!==1)
     throw Error('Не найдены однозначные границы HTML.');
@@ -24,7 +24,7 @@ function prepare(options={}){
   fs.copyFileSync(path.join(__dirname,'bridge.js'),path.join(output,'tauri-bridge.js'));
   fs.copyFileSync(path.join(__dirname,'updates.js'),path.join(output,'tauri-updates.js'));
   const renderer=fs.readFileSync(path.join(__dirname,'folder-importer.js'),'utf8');
-  // Folder importer works with Tauri's compatible API; adjust only storage hints.
+  // The folder importer uses Tauri's compatible API; adjust only storage hints.
   const adapted=renderer.replace(
     'Резервная копия: reports.json.bak. Данные не находятся в браузере.',
     'Используется SQLite. Исходный reports.json сохраняется после переноса; делайте отдельные резервные копии.'

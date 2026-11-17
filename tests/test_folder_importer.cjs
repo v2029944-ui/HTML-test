@@ -4,6 +4,10 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
 const source=fs.readFileSync(require('node:path').join(__dirname,'../tauri/folder-importer.js'),'utf8');
+const html=fs.readFileSync(require('node:path').join(__dirname,'../index.html'),'utf8');
+const dateHelpers=html.slice(html.indexOf('function normalized('),html.indexOf('// Prefixes precede substrings'))+
+ html.slice(html.indexOf('function readTripleColumns('),html.indexOf('function parseSheet('))+
+ html.slice(html.indexOf('// Explicit ordinary-period evidence'),html.indexOf('function importBlockMappings('));
 const functions=source.slice(source.indexOf('  function parseExcel('),source.indexOf('  function scheduleSync('));
 const draft=(date='2024-01-01')=>({type:'day',start:date,end:date,fileName:'year.xlsx',sheetName:'Q1',rows:[{work:'A',count:0,amount:0}],issues:[],warnings:[],hasMismatch:false,count:0,amount:0});
 function setup(options={}){
@@ -19,7 +23,7 @@ function setup(options={}){
  api:{list:async()=>({folder:'/reports',files,rules:{'year.xlsx':rule}}),readExcel:async()=>({signature:'new',sha256:'hash',bytes:[]}),checkExcel:async()=>options.stable!==false},
  storeReports:async reports=>{state.reports=reports;ctx.saved=reports;},
  Date,Set,JSON,Uint8Array};
- vm.createContext(ctx);vm.runInContext(functions,ctx);return {ctx,state,rule,calls};
+ vm.createContext(ctx);vm.runInContext(dateHelpers+functions,ctx);return {ctx,state,rule,calls};
 }
 test('daily-wide passes selected sheets/year/mappings and attaches source metadata',()=>{
  const {ctx,rule,calls}=setup();const result=ctx.parseExcel({name:'year.xlsx'},rule,[],'sig','hash');
@@ -73,4 +77,18 @@ for(const format of [undefined,'legacy'])test('legacy selection wins in a mixed 
  const rule={type:'week',start:'2024-01-01',sheet:'Legacy',...(format?{format}:{})};
  const reports=ctx.parseExcel({name:'mixed.xlsx'},rule,[],'sig','hash');
  assert.equal(calls.length,0);assert.equal(parsedSheet,'Legacy');assert.equal(reports.length,1);assert.equal(reports[0].type,'week');
+});
+
+test('suggested folder rules never guess October 19 for Анализ.xlsx',()=>{
+  const start=source.indexOf('  function suggestedRule(');
+  const end=source.indexOf('  function dateInput(',start);
+  assert.ok(start>=0&&end>start,'folder date suggestion is present');
+  const get=vm.runInNewContext('(()=>{'+source.slice(start,end)+'; return suggestedRule;})()');
+  const withoutDate=get('Анализ.xlsx');
+  assert.equal(withoutDate.type,'week');
+  assert.equal(withoutDate.start,'');
+  assert.equal(get('Другой.xlsx').start,'');
+  assert.equal(get('week_2026-11-09.xlsx').start,'2026-11-09');
+  assert.equal(get('day_2026-11-13.xlsx').start,'2026-11-13');
+  assert.equal(get('month_2026-10.xlsx').start,'2026-10-01');
 });
