@@ -1,0 +1,17 @@
+[package]
+name = "analiz-import-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+
+[dependencies]
+zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
+quick-xml = "=0.38.4"
+rusqlite = { version = "0.37", features = ["bundled"] }
+tempfile = "3"
+fs2 = "0.4"
+sha2 = "0.10"
+
+[[bin]]
+name = "stage-xlsx"
+path = "src/main.rs"
