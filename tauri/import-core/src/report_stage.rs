@@ -75,41 +75,46 @@ impl Serialize for ReportIssue {
     ) -> std::result::Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
         #[derive(Serialize)]
-        struct Cells<'a> {
-            work: &'a Option<String>,
-            count: &'a Option<String>,
-            amount: &'a Option<String>,
-        }
-        #[derive(Serialize)]
         struct Numbers {
-            count: Option<f64>,
-            amount: Option<f64>,
+            count: f64,
+            amount: f64,
         }
+        let cells: Vec<_> = [
+            self.work_cell.as_deref(),
+            self.count_cell.as_deref(),
+            self.amount_cell.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let (expected, actual) = match (
+            self.expected_count,
+            self.expected_amount,
+            self.actual_count,
+            self.actual_amount,
+        ) {
+            (Some(ec), Some(ea), Some(ac), Some(aa))
+                if [ec, ea, ac, aa].iter().all(|n| n.is_finite()) =>
+            {
+                (
+                    Some(Numbers {
+                        count: ec,
+                        amount: ea,
+                    }),
+                    Some(Numbers {
+                        count: ac,
+                        amount: aa,
+                    }),
+                )
+            }
+            _ => (None, None),
+        };
         let mut map = serializer.serialize_map(Some(17))?;
         map.serialize_entry("type", &self.kind)?;
         map.serialize_entry("row", &self.source_row)?;
-        map.serialize_entry(
-            "cells",
-            &Cells {
-                work: &self.work_cell,
-                count: &self.count_cell,
-                amount: &self.amount_cell,
-            },
-        )?;
-        map.serialize_entry(
-            "expected",
-            &Numbers {
-                count: self.expected_count,
-                amount: self.expected_amount,
-            },
-        )?;
-        map.serialize_entry(
-            "actual",
-            &Numbers {
-                count: self.actual_count,
-                amount: self.actual_amount,
-            },
-        )?;
+        map.serialize_entry("cells", &cells)?;
+        map.serialize_entry("expected", &expected)?;
+        map.serialize_entry("actual", &actual)?;
         map.serialize_entry("sequence", &self.sequence)?;
         map.serialize_entry("kind", &self.kind)?;
         map.serialize_entry("reason", &self.reason)?;

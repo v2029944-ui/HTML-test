@@ -712,6 +712,26 @@ fn prepared_documents_keep_structured_diagnostics_controls_and_bound_source_hash
         serde_json::to_value(p.organizations(&report).unwrap()).unwrap(),
         orgs
     );
+    let invalid = doc["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["type"] == "invalid")
+        .unwrap();
+    assert_eq!(invalid["cells"], json!(["B4"]));
+    assert_eq!(invalid["row"], 4);
+    assert_eq!(invalid["expected"], Value::Null);
+    assert_eq!(invalid["actual"], Value::Null);
+    assert_eq!(invalid["count_cell"], "B4");
+    let mismatch = doc["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["type"] == "mismatch")
+        .unwrap();
+    assert_eq!(mismatch["cells"], json!(["B2", "C2"]));
+    assert_eq!(mismatch["expected"], json!({"count":3.0,"amount":6.0}));
+    assert_eq!(mismatch["actual"], json!({"count":1.0,"amount":2.0}));
     assert_eq!(doc["issues"], issues);
     assert_eq!(doc["totals"], totals);
     assert_eq!(doc["organizationTotals"], orgs);
@@ -976,11 +996,11 @@ fn complete_quality_counts_are_independent_of_pages_and_controls_preserve_nulls(
     assert!(controls.last().unwrap().count.is_none());
     assert!(controls.last().unwrap().amount.is_none());
     let serialized = serde_json::to_value(&first[0]).unwrap();
-    assert!(serialized.get("type").is_some());
-    assert!(serialized.get("row").is_some());
-    assert!(serialized.get("cells").is_some());
-    assert!(serialized.get("expected").is_some());
-    assert!(serialized.get("actual").is_some());
+    assert_eq!(serialized["type"], "invalid");
+    assert_eq!(serialized["row"], 4);
+    assert_eq!(serialized["cells"], json!(["B4"]));
+    assert_eq!(serialized["expected"], Value::Null);
+    assert_eq!(serialized["actual"], Value::Null);
     assert!(p.issues(report, 0, 101).is_err());
     let conn = Connection::open(p.directory().join("stage.sqlite3")).unwrap();
     conn.execute("UPDATE converted_issues SET reason='damaged'", [])

@@ -82,10 +82,13 @@ Required legacy fields `id`, `type`, `start`, `end`, `rows`, row
 `sourceMapping`, `rowCount`, `organizationTotals`, `issueCount`, and `controlCount`.
 `issues`, `totals`, and row provenance keep B2a's full structured source rows,
 exact cells, expected/actual values, and nullable controls. Warning reasons and
-structured provenance remains native B2a representations; diagnostics additionally
+structured provenance retain native B2a representations; diagnostics additionally
 serialize legacy-compatible `type`, `row`, `cells`, `expected` and `actual` aliases
-without dropping the native fields; **exact legacy
-warning prose and quality-screen presentation parity are not claimed**.
+without dropping the native fields. `cells` is an array of at most three present
+addresses in work/count/amount order. `expected` and `actual` are null when no
+complete numeric comparison is present; comparison issues carry numeric
+`{count, amount}` objects. **Exact legacy warning prose and quality-screen
+presentation parity are not claimed**.
 Empty reports and overlapping periods within one prepared artifact fail closed.
 Future converters can reuse the document/preparation/application contract, but
 must supply the same complete report APIs and define additional metadata needs.
