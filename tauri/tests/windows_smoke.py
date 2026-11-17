@@ -122,8 +122,16 @@ def run():
                     if process.poll() is None:subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],check=True,capture_output=True)
                 raise
         def stop(process):
-            if process.poll() is None:subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],check=True,capture_output=True)
-            process.wait(timeout=30)
+            if process.poll() is not None:return
+            # Simulate closing the application window, not crashing its WebView2 storage process.
+            close_script="$app=Get-Process -Id $env:ANALIZ_SMOKE_PID -ErrorAction Stop; if(-not $app.CloseMainWindow()){throw 'Application window refused a normal close request'}"
+            try:
+                subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command',close_script],
+                    env=dict(env,ANALIZ_SMOKE_PID=str(process.pid)),check=True,capture_output=True,timeout=15)
+                process.wait(timeout=30)
+            finally:
+                # This is failure cleanup only; an unsuccessful normal close still fails the test.
+                if process.poll() is None:subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],check=True,capture_output=True)
         with sync_playwright() as pw:
             process,engine=start()
             try:
@@ -154,6 +162,10 @@ def run():
                 report['checks'].append('leap February calendar')
                 page.screenshot(path=str(output/'windows-webview2.png'))
                 assert not errors,errors
+                before_restart=page.evaluate("({view:document.querySelector('.view.active').id,saved:localStorage.getItem('work-reports-view-v1')})")
+                report['navigation_before_restart']=before_restart
+                (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+                assert before_restart=={'view':'upload','saved':'upload'},before_restart
             except BaseException as error:
                 diagnostics(error);raise
             finally:stop(process)
@@ -162,7 +174,10 @@ def run():
                 browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227');page=wait_for_webview_page(browser)
                 wait_for_app_state(page, 'Boolean(window.appReady)', 'Application initialization');page.evaluate('window.appReady')
                 assert len(page.evaluate('window.desktopAPI.load()')['reports'])==366
-                assert page.locator('.view.active').get_attribute('id')=='upload'
+                restored=page.evaluate("({view:document.querySelector('.view.active').id,saved:localStorage.getItem('work-reports-view-v1')})")
+                report['navigation_after_restart']=restored
+                (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+                assert restored=={'view':'upload','saved':'upload'},restored
                 report['checks'].append('SQLite and last view survive application restart')
             except BaseException as error:
                 diagnostics(error);raise
