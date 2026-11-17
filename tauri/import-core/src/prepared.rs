@@ -202,13 +202,18 @@ impl<'a> Stage<'a> {
             &self.db,
             rusqlite::TransactionBehavior::Immediate,
         )?;
-        let complete: bool = self.db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM manifest WHERE name='conversion_complete')",
+        // C1 cannot represent native-wide source diagnostics or proven zero days.
+        // A wide stage also sets conversion_complete, so testing mere existence
+        // would silently discard source-wide issues during manual application.
+        let converted: Option<String> = self.db.query_row(
+            "SELECT value FROM manifest WHERE name='conversion_complete'",
             [],
             |r| r.get(0),
-        )?;
-        if !complete {
-            return Err(fail("Report conversion is not complete"));
+        ).optional()?;
+        if converted.as_deref() != Some("legacy") {
+            return Err(fail(
+                "Only legacy reports can be prepared; daily-wide needs provenance-aware review",
+            ));
         }
         // Bound persisted metadata before reading values, including a damaged private stage.
         for (table, columns) in [

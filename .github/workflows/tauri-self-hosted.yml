@@ -1,0 +1,33 @@
+name: Tauri Windows self-hosted (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_installer:
+        description: Build an unsigned Windows NSIS installer after checks
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: [self-hosted, Windows, X64, analiz-tauri]
+    timeout-minutes: 180
+    steps:
+      - name: Checkout selected trusted branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          clean: true
+      - name: Run Node and Rust regression tests and optional installer build
+        shell: powershell
+        env:
+          BUILD_INSTALLER: ${{ inputs.build_installer }}
+        run: |
+          if ($env:BUILD_INSTALLER -eq 'true') {
+            & .\tools\verify-tauri-windows.ps1 -BuildInstaller
+          } else {
+            & .\tools\verify-tauri-windows.ps1
+          }
