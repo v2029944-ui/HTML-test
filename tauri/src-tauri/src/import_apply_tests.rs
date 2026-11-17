@@ -235,6 +235,7 @@ fn explicit_replacement_and_overlap_confirmation() {
             ImportConfirmation {
                 replace_exact: true,
                 accept_cross_type: false,
+                ..Default::default()
             },
             &ImportJob::new(),
             |_| {},
@@ -261,6 +262,7 @@ fn explicit_replacement_and_overlap_confirmation() {
             ImportConfirmation {
                 replace_exact: false,
                 accept_cross_type: true,
+                ..Default::default()
             },
             &ImportJob::new(),
             |_| {},
@@ -299,6 +301,21 @@ fn source_identity_is_bound_and_never_automatically_replaces_another_folder() {
     let storage = Storage::new(root.path().join("live")).unwrap();
     original(&storage);
     let preview1 = storage.preview_import(&p1).unwrap();
+    assert!(
+        storage
+            .apply_import(
+                &p1,
+                &preview1,
+                ImportConfirmation {
+                    replace_source: true,
+                    ..Default::default()
+                },
+                &ImportJob::new(),
+                |_| {}
+            )
+            .is_err(),
+        "manual artifact cannot imply folder ownership"
+    );
     assert!(storage
         .apply_import(
             &p2,
@@ -329,7 +346,7 @@ fn source_identity_is_bound_and_never_automatically_replaces_another_folder() {
         )
         .is_err());
     assert_eq!(storage.load().unwrap(), before);
-    // No whole-source/folder replacement API exists; explicit manual exact-period replacement is separate.
+    // Explicit manual exact-period replacement remains separate from folder ownership.
 }
 #[test]
 fn preparation_cancellation_empty_data_and_budgets_leave_live_database_intact() {
@@ -673,14 +690,634 @@ fn prepared_documents_keep_structured_diagnostics_controls_and_bound_source_hash
     let p = stage.prepare(&cancel, |_| {}).unwrap();
     let report = p.next_report(0).unwrap().unwrap();
     let doc: Value = serde_json::from_reader(p.open_document(&report).unwrap()).unwrap();
+    assert_eq!(
+        report.quality.issues,
+        issues.as_array().unwrap().len() as u64
+    );
+    assert!(report.quality.invalid > 0);
+    assert!(report.quality.mismatches > 0);
+    assert_eq!(
+        serde_json::to_value(p.issues(&report, 0, 1).unwrap())
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        serde_json::to_value(p.controls(&report, 0, 100).unwrap()).unwrap(),
+        totals
+    );
+    assert_eq!(
+        serde_json::to_value(p.organizations(&report).unwrap()).unwrap(),
+        orgs
+    );
     assert_eq!(doc["issues"], issues);
     assert_eq!(doc["totals"], totals);
     assert_eq!(doc["organizationTotals"], orgs);
     assert_eq!(doc["sourceHash"], source_hash);
     assert_eq!(p.source_hash(), source_hash);
+    let storage = Storage::new(root.path().join("live")).unwrap();
+    original(&storage);
+    let preview = storage.preview_import(&p).unwrap();
+    assert!(
+        storage
+            .apply_import(
+                &p,
+                &preview,
+                ImportConfirmation::default(),
+                &ImportJob::new(),
+                |_| {}
+            )
+            .is_err(),
+        "quality notices require explicit acknowledgment"
+    );
+    assert_eq!(preview.quality().issues, report.quality.issues);
+    storage
+        .apply_import(
+            &p,
+            &preview,
+            ImportConfirmation {
+                accept_quality: true,
+                ..Default::default()
+            },
+            &ImportJob::new(),
+            |_| {},
+        )
+        .unwrap();
+
     assert_eq!(doc["issueCount"], issues.as_array().unwrap().len());
     assert_eq!(
         doc["warnings"].as_array().unwrap().len(),
         issues.as_array().unwrap().len()
     );
+}
+
+fn folder_prepared<'a>(area: &'a StageArea, source: &Path, days: usize) -> PreparedImport<'a> {
+    let cancel = AtomicBool::new(false);
+    let mut stage = area
+        .ingest(source, Limits::default(), &cancel, |_| {})
+        .unwrap();
+    let mapping = analiz_import_core::TripleMapping {
+        header_row: 1,
+        work_col: 1,
+        count_col: 2,
+        amount_col: 3,
+    };
+    stage
+        .convert_legacy(
+            &LegacyOptions {
+                sheet: "xl/worksheets/sheet1.xml".into(),
+                kind: "day".into(),
+                start: "2026-11-01".into(),
+                organizations: ["СМУ16".into(), "АВТО".into(), "ТРАК".into(), "ЦЕНТР".into()],
+                mappings: Some(vec![mapping; days]),
+            },
+            &cancel,
+            |_| {},
+        )
+        .unwrap();
+    stage
+        .prepare_with_mode(analiz_import_core::ImportMode::Folder, &cancel, |_| {})
+        .unwrap()
+}
+#[test]
+fn folder_shrink_replaces_complete_source_only_and_receipt_counts_removals() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("data.xlsx");
+    fixture(&source, 2);
+    let area = StageArea::open(root.path().join("stage")).unwrap();
+    let storage = Storage::new(root.path().join("live")).unwrap();
+    let mut data = original(&storage);
+    data["reports"].as_array_mut().unwrap().push(json!({"id":"different-folder","type":"day","start":"2026-11-04","end":"2026-11-04","desktopSource":"data.xlsx","desktopFolder":"/different","rows":[]}));
+    storage.save(data).unwrap();
+    let p = folder_prepared(&area, &source, 3);
+    let preview = storage.preview_import(&p).unwrap();
+    storage
+        .apply_import(
+            &p,
+            &preview,
+            ImportConfirmation::default(),
+            &ImportJob::new(),
+            |_| {},
+        )
+        .unwrap();
+    let p = folder_prepared(&area, &source, 2);
+    let preview = storage.preview_import(&p).unwrap();
+    assert_eq!(preview.counts().replacements, 3);
+    assert_eq!(preview.counts().new_reports, 0);
+    assert!(storage
+        .apply_import(
+            &p,
+            &preview,
+            ImportConfirmation::default(),
+            &ImportJob::new(),
+            |_| {}
+        )
+        .is_err());
+    let receipt = storage
+        .apply_import(
+            &p,
+            &preview,
+            ImportConfirmation {
+                replace_source: true,
+                ..Default::default()
+            },
+            &ImportJob::new(),
+            |_| {},
+        )
+        .unwrap();
+    assert_eq!(receipt.replaced, 3);
+    assert_eq!(
+        storage
+            .apply_import(
+                &p,
+                &preview,
+                ImportConfirmation::default(),
+                &ImportJob::new(),
+                |_| {}
+            )
+            .unwrap(),
+        receipt
+    );
+    let loaded = storage.load().unwrap();
+    assert_eq!(loaded["reports"].as_array().unwrap().len(), 4);
+    assert!(loaded["reports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["id"] == "different-folder"));
+    assert!(!loaded["reports"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["start"] == "2026-11-03"));
+    assert_eq!(
+        storage
+            .aggregate(receipt.revision, &ReadFilter::default())
+            .unwrap()
+            .rows,
+        5
+    );
+    storage
+        .backup_sqlite(&root.path().join("backup.sqlite3"))
+        .unwrap();
+    let conn = Connection::open(root.path().join("backup.sqlite3")).unwrap();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM report_row_index", [], |r| r
+            .get::<_, u64>(0))
+            .unwrap(),
+        4
+    );
+}
+#[test]
+fn supported_generation_rotation_invalidates_same_revision_preview() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("data.xlsx");
+    fixture(&source, 2);
+    let area = StageArea::open(root.path().join("stage")).unwrap();
+    let p = prepared(&area, &source, "day", "2026-11-01");
+    let storage = Storage::new(root.path().join("live")).unwrap();
+    original(&storage);
+    let preview = storage.preview_import(&p).unwrap();
+    storage.invalidate_import_previews_after_restore().unwrap();
+    assert_eq!(storage.revision().unwrap(), preview.revision());
+    assert!(storage
+        .apply_import(
+            &p,
+            &preview,
+            ImportConfirmation::default(),
+            &ImportJob::new(),
+            |_| {}
+        )
+        .unwrap_err()
+        .contains("generation"));
+}
+
+#[test]
+fn preview_and_apply_cancel_while_waiting_for_storage_gate_or_writer() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("data.xlsx");
+    fixture(&source, 2);
+    let area = StageArea::open(root.path().join("stage")).unwrap();
+    let p = prepared(&area, &source, "day", "2026-11-01");
+    let storage = Storage::new(root.path().join("live")).unwrap();
+    original(&storage);
+    let preview = storage.preview_import(&p).unwrap();
+    let cancel = AtomicBool::new(false);
+    let guard = storage.gate.lock().unwrap();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            cancel.store(true, std::sync::atomic::Ordering::Release);
+        });
+        let start = std::time::Instant::now();
+        assert!(storage.preview_import_with_cancel(&p, &cancel).is_err());
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    });
+    drop(guard);
+    let conn = storage.connect().unwrap();
+    conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let job = ImportJob::new();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            job.cancel();
+        });
+        let start = std::time::Instant::now();
+        assert!(storage
+            .apply_import(&p, &preview, ImportConfirmation::default(), &job, |_| {})
+            .is_err());
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        eprintln!(
+            "c2 writer-wait cancellation observed in {} ms",
+            start.elapsed().as_millis()
+        );
+    });
+    conn.execute_batch("ROLLBACK").unwrap();
+}
+
+fn quality_fixture(path: &Path, invalid: usize) {
+    let mut zip = ZipWriter::new(fs::File::create(path).unwrap());
+    zip.start_file("xl/worksheets/sheet1.xml", SimpleFileOptions::default())
+        .unwrap();
+    write!(zip,"<worksheet><sheetData><row r=\"2\"><c r=\"A2\" t=\"inlineStr\"><is><t>СМУ16</t></is></c><c r=\"B2\"><v>1</v></c><c r=\"C2\"><v>2</v></c></row><row r=\"3\"><c r=\"A3\" t=\"inlineStr\"><is><t>Работа</t></is></c><c r=\"B3\"><v>1</v></c><c r=\"C3\"><v>2</v></c></row>").unwrap();
+    for n in 4..invalid + 4 {
+        write!(zip,"<row r=\"{n}\"><c r=\"A{n}\" t=\"inlineStr\"><is><t>Ошибка</t></is></c><c r=\"B{n}\" t=\"inlineStr\"><is><t>bad</t></is></c><c r=\"C{n}\"><v>2</v></c></row>").unwrap();
+    }
+    write!(zip,"<row r=\"{}\"><c r=\"A{}\" t=\"inlineStr\"><is><t>Итого</t></is></c></row></sheetData></worksheet>",invalid+4,invalid+4).unwrap();
+    zip.finish().unwrap();
+}
+#[test]
+fn complete_quality_counts_are_independent_of_pages_and_controls_preserve_nulls() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("data.xlsx");
+    quality_fixture(&source, 125);
+    let area = StageArea::open(root.path().join("stage")).unwrap();
+    let p = prepared(&area, &source, "day", "2026-11-01");
+    let reports = p.reports(0, 1).unwrap();
+    let report = &reports[0];
+    let first = p.issues(report, 0, 1).unwrap();
+    assert_eq!(first.len(), 1);
+    assert!(report.quality.issues > 100);
+    let mut seen = 0;
+    let mut cursor = 0;
+    loop {
+        let page = p.issues(report, cursor, 100).unwrap();
+        if page.is_empty() {
+            break;
+        }
+        cursor = page.last().unwrap().sequence;
+        seen += page.len() as u64;
+    }
+    assert_eq!(seen, report.quality.issues);
+    assert_eq!(seen, p.quality().issues);
+    let controls = p.controls(report, 0, 100).unwrap();
+    assert!(controls.last().unwrap().count.is_none());
+    assert!(controls.last().unwrap().amount.is_none());
+    let serialized = serde_json::to_value(&first[0]).unwrap();
+    assert!(serialized.get("type").is_some());
+    assert!(serialized.get("row").is_some());
+    assert!(serialized.get("cells").is_some());
+    assert!(serialized.get("expected").is_some());
+    assert!(serialized.get("actual").is_some());
+    assert!(p.issues(report, 0, 101).is_err());
+    let conn = Connection::open(p.directory().join("stage.sqlite3")).unwrap();
+    conn.execute("UPDATE converted_issues SET reason='damaged'", [])
+        .unwrap();
+    assert!(p.issues(report, 0, 1).is_err());
+}
+#[test]
+fn folder_shrink_failures_leave_all_old_days_and_settings_unchanged() {
+    for fault in ["quality", "read", "write", "cancel", "source", "revision"] {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("data.xlsx");
+        fixture(&source, 2);
+        let area = StageArea::open(root.path().join("stage")).unwrap();
+        let storage = Storage::new(root.path().join("live")).unwrap();
+        original(&storage);
+        let p = folder_prepared(&area, &source, 3);
+        let preview = storage.preview_import(&p).unwrap();
+        storage
+            .apply_import(
+                &p,
+                &preview,
+                ImportConfirmation::default(),
+                &ImportJob::new(),
+                |_| {},
+            )
+            .unwrap();
+        if fault == "quality" {
+            quality_fixture(&source, 1);
+        }
+        let p = folder_prepared(&area, &source, 2);
+        let preview = storage.preview_import(&p).unwrap();
+        if fault == "revision" {
+            storage.save(storage.load().unwrap()).unwrap();
+        }
+        let before = storage.load().unwrap();
+        let revision = storage.revision().unwrap();
+        if fault == "read" {
+            fs::remove_file(p.directory().join("report-2.json")).unwrap();
+        }
+        if fault == "source" {
+            fs::write(&source, b"changed").unwrap();
+        }
+        if fault == "write" {
+            storage.connect().unwrap().execute_batch("CREATE TRIGGER fail_c2 BEFORE INSERT ON report_rows BEGIN SELECT RAISE(ABORT,'write failure'); END").unwrap();
+        }
+        let job = ImportJob::new();
+        assert!(
+            storage
+                .apply_import(
+                    &p,
+                    &preview,
+                    ImportConfirmation {
+                        replace_source: true,
+                        ..Default::default()
+                    },
+                    &job,
+                    |progress| {
+                        if fault == "cancel" && progress.phase == "copy" {
+                            job.cancel();
+                        }
+                    }
+                )
+                .is_err(),
+            "{fault}"
+        );
+        assert_eq!(storage.load().unwrap(), before, "{fault}");
+        assert_eq!(storage.revision().unwrap(), revision, "{fault}");
+        assert!(storage
+            .committed_import(p.operation_id())
+            .unwrap()
+            .is_none());
+    }
+}
+#[test]
+fn legacy_folder_ownership_is_explicit_and_unknown_identity_blocks() {
+    for classification in [
+        "legacy",
+        "unknown",
+        "manual-c1",
+        "other-folder",
+        "malformed",
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("data.xlsx");
+        fixture(&source, 2);
+        let area = StageArea::open(root.path().join("stage")).unwrap();
+        let p = folder_prepared(&area, &source, 2);
+        let storage = Storage::new(root.path().join("live")).unwrap();
+        let mut data = original(&storage);
+        let mut old = json!({"id":"owned","type":"day","start":"2026-11-03","end":"2026-11-03","desktopSource":"data.xlsx","desktopFolder":p.source_folder(),"rows":[]});
+        match classification {
+            "unknown" => {
+                old.as_object_mut().unwrap().remove("desktopFolder");
+            }
+            "manual-c1" => old["sourceHash"] = "c1-hash".into(),
+            "other-folder" => old["desktopFolder"] = "/different".into(),
+            "malformed" => old["desktopFolder"] = json!(["wrong"]),
+            _ => {}
+        }
+        data["reports"].as_array_mut().unwrap().push(old);
+        storage.save(data.clone()).unwrap();
+        let preview = storage.preview_import(&p);
+        if classification == "unknown" || classification == "malformed" {
+            assert!(preview.is_err(), "{classification}");
+            continue;
+        }
+        let preview = preview.unwrap();
+        assert_eq!(
+            preview.counts().replacements,
+            if classification == "legacy" { 1 } else { 0 },
+            "{classification}"
+        );
+        assert_eq!(storage.load().unwrap(), data);
+        storage
+            .apply_import(
+                &p,
+                &preview,
+                ImportConfirmation {
+                    replace_source: true,
+                    ..Default::default()
+                },
+                &ImportJob::new(),
+                |_| {},
+            )
+            .unwrap();
+        let conn = storage.connect().unwrap();
+        let old: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM reports WHERE id='owned')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(old, classification != "legacy");
+    }
+}
+
+#[test]
+fn large_legacy_source_metadata_streams_and_cancels_without_loading_json() {
+    use std::io::Write;
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("data.xlsx");
+    fixture(&source, 2);
+    let area = StageArea::open(root.path().join("stage")).unwrap();
+    let p = folder_prepared(&area, &source, 2);
+    let storage = Storage::new(root.path().join("live")).unwrap();
+    original(&storage);
+    let conn = storage.connect().unwrap();
+    let prefix = b"{\"unrelatedMetadata\":[";
+    let tail = format!(
+        "0],\"desktopSource\":\"data.xlsx\",\"desktopFolder\":{},\"rows\":[]}}",
+        serde_json::to_string(p.source_folder()).unwrap()
+    );
+    let block = b"0,".repeat(32768);
+    let blocks = 512;
+    let length = prefix.len() + block.len() * blocks + tail.len();
+    conn.execute("INSERT INTO reports VALUES('large','day','2026-11-03','2026-11-03','data.xlsx',zeroblob(?1))",[length]).unwrap();
+    let rowid = conn.last_insert_rowid();
+    {
+        let mut blob = conn
+            .blob_open("main", "reports", "json", rowid, false)
+            .unwrap();
+        blob.write_all(prefix).unwrap();
+        for _ in 0..blocks {
+            blob.write_all(&block).unwrap();
+        }
+        blob.write_all(tail.as_bytes()).unwrap();
+    }
+    let memory = || {
+        fs::read_to_string("/proc/self/status")
+            .unwrap()
+            .lines()
+            .filter(|l| l.starts_with("VmRSS:") || l.starts_with("VmHWM:"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    eprintln!("c2 legacy metadata bytes={length} before {}", memory());
+    let started = std::time::Instant::now();
+    let preview = storage.preview_import(&p).unwrap();
+    eprintln!(
+        "c2 legacy metadata preview_ms={} after {}",
+        started.elapsed().as_millis(),
+        memory()
+    );
+    assert_eq!(preview.counts().replacements, 1);
+    let cancel = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            cancel.store(true, std::sync::atomic::Ordering::Release);
+        });
+        let started = std::time::Instant::now();
+        assert!(storage.preview_import_with_cancel(&p, &cancel).is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        eprintln!(
+            "c2 legacy metadata cancellation_ms={}",
+            started.elapsed().as_millis()
+        );
+    });
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM report_source_ownership", [], |r| r
+            .get::<_, u64>(0))
+            .unwrap(),
+        0,
+        "preview cannot persist ownership"
+    );
+    conn.execute(
+        "UPDATE reports SET json=?1 WHERE id='large'",
+        [format!(
+            "{{\"unknown\":\"{}\",\"desktopSource\":\"data.xlsx\",\"desktopFolder\":\"/x\"}}",
+            "x".repeat(65537)
+        )],
+    )
+    .unwrap();
+    assert!(
+        storage.preview_import(&p).is_err(),
+        "ignored string tokens are bounded too"
+    );
+}
+#[test]
+fn folder_mode_never_adopts_another_source_overlapping_period() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("data.xlsx");
+    fixture(&source, 2);
+    let area = StageArea::open(root.path().join("stage")).unwrap();
+    let p = folder_prepared(&area, &source, 2);
+    let storage = Storage::new(root.path().join("live")).unwrap();
+    let mut data = original(&storage);
+    data["reports"].as_array_mut().unwrap().push(json!({"id":"other","type":"day","start":"2026-11-01","end":"2026-11-01","desktopSource":"data.xlsx","desktopFolder":"/different","rows":[]}));
+    storage.save(data.clone()).unwrap();
+    assert!(storage
+        .preview_import(&p)
+        .unwrap_err()
+        .contains("another source"));
+    assert_eq!(storage.load().unwrap(), data);
+}
+
+#[test]
+fn source_ownership_index_is_invalidated_by_replace_writers_but_not_settings_reads() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("data.xlsx");
+    fixture(&source, 2);
+    let area = StageArea::open(root.path().join("stage")).unwrap();
+    let p = folder_prepared(&area, &source, 3);
+    let storage = Storage::new(root.path().join("live")).unwrap();
+    original(&storage);
+    let preview = storage.preview_import(&p).unwrap();
+    storage
+        .apply_import(
+            &p,
+            &preview,
+            ImportConfirmation::default(),
+            &ImportJob::new(),
+            |_| {},
+        )
+        .unwrap();
+    let conn = storage.connect().unwrap();
+    storage.revision().unwrap();
+    storage.load().unwrap();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM report_source_ownership", [], |r| r
+            .get::<_, u64>(0))
+            .unwrap(),
+        3
+    );
+    let id: String = conn
+        .query_row(
+            "SELECT id FROM reports WHERE period_start='2026-11-03'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let other=json!({"id":id,"type":"day","start":"2026-11-03","end":"2026-11-03","desktopSource":"data.xlsx","desktopFolder":"/different","rows":[]}).to_string();
+    conn.execute(
+        "INSERT OR REPLACE INTO reports VALUES(?1,'day','2026-11-03','2026-11-03','data.xlsx',?2)",
+        params![id, other],
+    )
+    .unwrap();
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM report_source_ownership", [], |r| r
+            .get::<_, u64>(0))
+            .unwrap(),
+        2
+    );
+    let smaller = folder_prepared(&area, &source, 2);
+    let preview = storage.preview_import(&smaller).unwrap();
+    assert_eq!(preview.counts().replacements, 2);
+}
+
+#[test]
+fn cancellation_during_large_source_set_does_not_return_a_preview() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("data.xlsx");
+    fixture(&source, 2);
+    let area = StageArea::open(root.path().join("stage")).unwrap();
+    let p = folder_prepared(&area, &source, 2);
+    let storage = Storage::new(root.path().join("live")).unwrap();
+    original(&storage);
+    let conn = storage.connect().unwrap();
+    conn.execute("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<50000) INSERT INTO reports(id,report_type,period_start,period_end,source_name,json) SELECT 'history-'||x,'day','2020-01-01','2020-01-01','data.xlsx','{\"desktopSource\":\"data.xlsx\",\"desktopFolder\":\"/different\",\"rows\":[]}' FROM n",[]).unwrap();
+    let revision = storage.revision().unwrap();
+    let cancel = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(30));
+            cancel.store(true, std::sync::atomic::Ordering::Release);
+        });
+        let start = std::time::Instant::now();
+        assert!(storage.preview_import_with_cancel(&p, &cancel).is_err());
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        eprintln!(
+            "c2 50000-source-set cancellation_ms={}",
+            start.elapsed().as_millis()
+        );
+    });
+    assert_eq!(storage.revision().unwrap(), revision);
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM reports", [], |r| r.get::<_, u64>(0))
+            .unwrap(),
+        50001
+    );
+}
+
+#[test]
+fn complete_conflict_and_source_scans_include_minimum_sqlite_rowid() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("data.xlsx");
+    fixture(&source, 2);
+    let area = StageArea::open(root.path().join("stage")).unwrap();
+    let p = prepared(&area, &source, "day", "2026-11-01");
+    let storage = Storage::new(root.path().join("live")).unwrap();
+    original(&storage);
+    storage.connect().unwrap().execute("INSERT INTO reports(rowid,id,report_type,period_start,period_end,source_name,json) VALUES(-9223372036854775808,'minimum','day','2026-11-01','2026-11-01','data.xlsx','{\"desktopSource\":\"data.xlsx\",\"desktopFolder\":\"/different\",\"rows\":[]}')",[]).unwrap();
+    assert_eq!(storage.preview_import(&p).unwrap().counts().replacements, 1);
+    let folder = folder_prepared(&area, &source, 2);
+    assert!(storage
+        .preview_import(&folder)
+        .unwrap_err()
+        .contains("another source"));
 }

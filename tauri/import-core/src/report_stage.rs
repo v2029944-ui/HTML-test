@@ -52,7 +52,7 @@ pub struct ReportRow {
     pub count_cell: String,
     pub amount_cell: String,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct ReportIssue {
     pub sequence: u64,
     pub kind: String,
@@ -66,6 +66,64 @@ pub struct ReportIssue {
     pub expected_amount: Option<f64>,
     pub actual_count: Option<f64>,
     pub actual_amount: Option<f64>,
+}
+/// Compatibility aliases are additive: retain every native provenance field.
+impl Serialize for ReportIssue {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        #[derive(Serialize)]
+        struct Cells<'a> {
+            work: &'a Option<String>,
+            count: &'a Option<String>,
+            amount: &'a Option<String>,
+        }
+        #[derive(Serialize)]
+        struct Numbers {
+            count: Option<f64>,
+            amount: Option<f64>,
+        }
+        let mut map = serializer.serialize_map(Some(17))?;
+        map.serialize_entry("type", &self.kind)?;
+        map.serialize_entry("row", &self.source_row)?;
+        map.serialize_entry(
+            "cells",
+            &Cells {
+                work: &self.work_cell,
+                count: &self.count_cell,
+                amount: &self.amount_cell,
+            },
+        )?;
+        map.serialize_entry(
+            "expected",
+            &Numbers {
+                count: self.expected_count,
+                amount: self.expected_amount,
+            },
+        )?;
+        map.serialize_entry(
+            "actual",
+            &Numbers {
+                count: self.actual_count,
+                amount: self.actual_amount,
+            },
+        )?;
+        map.serialize_entry("sequence", &self.sequence)?;
+        map.serialize_entry("kind", &self.kind)?;
+        map.serialize_entry("reason", &self.reason)?;
+        map.serialize_entry("source_row", &self.source_row)?;
+        map.serialize_entry("organization", &self.organization)?;
+        map.serialize_entry("work_cell", &self.work_cell)?;
+        map.serialize_entry("count_cell", &self.count_cell)?;
+        map.serialize_entry("amount_cell", &self.amount_cell)?;
+        map.serialize_entry("expected_count", &self.expected_count)?;
+        map.serialize_entry("expected_amount", &self.expected_amount)?;
+        map.serialize_entry("actual_count", &self.actual_count)?;
+        map.serialize_entry("actual_amount", &self.actual_amount)?;
+        map.end()
+    }
 }
 #[derive(Debug, Serialize)]
 pub struct ReportTotal {

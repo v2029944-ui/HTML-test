@@ -1,6 +1,6 @@
 //! Prepared import publication. No Tauri commands and no full-history load.
 use super::{err, read_model, Storage};
-use analiz_import_core::PreparedImport;
+use analiz_import_core::{ImportMode, PreparedImport, QualityCounts};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -8,9 +8,9 @@ use std::{
     io::{Read, Write},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Arc, Mutex, MutexGuard, TryLockError,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -25,8 +25,14 @@ pub struct ImportPreview {
     database: std::path::PathBuf,
     revision: i64,
     counts: ImportCounts,
+    generation: String,
+    quality: QualityCounts,
+    plan_hash: String,
 }
 impl ImportPreview {
+    pub fn quality(&self) -> &QualityCounts {
+        &self.quality
+    }
     pub fn revision(&self) -> i64 {
         self.revision
     }
@@ -34,11 +40,13 @@ impl ImportPreview {
         &self.counts
     }
 }
-/// Only manual exact-period replacement exists. No folder/source replacement mode.
+/// Folder replacement and quality notices require independent explicit acknowledgments.
 #[derive(Clone, Copy, Default)]
 pub struct ImportConfirmation {
     pub replace_exact: bool,
     pub accept_cross_type: bool,
+    pub replace_source: bool,
+    pub accept_quality: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ImportReceipt {
@@ -101,7 +109,13 @@ impl ImportJob {
     }
 }
 pub(super) fn initialize(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch("CREATE TABLE IF NOT EXISTS import_receipts(operation_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, reports INTEGER NOT NULL, rows INTEGER NOT NULL, replaced INTEGER NOT NULL);").map_err(err)
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS import_receipts(operation_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, reports INTEGER NOT NULL, rows INTEGER NOT NULL, replaced INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS import_generation(singleton INTEGER PRIMARY KEY CHECK(singleton=1), generation TEXT NOT NULL);
+    INSERT OR IGNORE INTO import_generation VALUES(1,lower(hex(randomblob(32))));
+    CREATE TABLE IF NOT EXISTS report_source_ownership(report_id TEXT PRIMARY KEY, source_name TEXT NOT NULL, folder TEXT NOT NULL, mode TEXT NOT NULL);
+    CREATE TRIGGER IF NOT EXISTS source_ownership_insert AFTER INSERT ON reports BEGIN DELETE FROM report_source_ownership WHERE report_id=NEW.id; END;
+    CREATE TRIGGER IF NOT EXISTS source_ownership_update AFTER UPDATE ON reports BEGIN DELETE FROM report_source_ownership WHERE report_id IN (OLD.id,NEW.id); END;
+    CREATE TRIGGER IF NOT EXISTS source_ownership_delete AFTER DELETE ON reports BEGIN DELETE FROM report_source_ownership WHERE report_id=OLD.id; END;").map_err(err)
 }
 fn receipt(conn: &Connection, operation: &str) -> Result<Option<ImportReceipt>, String> {
     if operation.len() != 64 || !operation.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -123,26 +137,148 @@ fn receipt(conn: &Connection, operation: &str) -> Result<Option<ImportReceipt>, 
     .optional()
     .map_err(err)
 }
-fn conflicts(conn: &Connection, prepared: &PreparedImport<'_>) -> Result<ImportCounts, String> {
-    read_model::check_metadata_bounds(conn)?;
+fn cancelled(cancel: &AtomicBool) -> Result<(), String> {
+    if cancel.load(Ordering::Acquire) {
+        Err("Import cancelled before commit.".into())
+    } else {
+        Ok(())
+    }
+}
+fn gate<'a>(storage: &'a Storage, cancel: &AtomicBool) -> Result<MutexGuard<'a, ()>, String> {
+    loop {
+        cancelled(cancel)?;
+        match storage.gate.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(TryLockError::Poisoned(e)) => return Err(err(e)),
+            Err(TryLockError::WouldBlock) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+}
+/// The SQLite callback owns its cancellation flag. A scoped monitor bridges the
+/// existing borrowed-token API without unsafe pointers or a 'static borrow.
+fn with_sql_cancel<T>(
+    conn: &Connection,
+    cancel: &AtomicBool,
+    work: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    struct Hooks<'a> {
+        conn: &'a Connection,
+        done: Arc<AtomicBool>,
+    }
+    impl Drop for Hooks<'_> {
+        fn drop(&mut self) {
+            self.conn.progress_handler(0, None::<fn() -> bool>);
+            self.done.store(true, Ordering::Release);
+        }
+    }
+    std::thread::scope(|scope| {
+        let interrupted = Arc::new(AtomicBool::new(cancel.load(Ordering::Acquire)));
+        let done = Arc::new(AtomicBool::new(false));
+        let observed = interrupted.clone();
+        let finished = done.clone();
+        scope.spawn(move || {
+            while !finished.load(Ordering::Acquire) {
+                if cancel.load(Ordering::Acquire) {
+                    observed.store(true, Ordering::Release);
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        });
+        conn.progress_handler(1000, Some(move || interrupted.load(Ordering::Acquire)));
+        let _hooks = Hooks { conn, done };
+        work()
+    })
+}
+fn generation(conn: &Connection) -> Result<String, String> {
+    conn.query_row(
+        "SELECT generation FROM import_generation WHERE singleton=1",
+        [],
+        |r| r.get(0),
+    )
+    .map_err(err)
+}
+/// Scan in rowid chunks rather than one uninterruptible aggregate over history.
+fn conflicts(
+    conn: &Connection,
+    prepared: &PreparedImport<'_>,
+    cancel: &AtomicBool,
+) -> Result<(ImportCounts, String), String> {
     let mut counts = ImportCounts::default();
+    let plan_hash = source_plan(conn, prepared, cancel)?;
+    if prepared.mode() == ImportMode::Folder {
+        counts.replacements = conn
+            .query_row("SELECT COUNT(*) FROM temp.import_source_plan", [], |r| {
+                r.get(0)
+            })
+            .map_err(err)?;
+    }
     let mut after = 0;
     while let Some(report) = prepared.next_report(after).map_err(err)? {
-        let (exact, overlap, cross): (u64,u64,u64) = conn.query_row(
-            "SELECT COALESCE(SUM(report_type=?1 AND period_start=?2 AND period_end=?3),0), COALESCE(SUM(report_type=?1 AND NOT(period_start=?2 AND period_end=?3)),0), COALESCE(SUM(report_type<>?1),0) FROM reports WHERE period_start<=?3 AND period_end>=?2",
-            params![report.kind, report.start, report.end], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
-        if overlap != 0 {
-            return Err("Overlapping same-type non-identical periods cannot be replaced.".into());
+        cancelled(cancel)?;
+        let mut exact = 0;
+        let mut cursor = i64::MIN;
+        let mut first = true;
+        loop {
+            cancelled(cancel)?;
+            let mut stmt = conn.prepare("SELECT r.rowid, CASE WHEN octet_length(r.id)>65536 OR octet_length(r.report_type)>65536 OR octet_length(r.period_start)>65536 OR octet_length(r.period_end)>65536 OR octet_length(r.source_name)>65536 THEN 1 ELSE 0 END, CASE WHEN octet_length(r.report_type)<=65536 THEN r.report_type END, CASE WHEN octet_length(r.period_start)<=65536 THEN r.period_start END, CASE WHEN octet_length(r.period_end)<=65536 THEN r.period_end END, CASE WHEN octet_length(r.id)<=65536 THEN EXISTS(SELECT 1 FROM temp.import_source_plan p WHERE p.report_id=r.id) ELSE 0 END FROM reports r WHERE r.rowid>=?1 AND (?2 OR r.rowid<>?1) ORDER BY r.rowid LIMIT 100").map_err(err)?;
+            let mut rows = stmt.query(params![cursor, first]).map_err(err)?;
+            first = false;
+            let mut seen = 0;
+            while let Some(row) = rows.next().map_err(err)? {
+                cursor = row.get(0).map_err(err)?;
+                seen += 1;
+                if row.get::<_, bool>(1).map_err(err)? {
+                    return Err("Report metadata exceeds 64 KiB.".into());
+                }
+                let owned = row.get::<_, bool>(5).map_err(err)?;
+                let kind: String = row.get(2).map_err(err)?;
+                let start: String = row.get(3).map_err(err)?;
+                let end: String = row.get(4).map_err(err)?;
+                if owned {
+                    if kind == report.kind && start == report.start && end == report.end {
+                        exact += 1;
+                    }
+                    continue;
+                }
+                if start > report.end || end < report.start {
+                    continue;
+                }
+                if kind != report.kind {
+                    counts.cross_type_overlaps += 1;
+                    continue;
+                }
+                if prepared.mode() == ImportMode::Folder {
+                    return Err(
+                        "Source replacement cannot replace another source's overlapping period."
+                            .into(),
+                    );
+                }
+                if start != report.start || end != report.end {
+                    return Err(
+                        "Overlapping same-type non-identical periods cannot be replaced.".into(),
+                    );
+                }
+                exact += 1;
+            }
+            if seen < 100 {
+                break;
+            }
         }
         if exact == 0 {
             counts.new_reports += 1;
         }
-        counts.replacements += exact;
-        counts.cross_type_overlaps += cross;
+        if prepared.mode() == ImportMode::Manual {
+            counts.replacements += exact;
+        }
         after = report.ordinal;
     }
-    Ok(counts)
+    cancelled(cancel)?;
+    Ok((counts, plan_hash))
 }
+#[path = "import_source.rs"]
+mod source;
+use source::source_plan;
 impl Storage {
     // Import calls must not trigger the legacy full-history migration/load path.
     // Normal startup (or revision()) initializes first; import only opens that DB.
@@ -152,8 +288,7 @@ impl Storage {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
         )
         .map_err(|e| format!("Initialize storage before importing: {e}"))?;
-        conn.busy_timeout(std::time::Duration::from_secs(5))
-            .map_err(err)?;
+        conn.busy_timeout(Duration::from_millis(10)).map_err(err)?;
         conn.execute_batch(
             "PRAGMA synchronous=FULL; PRAGMA cache_size=-2048; PRAGMA temp_store=FILE;",
         )
@@ -173,6 +308,18 @@ impl Storage {
             .map_err(err)?;
         Ok(conn)
     }
+    /// Required after restoring/replacing a database, before exposing it to import workers.
+    /// Restore coordinator must hold exclusive lifecycle access around restore + this call.
+    pub fn invalidate_import_previews_after_restore(&self) -> Result<(), String> {
+        let _guard = self.gate.lock().map_err(err)?;
+        let conn = self.import_connection()?;
+        conn.execute(
+            "UPDATE import_generation SET generation=lower(hex(randomblob(32))) WHERE singleton=1",
+            [],
+        )
+        .map_err(err)?;
+        Ok(())
+    }
     pub fn committed_import(&self, operation: &str) -> Result<Option<ImportReceipt>, String> {
         let _guard = self.gate.lock().map_err(err)?;
         receipt(&self.import_connection()?, operation)
@@ -187,16 +334,24 @@ impl Storage {
         cancel: &AtomicBool,
     ) -> Result<ImportPreview, String> {
         prepared.validate(cancel).map_err(err)?;
-        let _guard = self.gate.lock().map_err(err)?;
-        let mut conn = self.import_connection()?;
-        let tx = conn.transaction().map_err(err)?;
-        let revision = read_model::revision(&tx)?;
-        let counts = conflicts(&tx, prepared)?;
-        Ok(ImportPreview {
-            operation: prepared.operation_id().into(),
-            database: std::fs::canonicalize(self.db_path()).map_err(err)?,
-            revision,
-            counts,
+        let _guard = gate(self, cancel)?;
+        let conn = self.import_connection()?;
+        with_sql_cancel(&conn, cancel, || {
+            let tx = rusqlite::Transaction::new_unchecked(&conn, TransactionBehavior::Deferred)
+                .map_err(err)?;
+            let revision = read_model::revision(&tx)?;
+            let generation = generation(&tx)?;
+            let (counts, plan_hash) = conflicts(&tx, prepared, cancel)?;
+            cancelled(cancel)?;
+            Ok(ImportPreview {
+                operation: prepared.operation_id().into(),
+                database: std::fs::canonicalize(self.db_path()).map_err(err)?,
+                revision,
+                generation,
+                plan_hash,
+                quality: prepared.quality().clone(),
+                counts,
+            })
         })
     }
     pub fn apply_import(
@@ -207,7 +362,17 @@ impl Storage {
         job: &ImportJob,
         progress: impl FnMut(ImportProgress),
     ) -> Result<ImportReceipt, String> {
-        let _guard = self.gate.lock().map_err(err)?;
+        // A completed receipt is still authoritative for a cancelled retry.
+        let _guard = match gate(self, &job.cancelled) {
+            Ok(g) => g,
+            Err(e) => {
+                if let Some(done) = receipt(&self.import_connection()?, prepared.operation_id())? {
+                    job.completed();
+                    return Ok(done);
+                }
+                return Err(e);
+            }
+        };
         let mut conn = self.import_connection()?;
         // Durable receipt wins over stale revision, missing stage/source, and a late cancel.
         if let Some(done) = receipt(&conn, prepared.operation_id())? {
@@ -229,6 +394,18 @@ fn apply_in_connection(
     preview: &ImportPreview,
     confirmation: ImportConfirmation,
     job: &ImportJob,
+    progress: impl FnMut(ImportProgress),
+) -> Result<ImportReceipt, String> {
+    with_sql_cancel(conn, &job.cancelled, || {
+        apply_in_connection_inner(conn, prepared, preview, confirmation, job, progress)
+    })
+}
+fn apply_in_connection_inner(
+    conn: &Connection,
+    prepared: &PreparedImport<'_>,
+    preview: &ImportPreview,
+    confirmation: ImportConfirmation,
+    job: &ImportJob,
     mut progress: impl FnMut(ImportProgress),
 ) -> Result<ImportReceipt, String> {
     if std::fs::canonicalize(conn.path().ok_or("Import requires a file database")?).map_err(err)?
@@ -237,9 +414,22 @@ fn apply_in_connection(
         return Err("Preview belongs to a different database.".into());
     }
     let started = Instant::now();
-    let tx = conn
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(err)?;
+    let waiting = Instant::now();
+    let tx = loop {
+        job.check()?;
+        match rusqlite::Transaction::new_unchecked(conn, TransactionBehavior::Immediate) {
+            Ok(tx) => break tx,
+            Err(e)
+                if matches!(
+                    e.sqlite_error_code(),
+                    Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+                ) && waiting.elapsed() < Duration::from_secs(5) =>
+            {
+                continue
+            }
+            Err(e) => return Err(err(e)),
+        }
+    };
     if let Some(done) = receipt(&tx, prepared.operation_id())? {
         job.completed();
         return Ok(done);
@@ -248,12 +438,36 @@ fn apply_in_connection(
     if preview.operation != prepared.operation_id() {
         return Err("Preview belongs to a different prepared import.".into());
     }
+    if generation(&tx)? != preview.generation {
+        return Err("Database generation changed; preview again.".into());
+    }
     read_model::check_revision(&tx, preview.revision)?;
-    let counts = conflicts(&tx, prepared)?;
-    if counts != preview.counts {
+    let (counts, plan_hash) = conflicts(&tx, prepared, &job.cancelled)?;
+    if counts != preview.counts
+        || plan_hash != preview.plan_hash
+        || prepared.quality() != &preview.quality
+    {
         return Err("Import conflicts changed; preview again.".into());
     }
-    if counts.replacements != 0 && !confirmation.replace_exact {
+    if prepared.quality().requires_acknowledgment() && !confirmation.accept_quality {
+        return Err("Quality notices need explicit acknowledgment.".into());
+    }
+    if prepared.mode() == ImportMode::Manual && confirmation.replace_source {
+        return Err("Source replacement requires an explicitly folder-owned artifact.".into());
+    }
+    if prepared.mode() == ImportMode::Folder && confirmation.replace_exact {
+        return Err("Manual exact-period replacement is separate from source replacement.".into());
+    }
+    if prepared.mode() == ImportMode::Folder
+        && counts.replacements != 0
+        && !confirmation.replace_source
+    {
+        return Err("Whole-source replacement needs explicit confirmation.".into());
+    }
+    if prepared.mode() == ImportMode::Manual
+        && counts.replacements != 0
+        && !confirmation.replace_exact
+    {
         return Err("Exact-period replacement needs explicit confirmation.".into());
     }
     if counts.cross_type_overlaps != 0 && !confirmation.accept_cross_type {
@@ -261,6 +475,31 @@ fn apply_in_connection(
             "Cross-type overlap needs explicit acceptance; totals are not distributed across days."
                 .into(),
         );
+    }
+    // Delete one owned report at a time so cancellation stays observable and all
+    // removals (including absent days) remain inside the same rollback boundary.
+    if prepared.mode() == ImportMode::Folder {
+        loop {
+            job.check()?;
+            let target: Option<String> = tx
+                .query_row(
+                    "SELECT report_id FROM temp.import_source_plan ORDER BY report_id LIMIT 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(err)?;
+            let Some(target) = target else {
+                break;
+            };
+            tx.execute("DELETE FROM reports WHERE id=?1", [&target])
+                .map_err(err)?;
+            tx.execute(
+                "DELETE FROM temp.import_source_plan WHERE report_id=?1",
+                [&target],
+            )
+            .map_err(err)?;
+        }
     }
     let mut after = 0;
     let mut bytes = 0;
@@ -271,7 +510,7 @@ fn apply_in_connection(
         if report.rows == 0 || report.bytes == 0 || report.bytes > i32::MAX as u64 {
             return Err("Invalid or empty prepared report.".into());
         }
-        if confirmation.replace_exact {
+        if prepared.mode() == ImportMode::Manual && confirmation.replace_exact {
             tx.execute(
                 "DELETE FROM reports WHERE report_type=?1 AND period_start=?2 AND period_end=?3",
                 params![report.kind, report.start, report.end],
@@ -280,6 +519,20 @@ fn apply_in_connection(
         }
         tx.execute("INSERT INTO reports(id,report_type,period_start,period_end,source_name,json) VALUES(?1,?2,?3,?4,?5,zeroblob(?6))", params![report.id, report.kind, report.start, report.end, prepared.source_name(), report.bytes]).map_err(err)?;
         let rowid = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO report_source_ownership VALUES(?1,?2,?3,?4)",
+            params![
+                report.id,
+                prepared.source_name(),
+                prepared.source_folder(),
+                if prepared.mode() == ImportMode::Folder {
+                    "folder"
+                } else {
+                    "manual"
+                }
+            ],
+        )
+        .map_err(err)?;
         {
             let mut blob = tx
                 .blob_open("main", "reports", "json", rowid, false)

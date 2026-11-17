@@ -227,11 +227,14 @@ impl IndexInputRow {
 }
 // Limits raw JSON tokens before serde_json can grow its scratch buffer. This also
 // protects IgnoredAny metadata (including huge unknown strings/numeric literals).
-struct TokenBounded<R> {
+pub(super) struct TokenBounded<R> {
     inner: R,
     string: bool,
     escape: bool,
     token: usize,
+}
+impl<R> TokenBounded<R> {
+    pub(super) fn new(inner: R) -> Self { Self { inner, string: false, escape: false, token: 0 } }
 }
 impl<R: Read> Read for TokenBounded<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {

@@ -37,6 +37,7 @@ fn sqlite_full_and_index_write_error_roll_back_replacement() {
             ImportConfirmation {
                 replace_exact: true,
                 accept_cross_type: false,
+                ..Default::default()
             },
             &ImportJob::new(),
             |_| {},
@@ -83,6 +84,7 @@ fn panic_and_last_boundary_cancellation_roll_back() {
                 ImportConfirmation {
                     replace_exact: true,
                     accept_cross_type: false,
+                    ..Default::default()
                 },
                 &job,
                 |event| {
@@ -197,6 +199,7 @@ fn kill_child() {
             ImportConfirmation {
                 replace_exact: true,
                 accept_cross_type: false,
+                ..Default::default()
             },
             &ImportJob::new(),
             |event| {
@@ -251,5 +254,32 @@ fn process_death_rolls_back_and_recovers_stage() {
             .query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))
             .unwrap(),
         "ok"
+    );
+}
+
+#[test]
+fn sql_cancellation_interrupts_large_query_and_clears_hook() {
+    let conn = Connection::open_in_memory().unwrap();
+    let cancel = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            cancel.store(true, Ordering::Release);
+        });
+        let started = Instant::now();
+        let result = with_sql_cancel(&conn, &cancel, || {
+            conn.query_row("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<100000000) SELECT sum(x) FROM n", [], |r|r.get::<_,i64>(0)).map_err(err)
+        });
+        assert!(result.is_err());
+        assert!(started.elapsed() < Duration::from_secs(1));
+        eprintln!(
+            "c2 SQL cancellation observed in {} ms",
+            started.elapsed().as_millis()
+        );
+    });
+    assert_eq!(
+        conn.query_row("SELECT 1", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
     );
 }

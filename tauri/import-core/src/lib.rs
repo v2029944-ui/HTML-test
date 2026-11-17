@@ -1,7 +1,7 @@
 //! Disk-backed XLSX ingestion. No report conversion or live-database writes here.
 mod prepared;
 mod report_stage;
-pub use prepared::{PrepareProgress, PreparedImport, PreparedReport};
+pub use prepared::{ImportMode, QualityCounts, PrepareProgress, PreparedImport, PreparedReport};
 mod zip_index;
 use fs2::FileExt;
 use quick_xml::{

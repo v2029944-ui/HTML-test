@@ -18,7 +18,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.37", features = ["bundled", "blob", "backup"] }
+rusqlite = { version = "0.37", features = ["bundled", "blob", "backup", "hooks"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 sha2 = "0.10"
 
