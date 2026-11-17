@@ -183,9 +183,34 @@ fn management_real_js_goldens_full_counts_search_navigation_and_unknown_nodes() 
     let groups = s.management_group_page(rev, "", None, 500).unwrap();
     let actual: Vec<_> = groups
         .iter()
-        .map(|g| json!({"id":g.id,"name":g.name,"members":g.members,"unique":g.unique_members}))
+        .map(|g| json!({"id":g.id,"name":g.name,"members":g.members,"unique":g.unique_members,"works":s.management_member_page(rev,g.handle,None,500).unwrap().iter().map(|m|m.work.clone()).collect::<Vec<_>>()}))
         .collect();
     assert_eq!(json!(actual), old["groups"]);
+    assert_eq!(
+        json!(s.management_work_page(rev, "", None, None, 500).unwrap()),
+        old["union"]
+    );
+    for report in s
+        .management_report_page(rev, &ManagementReportFilter::default(), None, 500)
+        .unwrap()
+    {
+        let old_report = old["reports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == report.id)
+            .unwrap();
+        assert_eq!(report.rows, old_report["rows"].as_i64().unwrap());
+        assert_eq!(report.saved_amount, old_report["savedAmount"].as_f64());
+        assert_eq!(report.warnings, old_report["warnings"].as_i64().unwrap());
+        let orgs = s
+            .management_report_org_page(rev, &report.id, None, 500)
+            .unwrap()
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect::<Vec<_>>();
+        assert_eq!(json!(orgs), old_report["organizations"]);
+    }
     assert_eq!(s.management_group_count(rev, "Second").unwrap(), 1);
     assert_eq!(
         s.management_catalog_count(rev, "one", Some("A")).unwrap(),
