@@ -3145,6 +3145,7 @@ async function importCatalogFile(file) {
 }
 
 function resetWorkbookSelection(){
+  if(state.workbook||state.fileName){$('importWeek').value='';$('importMonth').value='';}
   state.folderImport=null;
   state.workbook=null;state.fileName='';state.pending=[];state.catalogPreview=[];
   const select=$('sheetSelect');
@@ -3160,6 +3161,7 @@ function resetWorkbookSelection(){
   $('excelFile').title='';
 }
 async function selectWorkbook(buffer,fileName) {
+  if(state.workbook){$('importWeek').value='';$('importMonth').value='';}
   state.folderImport=null;$('saveDailyFolderRule').hidden=true;
   if(!window.XLSX)throw Error('Модуль чтения Excel недоступен');
   const workbook=window.XLSX.read(buffer,{type:'array',cellDates:true});

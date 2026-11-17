@@ -60,7 +60,7 @@ class ImportControls(unittest.TestCase):
         self.page.locator('#inspectFile').click()
         self.page.wait_for_function("document.querySelector('#flash').textContent.includes('Укажите дату начала первой недели')")
         self.assertTrue(self.page.locator('#saveImport').is_disabled())
-        # A date explicitly entered by the user must not be overwritten when choosing another file.
+        # Dates belong to one workbook; a different file requires its own date.
         self.page.locator('#importWeek').fill('2026-11-09')
         self.page.locator('#excelFile').set_input_files({
             'name':'Другой.xlsx',
@@ -68,7 +68,21 @@ class ImportControls(unittest.TestCase):
             'buffer':daily_workbook_bytes()
         })
         self.page.wait_for_function("state.fileName==='Другой.xlsx'")
-        self.assertEqual(self.page.locator('#importWeek').input_value(),'2026-11-09')
+        self.assertEqual(self.page.locator('#importWeek').input_value(),'')
+        self.page.locator('#importWeek').fill('2026-11-16')
+        self.page.evaluate('renderImportDateFields()')
+        self.assertEqual(self.page.locator('#importWeek').input_value(),'2026-11-16')
+
+    def test_new_workbook_clears_day_week_and_month_dates(self):
+        open_view(self.page,'upload')
+        for kind, field, value in [('week','importWeek','2026-11-09'),('day','importWeek','2026-11-13'),('month','importMonth','2026-11')]:
+            self.page.locator('#importType').select_option(kind)
+            self.page.locator('#'+field).fill(value)
+            self.page.evaluate('renderImportDateFields()')
+            self.assertEqual(self.page.locator('#'+field).input_value(),value)
+            self.page.evaluate("()=>{state.fileName='previous.xlsx';resetWorkbookSelection()}")
+            self.assertEqual(self.page.locator('#'+field).input_value(),'')
+            self.assertTrue(self.page.locator('#saveImport').is_disabled())
 
     def test_saved_legacy_week_rule_requires_review_not_silent_reset(self):
         self.page.evaluate("""()=>{window.desktopAPI={
