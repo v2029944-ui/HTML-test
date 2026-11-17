@@ -1,9 +1,14 @@
 //! Disk-backed XLSX ingestion. No report conversion or live-database writes here.
+mod report_stage;
 mod zip_index;
 use fs2::FileExt;
 use quick_xml::{
     events::{BytesStart, Event},
     Reader,
+};
+pub use report_stage::{
+    ConversionSummary, LegacyOptions, ReportInfo, ReportIssue, ReportOrganization, ReportRow,
+    ReportTotal, TripleMapping,
 };
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
