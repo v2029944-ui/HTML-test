@@ -7,7 +7,8 @@ use quick_xml::{
     Reader,
 };
 pub use report_stage::{
-    ConversionSummary, LegacyOptions, ReportInfo, ReportIssue, ReportRow, TripleMapping,
+    ConversionSummary, LegacyOptions, ReportInfo, ReportIssue, ReportOrganization, ReportRow,
+    ReportTotal, TripleMapping,
 };
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};

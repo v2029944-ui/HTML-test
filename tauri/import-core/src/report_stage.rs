@@ -5,7 +5,7 @@ use chrono::{Datelike, Duration, Months, NaiveDate};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::{collections::HashSet, sync::atomic::AtomicBool};
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct TripleMapping {
     pub header_row: u32,
     pub work_col: u32,
@@ -28,6 +28,9 @@ pub struct ConversionSummary {
 }
 #[derive(Debug, Serialize)]
 pub struct ReportInfo {
+    pub ordinal: u64,
+    pub sheet: String,
+    pub mapping: TripleMapping,
     pub id: String,
     pub start: String,
     pub end: String,
@@ -64,11 +67,29 @@ pub struct ReportIssue {
     pub actual_count: Option<f64>,
     pub actual_amount: Option<f64>,
 }
-const SCHEMA:&str="CREATE TABLE IF NOT EXISTS converted_reports(ordinal INTEGER PRIMARY KEY,id TEXT UNIQUE,sheet TEXT,kind TEXT,start TEXT,end TEXT,row_count INTEGER,count REAL,amount REAL,has_mismatch INTEGER);
+#[derive(Debug, Serialize)]
+pub struct ReportTotal {
+    pub sequence: u64,
+    pub kind: String,
+    pub organization: Option<String>,
+    pub source_row: u32,
+    pub count: Option<f64>,
+    pub amount: Option<f64>,
+    pub work_cell: String,
+    pub count_cell: String,
+    pub amount_cell: String,
+}
+#[derive(Debug, Serialize)]
+pub struct ReportOrganization {
+    pub organization: String,
+    pub count: f64,
+    pub amount: f64,
+}
+const SCHEMA:&str="CREATE TABLE IF NOT EXISTS converted_reports(ordinal INTEGER PRIMARY KEY,id TEXT UNIQUE,sheet TEXT,kind TEXT,start TEXT,end TEXT,row_count INTEGER,count REAL,amount REAL,has_mismatch INTEGER,header_row INTEGER,work_col INTEGER,count_col INTEGER,amount_col INTEGER);
  CREATE TABLE IF NOT EXISTS converted_rows(report_id TEXT,row_index INTEGER,organization TEXT,work TEXT,count REAL,amount REAL,source_row INTEGER,work_cell TEXT,count_cell TEXT,amount_cell TEXT,PRIMARY KEY(report_id,row_index)) WITHOUT ROWID;
  CREATE TABLE IF NOT EXISTS converted_issues(report_id TEXT,seq INTEGER,kind TEXT,reason TEXT,source_row INTEGER,organization TEXT,work_cell TEXT,count_cell TEXT,amount_cell TEXT,expected_count REAL,expected_amount REAL,actual_count REAL,actual_amount REAL,PRIMARY KEY(report_id,seq)) WITHOUT ROWID;
  CREATE TABLE IF NOT EXISTS converted_totals(report_id TEXT,seq INTEGER,kind TEXT,organization TEXT,source_row INTEGER,count REAL,amount REAL,PRIMARY KEY(report_id,seq)) WITHOUT ROWID;
- CREATE TABLE IF NOT EXISTS converted_organizations(report_id TEXT,organization TEXT,count REAL,amount REAL,PRIMARY KEY(report_id,organization)) WITHOUT ROWID;";
+ CREATE TABLE IF NOT EXISTS converted_organizations(report_id TEXT,seq INTEGER,organization TEXT,count REAL,amount REAL,PRIMARY KEY(report_id,seq)) WITHOUT ROWID;";
 fn js_space(c: char) -> bool {
     matches!(
         c,
@@ -133,7 +154,23 @@ fn number(s: Option<&str>) -> Option<f64> {
 }
 fn round(n: f64, places: i32) -> f64 {
     let p = 10f64.powi(places);
-    (((n + f64::EPSILON) * p) + 0.5).floor() / p
+    // Preserve the legacy EPSILON addition and scaling. Math.round ties go
+    // toward +infinity; adding 0.5 first would alter large odd integers.
+    let scaled = (n + f64::EPSILON) * p;
+    if !scaled.is_finite() || scaled.fract() == 0.0 {
+        return scaled / p;
+    }
+    let floor = scaled.floor();
+    let rounded = if scaled - floor >= 0.5 {
+        floor + 1.0
+    } else {
+        floor
+    };
+    if rounded == 0.0 {
+        0.0f64.copysign(scaled) / p
+    } else {
+        rounded / p
+    }
 }
 fn cell(col: u32, row: u32) -> String {
     let mut c = col;
@@ -240,14 +277,18 @@ impl Stage<'_> {
                 }
                 let id = format!("legacy-{}", i + 1);
                 self.db.execute(
-                    "INSERT INTO converted_reports VALUES(?1,?2,?3,?4,?5,?6,0,0,0,0)",
+                    "INSERT INTO converted_reports VALUES(?1,?2,?3,?4,?5,?6,0,0,0,0,?7,?8,?9,?10)",
                     params![
                         i + 1,
                         id,
                         cfg.sheet,
                         cfg.kind,
                         first.to_string(),
-                        end.to_string()
+                        end.to_string(),
+                        mapping.header_row,
+                        mapping.work_col,
+                        mapping.count_col,
+                        mapping.amount_col
                     ],
                 )?;
                 let mut context = Context {
@@ -257,7 +298,8 @@ impl Stage<'_> {
                     id: &id,
                     active: None,
                     by_org: [(0., 0.); 4],
-                    present: [false; 4],
+                    present: [0; 4],
+                    present_count: 0,
                     rows: 0,
                     issues: 0,
                     totals: 0,
@@ -322,10 +364,10 @@ impl Stage<'_> {
                     )?;
                 }
                 for (j, (q, a)) in context.by_org.iter().enumerate() {
-                    if context.present[j] {
+                    if context.present[j] != 0 {
                         context.db.execute(
-                            "INSERT INTO converted_organizations VALUES(?1,?2,?3,?4)",
-                            params![id, cfg.organizations[j], q, a],
+                            "INSERT INTO converted_organizations VALUES(?1,?2,?3,?4,?5)",
+                            params![id, context.present[j], cfg.organizations[j], q, a],
                         )?;
                     }
                 }
@@ -366,9 +408,17 @@ impl Stage<'_> {
     pub fn report_page(&self, after: u64, limit: usize) -> Result<Vec<ReportInfo>> {
         page_limit(limit)?;
         self.conversion_ready()?;
-        let mut s=self.db.prepare("SELECT id,start,end,kind,row_count,count,amount,has_mismatch FROM converted_reports WHERE ordinal>?1 ORDER BY ordinal LIMIT ?2")?;
+        let mut s=self.db.prepare("SELECT id,start,end,kind,row_count,count,amount,has_mismatch,ordinal,sheet,header_row,work_col,count_col,amount_col FROM converted_reports WHERE ordinal>?1 ORDER BY ordinal LIMIT ?2")?;
         let r = s.query_map(params![after, limit], |r| {
             Ok(ReportInfo {
+                ordinal: r.get(8)?,
+                sheet: r.get(9)?,
+                mapping: TripleMapping {
+                    header_row: r.get(10)?,
+                    work_col: r.get(11)?,
+                    count_col: r.get(12)?,
+                    amount_col: r.get(13)?,
+                },
                 id: r.get(0)?,
                 start: r.get(1)?,
                 end: r.get(2)?,
@@ -380,6 +430,40 @@ impl Stage<'_> {
             })
         })?;
         Ok(r.collect::<std::result::Result<_, _>>()?)
+    }
+    /// Exclusive one-based total sequence; at most 100 controls per page.
+    pub fn report_totals(&self, id: &str, after: u64, limit: usize) -> Result<Vec<ReportTotal>> {
+        page_limit(limit)?;
+        self.conversion_ready()?;
+        let mut stmt = self.db.prepare("SELECT t.seq,t.kind,t.organization,t.source_row,t.count,t.amount,r.work_col,r.count_col,r.amount_col FROM converted_totals t JOIN converted_reports r ON r.id=t.report_id WHERE t.report_id=?1 AND t.seq>?2 ORDER BY t.seq LIMIT ?3")?;
+        let rows = stmt.query_map(params![id, after, limit], |r| {
+            let source_row = r.get(3)?;
+            Ok(ReportTotal {
+                sequence: r.get(0)?,
+                kind: r.get(1)?,
+                organization: r.get(2)?,
+                source_row,
+                count: r.get(4)?,
+                amount: r.get(5)?,
+                work_cell: cell(r.get(6)?, source_row),
+                count_cell: cell(r.get(7)?, source_row),
+                amount_cell: cell(r.get(8)?, source_row),
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+    /// At most four configured organizations, in source first-seen order.
+    pub fn report_organizations(&self, id: &str) -> Result<Vec<ReportOrganization>> {
+        self.conversion_ready()?;
+        let mut stmt = self.db.prepare("SELECT organization,count,amount FROM converted_organizations WHERE report_id=?1 ORDER BY seq LIMIT 4")?;
+        let rows = stmt.query_map([id], |r| {
+            Ok(ReportOrganization {
+                organization: r.get(0)?,
+                count: r.get(1)?,
+                amount: r.get(2)?,
+            })
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
     pub fn report_rows(&self, id: &str, after: u64, limit: usize) -> Result<Vec<ReportRow>> {
         page_limit(limit)?;
@@ -465,7 +549,8 @@ struct Context<'a> {
     id: &'a str,
     active: Option<Active>,
     by_org: [(f64, f64); 4],
-    present: [bool; 4],
+    present: [u64; 4],
+    present_count: u64,
     rows: u64,
     issues: u64,
     totals: u64,
@@ -527,6 +612,12 @@ impl Context<'_> {
         }
         Ok(())
     }
+    fn mark_present(&mut self, org: usize) {
+        if self.present[org] == 0 {
+            self.present_count += 1;
+            self.present[org] = self.present_count;
+        }
+    }
     fn add(&mut self, row: u32, work: &str, q: f64, a: f64) -> Result<()> {
         let org = self
             .active
@@ -537,7 +628,7 @@ impl Context<'_> {
         self.sum.1 += a;
         self.by_org[org].0 += q;
         self.by_org[org].1 += a;
-        self.present[org] = true;
+        self.mark_present(org);
         if [
             self.sum.0,
             self.sum.1,
@@ -584,6 +675,11 @@ impl Context<'_> {
                 None
             },
         );
+        let raw_present = |slot: usize| {
+            values[slot]
+                .as_deref()
+                .is_some_and(|s| !s.trim_matches(js_space).is_empty())
+        };
         if work.is_empty() {
             if let (Some(q), Some(a), Some(_)) = (q, a, active) {
                 self.add(row, &format!("[Без названия — строка {row}]"), q, a)?;
@@ -596,16 +692,22 @@ impl Context<'_> {
                     None,
                     None,
                 )?;
-            } else if values[1..].iter().any(|v| {
-                v.as_deref()
-                    .is_some_and(|s| !s.trim_matches(js_space).is_empty())
-            }) {
+            } else if q.is_some() || a.is_some() || raw_present(1) || raw_present(2) {
+                let cells = if q.is_some() || a.is_some() {
+                    (Some(cell(self.m.work_col, row)), bad_cells.1, bad_cells.2)
+                } else {
+                    (
+                        Some(cell(self.m.work_col, row)),
+                        raw_present(1).then(|| cell(self.m.count_col, row)),
+                        raw_present(2).then(|| cell(self.m.amount_col, row)),
+                    )
+                };
                 self.issue(
                     "invalid",
                     "Строка без названия содержит неполные или некорректные значения",
                     Some(row),
                     active,
-                    (Some(cell(self.m.work_col, row)), bad_cells.1, bad_cells.2),
+                    cells,
                     None,
                     None,
                 )?;
@@ -617,7 +719,7 @@ impl Context<'_> {
             lower.strip_prefix(p).is_some_and(|tail| {
                 tail.is_empty()
                     || tail.starts_with(':')
-                    || tail.chars().next().is_some_and(char::is_whitespace)
+                    || tail.chars().next().is_some_and(js_space)
             })
         });
         if total {
@@ -675,7 +777,7 @@ impl Context<'_> {
                     amount: a,
                     row,
                 });
-                self.present[org] = true;
+                self.mark_present(org);
                 self.totals += 1;
                 self.db.execute(
                     "INSERT INTO converted_totals VALUES(?1,?2,'org',?3,?4,?5,?6)",
@@ -726,6 +828,29 @@ impl Context<'_> {
 #[cfg(test)]
 mod numeric_tests {
     use super::*;
+    #[test]
+    fn rounding_matches_math_round_after_legacy_epsilon_scaling() {
+        for (input, places, expected) in [
+            (4503599627.370497, 6, 4503599627.370497),
+            (45035996273704.97, 2, 45035996273704.97),
+            (-45035996273704.97, 2, -45035996273704.97),
+            (0.4999999999999997, 0, 0.0),
+            (-0.5000000000000003, 0, -1.0),
+            (-1.5, 0, -1.0),
+            (-2.5, 0, -2.0),
+            (-0.5, 0, -0.0),
+            (-0.1, 0, -0.0),
+            (1.005, 2, 1.01),
+            (1.2345678, 6, 1.234568),
+        ] {
+            assert_eq!(
+                round(input, places).to_bits(),
+                (expected as f64).to_bits(),
+                "{input} / {places}"
+            );
+        }
+        assert!(!round(1e308, 6).is_finite());
+    }
     #[test]
     fn numeric_cells_match_ecmascript_whitespace_and_finite_rules() {
         assert_eq!(number(Some("1\u{00a0}234,50")), Some(1234.5));
