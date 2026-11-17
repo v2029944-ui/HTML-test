@@ -1,6 +1,7 @@
 """Run the packaged Tauri app through its real WebView2 and SQLite on an isolated Windows CI runner."""
 import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib
 from pathlib import Path
+from contextlib import contextmanager
 from playwright.sync_api import sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests'))
@@ -66,6 +67,35 @@ def wait_for_app_state(page, expression, description, timeout_ms=30_000):
         if remaining<=0:raise RuntimeError(description+' did not complete within '+str(timeout_ms)+' ms')
         page.wait_for_timeout(min(100,remaining*1000))
 
+@contextmanager
+def windows_test_workspace():
+    """Release only this test's WebView2 workers before deleting their temporary profile."""
+    workspace=Path(tempfile.mkdtemp(prefix='analiz-webview2-'))
+    try:
+        yield workspace
+    finally:
+        cleanup_script=r"""
+        $token=$env:ANALIZ_SMOKE_PROFILE_TOKEN
+        if(-not $token.StartsWith('analiz-webview2-')){throw 'Invalid test profile token'}
+        $owned=@(Get-CimInstance Win32_Process -Filter "name='msedgewebview2.exe'" | Where-Object {$_.CommandLine -like "*$token*"})
+        foreach($item in $owned){
+          # A parent worker may already have terminated a child in this snapshot.
+          Stop-Process -Id $item.ProcessId -Force -ErrorAction SilentlyContinue
+          $remaining=Get-Process -Id $item.ProcessId -ErrorAction SilentlyContinue
+          if($remaining -and -not $remaining.WaitForExit(10000)){throw 'A test WebView2 worker did not exit'}
+        }
+        $left=@(Get-CimInstance Win32_Process -Filter "name='msedgewebview2.exe'" | Where-Object {$_.CommandLine -like "*$token*"})
+        if($left.Count){throw 'Test WebView2 workers remain after cleanup'}
+        """
+        subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command',cleanup_script],
+            env=dict(os.environ,ANALIZ_SMOKE_PROFILE_TOKEN=workspace.name),check=True,capture_output=True,timeout=30)
+        deadline=time.monotonic()+10
+        while workspace.exists():
+            try:shutil.rmtree(workspace)
+            except PermissionError as error:
+                if getattr(error,'winerror',None) not in (5,32,33) or time.monotonic()>=deadline:raise
+                time.sleep(.2)
+
 def run():
     if sys.platform!='win32' or os.environ.get('GITHUB_ACTIONS')!='true':raise RuntimeError('Run only on an isolated Windows GitHub Actions runner')
     installers=list((ROOT/'tauri/src-tauri/target/release/bundle/nsis').glob('*.exe'))
@@ -84,7 +114,7 @@ def run():
             'gui_check':'separately compiled non-distributable WebView2 CDP build','checks':[]}
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print('INSTALLER_PATH='+report['installer'],flush=True);print('INSTALLER_BYTES='+str(report['bytes']),flush=True)
-    with tempfile.TemporaryDirectory(prefix='analiz-webview2-') as tmp:
+    with windows_test_workspace() as tmp:
         tmp=Path(tmp);destination=tmp/'installed'
         # CDP comes from the test-only Tauri configuration's WebView2 API options,
         # not from an environment flag ignored by elevated modern WebView2.
@@ -133,7 +163,7 @@ def run():
                 # This is failure cleanup only; an unsuccessful normal close still fails the test.
                 if process.poll() is None:subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],check=True,capture_output=True)
         with sync_playwright() as pw:
-            process,engine=start()
+            process,engine=start();browser=None
             try:
                 browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227')
                 page=wait_for_webview_page(browser);errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
@@ -168,8 +198,11 @@ def run():
                 assert before_restart=={'view':'upload','saved':'upload'},before_restart
             except BaseException as error:
                 diagnostics(error);raise
-            finally:stop(process)
-            process,_=start()
+            finally:
+                try:stop(process)
+                finally:
+                    if browser and browser.is_connected():browser.close()
+            process,_=start();browser=None
             try:
                 browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227');page=wait_for_webview_page(browser)
                 wait_for_app_state(page, 'Boolean(window.appReady)', 'Application initialization');page.evaluate('window.appReady')
@@ -181,7 +214,10 @@ def run():
                 report['checks'].append('SQLite and last view survive application restart')
             except BaseException as error:
                 diagnostics(error);raise
-            finally:stop(process)
+            finally:
+                try:stop(process)
+                finally:
+                    if browser and browser.is_connected():browser.close()
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(report,ensure_ascii=False),flush=True)
 
