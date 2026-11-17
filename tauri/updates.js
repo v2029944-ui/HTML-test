@@ -116,7 +116,7 @@
         try{reserve=await checkBackupUpdate();}
         catch(error){throw Error('GitHub: '+(primaryError?.message||primaryError)+'; Яндекс: '+(error?.message||error));}
         if(!reserve||reserve.version!==update.version)
-          throw Error('GitHub: '+(primaryError?.message||primaryError)+'; на Яндексе нет подтверждённой версии '+update.version+'.');
+          throw Error('GitHub: '+(primaryError?.message||primaryError)+'; на Яндексе нет подтверждённой версии '+update.version);
         await update.close();
         update=reserve;received=0;total=0;
         message('Скачиваем ту же подписанную версию с Яндекса…',false,true);
