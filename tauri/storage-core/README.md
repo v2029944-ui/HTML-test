@@ -1,5 +1,9 @@
 # Bounded SQLite read-model foundation (D1)
 
+D2a adds the [bounded report-semantic analysis API](ANALYTICS.md). Use that layer
+for completeness-aware ranges, grouped comparisons, adjacent changes and complete
+CSV exports; D1 raw aggregates below intentionally retain their original meaning.
+
 C1 adds [prepared import and atomic application](IMPORT_APPLICATION.md), including
 UTF-8 BLOB compatibility in full `load()`. The sections below describe the D1
 foundation; its final “future C” note is historical and superseded by C1.

@@ -11,6 +11,10 @@ use std::{
     time::UNIX_EPOCH,
 };
 
+#[path = "analytics.rs"]
+mod analytics;
+pub use analytics::*;
+
 #[path = "read_model.rs"]
 mod read_model;
 #[path = "import_apply.rs"]
@@ -218,6 +222,7 @@ fn new_connection(path: &Path) -> Result<Connection, String> {
          );",
     ).map_err(err)?;
     read_model::initialize(&conn)?;
+    analytics::initialize(&conn)?;
     import_apply::initialize(&conn)?;
     Ok(conn)
 }
@@ -796,3 +801,7 @@ mod read_model_tests;
 #[cfg(test)]
 #[path = "import_apply_tests.rs"]
 mod import_apply_tests;
+
+#[cfg(test)]
+#[path = "analytics_tests.rs"]
+mod analytics_tests;
