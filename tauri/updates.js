@@ -16,13 +16,21 @@
   const banner=elem('section',null,'panel update-notice');banner.id='appUpdateNotice';banner.hidden=true;banner.setAttribute('aria-label','Доступно обновление программы');
   const title=elem('h2');title.id='appUpdateNoticeTitle';title.setAttribute('role','status');title.setAttribute('aria-live','polite');
   const bannerActions=elem('div',null,'actions'),bannerNotes=button('noticeWhatsNew','Что нового'),later=button('deferAppUpdate','Позже'),bannerInstall=button('noticeInstallUpdate','Обновить','primary');
-  bannerActions.append(bannerNotes,later,bannerInstall);banner.append(title,bannerActions);main.prepend(banner);
+  const bannerStatus=elem('p',null,'muted small');bannerStatus.id='appUpdateNoticeStatus';bannerStatus.hidden=true;
+  bannerStatus.setAttribute('role','status');bannerStatus.setAttribute('aria-live','polite');
+  bannerActions.append(bannerNotes,later,bannerInstall);banner.append(title,bannerStatus,bannerActions);main.prepend(banner);
   const management=document.getElementById('managementToggle'),badge=elem('span','●','update-badge');badge.id='appUpdateBadge';badge.hidden=true;
   const originalLabel=management?.getAttribute('aria-label')||'Управление';management?.append(badge);
   const dialog=elem('dialog',null,'update-notes');dialog.id='appUpdateNotes';dialog.setAttribute('aria-labelledby','appUpdateNotesHeading');
   const notesHeading=elem('h2');notesHeading.id='appUpdateNotesHeading';const notesBody=elem('div',null,'update-notes-body'),closeNotes=button('closeUpdateNotes','Закрыть');
   dialog.append(notesHeading,notesBody,closeNotes);main.append(dialog);closeNotes.addEventListener('click',()=>dialog.close());
-  const message=(text,error=false)=>{status.textContent=text;status.className=(error?'warn':'muted')+' small';};
+  const message=(text,error=false,showInNotice=false)=>{
+    status.textContent=text;status.className=(error?'warn':'muted')+' small';
+    bannerStatus.textContent=text;bannerStatus.className=(error?'warn':'muted')+' small';
+    bannerStatus.hidden=!update||(!error&&!showInNotice);
+    // The settings panel may be hidden while the user initiates an update from Analytics.
+    if(update&&error)banner.hidden=false;
+  };
   function showNotes(){if(!update)return;notesHeading.textContent='Что нового в версии '+update.version;notesBody.textContent=(typeof update.body==='string'&&update.body.trim())||'Описание изменений для этой версии не опубликовано.';if(!dialog.open)dialog.showModal();}
   notes.addEventListener('click',showNotes);bannerNotes.addEventListener('click',showNotes);
   function showAvailable(manual){
@@ -65,13 +73,13 @@
     try{
       if(!await confirm('Скачать и установить версию '+update.version+'? Программа закроется. Несохранённые изменения в формах будут потеряны. Сохранённые отчёты и настройки останутся.'))return;
       const changed=blocked();if(changed){message(changed,true);return;}
-      main.inert=true;let received=0,total=0;message('Скачиваем обновление…');
+      main.inert=true;let received=0,total=0;message('Скачиваем обновление…',false,true);
       await update.downloadAndInstall(event=>{
         if(event.event==='Started')total=event.data.contentLength||0;
-        if(event.event==='Progress'){received+=event.data.chunkLength;message(total?'Загружено '+Math.min(100,Math.round(received/total*100))+'%':'Загружено '+Math.round(received/1024)+' КБ');}
-        if(event.event==='Finished')message('Проверка подписи и установка обновления…');
+        if(event.event==='Progress'){received+=event.data.chunkLength;message(total?'Загружено '+Math.min(100,Math.round(received/total*100))+'%':'Загружено '+Math.round(received/1024)+' КБ',false,true);}
+        if(event.event==='Finished')message('Проверка подписи и установка обновления…',false,true);
       },{timeout:120000,restartAfterInstall:true});
-      message('Обновление передано установщику. Если программа закрылась, дождитесь завершения установки.');
+      message('Обновление передано установщику. Если программа закрылась, дождитесь завершения установки.',false,true);
     }catch(err){message('Обновление не установлено: '+(err?.message||String(err))+'. Можно повторить попытку.',true);}
     finally{main.inert=wasInert;state.appUpdating=false;if(operations)operations.updating=false;lock(false);}
   }
