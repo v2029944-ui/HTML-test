@@ -91,13 +91,14 @@ test('watched-folder importer suggests correct dates for daily, weekly and month
 });
 
 
-test('Tauri dialog permission and all seven confirmations guard writes until answered',async()=>{
+test('Tauri dialog permission and every confirmation guard writes until answered',async()=>{
   const root=path.resolve(__dirname,'../..');
   const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
   const cap=JSON.parse(fs.readFileSync(path.join(root,'tauri/src-tauri/capabilities/default.json'),'utf8'));
   assert.ok(cap.permissions.includes('dialog:allow-message'));
-  assert.equal((html.match(/!await confirm\(/g)||[]).length,7);
-  assert.equal((html.match(/\bconfirm\(/g)||[]).length,7,'No confirmation may bypass await');
+  const confirmationCount=(html.match(/\bconfirm\(/g)||[]).length;
+  assert.ok(confirmationCount>=7,'Existing destructive confirmations must remain');
+  assert.equal((html.match(/!await confirm\(/g)||[]).length,confirmationCount,'No confirmation may bypass await');
 
   const compileFunction=(name,context)=>{
     const start=html.indexOf('async function '+name+'(');
