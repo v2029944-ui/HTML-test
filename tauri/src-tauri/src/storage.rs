@@ -11,6 +11,10 @@ use std::{
     time::UNIX_EPOCH,
 };
 
+#[path = "read_model.rs"]
+mod read_model;
+pub use read_model::{Aggregate, IndexedRow, ReadFilter, ReportHeader, MAX_PAGE_ROWS};
+
 const MAX_EXCEL_BYTES: u64 = 30 * 1024 * 1024;
 const MAX_PAYLOAD_BYTES: usize = 200 * 1024 * 1024;
 // Keep synchronized with REPORT_TYPES in the root index.html.
@@ -214,6 +218,7 @@ fn new_connection(path: &Path) -> Result<Connection, String> {
            json TEXT NOT NULL
          );",
     ).map_err(err)?;
+    read_model::initialize(&conn)?;
     Ok(conn)
 }
 
@@ -259,6 +264,7 @@ fn write_data(tx: &Transaction<'_>, data: &Value) -> Result<(), String> {
             report["desktopSource"].as_str(),
             report.to_string(),
         ]).map_err(err)?;
+        read_model::index_value(tx, report["id"].as_str().ok_or("Missing id")?, report)?;
     }
     drop(stmt);
     insert_key(tx, "settings", &data["settings"].to_string())?;
@@ -778,3 +784,6 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+#[path = "read_model_tests.rs"]
+mod read_model_tests;
