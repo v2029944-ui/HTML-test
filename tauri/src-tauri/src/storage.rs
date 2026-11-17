@@ -11,6 +11,12 @@ use std::{
     time::UNIX_EPOCH,
 };
 
+#[path = "management.rs"]
+mod management;
+pub use management::*;
+#[path = "management_tree.rs"]
+mod management_tree;
+
 #[path = "analytics.rs"]
 mod analytics;
 pub use analytics::*;
@@ -223,6 +229,7 @@ fn new_connection(path: &Path) -> Result<Connection, String> {
     ).map_err(err)?;
     read_model::initialize(&conn)?;
     analytics::initialize(&conn)?;
+    management::initialize(&conn)?;
     import_apply::initialize(&conn)?;
     Ok(conn)
 }
@@ -239,7 +246,11 @@ fn read_key(conn: &Connection, key: &str) -> Result<Option<String>, String> {
     let mut stmt = conn.prepare("SELECT json FROM kv WHERE name=?1").map_err(err)?;
     let mut rows = stmt.query([key]).map_err(err)?;
     match rows.next().map_err(err)? {
-        Some(row) => row.get::<_, String>(0).map(Some).map_err(err),
+        Some(row) => match row.get_ref(0).map_err(err)? {
+            rusqlite::types::ValueRef::Text(bytes) | rusqlite::types::ValueRef::Blob(bytes) =>
+                String::from_utf8(bytes.to_vec()).map(Some).map_err(err),
+            _ => Err("Invalid stored kv JSON type".into()),
+        },
         None => Ok(None),
     }
 }
@@ -805,3 +816,7 @@ mod import_apply_tests;
 #[cfg(test)]
 #[path = "analytics_tests.rs"]
 mod analytics_tests;
+
+#[cfg(test)]
+#[path = "management_tests.rs"]
+mod management_tests;

@@ -1,5 +1,8 @@
 # Bounded SQLite read-model foundation (D1)
 
+D2b adds the [bounded full-fidelity settings and management API](MANAGEMENT.md),
+with targeted writes and no frontend activation.
+
 D2a adds the [bounded report-semantic analysis API](ANALYTICS.md). Use that layer
 for completeness-aware ranges, grouped comparisons, adjacent changes and complete
 CSV exports; D1 raw aggregates below intentionally retain their original meaning.
