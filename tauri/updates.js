@@ -53,14 +53,43 @@
     return '';
   }
   function lock(value){busy=value;check.disabled=install.disabled=bannerInstall.disabled=later.disabled=value;}
+  const backupEvent='html-test-backup-update-progress';
+  async function checkBackupUpdate(){
+    const info=await tauri.core.invoke('check_backup_update');
+    if(!info)return null;
+    if(typeof info.version!=='string'||!info.version||typeof info.currentVersion!=='string')
+      throw Error('Некорректный ответ резервного сервера обновлений.');
+    return {...info,fromBackup:true,close:async()=>{},
+      downloadAndInstall:async onEvent=>{
+        const unlisten=await tauri.event?.listen?.(backupEvent,({payload})=>onEvent(payload));
+        try{await tauri.core.invoke('install_backup_update',{expectedVersion:info.version});}
+        finally{if(unlisten)unlisten();}
+      }
+    };
+  }
+  function networkDownloadError(err){
+    const text=String(err?.message||err||'');
+    return !/signature|подпис|checksum|digest|permission|диск|места на диске/i.test(text)
+      && /network|connection|connect|download|request|timeout|timed out|dns|proxy|socket|tls|http|status|offline|сеть|соединени|загрузк|тайм-аут/i.test(text);
+  }
   async function checkUpdate(manual=false){
     if(busy)return;lock(true);
     try{
       if(!await tauri.core.invoke('updater_configured')){if(update){await update.close();update=null;}showAvailable(false);message('В этой сборке онлайн-обновление не настроено: требуется выпуск с ключом проверки подписи.');return;}
       if(update){await update.close();update=null;}
       showAvailable(false);message('Проверяем новую версию…');
-      update=await tauri.updater.check({timeout:15000});
-      message(update?'Доступна версия '+update.version+' (установлена '+update.currentVersion+').':'Установлена актуальная версия.');
+      try{update=await tauri.updater.check({timeout:15000});}
+      catch(primaryError){
+        try{
+          update=await checkBackupUpdate();
+        }catch(backupError){
+          throw Error('GitHub: '+(primaryError?.message||primaryError)+
+            '; Яндекс: '+(backupError?.message||backupError));
+        }
+        if(!update)throw Error('GitHub недоступен, а Яндекс не предлагает новую версию; актуальность обновлений не подтверждена.');
+      }
+      message(update?'Доступна версия '+update.version+' (установлена '+update.currentVersion+
+        (update.fromBackup?'; источник — Яндекс':'')+').':'Установлена актуальная версия.');
       showAvailable(manual);
     }catch(err){showAvailable(false);message('Не удалось проверить обновления: '+(err?.message||String(err))+'. Можно повторить проверку позже.',true);}
     finally{lock(false);}
@@ -74,11 +103,25 @@
       if(!await confirm('Скачать и установить версию '+update.version+'? Программа закроется. Несохранённые изменения в формах будут потеряны. Сохранённые отчёты и настройки останутся.'))return;
       const changed=blocked();if(changed){message(changed,true);return;}
       main.inert=true;let received=0,total=0;message('Скачиваем обновление…',false,true);
-      await update.downloadAndInstall(event=>{
-        if(event.event==='Started')total=event.data.contentLength||0;
+      const progress=event=>{
+        if(event.event==='Started'||event.data?.contentLength)total=event.data?.contentLength||total;
         if(event.event==='Progress'){received+=event.data.chunkLength;message(total?'Загружено '+Math.min(100,Math.round(received/total*100))+'%':'Загружено '+Math.round(received/1024)+' КБ',false,true);}
         if(event.event==='Finished')message('Проверка подписи и установка обновления…',false,true);
-      },{timeout:120000,restartAfterInstall:true});
+      };
+      try{
+        await update.downloadAndInstall(progress,{timeout:120000,restartAfterInstall:true});
+      }catch(primaryError){
+        if(update.fromBackup||!networkDownloadError(primaryError))throw primaryError;
+        let reserve;
+        try{reserve=await checkBackupUpdate();}
+        catch(error){throw Error('GitHub: '+(primaryError?.message||primaryError)+'; Яндекс: '+(error?.message||error));}
+        if(!reserve||reserve.version!==update.version)
+          throw Error('GitHub: '+(primaryError?.message||primaryError)+'; на Яндексе нет подтверждённой версии '+update.version+'.');
+        await update.close();
+        update=reserve;received=0;total=0;
+        message('Скачиваем ту же подписанную версию с Яндекса…',false,true);
+        await update.downloadAndInstall(progress,{timeout:120000,restartAfterInstall:true});
+      }
       message('Обновление передано установщику. Если программа закрылась, дождитесь завершения установки.',false,true);
     }catch(err){message('Обновление не установлено: '+(err?.message||String(err))+'. Можно повторить попытку.',true);}
     finally{main.inert=wasInert;state.appUpdating=false;if(operations)operations.updating=false;lock(false);}
