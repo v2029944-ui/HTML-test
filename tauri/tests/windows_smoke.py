@@ -38,18 +38,27 @@ def run():
     installers=list((ROOT/'tauri/src-tauri/target/release/bundle/nsis').glob('*.exe'))
     if len(installers)!=1:raise RuntimeError('Expected one freshly built installer')
     output=ROOT/'tauri/test-artifacts';output.mkdir(exist_ok=True)
-    installer=output/'setup.exe';shutil.copy2(installers[0],installer)
-    signature=Path(str(installers[0])+'.sig')
-    if not signature.exists():raise RuntimeError('Signed preview installer is required')
-    shutil.copy2(signature,output/'setup.exe.sig')
-    report={'installer':str(installer.relative_to(ROOT)),'bytes':installer.stat().st_size,'sha256':hashlib.sha256(installer.read_bytes()).hexdigest(),'checks':[]}
+    # The signed preview was copied before the test-only CDP-enabled build overwrote
+    # the bundle directory. Only the signed preview is uploaded to Actions artifacts.
+    installer=output/'setup.exe';signature=output/'setup.exe.sig'
+    if not installer.is_file() or not signature.is_file():
+        raise RuntimeError('Original signed preview installer and signature must be preserved')
+    gui_installer=installers[0]
+    if hashlib.sha256(gui_installer.read_bytes()).digest()==hashlib.sha256(installer.read_bytes()).digest():
+        raise RuntimeError('GUI test bundle is not distinct from the signed production preview')
+    report={'installer':str(installer.relative_to(ROOT)),'bytes':installer.stat().st_size,
+            'sha256':hashlib.sha256(installer.read_bytes()).hexdigest(),
+            'gui_check':'separately compiled non-distributable WebView2 CDP build','checks':[]}
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print('INSTALLER_PATH='+report['installer'],flush=True);print('INSTALLER_BYTES='+str(report['bytes']),flush=True)
     with tempfile.TemporaryDirectory(prefix='analiz-webview2-') as tmp:
         tmp=Path(tmp);destination=tmp/'installed'
-        env=dict(os.environ,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--remote-debugging-port=9227',WEBVIEW2_USER_DATA_FOLDER=str(tmp/'webview'))
+        # CDP comes from the test-only Tauri configuration's WebView2 API options,
+        # not from an environment flag ignored by elevated modern WebView2.
+        env=dict(os.environ,WEBVIEW2_USER_DATA_FOLDER=str(tmp/'webview'))
+        env.pop('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS',None)
         env['NO_PROXY']=env.get('NO_PROXY','')+',127.0.0.1,localhost'
-        subprocess.run([str(installer),'/S','/D='+str(destination)],check=True,timeout=240,env=env)
+        subprocess.run([str(gui_installer),'/S','/D='+str(destination)],check=True,timeout=240,env=env)
         executables=list(destination.rglob('analiz-rabot-tauri.exe'))
         if len(executables)!=1:raise RuntimeError('Installed application executable not found')
         # NSIS may launch the application before the test starts its own instance.
@@ -107,7 +116,7 @@ def run():
                 checkbox.focus();page.keyboard.press('Space');assert page.locator('#orgFilter input').first.is_checked()!=was
                 page.keyboard.press('Escape');report['checks'].append('native and multiple dropdown keyboard input')
                 page.locator('#reportsShortcut').click()
-                page.locator('#calendarYear').select_option('2024');page.locator('#calendarType').select_option('day')
+                page.locator('#calendarYearSelect').select_option('2024');page.locator('#calendarType').select_option('day')
                 page.locator('[data-month="2024-02"]').click();assert page.locator('#calendarDetails button[data-date]').count()==29
                 report['checks'].append('leap February calendar')
                 page.screenshot(path=str(output/'windows-webview2.png'))

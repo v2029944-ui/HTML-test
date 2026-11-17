@@ -52,6 +52,22 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           ANALIZ_UPDATER_PUBLIC_KEY: ${{ secrets.ANALIZ_UPDATER_PUBLIC_KEY }}
         run: npm --prefix tauri run build:signed:windows
+      - name: Preserve signed preview before building test-only WebView2 bundle
+        if: github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
+        shell: pwsh
+        run: |
+          $setups = @(Get-ChildItem "tauri/src-tauri/target/release/bundle/nsis/*.exe")
+          if ($setups.Count -ne 1) { throw "Expected exactly one signed preview installer." }
+          New-Item -ItemType Directory -Force "tauri/test-artifacts" | Out-Null
+          Copy-Item $setups[0].FullName "tauri/test-artifacts/setup.exe"
+          Copy-Item ($setups[0].FullName + ".sig") "tauri/test-artifacts/setup.exe.sig"
+      - name: Build non-distributable GUI test installer with WebView2 CDP
+        if: github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
+        shell: pwsh
+        run: |
+          Push-Location tauri
+          try { npx tauri build --config tests/ci-webview2.json }
+          finally { Pop-Location }
       - uses: actions/setup-python@v5
         if: github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         with:
@@ -70,6 +86,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Upload experimental installer
+        if: github.ref != 'refs/heads/work/tauri-dropdown-updates-20261117'
         uses: actions/upload-artifact@v4
         with:
           name: Tauri-Windows-experimental
