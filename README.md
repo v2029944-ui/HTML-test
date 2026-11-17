@@ -1,5 +1,7 @@
 # HTML-test — автономная аналитика отчётов
 
+Тестовая версия Tauri 0.1.3-beta.1: [результаты успешной Windows GUI-проверки](docs/TAURI_PREVIEW.md). Подписанный рабочий выпуск остаётся 0.1.2.
+
 ## Windows-приложение: Tauri 2 + SQLite
 
 Основная настольная версия — **Tauri 2** с локальной базой **SQLite**. [Подписанный установщик Tauri 0.1.2 для Windows x64](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v0.1.2/Analiz-rabot-Tauri-Windows-x64-setup.exe). Новые сборки смотрите в [GitHub Releases](https://github.com/v2029944-ui/HTML-test/releases). Изменения в исходном коде не появляются в ранее опубликованном EXE автоматически.
