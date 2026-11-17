@@ -38,6 +38,27 @@ test('network/signature errors are visible and recover without locking the inter
   assert.equal(f.ids.checkAppUpdate.disabled,false);
   f.fail(null);await f.ids.checkAppUpdate.listeners.click();assert.equal(f.ids.installAppUpdate.hidden,false);
 });
+test('the visible Analytics notice reports an import blocker and an invalid signature',async()=>{
+  const f=await fixture();f.approve(true);
+  // Even after deferral, a failed installation attempt must be visible outside Settings.
+  f.ids.deferAppUpdate.listeners.click();assert.equal(f.ids.appUpdateNotice.hidden,true);
+  f.ctx.state.excelImports=1;
+  await f.ids.installAppUpdate.listeners.click();
+  assert.equal(f.counts().downloads,0);
+  assert.equal(f.ids.appUpdateNotice.hidden,false);
+  assert.equal(f.ids.appUpdateNoticeStatus.hidden,false);
+  assert.match(f.ids.appUpdateNoticeStatus.textContent,/Завершите импорт/);
+  f.ctx.state.excelImports=0;f.fail(Error('Invalid signature'));
+  await f.ids.noticeInstallUpdate.listeners.click();
+  assert.equal(f.ids.appUpdateNotice.hidden,false);
+  assert.equal(f.ids.appUpdateNoticeStatus.hidden,false);
+  assert.match(f.ids.appUpdateNoticeStatus.textContent,/не установлено.*Invalid signature/);
+  assert.equal(f.main.inert,false);
+  assert.equal(f.ctx.state.appUpdating,false);
+  f.fail(null);await f.ids.noticeInstallUpdate.listeners.click();
+  assert.match(f.ids.appUpdateNoticeStatus.textContent,/Обновление передано установщику/);
+  assert.equal(f.ids.appUpdateNoticeStatus.hidden,false);
+});
 test('updater does not start during an active import',async()=>{
   const f=await fixture();f.ctx.state.desktopSyncing=true;f.approve(true);
   await f.ids.installAppUpdate.listeners.click();assert.equal(f.counts().downloads,0);
