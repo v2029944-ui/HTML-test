@@ -67,7 +67,7 @@ def generate(path, target, formatted):
 
 
 def stats(path):
-    result = dict(cells=0, value_cells=0, empty_formatted_cells=0)
+    result = dict(cells=0, value_cells=0, empty_formatted_cells=0, inline_text_value_cells=0, numeric_value_cells=0)
     unique = set()  # fixture statistics only, not part of Rust memory evidence
     with zipfile.ZipFile(path) as z:
         result['components'] = {i.filename: i.file_size for i in z.infolist()}
@@ -82,12 +82,14 @@ def stats(path):
                         values = [x.text for x in node.iter() if x.tag.rsplit('}', 1)[-1] in ['t', 'v'] and x.text is not None]
                         result['value_cells'] += bool(values)
                         result['empty_formatted_cells'] += not values and 's' in node.attrib
+                        result['inline_text_value_cells'] += bool(values) and node.attrib.get('t') == 'inlineStr'
+                        result['numeric_value_cells'] += bool(values) and node.attrib.get('t', 'n') == 'n'
                         if node.attrib.get('t') == 'inlineStr':
                             unique.add(''.join(values))
                         node.clear()
                     elif tag == 'row':
                         node.clear()
-    result.update(source_bytes=path.stat().st_size, unpacked_bytes=sum(result['components'].values()), unique_strings=len(unique))
+    result.update(source_bytes=path.stat().st_size, unpacked_bytes=sum(result['components'].values()), unique_strings=len(unique), empty_unformatted_cells=result['cells']-result['value_cells']-result['empty_formatted_cells'])
     return result
 
 

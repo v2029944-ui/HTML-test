@@ -67,6 +67,9 @@ cargo build --release --manifest-path tauri/import-core/Cargo.toml
 python tools/compare_native_legacy.py --binary tauri/import-core/target/release/stage-xlsx
 python tools/compare_native_wide.py --binary tauri/import-core/target/release/stage-xlsx
 python tools/profile_native_wide.py --binary tauri/import-core/target/release/stage-xlsx --output /tmp/wide-profile
+cargo build --release --manifest-path tauri/import-core/Cargo.toml --example cancel_wide
+python tools/profile_native_wide_cancel.py --binary tauri/import-core/target/release/examples/cancel_wide --fixtures /tmp/wide-profile --output /tmp/wide-cancel.json
+python tools/profile_native_wide.py --binary tauri/import-core/target/release/stage-xlsx --output /tmp/wide-stress --stress-only
 ```
 
 The parity tools use actual legacy JavaScript on small real XLSX files; Chromium
@@ -77,6 +80,8 @@ and fixture statistics are outside the measured child. First invocation does not
 mean a cold OS cache. In-child Linux `/proc/self/status` VmHWM measures the Rust
 process, not WebView2. Raw reading and business conversion timings include their
 respective private SQLite work; no separate final live-apply timing is claimed.
+Archived repeated results, stress/cancellation probes and comparison limits are
+in [the progress report](../../docs/NATIVE_IMPORT_PROGRESS.md#measured-wide-core-code-1af6599).
 
 ## Integration still required
 
