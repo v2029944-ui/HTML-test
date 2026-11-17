@@ -74,3 +74,17 @@ for(const format of [undefined,'legacy'])test('legacy selection wins in a mixed 
  const reports=ctx.parseExcel({name:'mixed.xlsx'},rule,[],'sig','hash');
  assert.equal(calls.length,0);assert.equal(parsedSheet,'Legacy');assert.equal(reports.length,1);assert.equal(reports[0].type,'week');
 });
+
+test('suggested folder rules never guess October 19 for Анализ.xlsx',()=>{
+  const start=source.indexOf('  function suggestedRule(');
+  const end=source.indexOf('  function dateInput(',start);
+  assert.ok(start>=0&&end>start,'folder date suggestion is present');
+  const get=vm.runInNewContext('(()=>{'+source.slice(start,end)+'; return suggestedRule;})()');
+  const withoutDate=get('Анализ.xlsx');
+  assert.equal(withoutDate.type,'week');
+  assert.equal(withoutDate.start,'');
+  assert.equal(get('Другой.xlsx').start,'');
+  assert.equal(get('week_2026-11-09.xlsx').start,'2026-11-09');
+  assert.equal(get('day_2026-11-13.xlsx').start,'2026-11-13');
+  assert.equal(get('month_2026-10.xlsx').start,'2026-10-01');
+});

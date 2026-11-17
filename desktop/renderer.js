@@ -58,8 +58,6 @@
     if(day)return {type:'day',start:day[1],sheet:''};
     if(week)return {type:'week',start:week[1],sheet:''};
     if(month)return {type:'month',start:month[1]+'-01',sheet:''};
-    if(name.toLocaleLowerCase('ru-RU')==='анализ.xlsx')
-      return {type:'week',start:'2026-10-19',sheet:''};
     return {type:'week',start:'',sheet:''};
   }
   function dateInput(type,start){
@@ -220,6 +218,10 @@
       });
       const actions=node('div',undefined,'desktop-file-actions');actions.append(save,manual);
       line.append(filename,fields,sheetBox,actions);
+      // Older builds suggested this date for Анализ.xlsx without reading its contents.
+      // Do not silently erase an existing saved rule: 19.10.2026 might be intentional.
+      if(rule?.type==='week'&&rule.start==='2026-10-19'&&file.name.toLocaleLowerCase('ru-RU')==='анализ.xlsx')
+        line.append(node('small','Проверьте начало первой недели: старые версии автоматически предлагали 19.10.2026 для «Анализ.xlsx». Если дата не совпадает с Excel, измените её и сохраните правило.','warn small'));
       const imported=state.reports.filter(r=>r.desktopSource===file.name).map(r=>r.importedAt).filter(x=>x&&Number.isFinite(Date.parse(x))).sort().at(-1);
       if(imported)line.append(node('p','Последнее успешное обновление: '+new Date(imported).toLocaleString('ru-RU'),'muted small'));
       if(!rule)line.append(node('small','Настройте правило для автоматического обновления.','warn small'));

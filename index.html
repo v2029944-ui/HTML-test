@@ -1668,7 +1668,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <p class="muted small">Выберите отчётные листы. Итоги квартала или года проверяются отдельно и не становятся дополнительным днём. При неоднозначной шапке укажите год и ручные столбцы; пустые дни не заменяются нулями.</p>
           <div id="dailySheetChoices"></div><button type="button" id="saveDailyFolderRule" class="button secondary" hidden>Запомнить настройки файла для автоимпорта</button>
         </section>
-        <p class="muted small">Для недельного <code>Анализ.xlsx</code> первая неделя начинается 19.10.2026. Для дневного отчёта каждый набор столбцов относится к отдельной дате; недельные суммы автоматически по дням не распределяются. Для других файлов укажите собственные даты. Можно открыть этот HTML двойным нажатием на компьютере, интернет не требуется.</p>
+        <p class="muted small">Для обычных недельных и дневных отчётов укажите первую дату по данным вашего Excel: название файла не определяет начало периода. Даты последующих наборов рассчитываются последовательно, при пропусках их можно скорректировать вручную. Недельные суммы автоматически по дням не распределяются. HTML работает без интернета.</p>
         <details class="quick-help import-advanced" id="importAdvanced">
           <summary>Столбцы и даты каждого набора</summary>
           <p>Обычно столбцы распознаются автоматически, а периоды идут подряд. Для другого формата Excel включите ручную настройку: укажите буквы столбцов работы, количества и суммы и номер строки заголовка для каждого набора. Даты ниже можно изменить по отдельности без изменения первого периода.</p>
@@ -3145,6 +3145,7 @@ async function importCatalogFile(file) {
 }
 
 function resetWorkbookSelection(){
+  if(state.workbook||state.fileName){$('importWeek').value='';$('importMonth').value='';}
   state.folderImport=null;
   state.workbook=null;state.fileName='';state.pending=[];state.catalogPreview=[];
   const select=$('sheetSelect');
@@ -3160,13 +3161,13 @@ function resetWorkbookSelection(){
   $('excelFile').title='';
 }
 async function selectWorkbook(buffer,fileName) {
+  if(state.workbook){$('importWeek').value='';$('importMonth').value='';}
   state.folderImport=null;$('saveDailyFolderRule').hidden=true;
   if(!window.XLSX)throw Error('Модуль чтения Excel недоступен');
   const workbook=window.XLSX.read(buffer,{type:'array',cellDates:true});
   state.workbook=workbook;state.fileName=fileName;state.pending=[];state.dailyImportSummary=null;
   $('dailySheetChoices').replaceChildren();
   state.catalogPreview=detectCatalogWorkbook(workbook);
-  if(fileName.toLocaleLowerCase('ru-RU')==='анализ.xlsx' && $('importType').value==='week' && !$('importWeek').value){$('importWeek').value='2026-10-19';}
   const select=$('sheetSelect');select.replaceChildren();
   workbook.SheetNames.forEach(name=>{const option=elem('option',name);option.value=name;select.append(option);});
   select.disabled=false;$('inspectFile').disabled=false;$('saveImport').disabled=true;
