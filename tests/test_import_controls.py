@@ -70,6 +70,24 @@ class ImportControls(unittest.TestCase):
         self.page.wait_for_function("state.fileName==='Другой.xlsx'")
         self.assertEqual(self.page.locator('#importWeek').input_value(),'2026-11-09')
 
+    def test_saved_legacy_week_rule_requires_review_not_silent_reset(self):
+        self.page.evaluate("""()=>{window.desktopAPI={
+          list:async()=>({
+            folder:'C:/Reports',
+            files:[{name:'Анализ.xlsx',size:1000,signature:'old',tooLarge:false}],
+            rules:{'Анализ.xlsx':{type:'week',start:'2026-10-19',sheet:''}}
+          }),
+          info:async()=>({dataFile:'C:/Documents/Анализ работ/reports.sqlite3'}),
+          readExcel:async()=>{throw Error('Source unavailable in test')},
+          onFilesChanged:()=>()=>{}
+        }}""")
+        self.page.add_script_tag(content=(ROOT/'desktop/renderer.js').read_text())
+        self.page.wait_for_function("document.querySelector('.desktop-file-row')?.textContent.includes('Проверьте начало первой недели')")
+        row=self.page.locator('.desktop-file-row')
+        self.assertIn('старые версии автоматически предлагали 19.10.2026',row.inner_text())
+        self.assertEqual(row.locator('input[aria-label="Первый период файла"]').input_value(),'2026-10-19')
+        self.assertEqual(self.page.evaluate("state.reports.length"),0)
+
     def test_folder_manual_import_keeps_auto_rejection_and_checks_source(self):
         good=daily_workbook_bytes()
         original=zipfile.ZipFile(io.BytesIO(good))
