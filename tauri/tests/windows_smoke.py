@@ -1,7 +1,7 @@
 """Run the packaged Tauri app through its real WebView2 and SQLite on an isolated Windows CI runner."""
 import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib
 from pathlib import Path
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests'))
 from test_daily_wide import wide_xlsx
@@ -32,6 +32,25 @@ def diagnostics(error):
     env=dict(os.environ,ANALIZ_SMOKE_SCREENSHOT=str(output/'windows-desktop-diagnostic.png'))
     result=subprocess.run(['powershell','-NoProfile','-Command',script],env=env,capture_output=True,encoding='utf-8',errors='replace',timeout=30)
     (output/'windows-runtime.txt').write_text((result.stdout or '')+'\n'+(result.stderr or ''),encoding='utf-8')
+
+def wait_for_webview_page(browser, timeout_ms=60_000):
+    """Wait for the installed WebView2 app page, not just the DevTools endpoint.
+
+    Connecting to CDP can succeed before the application has created its page.
+    Use the existing page if one is present; otherwise wait for the context's
+    page event. This is used for both the first launch and the restart.
+    """
+    if not browser.contexts:
+        raise RuntimeError('WebView2 DevTools connected without a browser context')
+    context=browser.contexts[0]
+    for page in context.pages:
+        if not page.is_closed():
+            return page
+    print('WebView2 DevTools connected; waiting for application page...',flush=True)
+    try:
+        return context.wait_for_event('page',timeout=timeout_ms)
+    except PlaywrightTimeoutError as error:
+        raise RuntimeError('WebView2 application page did not appear within '+str(timeout_ms)+' ms') from error
 
 def run():
     if sys.platform!='win32' or os.environ.get('GITHUB_ACTIONS')!='true':raise RuntimeError('Run only on an isolated Windows GitHub Actions runner')
@@ -95,7 +114,7 @@ def run():
             process,engine=start()
             try:
                 browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227')
-                page=browser.contexts[0].pages[0];errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+                page=wait_for_webview_page(browser);errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
                 page.wait_for_function('!!window.appReady');page.evaluate('window.appReady')
                 assert page.evaluate('!!window.__TAURI__.core.invoke')
                 data=page.evaluate('window.desktopAPI.load()')
@@ -126,7 +145,7 @@ def run():
             finally:stop(process)
             process,_=start()
             try:
-                browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227');page=browser.contexts[0].pages[0]
+                browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227');page=wait_for_webview_page(browser)
                 page.wait_for_function('!!window.appReady');page.evaluate('window.appReady')
                 assert len(page.evaluate('window.desktopAPI.load()')['reports'])==366
                 assert page.locator('.view.active').get_attribute('id')=='upload'
