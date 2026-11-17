@@ -1,7 +1,7 @@
 """Run the packaged Tauri app through its real WebView2 and SQLite on an isolated Windows CI runner."""
 import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib
 from pathlib import Path
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests'))
 from test_daily_wide import wide_xlsx
@@ -51,6 +51,20 @@ def wait_for_webview_page(browser, timeout_ms=60_000):
         return context.wait_for_event('page',timeout=timeout_ms)
     except PlaywrightTimeoutError as error:
         raise RuntimeError('WebView2 application page did not appear within '+str(timeout_ms)+' ms') from error
+
+def wait_for_app_state(page, expression, description, timeout_ms=30_000):
+    """Poll through CDP evaluation without page-side eval blocked by the app CSP."""
+    deadline=time.monotonic()+timeout_ms/1000
+    while True:
+        try:
+            if page.evaluate(expression):return
+        except PlaywrightError as error:
+            # A newly created WebView2 page can navigate while startup is being observed.
+            if 'Execution context was destroyed' not in str(error) and 'Cannot find context with specified id' not in str(error):
+                raise
+        remaining=deadline-time.monotonic()
+        if remaining<=0:raise RuntimeError(description+' did not complete within '+str(timeout_ms)+' ms')
+        page.wait_for_timeout(min(100,remaining*1000))
 
 def run():
     if sys.platform!='win32' or os.environ.get('GITHUB_ACTIONS')!='true':raise RuntimeError('Run only on an isolated Windows GitHub Actions runner')
@@ -115,16 +129,16 @@ def run():
             try:
                 browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227')
                 page=wait_for_webview_page(browser);errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-                page.wait_for_function('!!window.appReady');page.evaluate('window.appReady')
+                wait_for_app_state(page, 'Boolean(window.appReady)', 'Application initialization');page.evaluate('window.appReady')
                 assert page.evaluate('!!window.__TAURI__.core.invoke')
                 data=page.evaluate('window.desktopAPI.load()')
                 if data['reports']:raise RuntimeError('CI data folder is not empty; refusing to overwrite reports')
                 report['webview2']=engine.get('Browser');report['customizableSelect']=page.evaluate("CSS.supports('appearance','base-select')");report['checks'].append('real WebView2 launch')
                 page.locator('#reportsShortcut').click()
                 excel=tmp/'synthetic-year.xlsx';excel.write_bytes(wide_xlsx(2024))
-                page.locator('#excelFile').set_input_files(str(excel));page.wait_for_function('state.workbook!==null')
-                page.locator('#inspectFile').click();page.wait_for_function('state.pending.length===366')
-                page.locator('#saveImport').click();page.wait_for_function('state.reports.length===366')
+                page.locator('#excelFile').set_input_files(str(excel));wait_for_app_state(page, 'state.workbook!==null', 'Excel workbook loading')
+                page.locator('#inspectFile').click();wait_for_app_state(page, 'state.pending.length===366', 'Preview of 366 daily reports')
+                page.locator('#saveImport').click();wait_for_app_state(page, 'state.reports.length===366', 'Saving 366 daily reports')
                 loaded=page.evaluate('window.desktopAPI.load()');assert len(loaded['reports'])==366
                 assert abs(sum(r['amount'] for r in loaded['reports'])-7320)<.001
                 report['checks'].append('Excel import and 366 reports persisted through native SQLite')
@@ -146,7 +160,7 @@ def run():
             process,_=start()
             try:
                 browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227');page=wait_for_webview_page(browser)
-                page.wait_for_function('!!window.appReady');page.evaluate('window.appReady')
+                wait_for_app_state(page, 'Boolean(window.appReady)', 'Application initialization');page.evaluate('window.appReady')
                 assert len(page.evaluate('window.desktopAPI.load()')['reports'])==366
                 assert page.locator('.view.active').get_attribute('id')=='upload'
                 report['checks'].append('SQLite and last view survive application restart')
