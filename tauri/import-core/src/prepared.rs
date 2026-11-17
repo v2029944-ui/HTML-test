@@ -880,8 +880,9 @@ fn validate_provenance_and_zero(
         || !(1..=1024).contains(&p.source_block)
         || !valid_date(&p.coverage.start)
         || !valid_date(&p.coverage.end)
-        || p.coverage.start > info.start
-        || p.coverage.end < info.end
+        // Declared title coverage is source-period evidence, independent of
+        // valid explicit daily headers; missing-day diagnostics preserve the mismatch.
+        || p.coverage.start > p.coverage.end
         || p.source_control_date
             .as_ref()
             .is_some_and(|d| !valid_date(d))

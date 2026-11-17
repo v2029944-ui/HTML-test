@@ -306,3 +306,14 @@ import path. Legacy full load and streaming backfill can read those documents;
 organization presence and explicitZero remain in JSON. Bounded live quality and
 analytics organization-presence indexes still require later integration. There
 are no production Tauri commands or automatic UI activation in this milestone.
+
+C3 coverage review correction: declared sourceCoverage bounds are validated for
+valid dates and order, independently of explicit actual daily dates. Out-of-window
+actual headers remain valid financial reports, with complete missing-day quality
+notices and explicit acknowledgment. Zero/control proof is unchanged.
+
+Production activation must also resolve partial diagnostic-anchor replacement:
+manual replace_exact may delete the first artifact report while other old wide
+days retain sourceDiagnosticsReport links. Complete source diagnostics can become
+orphaned. This backend has no preservation/reference check or partial-anchor block;
+full-source replacement is safe when all old references are removed atomically.

@@ -38,12 +38,40 @@ def change(payload, kind):
         for name,data in parts.items():z.writestr(name,data)
     return out.getvalue()
 
+def outside_coverage_fixture():
+    with zipfile.ZipFile(io.BytesIO(wide_xlsx(2024))) as z:
+        parts={i.filename:z.read(i.filename) for i in z.infolist()}
+    sheet=ET.fromstring(parts['xl/worksheets/sheet1.xml'])
+    def column(address):
+        out=0
+        for char in address.rstrip('0123456789'):out=out*26+ord(char)-64
+        return out
+    for row in sheet.findall('.//{*}row'):
+        ri=int(row.attrib['r'])
+        if ri==17:row.find('.//{*}t').text='Работа Q1 2024'
+        if ri<18:continue
+        for cell in list(row):
+            col=column(cell.attrib['r'])
+            if 5<col<734:row.remove(cell);continue
+            if col>=734:
+                cell.attrib['r']=('F' if col==734 else 'G')+str(ri)
+                if ri>=20:
+                    cell.find('{*}v').text=str((4 if ri==28 else 1) if col==734 else (40 if ri==28 else 10))
+            if ri==18 and col in [2,4]:cell.find('.//{*}t').text='2024-04-01' if col==2 else '2024-04-02'
+    merges=sheet.find('{*}mergeCells');merges.clear()
+    for ref in ['A18:A19','B18:C18','D18:E18','F18:G18']:ET.SubElement(merges,'mergeCell',ref=ref)
+    parts['xl/worksheets/sheet1.xml']=ET.tostring(sheet)
+    out=io.BytesIO()
+    with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
+        for name,data in parts.items():z.writestr(name,data)
+    return out.getvalue()
+
 def diagnostic(issue):
     return {k:issue.get(k) for k in ['type','row','organization','scope','date','cells','expected','actual']}
 def normalize_control(t):return {k:t.get(k) for k in ['type','row','name','count','amount']}
 def run():
     parser=argparse.ArgumentParser();parser.add_argument('--binary',required=True);parser.add_argument('--case');args=parser.parse_args()
-    cases=[('full leap year',wide_xlsx(2024),{},'2026-11-17'),('four quarters',wide_xlsx(2024,quarter_sheets=True),{},'2026-11-17'),('selected sheet order',wide_xlsx(2024,quarter_sheets=True),{'sheets':['Q3','Q1']},'2026-11-17'),('source total mismatch',altered(wide_xlsx(2024),'bad-total'),{},'2026-11-17'),('nullable source control',change(wide_xlsx(2024),'invalid-source'),{},'2026-11-17'),('explicit zero and historical blank',change(wide_xlsx(2024,blank_day='2024-02-05'),'zero-day'),{},'2026-11-17'),('future-only sheet',change(wide_xlsx(2024,quarter_sheets=True),'future-sheet'),{'sheets':['Q1','Q2']},'2024-03-31')]
+    cases=[('full leap year',wide_xlsx(2024),{},'2026-11-17'),('actual dates outside declared quarter',outside_coverage_fixture(),{},'2026-11-17'),('four quarters',wide_xlsx(2024,quarter_sheets=True),{},'2026-11-17'),('selected sheet order',wide_xlsx(2024,quarter_sheets=True),{'sheets':['Q3','Q1']},'2026-11-17'),('source total mismatch',altered(wide_xlsx(2024),'bad-total'),{},'2026-11-17'),('nullable source control',change(wide_xlsx(2024),'invalid-source'),{},'2026-11-17'),('explicit zero and historical blank',change(wide_xlsx(2024,blank_day='2024-02-05'),'zero-day'),{},'2026-11-17'),('future-only sheet',change(wide_xlsx(2024,quarter_sheets=True),'future-sheet'),{'sheets':['Q1','Q2']},'2024-03-31')]
     with sync_playwright() as pw:
         browser=pw.chromium.launch(executable_path='/usr/bin/chromium',headless=True)
         page=browser.new_page();page.route('https://prepared.test/',lambda r:r.fulfill(content_type='text/html',body=(ROOT/'index.html').read_text()));page.goto('https://prepared.test/');page.wait_for_function('state.db!==null')
@@ -51,6 +79,10 @@ def run():
         for name,payload,options,today in cases:
             if args.case and args.case not in name:continue
             old=page.evaluate('''async ({options,today})=>{reportToday=()=>today;const b=await(await fetch('/input.xlsx')).arrayBuffer();return parseDailyWorkbook(XLSX.read(new Uint8Array(b)),{...options,fileName:'fixture.xlsx'});}''',{'options':options,'today':today})
+            if name=='actual dates outside declared quarter':
+                assert len(old['reports'])==2 and [r['start'] for r in old['reports']]==['2024-04-01','2024-04-02']
+                assert old['reports'][0]['sourceCoverage']=={'start':'2024-01-01','end':'2024-03-31'}
+                assert len(old['reports'][0]['issues'])==91 and all(i['type']=='missing-day' for i in old['reports'][0]['issues'])
             with tempfile.TemporaryDirectory(prefix='c3-golden-') as tmp:
                 source=Path(tmp)/'fixture.xlsx';source.write_bytes(payload)
                 root=Path(tmp)/'worker';result=subprocess.run([args.binary,str(source),str(root),'emit',today,json.dumps(options)],text=True,capture_output=True)

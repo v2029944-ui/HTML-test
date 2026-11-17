@@ -85,6 +85,10 @@ prepared report exposes frozen `provenance` and retains the ordinary `info`, row
 controls and issue APIs. Wide documents retain `sheetName`, `sourceFormat`,
 `sourceBlock`, `sourceCoverage`, `sourceControlDate`, `explicitZero`, zero-based
 legacy source-column aliases, and the existing native sheet/mapping fields.
+Declared `sourceCoverage` comes from the source title/header and has valid ordered
+bounds; actual explicit daily dates may lie outside it. Those days are retained
+alongside missing-day diagnostics for the declared period, matching the old parser.
+Coverage is not an extra enclosing-date constraint or a substitute for zero proof.
 `sourceReportId` retains the local conversion ID, linking `SourceIssue.report_id`
 to live documents without guessing issue identity from kind/row.
 
@@ -133,3 +137,10 @@ snapshot, not recomputed automatically for a long-lived artifact. No production
 compatibility or three-million-cell end-to-end safety claim follows from this
 backend slice. The separately developed analytics branch requires a reviewed
 schema/index integration; this work does not depend on its edits.
+
+Production-blocking lifecycle risk: manual `replace_exact` can remove the first
+artifact report while other old days still refer to its `sourceDiagnosticsReport`.
+That can orphan complete source diagnostics. No preservation/reference check or
+partial-anchor replacement block is implemented here. Keep production import
+activation disabled until resolved. Whole-source/full-repeat replacement is safe
+for this representation when all old anchor references are removed atomically.

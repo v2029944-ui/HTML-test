@@ -675,3 +675,87 @@ fn wide_other_source_conflict_and_preparation_cancel_leave_live_reports_unchange
         .contains("another source"));
     assert_eq!(storage.load().unwrap(), before);
 }
+
+#[test]
+fn wide_declared_quarter_preserves_valid_actual_days_outside_coverage_with_quality_ack() {
+    for zero in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("wide.xlsx");
+        fixture_at(
+            &source,
+            2,
+            zero,
+            false,
+            false,
+            "2024-04-01",
+            "Работа Q1 2024",
+        );
+        let area = StageArea::open(root.path().join("stage")).unwrap();
+        let p = prepared(&area, &source, "2024-12-31");
+        assert_eq!(p.report_count(), 2);
+        assert_eq!(p.source_diagnostics().relevant, 91);
+        assert_eq!(p.quality().issues, 91);
+        let first = p.next_report(0).unwrap().unwrap();
+        assert_eq!(first.start, "2024-04-01");
+        assert_eq!(first.is_explicit_zero(), zero);
+        let provenance = first.provenance.as_ref().unwrap();
+        assert_eq!(provenance.coverage.start, "2024-01-01");
+        assert_eq!(provenance.coverage.end, "2024-03-31");
+        assert_eq!(
+            provenance.source_control_date.as_deref(),
+            Some("2024-04-01")
+        );
+        let storage = Storage::new(root.path().join("live")).unwrap();
+        storage.revision().unwrap();
+        let preview = storage.preview_import(&p).unwrap();
+        assert!(storage
+            .apply_import(
+                &p,
+                &preview,
+                ImportConfirmation::default(),
+                &ImportJob::new(),
+                |_| {}
+            )
+            .is_err());
+        assert!(storage.load().unwrap()["reports"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let receipt = storage
+            .apply_import(
+                &p,
+                &preview,
+                ImportConfirmation {
+                    accept_quality: true,
+                    ..Default::default()
+                },
+                &ImportJob::new(),
+                |_| {},
+            )
+            .unwrap();
+        assert_eq!(receipt.rows, if zero { 0 } else { 2 });
+        let loaded = storage.load().unwrap();
+        for (index, report) in loaded["reports"].as_array().unwrap().iter().enumerate() {
+            assert_eq!(
+                report["start"],
+                if index == 0 {
+                    "2024-04-01"
+                } else {
+                    "2024-04-02"
+                }
+            );
+            assert_eq!(
+                report["sourceCoverage"],
+                json!({"start":"2024-01-01","end":"2024-03-31"})
+            );
+            assert_eq!(report["explicitZero"], zero);
+        }
+        assert_eq!(
+            storage
+                .aggregate(receipt.revision, &ReadFilter::default())
+                .unwrap()
+                .rows,
+            if zero { 0 } else { 2 }
+        );
+    }
+}
