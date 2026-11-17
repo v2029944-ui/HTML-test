@@ -16,7 +16,7 @@ class SelectsUpdates(unittest.TestCase):
         self.page.goto('https://selects.test/');self.page.evaluate('window.appReady')
     def tearDown(self):self.context.close();self.assertEqual(self.errors,[])
     def updates(self):
-        self.page.evaluate('''()=>{window.downloads=0;window.tauriOperations={saves:0,reads:0,updating:false};window.__TAURI__={core:{invoke:async()=>true},updater:{check:async()=>({version:'0.2.0',currentVersion:'0.1.2',body:'Описание <img src=x onerror=bad()>',close:async()=>{},downloadAndInstall:async()=>{downloads++}})}}}''')
+        self.page.evaluate('''()=>{window.downloads=0;window.failSignature=false;window.tauriOperations={saves:0,reads:0,updating:false};window.__TAURI__={core:{invoke:async()=>true},updater:{check:async()=>({version:'0.2.0',currentVersion:'0.1.2',body:'Описание <img src=x onerror=bad()>',close:async()=>{},downloadAndInstall:async()=>{downloads++;if(window.failSignature)throw Error('Invalid signature')}})}}}''')
         self.page.add_script_tag(content=(ROOT/'tauri/updates.js').read_text());self.page.wait_for_function('document.querySelector("#appUpdateStatus").textContent.includes("Доступна версия")')
     def test_native_and_multiple_selects_share_geometry_and_work_with_keyboard(self):
         self.assertFalse(self.page.locator('#appUpdateNotice').count())
@@ -50,6 +50,21 @@ class SelectsUpdates(unittest.TestCase):
         self.page.evaluate('state.excelImports=0')
         self.page.once('dialog',lambda d:d.accept());self.page.locator('#noticeInstallUpdate').click()
         self.assertEqual(self.page.evaluate('downloads'),1);self.assertFalse(self.page.evaluate('state.appUpdating'))
+    def test_update_failure_is_visible_in_analytics_not_only_hidden_settings(self):
+        self.updates()
+        self.assertEqual(self.page.locator('.view.active').get_attribute('id'),'dashboard')
+        self.page.evaluate('state.excelImports=1')
+        self.page.locator('#noticeInstallUpdate').click()
+        self.assertTrue(self.page.locator('#appUpdateNotice').is_visible())
+        self.assertTrue(self.page.locator('#appUpdateNoticeStatus').is_visible())
+        self.assertIn('Завершите импорт',self.page.locator('#appUpdateNoticeStatus').inner_text())
+        self.page.evaluate('state.excelImports=0;window.failSignature=true')
+        self.page.once('dialog',lambda d:d.accept())
+        self.page.locator('#noticeInstallUpdate').click()
+        self.assertTrue(self.page.locator('#appUpdateNoticeStatus').is_visible())
+        self.assertIn('Invalid signature',self.page.locator('#appUpdateNoticeStatus').inner_text())
+        self.assertFalse(self.page.evaluate('state.appUpdating'))
+
     def test_long_native_options_and_update_notice_fit_phone(self):
         self.updates()
         for width in [320,390]:
