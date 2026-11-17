@@ -45,6 +45,31 @@ def daily_workbook_bytes():
 
 
 class ImportControls(unittest.TestCase):
+    def test_week_start_is_not_invented_from_analyz_filename(self):
+        open_view(self.page,'upload')
+        self.assertEqual(self.page.locator('#importType').input_value(),'week')
+        self.assertEqual(self.page.locator('#importWeek').input_value(),'')
+        self.page.locator('#excelFile').set_input_files({
+            'name':'Анализ.xlsx',
+            'mimeType':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'buffer':daily_workbook_bytes()
+        })
+        self.page.wait_for_function('state.workbook!==null')
+        self.assertEqual(self.page.locator('#importWeek').input_value(),'')
+        self.assertNotIn('19.10.2026', self.page.locator('#upload').inner_text())
+        self.page.locator('#inspectFile').click()
+        self.page.wait_for_function("document.querySelector('#flash').textContent.includes('Укажите дату начала первой недели')")
+        self.assertTrue(self.page.locator('#saveImport').is_disabled())
+        # A date explicitly entered by the user must not be overwritten on reselect.
+        self.page.locator('#importWeek').fill('2026-11-09')
+        self.page.locator('#excelFile').set_input_files({
+            'name':'Анализ.xlsx',
+            'mimeType':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'buffer':daily_workbook_bytes()
+        })
+        self.page.wait_for_function("state.workbook!==null&&document.querySelector('#excelFileStatus').textContent==='Файл загружен'")
+        self.assertEqual(self.page.locator('#importWeek').input_value(),'2026-11-09')
+
     def test_folder_manual_import_keeps_auto_rejection_and_checks_source(self):
         good=daily_workbook_bytes()
         original=zipfile.ZipFile(io.BytesIO(good))
