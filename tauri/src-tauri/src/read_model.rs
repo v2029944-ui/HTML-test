@@ -20,7 +20,7 @@ fn metadata_is_oversized(conn: &Connection) -> Result<bool, String> {
     conn.query_row(OVERSIZED_METADATA_SQL, [], |r| r.get(0))
         .map_err(err)
 }
-fn check_metadata_bounds(conn: &Connection) -> Result<(), String> {
+pub(super) fn check_metadata_bounds(conn: &Connection) -> Result<(), String> {
     if metadata_is_oversized(conn)? {
         return Err(
             "Report metadata exceeds 64 KiB; selective reads require bounded headers.".into(),
@@ -126,7 +126,7 @@ pub struct Aggregate {
     pub weighted_average: Option<f64>,
 }
 
-fn revision(conn: &Connection) -> Result<i64, String> {
+pub(super) fn revision(conn: &Connection) -> Result<i64, String> {
     conn.query_row(
         "SELECT revision FROM storage_revision WHERE singleton=1",
         [],
@@ -134,7 +134,7 @@ fn revision(conn: &Connection) -> Result<i64, String> {
     )
     .map_err(err)
 }
-fn check_revision(conn: &Connection, expected: i64) -> Result<(), String> {
+pub(super) fn check_revision(conn: &Connection, expected: i64) -> Result<(), String> {
     if revision(conn)? != expected {
         return Err("Stale storage revision; refresh the selection.".into());
     }

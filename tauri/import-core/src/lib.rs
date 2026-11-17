@@ -1,5 +1,7 @@
 //! Disk-backed XLSX ingestion. No report conversion or live-database writes here.
+mod prepared;
 mod report_stage;
+pub use prepared::{PrepareProgress, PreparedImport, PreparedReport};
 mod zip_index;
 use fs2::FileExt;
 use quick_xml::{
@@ -82,6 +84,9 @@ pub struct Stage<'a> {
     _area: &'a StageArea,
     pub stats: Stats,
     pub source_hash: String,
+    source_path: PathBuf,
+    bound_hash: String,
+    limits: Limits,
 }
 impl StageArea {
     /// One manager owns a private staging root. Recovery runs under its OS lock.
@@ -122,7 +127,8 @@ impl StageArea {
         mut progress: impl FnMut(&Stats),
     ) -> Result<Stage<'_>> {
         check_cancel(cancel)?;
-        let mut file = File::open(source)?;
+        let source_path = fs::canonicalize(source)?;
+        let mut file = File::open(&source_path)?;
         if file.metadata()?.len() > limits.archive_bytes {
             return Err(fail("XLSX archive byte limit"));
         }
@@ -131,6 +137,7 @@ impl StageArea {
         let mut zip = zip_index::Index::open(file, limits, cancel)?;
         let dir = tempfile::Builder::new()
             .prefix("import-")
+            .rand_bytes(24)
             .tempdir_in(&self.root)?;
         let db = Connection::open(dir.path().join("stage.sqlite3"))?;
         db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; PRAGMA max_page_count=524288;
@@ -148,7 +155,10 @@ impl StageArea {
             db,
             _area: self,
             stats: Stats::default(),
-            source_hash: hash,
+            source_hash: hash.clone(),
+            bound_hash: hash,
+            source_path,
+            limits,
         };
         for info in &zip.entries {
             check_cancel(cancel)?;

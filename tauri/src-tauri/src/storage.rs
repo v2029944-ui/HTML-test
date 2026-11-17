@@ -13,6 +13,9 @@ use std::{
 
 #[path = "read_model.rs"]
 mod read_model;
+#[path = "import_apply.rs"]
+mod import_apply;
+pub use import_apply::{ImportConfirmation, ImportCounts, ImportJob, ImportPreview, ImportProgress, ImportReceipt};
 pub use read_model::{Aggregate, IndexedRow, ReadFilter, ReportHeader, MAX_PAGE_ROWS};
 
 const MAX_EXCEL_BYTES: u64 = 30 * 1024 * 1024;
@@ -215,6 +218,7 @@ fn new_connection(path: &Path) -> Result<Connection, String> {
          );",
     ).map_err(err)?;
     read_model::initialize(&conn)?;
+    import_apply::initialize(&conn)?;
     Ok(conn)
 }
 
@@ -343,10 +347,15 @@ impl Storage {
         let _guard = self.gate.lock().map_err(err)?;
         let conn = self.connect()?;
         let mut stmt = conn.prepare("SELECT json FROM reports ORDER BY period_start,id").map_err(err)?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(err)?;
+        let mut rows = stmt.query([]).map_err(err)?;
         let mut reports = Vec::new();
-        for row in rows {
-            reports.push(serde_json::from_str::<Value>(&row.map_err(err)?).map_err(err)?);
+        while let Some(row) = rows.next().map_err(err)? {
+            let raw = row.get_ref(0).map_err(err)?;
+            let bytes = match raw {
+                rusqlite::types::ValueRef::Text(b) | rusqlite::types::ValueRef::Blob(b) => b,
+                _ => return Err("Invalid stored report JSON type.".into()),
+            };
+            reports.push(serde_json::from_slice::<Value>(bytes).map_err(err)?);
         }
         let settings = match read_key(&conn, "settings")? {
             Some(text) => serde_json::from_str::<Value>(&text).map_err(err)?,
@@ -783,3 +792,7 @@ mod tests {
 #[cfg(test)]
 #[path = "read_model_tests.rs"]
 mod read_model_tests;
+
+#[cfg(test)]
+#[path = "import_apply_tests.rs"]
+mod import_apply_tests;

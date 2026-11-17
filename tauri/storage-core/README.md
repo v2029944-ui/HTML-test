@@ -1,5 +1,9 @@
 # Bounded SQLite read-model foundation (D1)
 
+C1 adds [prepared import and atomic application](IMPORT_APPLICATION.md), including
+UTF-8 BLOB compatibility in full `load()`. The sections below describe the D1
+foundation; its final “future C” note is historical and superseded by C1.
+
 This harness includes the **production** `../src-tauri/src/storage.rs`, without Tauri,
 GTK, WebKit, or a GUI build. The original `reports(..., json TEXT)` and `kv` schema,
 full `load()` response, save format, and legacy JSON files remain intact. This is an
