@@ -7,6 +7,28 @@ use std::io::{self, BufReader, Read};
 pub const MAX_PAGE_ROWS: usize = 500;
 const MAX_TOKEN_BYTES: usize = 64 * 1024;
 
+// NOT INDEXED forces a table-header scan rather than traversing an index with
+// potentially huge keys. octet_length sets OP_Column's BYTELENARG flag, allowing
+// SQLite to use record sizes without loading TEXT overflow payloads.
+pub(super) const OVERSIZED_METADATA_SQL: &str =
+    "SELECT EXISTS(SELECT 1 FROM reports NOT INDEXED WHERE
+    octet_length(id)>65536 OR octet_length(report_type)>65536 OR
+    octet_length(period_start)>65536 OR octet_length(period_end)>65536 OR
+    octet_length(source_name)>65536)";
+
+fn metadata_is_oversized(conn: &Connection) -> Result<bool, String> {
+    conn.query_row(OVERSIZED_METADATA_SQL, [], |r| r.get(0))
+        .map_err(err)
+}
+fn check_metadata_bounds(conn: &Connection) -> Result<(), String> {
+    if metadata_is_oversized(conn)? {
+        return Err(
+            "Report metadata exceeds 64 KiB; selective reads require bounded headers.".into(),
+        );
+    }
+    Ok(())
+}
+
 pub(super) fn initialize(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "PRAGMA temp_store=FILE;
@@ -48,7 +70,22 @@ pub(super) fn initialize(conn: &Connection) -> Result<(), String> {
           UPDATE storage_revision SET revision=revision+1 WHERE singleton=1;
         END;",
     )
-    .map_err(err)
+    .map_err(err)?;
+    // These original lookup indexes are optional for correctness. Never build a
+    // missing index over oversized legacy keys during a supposedly bounded read.
+    // Keep existing indexes and original definitions unchanged, and avoid adding
+    // newer SQL functions to persisted schema needed by older external writers.
+    // Keep the size check and optional index build in one SQLite snapshot: an
+    // external write between them must cause an upgrade error, not a huge build.
+    let tx = conn.unchecked_transaction().map_err(err)?;
+    if !metadata_is_oversized(&tx)? {
+        tx.execute_batch(
+            "CREATE INDEX IF NOT EXISTS reports_by_period ON reports(report_type, period_start);
+            CREATE INDEX IF NOT EXISTS reports_by_source ON reports(source_name);",
+        )
+        .map_err(err)?;
+    }
+    tx.commit().map_err(err)
 }
 
 /// All types/dates/organizations/works by default. Dates require full period containment.
@@ -401,7 +438,16 @@ impl Storage {
             PRAGMA temp.cache_size=-2048;") .map_err(err)?;
         let tx = conn.transaction().map_err(err)?;
         check_revision(&tx, expected_revision)?;
-        let (rowid,kind,start,end): (i64,String,String,String)=tx.query_row("SELECT rowid,report_type,period_start,period_end FROM reports WHERE id=?1 AND length(CAST(report_type AS BLOB))<=65536 AND length(CAST(period_start AS BLOB))<=65536 AND length(CAST(period_end AS BLOB))<=65536",[id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(err)?.ok_or("Report not found or metadata exceeds limits")?;
+        check_metadata_bounds(&tx)?;
+        let (rowid, kind, start, end): (i64, String, String, String) = tx
+            .query_row(
+                "SELECT rowid,report_type,period_start,period_end FROM reports WHERE id=?1",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()
+            .map_err(err)?
+            .ok_or("Report not found")?;
         if !REPORT_TYPES.contains(&kind.as_str()) || !valid_date(&start) || !valid_date(&end) {
             return Err("Invalid report metadata".into());
         }
@@ -447,6 +493,9 @@ impl Storage {
         let cap = limit(page_size)?;
         let (mut predicate, mut values) = filters(filter)?;
         if let Some((id, n)) = after {
+            if id.len() > MAX_TOKEN_BYTES {
+                return Err("Cursor exceeds 64 KiB".into());
+            }
             predicate.push_str(" AND (x.report_id,x.row_index)>(?,?)");
             values.extend([SqlValue::from(id.to_string()), n.into()]);
         }
@@ -455,6 +504,7 @@ impl Storage {
         let mut conn = self.connect()?;
         let tx = conn.transaction().map_err(err)?;
         check_revision(&tx, expected_revision)?;
+        check_metadata_bounds(&tx)?;
         check_index(&tx, filter)?;
         let mut stmt=tx.prepare(&format!("SELECT x.report_id,x.row_index,x.organization,x.work,x.count,x.amount FROM report_rows x JOIN reports r ON r.id=x.report_id WHERE {predicate} ORDER BY x.report_id,x.row_index LIMIT ?")).map_err(err)?;
         let result = stmt
@@ -492,6 +542,9 @@ impl Storage {
             values = f.1;
         }
         if let Some((date, id)) = after {
+            if date.len() > MAX_TOKEN_BYTES || id.len() > MAX_TOKEN_BYTES {
+                return Err("Cursor exceeds 64 KiB".into());
+            }
             predicate.push_str(" AND (r.period_start,r.id)>(?,?)");
             values.extend([date.to_string().into(), id.to_string().into()]);
         }
@@ -500,16 +553,17 @@ impl Storage {
         let mut conn = self.connect()?;
         let tx = conn.transaction().map_err(err)?;
         check_revision(&tx, expected_revision)?;
+        check_metadata_bounds(&tx)?;
         // Headers without row predicates are available before backfilling.
         if !filter.organizations.is_empty() || !filter.works.is_empty() {
             check_index(&tx, filter)?;
         }
-        let mut stmt=tx.prepare(&format!("SELECT CASE WHEN length(CAST(r.id AS BLOB))<=65536 THEN r.id END,
-          CASE WHEN length(CAST(r.report_type AS BLOB))<=65536 THEN r.report_type END,
-          CASE WHEN length(CAST(r.period_start AS BLOB))<=65536 THEN r.period_start END,
-          CASE WHEN length(CAST(r.period_end AS BLOB))<=65536 THEN r.period_end END,
-          CASE WHEN length(CAST(r.source_name AS BLOB))<=65536 OR r.source_name IS NULL THEN r.source_name ELSE 0 END
-          FROM reports r WHERE {predicate} ORDER BY r.period_start,r.id LIMIT ?")).map_err(err)?;
+        let mut stmt = tx
+            .prepare(&format!(
+                "SELECT r.id,r.report_type,r.period_start,r.period_end,r.source_name
+          FROM reports r WHERE {predicate} ORDER BY r.period_start,r.id LIMIT ?"
+            ))
+            .map_err(err)?;
         let result = stmt
             .query_map(rusqlite::params_from_iter(values), |r| {
                 Ok(ReportHeader {
@@ -535,6 +589,7 @@ impl Storage {
         let mut conn = self.connect()?;
         let tx = conn.transaction().map_err(err)?;
         check_revision(&tx, expected_revision)?;
+        check_metadata_bounds(&tx)?;
         check_index(&tx, filter)?;
         let (rows,count,amount):(i64,f64,f64)=tx.query_row(&format!("SELECT COUNT(*),COALESCE(SUM(x.count),0),COALESCE(SUM(x.amount),0) FROM report_rows x JOIN reports r ON r.id=x.report_id WHERE {predicate}"),rusqlite::params_from_iter(values),|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
         let average = if count == 0.0 {

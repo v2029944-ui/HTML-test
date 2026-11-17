@@ -41,8 +41,28 @@ even if that report might have no rows matching the organization/work filter.
 Unfiltered metadata header pages can enumerate reports before backfilling; header
 queries with organization/work filters require valid indexes. Empty reports get a
 valid manifest with zero rows and are included in header pages without row filters.
-Header fields and indexed labels/IDs are limited to 64 KiB per string; oversized
-header values cause errors rather than unbounded output or truncation.
+Header fields and indexed labels/IDs are limited to 64 KiB per string. Before any
+selective filtering, key lookup, join, or ordering, a metadata-only table scan uses
+`octet_length` to check every report header. If **any** report has an oversized
+header, all selective APIs (including backfill) fail explicitly, even if the report
+would be outside the requested filter/page. This conservative global restriction
+avoids silently omitting reports and prevents SQLite comparisons/sorts from
+materializing oversized keys. `load()` and complete SQLite backup remain available.
+Cursor strings are also bounded before they are copied into SQL parameters.
+
+The guard uses `reports NOT INDEXED`, and the bundled SQLite EXPLAIN test proves
+all five `OP_Column` reads carry `BYTELENARG` (P5 `0xc0`), which reads record byte
+lengths without loading TEXT overflow payloads. A `length(CAST(... AS BLOB))` guard
+is insufficient because the cast forces full-field materialization first. The
+metadata scan costs O(number of reports) time and does not parse report JSON.
+
+Creation of missing optional legacy `reports_by_period`/`reports_by_source`
+indexes is skipped while oversized headers exist, so first opening an original
+schema cannot accidentally build huge keys before the guard runs. The size check
+and optional index creation share one SQLite transaction/snapshot. Existing
+indexes are untouched; normal databases get the original index definitions,
+without new SQL functions in persisted schema. Query result semantics and the
+original full load/save formats remain unchanged.
 
 The aggregate uses SQLite `COUNT(*)`, `SUM(count)`, and `SUM(amount)` over the whole
 selection. Weighted average is `SUM(amount) / SUM(count)` and is `None` when total
@@ -114,7 +134,10 @@ Backfill opens the existing TEXT JSON using a readonly SQLite blob, uses an 8 Ki
 BufReader, holds one deserialized row at a time, and sends unknown metadata/row
 fields to `IgnoredAny`. A reader guard rejects **raw JSON tokens** above 64 KiB
 (including unknown strings and escaped strings); serde_json's recursion limit is
-retained. Required root id/type/start/end must match the original report columns;
+retained. The raw-token cap is stricter than a decoded 64 KiB label: JSON escape
+sequences can expand one decoded byte into up to six raw bytes. Frontend/import
+integration must account for this edge; the budget has not been silently relaxed.
+Required root id/type/start/end must match the original report columns;
 duplicate required fields/rows, missing rows, malformed JSON, invalid row fields,
 and trailing data fail before publication.
 
@@ -169,5 +192,66 @@ upgrade without changing TEXT JSON, old migration/roundtrip tests, concurrent
 snapshot invalidation, malformed-data publication failure, full save rollback after
 an injected index failure, explicit filter/size limits, and numeric overflow.
 The initial test-first run failed to compile because the new APIs did not exist;
-the implemented suite passes 21 tests. The Linux harness does not validate the
+the implemented suite passes 23 tests (the original 21 plus two header regressions). The Linux harness does not validate the
 Tauri/Windows GUI build. Clippy is unavailable in the supplied Rust toolchain.
+
+
+## Header-bound review fix and isolated memory proof
+
+The two additional regressions cover 4 MiB values in each of `id`, `report_type`,
+`period_start`, `period_end`, and `source_name` on an original-schema database with
+no optional lookup indexes. They require explicit errors before filtered/cursor
+queries, preserve original JSON/reports/revision, verify the giant-key indexes
+were not built, and preserve full load/save compatibility for valid oversized ID
+and desktopSource data. The other test checks the actual bundled SQLite VDBE
+flags/query plan and preservation of an existing original index definition.
+The behavioral test failed on the previous implementation before the fix.
+
+For the isolated memory probe, the Python builder creates one original-schema
+report, no optional lookup indexes, no kv data, and an empty row array. Normal
+metadata is ID `r1`, type `week`, start `2026-11-02`, end `2026-11-08`, and source
+`source.xlsx`. It replaces one selected metadata field with N ASCII `z` bytes and
+stores matching metadata in original JSON (including `desktopSource`). Fixture
+construction finishes before the measured Rust process. The Rust probe first
+opens storage, then issues five selective calls (unfiltered headers, filtered
+headers with cursor, row page with cursor, aggregate, and bounded-ID backfill),
+requiring the explicit limit error each time and unchanged revision. Its final
+Linux `/proc/self/status` `VmHWM` measures only that executable's high-water RSS;
+it also asserts <32 MiB for these fixtures. This avoids inherited child
+`ru_maxrss` accounting artifacts. Afterwards Python verifies the original JSON
+SHA256, one preserved report, and absence of newly built optional lookup indexes.
+
+```sh
+export CARGO_HOME=/workspace/rust/cargo
+export RUSTUP_HOME=/workspace/rust/rustup
+/workspace/rust/cargo/bin/cargo build --offline --manifest-path tauri/storage-core/Cargo.toml --example headers
+python3 tauri/storage-core/examples/make_header_fixture.py tauri/storage-core/target/header-source-1m-final 1048576 source_name
+python3 tauri/storage-core/examples/make_header_fixture.py tauri/storage-core/target/header-source-32m-final 33554432 source_name
+python3 tauri/storage-core/examples/make_header_fixture.py tauri/storage-core/target/header-id-32m-final 33554432 id
+python3 tauri/storage-core/examples/make_header_fixture.py tauri/storage-core/target/header-period-32m-final 33554432 period_start
+python3 tauri/storage-core/examples/measure_headers.py tauri/storage-core/target/header-source-1m-final
+python3 tauri/storage-core/examples/measure_headers.py tauri/storage-core/target/header-source-32m-final
+python3 tauri/storage-core/examples/measure_headers.py tauri/storage-core/target/header-id-32m-final
+python3 tauri/storage-core/examples/measure_headers.py tauri/storage-core/target/header-period-32m-final
+```
+
+Use fresh fixture paths for a repeat run so the first-open initialization is
+measured. Actual debug-build measurements from fresh original-schema databases:
+
+| Oversized field | Field bytes | Original JSON bytes | In-child VmHWM, KiB | Elapsed seconds |
+| --- | ---: | ---: | ---: | ---: |
+| source_name | 1,048,576 | 1,048,670 | 3,892 | 0.069 |
+| source_name | 33,554,432 | 33,554,526 | 3,864 | 0.024 |
+| id | 33,554,432 | 33,554,535 | 3,904 | 0.046 |
+| period_start | 33,554,432 | 33,554,527 | 3,912 | 0.024 |
+
+These are bounded rejection measurements, not successful selective reads of
+oversized fields. All four JSON integrity checks passed, no reports were changed
+or deleted, and neither optional giant-key index was created. The metadata guard
+uses the bundled SQLite `octet_length` function (introduced in SQLite 3.43), but
+adds no references to that function to the saved schema for older writers.
+
+For future C integration, blob backfill already accepts SQLite TEXT/BLOB payloads;
+original `load()` still requests String/TEXT. Accepting UTF-8 BLOB in the complete
+legacy response must be added when C begins publishing blob-backed JSON; it is
+not silently enabled by this header-bound fix.

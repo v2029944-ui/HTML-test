@@ -378,3 +378,153 @@ fn original_sqlite_schema_upgrades_without_replacing_json_or_reports() {
         .report_page(rev, &ReadFilter::default(), None, 10)
         .is_err());
 }
+
+#[test]
+fn oversized_headers_fail_before_filters_sorting_or_key_lookups_without_data_changes() {
+    for column in [
+        "id",
+        "report_type",
+        "period_start",
+        "period_end",
+        "source_name",
+    ] {
+        let dir = tempdir().unwrap();
+        let conn = Connection::open(dir.path().join("reports.sqlite3")).unwrap();
+        conn.execute_batch("CREATE TABLE reports(id TEXT PRIMARY KEY,report_type TEXT NOT NULL,period_start TEXT NOT NULL,period_end TEXT NOT NULL,source_name TEXT,json TEXT NOT NULL); CREATE TABLE kv(name TEXT PRIMARY KEY,json TEXT NOT NULL);").unwrap();
+        let oversized = "z".repeat(4 * 1024 * 1024);
+        let mut raw = data()["reports"][0].clone();
+        let json_field = match column {
+            "id" => "id",
+            "report_type" => "type",
+            "period_start" => "start",
+            "period_end" => "end",
+            _ => "desktopSource",
+        };
+        raw[json_field] = json!(oversized);
+        let serialized = raw.to_string();
+        conn.execute(
+            "INSERT INTO reports VALUES('r1','week','2026-11-02','2026-11-08',NULL,?1)",
+            [&serialized],
+        )
+        .unwrap();
+        conn.execute(&format!("UPDATE reports SET {column}=?1"), [&oversized])
+            .unwrap();
+        let store = Storage::new(dir.path().into()).unwrap();
+        let rev = store.revision().unwrap();
+        let filter = ReadFilter {
+            report_type: Some("day".into()),
+            start: Some("2027-01-01".into()),
+            ..ReadFilter::default()
+        };
+        for selected in [&ReadFilter::default(), &filter] {
+            let failure = store
+                .report_page(rev, selected, Some(("2026-01-01", "cursor")), 1)
+                .unwrap_err();
+            assert!(failure.contains("64 KiB"), "{column}: {failure}");
+            assert!(store
+                .row_page(rev, selected, Some(("cursor", 0)), 1)
+                .unwrap_err()
+                .contains("64 KiB"));
+            assert!(store
+                .aggregate(rev, selected)
+                .unwrap_err()
+                .contains("64 KiB"));
+        }
+        assert!(store
+            .index_report("r1", rev)
+            .unwrap_err()
+            .contains("64 KiB"));
+        let preserved: String = conn
+            .query_row("SELECT json FROM reports", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(preserved, serialized);
+        assert_eq!(store.load().unwrap()["reports"][0], raw);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM reports", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(store.revision().unwrap(), rev);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name IN ('reports_by_source','reports_by_period')",[],|r|r.get::<_,i64>(0)).unwrap(),0,"first open must not build missing indexes over oversized keys");
+        if matches!(column, "id" | "source_name") {
+            let legacy = json!({"reports":[raw.clone()],"settings":default_settings()});
+            store.save(legacy.clone()).unwrap();
+            assert_eq!(
+                store.load().unwrap(),
+                legacy,
+                "oversized metadata accepted by the original format must remain saveable"
+            );
+        }
+    }
+}
+
+#[test]
+fn sqlite_metadata_preflight_uses_payload_free_byte_lengths_and_preserves_old_indexes() {
+    let dir = tempdir().unwrap();
+    let conn = Connection::open(dir.path().join("reports.sqlite3")).unwrap();
+    conn.execute_batch("CREATE TABLE reports(id TEXT PRIMARY KEY,report_type TEXT NOT NULL,period_start TEXT NOT NULL,period_end TEXT NOT NULL,source_name TEXT,json TEXT NOT NULL); CREATE TABLE kv(name TEXT PRIMARY KEY,json TEXT NOT NULL); CREATE INDEX reports_by_source ON reports(source_name);").unwrap();
+    let old_index: String = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE name='reports_by_source'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    store.revision().unwrap();
+    assert_eq!(
+        conn.query_row(
+            "SELECT sql FROM sqlite_master WHERE name='reports_by_source'",
+            [],
+            |r| r.get::<_, String>(0)
+        )
+        .unwrap(),
+        old_index
+    );
+    let mut explain = conn
+        .prepare(&format!("EXPLAIN {}", read_model::OVERSIZED_METADATA_SQL))
+        .unwrap();
+    let columns: Vec<(i64, i64)> = explain
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(6)?,
+            ))
+        })
+        .unwrap()
+        .map(|r| r.unwrap())
+        .filter(|(op, _, _)| op == "Column")
+        .map(|(_, column, flags)| (column, flags))
+        .collect();
+    assert_eq!(
+        columns.len(),
+        5,
+        "every metadata field must use the size-only path"
+    );
+    for (column, flags) in columns {
+        assert!(column <= 4);
+        assert_eq!(
+            flags & 0xc0,
+            0xc0,
+            "OP_Column must use BYTELENARG, not materialize the TEXT"
+        );
+    }
+    let plan: Vec<String> = conn
+        .prepare(&format!(
+            "EXPLAIN QUERY PLAN {}",
+            read_model::OVERSIZED_METADATA_SQL
+        ))
+        .unwrap()
+        .query_map([], |r| r.get::<_, String>(3))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    assert!(
+        plan.iter().any(|line| line == "SCAN reports"),
+        "guard must scan table records instead of giant index keys: {plan:?}"
+    );
+    assert!(!plan
+        .iter()
+        .any(|line| line.contains("USING") || line.contains("TEMP B-TREE")));
+}

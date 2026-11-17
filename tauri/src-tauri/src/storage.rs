@@ -209,10 +209,6 @@ fn new_connection(path: &Path) -> Result<Connection, String> {
            source_name TEXT,
            json TEXT NOT NULL
          );
-         CREATE INDEX IF NOT EXISTS reports_by_period
-           ON reports(report_type, period_start);
-         CREATE INDEX IF NOT EXISTS reports_by_source
-           ON reports(source_name);
          CREATE TABLE IF NOT EXISTS kv (
            name TEXT PRIMARY KEY,
            json TEXT NOT NULL
