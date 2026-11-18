@@ -17,7 +17,7 @@ fn save_data(store: State<'_, Storage>, data: serde_json::Value) -> Result<serde
 }
 
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct NativeReportCursor {
     start: String,
     id: String,

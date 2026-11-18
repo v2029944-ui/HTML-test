@@ -31,6 +31,8 @@ class Element{
 function mount(){
  const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
+ e.analysisType.value='day';
+ e.analysisOrganization.value='*';
  const calls=[];
  const report=n=>({id:'r'+n,period_start:'2024-02-'+String(n%28+1).padStart(2,'0'),period_end:'2024-02-29',report_type:'day',source_name:'<b>untrusted</b>'});
  const api={
