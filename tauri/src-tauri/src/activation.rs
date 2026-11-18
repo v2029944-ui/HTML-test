@@ -82,6 +82,31 @@ fn load_request(root: &Path) -> Result<Option<RestoreRequest>, String> {
     Ok(Some(req))
 }
 
+fn ensure_no_wal(path: &Path) -> Result<(), String> {
+    if path.exists() {
+        // A previous process might have stopped with committed WAL pages.
+        // Checkpoint a live file before attempting to move it.
+        let conn = Connection::open_with_flags(
+            path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+        ).map_err(err)?;
+        let (busy, _, _):(i64,i64,i64)=conn.query_row(
+            "PRAGMA wal_checkpoint(TRUNCATE)", [],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))
+        ).map_err(err)?;
+        if busy != 0 {
+            return Err("База используется другим процессом. Закройте другие экземпляры программы.".into());
+        }
+    }
+    for extension in ["-wal","-shm"] {
+        let mut name = path.as_os_str().to_os_string();
+        name.push(extension);
+        if fs::symlink_metadata(PathBuf::from(name)).is_ok() {
+            return Err("У базы остались WAL-файлы. Восстановление остановлено, чтобы не повредить данные.".into());
+        }
+    }
+    Ok(())
+}
+
 fn ensure_regular(path: &Path) -> Result<(), String> {
     if !fs::symlink_metadata(path).map_err(err)?.file_type().is_file() {
         return Err("Файл восстановления не является обычным файлом.".into());
@@ -142,6 +167,7 @@ pub fn apply_pending_restore(root: &Path) -> Result<Option<RestoreLaunchResult>,
     // the recovered file, and never overwrite the original backup.
     if previous.exists() {
         ensure_regular(&previous)?;
+        ensure_no_wal(&live)?;
         if live.exists() {
             ensure_regular(&live)?;
             let orphan = root.join(req.stage.replace(".analiz-restore-stage-", ".analiz-restore-interrupted-"));
@@ -183,25 +209,14 @@ pub fn apply_pending_restore(root: &Path) -> Result<Option<RestoreLaunchResult>,
     }
     // Refuse to move the live file with pending WAL pages or any remaining
     // SQLite readers. A previous app version may not honor our process lock.
-    {
-        let conn = Connection::open_with_flags(&live, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)
-            .map_err(err)?;
-        let (busy, _, _):(i64,i64,i64)=conn.query_row(
-            "PRAGMA wal_checkpoint(TRUNCATE)", [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))
-        ).map_err(err)?;
-        if busy != 0 {
-            return Err("База используется другим процессом. Закройте другие экземпляры программы.".into());
-        }
-    }
-    for ext in ["-wal", "-shm"] {
-        let mut os = live.as_os_str().to_os_string();
-        os.push(ext);
-        if fs::symlink_metadata(PathBuf::from(os)).is_ok() {
-            return Err("У SQLite остались служебные WAL-файлы. Закройте другие процессы и повторите запуск.".into());
-        }
-    }
+    ensure_no_wal(&live)?;
     fs::rename(&live, &previous).map_err(err)?;
     let attempt = (|| {
+        // A second process that does not use our lock must not create a new
+        // live database between the two renames.
+        if fs::symlink_metadata(&live).is_ok() {
+            return Err("База снова открыта другим процессом. Восстановление отменено.".into());
+        }
         fs::rename(&candidate, &live).map_err(err)?;
         let restored = recovery::check_snapshot(&live)?;
         if restored.verification != req.digest {
@@ -222,6 +237,7 @@ pub fn apply_pending_restore(root: &Path) -> Result<Option<RestoreLaunchResult>,
     if attempt.is_err() {
         // Never remove the previous database. If either rename fails, stop
         // startup rather than start an application with ambiguous data.
+        ensure_no_wal(&live)?;
         if live.exists() {
             let orphan = root.join(req.stage.replace(".analiz-restore-stage-", ".analiz-restore-interrupted-"));
             fs::rename(&live, &orphan).map_err(err)?;
