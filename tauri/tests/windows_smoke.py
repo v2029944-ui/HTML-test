@@ -284,6 +284,34 @@ def run():
                 assert page.locator('#workRows tr').count()==0
                 assert page.locator('#workNext').is_disabled()
                 report['checks'].append('Native work/group keyset breakdown is empty for missing weekly data')
+                # D4f: export uses an on-disk CSV from SQLite, not report JSON,
+                # and must reject an existing output path without replacement.
+                export_path=tmp/'analysis-empty-week.csv'
+                if export_path.exists():
+                    raise RuntimeError('CSV export test destination unexpectedly exists')
+                export_call="""
+                  async path => {
+                    const snapshot=await window.desktopAPI.nativeSettingsBootstrap();
+                    return window.__TAURI__.core.invoke('native_export_range_csv',{
+                      revision:snapshot.revision, reportType:'week',
+                      from:'2026-11-02', to:'2026-11-09',
+                      organizations:snapshot.org_names, organization:null,
+                      destination:path
+                    });
+                  }
+                """
+                page.evaluate(export_call,str(export_path))
+                exported=export_path.read_bytes()
+                assert exported.startswith(b'\\xef\\xbb\\xbf"key";"name";"kind";"count";"amount";"average";"active"')
+                assert b'\\r\\n' in exported
+                try:
+                    page.evaluate(export_call,str(export_path))
+                except Exception as error:
+                    assert 'already exists' in str(error)
+                else:
+                    raise RuntimeError('Native SQL export overwrote an existing CSV')
+                assert export_path.read_bytes()==exported
+                report['checks'].append('Native SQL CSV export with UTF-8 BOM and no-overwrite guarantee')
                 report['checks'].append('SQL-only native page, bounded report navigation, settings bootstrap')
                 page.locator('#legacyWorkspaceLink').click()
                 wait_for_app_state(page,'Boolean(window.appReady)','Legacy workspace after native route')

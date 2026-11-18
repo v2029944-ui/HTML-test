@@ -29,7 +29,7 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
@@ -42,6 +42,10 @@ function mount(){
    nativeGroupRename:async(rev,handle,name)=>{calls.push({kind:'rename',rev,handle,name});return 13;},
    nativeAnalysisIndexPage:async(rev,kind,after,limit)=>{calls.push({kind:'index',rev,reportType:kind,after,limit});return {processed:2,next:null,done:true};},
    nativeAnalysisIndexSettings:async rev=>{calls.push({kind:'settings_index',rev});},
+   chooseCsvPath:async defaultPath=>{calls.push({kind:'save_csv',defaultPath});return 'C:\\\\Exports\\\\new.csv';},
+   nativeExportRangeCsv:async(rev,kind,from,to,organizations,organization,destination)=>{
+     calls.push({kind:'export_csv',rev,reportType:kind,from,to,organizations,organization,destination});
+   },
    nativeAnalysisRange:async(rev,kind,from,to,organizations)=>{calls.push({kind:'range',rev,reportType:kind,from,to,organizations});return {complete:false,periods:366,missing:1,total:{count:null,amount:null,average:null},invalid_reports:1,duplicate_issues:0,overlap_issues:0};},
    nativeAnalysisRangePage:async(rev,kind,from,to,organizations,organization,after,limit)=>{
      calls.push({kind:'work',rev,reportType:kind,from,to,organizations,organization,after,limit});
@@ -176,4 +180,29 @@ test('bounded work/group SQL pages preserve unknown totals, keyset cursors and s
  assert.equal(e.workNext.disabled,true);
  await e.analysisRun.events.click();
  assert.equal(calls.filter(c=>c.kind==='work').at(-1).organization,'СМУ16');
+});
+
+test('native CSV export waits for explicit Save selection and preserves selected revision',async()=>{
+ const {e,calls,window}=mount();
+ await window.nativeWorkspaceReady;
+ assert.equal(e.analysisExport.disabled,true);
+ e.analysisFrom.value='2024-01-01';e.analysisTo.value='2024-12-31';
+ await e.analysisPrepare.events.click();
+ assert.equal(e.analysisExport.disabled,true,'indexing does not authorize exporting a stale scope');
+ await e.analysisRun.events.click();
+ assert.equal(e.analysisExport.disabled,false);
+ await e.analysisExport.events.click();
+ const save=calls.find(c=>c.kind==='save_csv');
+ const exportCall=calls.find(c=>c.kind==='export_csv');
+ assert.match(save.defaultPath,/\.csv$/);
+ assert.equal(exportCall.rev,12);
+ assert.equal(exportCall.from,'2024-01-01');
+ assert.equal(exportCall.to,'2024-12-31');
+ assert.deepEqual(exportCall.organizations,['СМУ16','АВТО']);
+ assert.equal(exportCall.organization,null);
+ assert.equal(exportCall.destination,'C:\\\\Exports\\\\new.csv');
+ assert.match(e.exportStatus.textContent,/CSV сохранён/);
+ e.analysisOrganization.value='СМУ16';
+ e.analysisOrganization.events.change();
+ assert.equal(e.analysisExport.disabled,true,'scope changes invalidate previous export');
 });
