@@ -23,6 +23,12 @@ pub use analytics::*;
 
 #[path = "backup.rs"]
 mod backup;
+#[path = "recovery.rs"]
+mod recovery;
+pub use recovery::RestorePreview;
+#[path = "activation.rs"]
+mod activation;
+pub use activation::{AppRestoreLock, RestoreLaunchInfo, RestoreLaunchResult, ScheduledRestore, apply_pending_restore_or_open_original};
 #[path = "metric_reports.rs"]
 mod metric_reports;
 pub use metric_reports::{kinds as metric_kinds, MetricKind, MetricReceipt, MetricReview, MetricSummary};

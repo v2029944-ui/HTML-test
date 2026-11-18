@@ -2,6 +2,7 @@
 (function(){
 'use strict';
 const api=window.desktopAPI,$=id=>document.getElementById(id);
+const userError=window.analizUserError||(()=>'Операция не выполнена. Перезапустите программу и повторите действие.');
 const make=(tag,text)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);return el;};
 function status(id,text,error=false){$(id).textContent=String(text);$(id).className='status '+(error?'error':'muted');}
 const reportSize=100,groupSize=50;
@@ -9,7 +10,7 @@ let revision=null,reportAfter=null,reportBack=[],reportNext=null,groupAfter=null
 let reportsBusy=false,groupsBusy=false,refreshBusy=false;
 let analysisBusy=false,analysisReady=false,analysisCancelled=false,orgNames=[];
 let workBusy=false,workScope=null,workAfter=null,workBack=[],workNext=null;
-let exportBusy=false,backupBusy=false;
+let exportBusy=false,backupBusy=false,restoreBusy=false,restoreSelection=null;
 const workSize=50;
 function controlState(){
 $('reportBack').disabled=reportsBusy||refreshBusy||!reportBack.length;
@@ -17,8 +18,12 @@ $('reportNext').disabled=reportsBusy||refreshBusy||!reportNext;
 $('nativeReportType').disabled=reportsBusy||refreshBusy;
 $('groupBack').disabled=groupsBusy||refreshBusy||!groupBack.length;
 $('groupNext').disabled=groupsBusy||refreshBusy||!groupNext;
-$('workspaceRefresh').disabled=reportsBusy||groupsBusy||refreshBusy||analysisBusy||workBusy||exportBusy||backupBusy;
-$('backupSqlite').disabled=backupBusy||exportBusy||analysisBusy||workBusy||refreshBusy;
+$('workspaceRefresh').disabled=reportsBusy||groupsBusy||refreshBusy||analysisBusy||workBusy||exportBusy||backupBusy||restoreBusy;
+$('backupSqlite').disabled=backupBusy||exportBusy||analysisBusy||workBusy||refreshBusy||restoreBusy;
+$('restoreChoose').disabled=restoreBusy||backupBusy||analysisBusy||exportBusy||refreshBusy;
+$('restoreCopy').disabled=restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy;
+$('restoreSchedule').disabled=restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy;
+$('restoreCancel').disabled=restoreBusy||backupBusy||analysisBusy||exportBusy||refreshBusy;
 $('analysisPrepare').disabled=analysisBusy||refreshBusy||exportBusy||revision===null;
 $('analysisCancel').disabled=!analysisBusy;
 $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!analysisReady;
@@ -43,7 +48,7 @@ try{
  for(const item of rows){const tr=make('tr');for(const value of [item.period_start,item.period_end,item.report_type,item.source_name||'—',item.id])tr.append(make('td',value??''));tbody.append(tr);}
  status('reportStatus','На странице: '+rows.length+' отчётов. Сортировка по дате и идентификатору.');
  return true;
-}catch(err){reportNext=null;reportBack=[];status('reportStatus','Ошибка SQLite: '+String(err?.message||err)+'. Нажмите «Обновить данные».',true);return false;}
+}catch(err){reportNext=null;reportBack=[];status('reportStatus','Ошибка SQLite: '+userError(err)+'. Нажмите «Обновить данные».',true);return false;}
 finally{reportsBusy=false;controlState();}
 }
 async function groups(cursor,reset=false){
@@ -66,17 +71,17 @@ try{
    if(!window.confirm('Переименовать группу «'+group.name+'» в «'+name+'»?'))return;
    save.disabled=true;
    try{await api.nativeGroupRename(revision,group.handle,name);await refresh();status('workspaceStatus','Название группы изменено и сохранено в SQLite.');}
-   catch(err){status('groupStatus','Группа не изменена: '+String(err?.message||err),true);save.disabled=false;}
+   catch(err){status('groupStatus','Группа не изменена: '+userError(err),true);save.disabled=false;}
   });
   const action=make('td');action.append(save);tr.append(action);tbody.append(tr);
  }
  status('groupStatus','На странице: '+rows.length+' групп. Данные отчётов не меняются.');
  return true;
-}catch(err){groupNext=null;groupBack=[];status('groupStatus','Ошибка групп: '+String(err?.message||err),true);return false;}
+}catch(err){groupNext=null;groupBack=[];status('groupStatus','Ошибка групп: '+userError(err),true);return false;}
 finally{groupsBusy=false;controlState();}
 }
 async function refresh(){
-if(refreshBusy||reportsBusy||groupsBusy||analysisBusy||workBusy||exportBusy||backupBusy)return false;
+if(refreshBusy||reportsBusy||groupsBusy||analysisBusy||workBusy||exportBusy||backupBusy||restoreBusy)return false;
 refreshBusy=true;controlState();
 try{
  const snapshot=await api.nativeSettingsBootstrap();
@@ -94,7 +99,7 @@ try{
 }catch(err){
  revision=null;$('reportRows').replaceChildren();$('groupRows').replaceChildren();
  reportNext=null;groupNext=null;reportBack=[];groupBack=[];
- status('workspaceStatus','Невозможно открыть SQL-режим: '+String(err?.message||err),true);return false;
+ status('workspaceStatus','Невозможно открыть SQL-режим: '+userError(err),true);return false;
 }finally{refreshBusy=false;controlState();}
 const reportsLoaded=await reports(null,true);
 const groupsLoaded=await groups(null,true);
@@ -102,7 +107,7 @@ return reportsLoaded&&groupsLoaded;
 }
 
 async function backupSqlite(){
- if(backupBusy||analysisBusy||exportBusy||refreshBusy||workBusy)return;
+ if(backupBusy||analysisBusy||exportBusy||refreshBusy||workBusy||restoreBusy)return;
  backupBusy=true;controlState();
  try{
   const now=new Date().toISOString().slice(0,10);
@@ -115,9 +120,85 @@ async function backupSqlite(){
   const captured=await api.nativeBackupSqlite(destination);
   status('backupStatus','Копия SQLite сохранена. Ревизия снимка: '+captured+'. Оригинальная база не изменена.');
  }catch(err){
-  status('backupStatus','Не удалось сохранить копию SQLite: '+String(err?.message||err)+'. Выберите новое имя и проверьте свободное место.',true);
+  status('backupStatus','Не удалось сохранить копию SQLite: '+userError(err)+'. Выберите новое имя и проверьте свободное место.',true);
  }finally{backupBusy=false;controlState();}
 }
+const restoreError=err=>{
+ const raw=typeof err==='string'?err:typeof err?.message==='string'?err.message:'';
+ if(typeof window.analizUserError==='function')return window.analizUserError(err);
+ return /[А-Яа-яЁё]/.test(raw) && !/SELECT|SQLITE_ERROR|traceback|stack trace/i.test(raw)
+  ?raw:'Не удалось проверить резервную копию. Проверьте файл и повторите попытку.';
+};
+async function inspectBackup(){
+ if(restoreBusy||backupBusy||analysisBusy||exportBusy||refreshBusy)return;
+ restoreSelection=null;restoreBusy=true;controlState();
+ $('restoreSelected').textContent='Резервная копия не выбрана.';
+ try{
+  const source=await api.chooseRestoreBackupPath();
+  if(!source){status('restoreStatus','Выбор резервной копии отменён.');return;}
+  if(typeof source!=='string')throw Error('Выберите один файл с расширением .sqlite3.');
+  status('restoreStatus','Проверяем целостность SQLite, отчёты и настройки…');
+  const preview=await api.nativeRestorePreview(source);
+  if(!preview||typeof preview.verification!=='string'||
+     !/^[a-f0-9]{64}$/i.test(preview.verification)||
+     !Number.isSafeInteger(preview.reportCount)||preview.reportCount<0)
+    throw Error('Не удалось подтвердить целостность резервной копии.');
+  restoreSelection={source,verification:preview.verification};
+  $('restoreSelected').textContent='Проверенный файл: '+source.split(/[\\/]/).pop();
+  status('restoreStatus','Копия проверена. Отчётов: '+preview.reportCount+
+    '. Можно создать отдельный восстановленный файл. Рабочая база не изменена.');
+ }catch(err){restoreSelection=null;status('restoreStatus',restoreError(err),true);}
+ finally{restoreBusy=false;controlState();}
+}
+async function writeRestoreCopy(){
+ if(restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy)return;
+ if(!window.confirm('Создать отдельную восстановленную копию? Рабочая база SQLite не изменится.'))return;
+ const selected=restoreSelection;
+ restoreBusy=true;controlState();
+ try{
+  const destination=await api.chooseRestoreDestination('analiz-restored-check.sqlite3');
+  if(!destination){status('restoreStatus','Создание восстановленной копии отменено.');return;}
+  if(typeof destination!=='string')throw Error('Укажите новый файл с расширением .sqlite3.');
+  status('restoreStatus','Создаём проверенную отдельную копию без замены рабочей базы…');
+  const result=await api.nativeRestoreCopy(selected.source,selected.verification,destination);
+  if(result?.verification!==selected.verification)throw Error('Результат проверки копии не совпал.');
+  status('restoreStatus','Восстановленная копия создана и проверена. Отчётов: '+
+    result.reportCount+'. Рабочая база не изменена. Не подменяйте её вручную при открытой программе.');
+ }catch(err){status('restoreStatus',restoreError(err),true);}
+ finally{restoreBusy=false;controlState();}
+}
+async function scheduleRestoreAtStartup(){
+ if(restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy)return;
+ if(!window.confirm('При следующем запуске будет заменена текущая рабочая база SQLite на выбранную резервную копию. Программа заранее сохранит защитные копии текущей базы. Продолжить?'))return;
+ restoreBusy=true;controlState();
+ try{
+  const selected=restoreSelection;
+  status('restoreStatus','Подготавливаем отдельную проверенную копию для следующего запуска…');
+  const request=await api.nativeRestoreSchedule(selected.source,selected.verification);
+  if(!request?.restartRequired)throw Error('Не удалось запланировать восстановление.');
+  restoreSelection=null;
+  status('restoreStatus','Восстановление запланировано: '+request.reportCount+
+    ' отчётов. Полностью закройте приложение и откройте снова. До перезапуска рабочая база не изменена.');
+ }catch(err){status('restoreStatus',restoreError(err),true);}
+ finally{restoreBusy=false;controlState();}
+}
+async function cancelScheduledRestore(){
+ if(restoreBusy||backupBusy||analysisBusy||exportBusy||refreshBusy)return;
+ if(!window.confirm('Отменить запланированное восстановление? Рабочая база не изменится.'))return;
+ restoreBusy=true;controlState();
+ try{
+  const removed=await api.nativeRestoreCancel();
+  restoreSelection=null;
+  status('restoreStatus',removed?
+    'Отложенное восстановление отменено. Рабочая база сохранена.':
+    'Запланированных восстановлений нет. Рабочая база не изменена.');
+ }catch(err){status('restoreStatus',restoreError(err),true);}
+ finally{restoreBusy=false;controlState();}
+}
+$('restoreCancel').addEventListener('click',cancelScheduledRestore);
+$('restoreSchedule').addEventListener('click',scheduleRestoreAtStartup);
+$('restoreChoose').addEventListener('click',inspectBackup);
+$('restoreCopy').addEventListener('click',writeRestoreCopy);
 $('workspaceRefresh').addEventListener('click',()=>{void refresh();});
 $('backupSqlite').addEventListener('click',backupSqlite);
 $('nativeReportType').addEventListener('change',()=>{reportAfter=null;reportBack=[];void reports(null,true);});
@@ -154,7 +235,7 @@ controlState();
    analysisReady=true;
    status('analysisStatus','Индексы готовы: '+processed+' отчётов. Теперь выберите даты и нажмите «Рассчитать».');
  }catch(err){
-   status('analysisStatus','Индексы не готовы: '+String(err?.message||err),true);
+   status('analysisStatus','Индексы не готовы: '+userError(err),true);
  }finally{analysisBusy=false;controlState();}
 }
 
@@ -230,7 +311,7 @@ async function workPage(cursor,reset=false){
  }catch(err){
   workNext=null;workBack=[];workScope=null;
   $('workRows').replaceChildren();
-  status('workStatus','Ошибка SQL-чтения: '+String(err?.message||err)+'. Повторите расчёт.',true);
+  status('workStatus','Ошибка SQL-чтения: '+userError(err)+'. Повторите расчёт.',true);
   return false;
  }finally{workBusy=false;controlState();}
 }
@@ -261,7 +342,7 @@ async function calculateAnalysis(){
  }catch(err){
    $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
    status('divisionStatus','Сравнение не выполнено из-за ошибки.',true);
-   status('analysisStatus','Ошибка расчёта: '+String(err?.message||err),true);
+   status('analysisStatus','Ошибка расчёта: '+userError(err),true);
  }finally{analysisBusy=false;controlState();}
  if(workScope)await workPage(null,true);
 }
@@ -283,7 +364,7 @@ async function exportAnalysisCsv(){
   );
   status('exportStatus','CSV сохранён. Исходные отчёты не изменены.');
  }catch(err){
-  status('exportStatus','Экспорт не выполнен: '+String(err?.message||err)+'. Выберите новый CSV-файл.',true);
+  status('exportStatus','Экспорт не выполнен: '+userError(err)+'. Выберите новый CSV-файл.',true);
  }finally{exportBusy=false;controlState();}
 }
 const year=String(new Date().getFullYear());
@@ -321,4 +402,9 @@ controlState();
 // Called after a verified native SQLite commit; reads only bounded metadata/pages.
 window.nativeWorkspaceRefresh=refresh;
 window.nativeWorkspaceReady=refresh();
+if(typeof api.nativeRestoreLaunchInfo==='function'){
+ void api.nativeRestoreLaunchInfo().then(result=>{
+  if(result?.message)status('restoreStatus',result.message,!result.restored);
+ }).catch(err=>status('restoreStatus',restoreError(err),true));
+}
 })();

@@ -33,7 +33,19 @@ jobs:
           workspaces: "tauri/src-tauri -> target"
           cache-on-failure: true
       - name: Install Tauri CLI
-        run: npm install --prefix tauri --no-audit --no-fund
+        shell: pwsh
+        run: |
+          npm install --prefix tauri --no-audit --no-fund --include=optional
+          if ($LASTEXITCODE -ne 0) { throw 'Tauri CLI installation failed' }
+          # npm occasionally omits the Windows native optional dependency.
+          # Install the exact platform package matching the resolved CLI version.
+          $cliVersion = (Get-Content 'tauri/node_modules/@tauri-apps/cli/package.json' -Raw | ConvertFrom-Json).version
+          if (-not (Test-Path 'tauri/node_modules/@tauri-apps/cli-win32-x64-msvc/package.json')) {
+            npm install --prefix tauri --no-save --no-package-lock --no-audit --no-fund "@tauri-apps/cli-win32-x64-msvc@$cliVersion"
+            if ($LASTEXITCODE -ne 0) { throw 'Tauri Windows native CLI installation failed' }
+          }
+          node -e "require('./tauri/node_modules/@tauri-apps/cli')"
+          if ($LASTEXITCODE -ne 0) { throw 'Tauri Windows native CLI verification failed' }
       - name: Check frontend bridge and prepare HTML
         shell: pwsh
         run: |

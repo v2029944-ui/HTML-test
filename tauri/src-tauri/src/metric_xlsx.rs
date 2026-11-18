@@ -144,7 +144,7 @@ fn finish_row(
     if !any {return Ok(());}
     if dim.is_empty() {return Err(format!("Missing dimension at Excel row {row}"));}
     if out.len()>=metric_reports::MAX_ROWS {
-        return Err("XLSX metric row count exceeds 10 000".into());
+        return Err("Дополнительный XLSX содержит более 10 000 строк данных. Уменьшите число строк и повторите проверку.".into());
     }
     let mut values=BTreeMap::new();
     for (id,col) in &profile.values {
@@ -219,7 +219,7 @@ fn from_excel(
     }
     let metadata=fs::symlink_metadata(path).map_err(err)?;
     if !metadata.file_type().is_file() || metadata.len()>Limits::default().archive_bytes {
-        return Err("A regular XLSX file <=30 MiB is required".into());
+        return Err("Выберите обычный файл XLSX размером не более 30 МиБ. Если файл больше, уменьшите его размер и повторите проверку.".into());
     }
     let source_name=path.file_name().and_then(|n|n.to_str())
         .ok_or("XLSX file name is not valid UTF-8")?.to_owned();
