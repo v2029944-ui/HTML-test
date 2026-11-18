@@ -1,6 +1,7 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const {prepare}=require('../prepare.cjs');
+const {userError}=require('../native-errors.js');
 const filename=path.join(__dirname,'../native-wide-import.js');
 class Node{
  constructor(tag){this.tag=tag;this.children=[];this.events={};this.textContent='';this.value='';this.checked=false;this.disabled=false;this.className='';}
@@ -42,7 +43,7 @@ function setup(options={}){
      return {reports:366,rows:12000,revision:8,replaced:364};
    }
  };
- const window={desktopAPI:api,confirm:()=>{confirmCount++;return true;}};
+ const window={desktopAPI:api,confirm:()=>{confirmCount++;return true;},analizUserError:userError};
  const document={getElementById:id=>elements[id],createElement:tag=>new Node(tag)};
  vm.runInNewContext(fs.readFileSync(filename,'utf8'),{window,document});
  return {elements,calls,window,confirmCount:()=>confirmCount};
