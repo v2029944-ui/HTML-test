@@ -29,6 +29,13 @@
       'native_analysis_organizations',{revision,reportType,from,to,organizations},'reads'),
     nativeAnalysisRangePage:(revision,reportType,from,to,organizations,organization=null,after=null,limit=50)=>tracked(
       'native_analysis_range_page',{revision,reportType,from,to,organizations,organization,after,limit},'reads'),
+    chooseCsvPath:async defaultPath=>{
+      if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
+      if(typeof tauri.dialog.save!=='function')throw Error('Диалог сохранения CSV недоступен.');
+      return tauri.dialog.save({title:'Сохранить результаты анализа',defaultPath,filters:[{name:'CSV',extensions:['csv']}]});
+    },
+    nativeExportRangeCsv:(revision,reportType,from,to,organizations,organization,destination)=>tracked(
+      'native_export_range_csv',{revision,reportType,from,to,organizations,organization,destination},'saves'),
     nativeReportPage:(revision,filter,after=null,limit=100)=>tracked(
       'native_report_page',{revision,filter,after,limit},'reads'),
     save:data=>tracked('save_data',{data},'saves'),
