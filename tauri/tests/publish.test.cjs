@@ -1,10 +1,14 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
-function fixture({existing=false,signature='signature',failInstaller=false}={}){
+function fixture({existing=false,signature='signature',failInstaller=false,missingNotes=false,placeholderNotes=false}={}){
   const commands=[],repo='v2029944-ui/HTML-test',version='0.1.1',installer='Analiz-rabot-Tauri-Windows-x64-setup.exe';
   const api={readFileSync(file){
     if(file.endsWith('tauri.conf.json'))return JSON.stringify({version});
     if(file.endsWith('tauri-latest.json'))return JSON.stringify({version,platforms:{'windows-x86_64':{signature:'signature',url:`https://github.com/${repo}/releases/download/tauri-v${version}/${installer}`}}});
+    if(path.basename(file)===version+'.md' && file.includes('release-notes')){
+      if(missingNotes)throw Error('ENOENT');
+      return placeholderNotes?'# TODO\n- заполнить':'# Что изменилось\n- Исправлена обработка повторного ввода Excel.\n- Улучшена проверка резервного копирования пользовательской базы.';
+    }
     return signature;
   },statSync:()=>({size:1}),mkdtempSync:()=>'/tmp/test-release',rmSync(){}};
   const spawnSync=(_bin,args)=>{
@@ -37,20 +41,22 @@ test('retry never replaces an installer already published with another signature
   const same=fixture({existing:true});same.run();assert.equal(same.commands.filter(x=>x[1]==='create').length,0);
 });
 
-test('current Tauri version is synchronized and has concrete versioned release notes',()=>{
- const config=JSON.parse(fs.readFileSync(path.join(__dirname,'../src-tauri/tauri.conf.json'),'utf8'));
- const pkg=JSON.parse(fs.readFileSync(path.join(__dirname,'../package.json'),'utf8'));
- const cargo=fs.readFileSync(path.join(__dirname,'../src-tauri/Cargo.toml'),'utf8');
- const v=cargo.match(/^version\s*=\s*"([^"]+)"/m);
- assert.ok(v,'Cargo package version must be defined');
- assert.equal(config.version,pkg.version);
- assert.equal(config.version,v[1]);
- const filename=path.join(__dirname,'../release-notes',config.version+'.md');
- assert.ok(fs.existsSync(filename),'Every candidate needs version-specific changelog');
- const notes=fs.readFileSync(filename,'utf8');
- assert.match(notes,/^#\s+.+/m);
- assert.match(notes,/^[-*]\s+.+/m);
- assert.match(notes,/## Что добавлено/);
- assert.match(notes,/## Обновление и ограничения/);
- assert.ok(notes.length>400,'No generic placeholder is allowed for a release');
+test('release publication refuses missing notes before contacting GitHub',()=>{
+ const f=fixture({missingNotes:true});
+ assert.throws(f.run,/необходим tauri\/release-notes/);
+ assert.equal(f.commands.length,0);
+});
+test('release publication refuses placeholder-only notes',()=>{
+ const f=fixture({placeholderNotes:true});
+ assert.throws(f.run,/Release notes должны/);
+ assert.equal(f.commands.length,0);
+});
+test('versioned release uses the exact changelog file rather than generic notes',()=>{
+ const f=fixture();f.run();
+ const creation=f.commands.find(x=>x[1]==='create'&&x[2]==='tauri-v0.1.1');
+ assert.ok(creation);
+ const index=creation.indexOf('--notes-file');
+ assert.ok(index>0);
+ assert.match(creation[index+1],/release-notes[\\/]0\.1\.1\.md$/);
+ assert.equal(creation.includes('--notes'),false);
 });

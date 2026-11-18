@@ -1,8 +1,26 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');
+
+// A GitHub Release must describe this exact version; generic default text is
+// not acceptable. Read it before running any GitHub CLI operations.
+function releaseNotesFile(version){
+  if(!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version))
+    throw Error('Некорректный номер версии для release notes.');
+  const file=path.join(__dirname,'release-notes',version+'.md');
+  let notes;
+  try{notes=fs.readFileSync(file,'utf8');}
+  catch{throw Error('Для выпуска '+version+' необходим tauri/release-notes/'+version+'.md с описанием изменений.');}
+  const normalized=notes.replace(/\r\n/g,'\n').trim();
+  if(normalized.length<55||!/^#{1,3}\s+.+/m.test(normalized)||
+     !/^\s*[-*]\s+\S.+/m.test(normalized)||
+     /\b(?:TODO|TBD)\b|ЗАПОЛНИТЬ|ОПИСАНИЕ ИЗМЕНЕНИЙ/i.test(normalized))
+    throw Error('Release notes должны содержать заголовок и конкретный список изменений, без заглушек.');
+  return file;
+}
 function publish(){
   const config=JSON.parse(fs.readFileSync(path.join(__dirname,'src-tauri/tauri.conf.json'),'utf8'));
   const tag='tauri-v'+config.version,repo='v2029944-ui/HTML-test';
+  const notesFile=releaseNotesFile(config.version);
   const folder=path.join(__dirname,'release',tag);
   const manifest=JSON.parse(fs.readFileSync(path.join(folder,'tauri-latest.json'),'utf8'));
   const installer='Analiz-rabot-Tauri-Windows-x64-setup.exe';
@@ -31,7 +49,7 @@ function publish(){
   }else{
     gh(['release','create',tag,path.join(folder,installer),path.join(folder,installer+'.sig'),
       '--repo',repo,'--target',process.env.GITHUB_SHA||'HEAD','--title','Tauri '+config.version,
-      '--notes','Экспериментальная подписанная Windows-версия. Исходные Excel и пользовательская база не включены.',
+      '--notes-file',notesFile,
       '--prerelease','--latest=false']);
   }
   // Advance the channel only after the versioned installer is available.
@@ -42,4 +60,4 @@ function publish(){
   console.log('Published '+tag+' and advanced the Tauri update channel.');
 }
 if(require.main===module){try{publish();}catch(err){console.error(err.message);process.exitCode=1;}}
-module.exports={publish};
+module.exports={publish,releaseNotesFile};
