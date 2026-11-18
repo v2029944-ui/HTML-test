@@ -231,6 +231,9 @@ def run():
                 page.locator('#openNativeWorkspace').click()
                 wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)','Native SQLite workspace startup')
                 page.evaluate('window.nativeWorkspaceReady')
+                # Opt in to SQL-first startup; the setting must survive closing WebView2.
+                page.locator('#sqlStartupPreference').check()
+                assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") == 'sql'
                 if page.evaluate("typeof window.appReady !== 'undefined'"):
                     raise RuntimeError('Native workspace unexpectedly imported legacy full-history bootstrap')
                 # Declarative report families are separate from classic reports.
@@ -469,7 +472,21 @@ def run():
             process,_=start();browser=None
             try:
                 browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227');page=wait_for_webview_page(browser)
-                wait_for_app_state(page, 'Boolean(window.appReady)', 'Application initialization');page.evaluate('window.appReady')
+                # The lightweight launcher must go straight to SQLite on restart:
+                # no full-history window.appReady and no legacy frontend bootstrap.
+                wait_for_app_state(page, 'Boolean(window.nativeWorkspaceReady)', 'SQL-first application restart')
+                page.evaluate('window.nativeWorkspaceReady')
+                if page.evaluate("typeof window.appReady !== 'undefined'"):
+                    raise RuntimeError('SQL-first startup loaded the classic history')
+                assert page.locator('#metricReports').inner_text()=='366'
+                assert page.locator('#sqlStartupPreference').is_checked()
+                report['checks'].append('opt-in SQL-first startup avoids full report history')
+                # Switch the next launch back to classic; imports must remain accessible.
+                page.locator('#sqlStartupPreference').uncheck()
+                assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") is None
+                page.locator('#legacyWorkspaceLink').click()
+                wait_for_app_state(page, 'Boolean(window.appReady)', 'Classic interface after SQL-first restart')
+                page.evaluate('window.appReady')
                 assert len(page.evaluate('window.desktopAPI.load()')['reports'])==366
                 restored=page.evaluate("({view:document.querySelector('.view.active').id,saved:localStorage.getItem('work-reports-view-v1')})")
                 report['navigation_after_restart']=restored
