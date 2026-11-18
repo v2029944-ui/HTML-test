@@ -26,6 +26,11 @@ function mount(options={}){
   const window={
     desktopAPI:api,
     confirm:()=>{calls.push('confirm');return options.consent!==false;},
+    nativeWorkspaceRefresh:async()=>{
+      calls.push('sql_refresh');
+      if(options.refreshFails)throw Error('stale view');
+      return true;
+    },
     addEventListener:(name,callback)=>{if(name==='pagehide')window.onHide=callback;}
   };
   const document={getElementById:id=>nodes[id],createElement:tag=>new Node(tag)};
@@ -77,7 +82,7 @@ test('folder change warns about losing rules and never modifies reports',async()
   const yes=mount({listing});
   await yes.window.nativeFolderReady;
   await yes.nodes.sourceFolderChoose.events.click();
-  assert.deepEqual(yes.calls,['list','confirm','choose','list']);
+  assert.deepEqual(yes.calls,['list','confirm','choose','sql_refresh','list']);
   assert.match(yes.nodes.sourceFolderStatus.textContent,/Папка проверена/);
 });
 
@@ -106,4 +111,13 @@ test('invalid Rust listing or unavailable folder reports an error instead of inv
   const error=mount({failList:true});
   await error.window.nativeFolderReady;
   assert.match(error.nodes.sourceFolderStatus.textContent,/disk unavailable/);
+});
+
+test('failed SQL revision refresh after folder selection is not mistaken for a failed folder change',async()=>{
+ const panel=mount({listing:{folder:'C:/Existing',files:[],rules:{}},refreshFails:true});
+ await panel.window.nativeFolderReady;
+ await panel.nodes.sourceFolderChoose.events.click();
+ assert.equal(panel.calls.filter(x=>x==='choose').length,1);
+ assert.equal(panel.calls.filter(x=>x==='sql_refresh').length,1);
+ assert.match(panel.nodes.sourceFolderStatus.textContent,/Нажмите «Обновить данные»/);
 });
