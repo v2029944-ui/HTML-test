@@ -534,11 +534,15 @@ def run():
                 # round-trip, then await metadata instead of assuming it survived.
                 page.evaluate('async folder => window.__TAURI__.core.invoke("set_folder", {folder})', str(tmp))
                 page.locator('#sourceFolderRefresh').click()
+                # Both synthetic-year.xlsx and metric-labor-demo.xlsx remain
+                # in the test folder; target the intended source by name rather
+                # than assuming the yearly workbook sorts first.
                 wait_for_app_state(page,
-                    'document.querySelector("#sourceFolderRows tr td")?.textContent === "synthetic-year.xlsx"',
+                    'Array.from(document.querySelectorAll("#sourceFolderRows tr td:first-child")).some(td => td.textContent === "synthetic-year.xlsx")',
                     'SQL editor source metadata')
-                assert page.locator('#sourceFolderRows tr').count()==1
-                page.locator('#sourceFolderRows tr button').first.click()
+                year_row=page.locator('#sourceFolderRows tr').filter(has_text='synthetic-year.xlsx')
+                assert year_row.count()==1
+                year_row.locator('button').click()
                 page.locator('#sourceRuleFormat').select_option('daily-wide')
                 page.locator('#sourceRuleYear').fill('2024')
                 page.evaluate('window.confirm = () => true')  # Test only; real UI requires confirmation.
