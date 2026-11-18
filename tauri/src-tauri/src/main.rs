@@ -519,6 +519,27 @@ async fn native_restore_copy(
 }
 
 #[tauri::command]
+async fn native_restore_schedule(
+    app: tauri::AppHandle, source: String, verification: String
+) -> Result<storage::ScheduledRestore, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if source.len() > 32767 {
+            return Err("Слишком длинный путь к резервной копии.".into());
+        }
+        app.state::<Storage>().schedule_restore(
+            std::path::Path::new(&source), &verification
+        )
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn native_restore_launch_info(
+    state: State<'_, storage::RestoreLaunchInfo>
+) -> Option<storage::RestoreLaunchResult> {
+    state.0.clone()
+}
+
+#[tauri::command]
 fn get_info(store: State<'_, Storage>) -> Result<serde_json::Value, String> {
     store.info()
 }
@@ -568,9 +589,17 @@ fn main() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let root = app.path().document_dir()?.join("Анализ работ");
+            // Hold one exclusive lock for the entire application lifetime.
+            // Offline recovery runs before ANY native SQLite connection opens.
+            let lease = storage::AppRestoreLock::acquire(&root)
+                .map_err(std::io::Error::other)?;
+            let restored = storage::apply_pending_restore(&root)
+                .map_err(std::io::Error::other)?;
             let storage = Storage::new(root)
                 .map_err(std::io::Error::other)?;
+            app.manage(lease);
             app.manage(storage);
+            app.manage(storage::RestoreLaunchInfo(restored));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -579,6 +608,7 @@ fn main() {
             native_analysis_index_page, native_analysis_index_settings, native_analysis_range,
             native_analysis_organizations, native_analysis_range_page,
             native_export_range_csv, native_backup_sqlite, native_restore_preview, native_restore_copy,
+            native_restore_schedule, native_restore_launch_info,
             native_wide_import_preview, native_wide_import_apply,
             native_metric_kinds, native_metric_preview, native_metric_apply, native_metric_summary,
             native_metric_xlsx_profiles, native_metric_xlsx_preview, native_metric_xlsx_apply,
