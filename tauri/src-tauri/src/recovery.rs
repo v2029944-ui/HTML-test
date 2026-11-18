@@ -310,6 +310,29 @@ mod tests {
         assert_eq!(live.load().unwrap(), sample());
     }
     #[test]
+    fn metric_table_change_invalidates_review_and_prevents_stale_restore() {
+        let dir = tempdir().unwrap();
+        let live = Storage::new(dir.path().join("live")).unwrap();
+        live.save(sample()).unwrap();
+        let source = dir.path().join("metric-backup.sqlite3");
+        live.backup_sqlite_verified(&source).unwrap();
+        let preview = live.restore_preview(&source).unwrap();
+        let writer = Connection::open(&source).unwrap();
+        writer.execute(
+            "UPDATE metric_catalog_revision SET revision=revision+1 WHERE singleton=1", []
+        ).unwrap();
+        drop(writer);
+        let updated = live.restore_preview(&source).unwrap();
+        assert_ne!(preview.verification, updated.verification,
+            "Every stored metric family must be covered by the verified token");
+        let target = dir.path().join("stale-metrics.sqlite3");
+        assert!(live.restore_verified_copy(
+            &source, &preview.verification, &target
+        ).unwrap_err().contains("изменилась"));
+        assert!(!target.exists());
+    }
+
+    #[test]
     fn restore_rejects_malformed_json_and_backup_changed_after_preview() {
         let dir = tempdir().unwrap();
         let live = Storage::new(dir.path().join("live")).unwrap();
