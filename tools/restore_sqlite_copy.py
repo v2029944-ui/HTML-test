@@ -102,7 +102,7 @@ def recover_copy(source: Path, destination: Path) -> dict:
         if actual != expected or actual_count != record_count:
             raise ValueError('Restored database differs from source snapshot')
 
-        with temporary.open('rb') as file:
+        with temporary.open('r+b') as file:
             os.fsync(file.fileno())
         # Atomic publication: os.link never replaces an existing destination.
         os.link(temporary, destination)
