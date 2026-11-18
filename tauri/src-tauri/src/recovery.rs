@@ -29,7 +29,7 @@ fn validate_backup(store: &Storage, source: &Path) -> Result<PathBuf, String> {
     Ok(original)
 }
 
-fn check_snapshot(path: &Path) -> Result<RestorePreview, String> {
+pub(super) fn check_snapshot(path: &Path) -> Result<RestorePreview, String> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(err)?;
     let integrity: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .map_err(err)?;
