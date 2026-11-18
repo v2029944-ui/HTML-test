@@ -19,6 +19,12 @@
       'native_group_page',{revision,afterHandle,limit},'reads'),
     nativeGroupRename:(revision,handle,name)=>tracked(
       'native_group_rename',{revision,handle,name},'saves'),
+    nativeAnalysisIndexPage:(revision,reportType,after=null,limit=20)=>tracked(
+      'native_analysis_index_page',{revision,reportType,after,limit},'reads'),
+    nativeAnalysisIndexSettings:revision=>tracked(
+      'native_analysis_index_settings',{revision},'reads'),
+    nativeAnalysisRange:(revision,reportType,from,to,organizations)=>tracked(
+      'native_analysis_range',{revision,reportType,from,to,organizations},'reads'),
     nativeReportPage:(revision,filter,after=null,limit=100)=>tracked(
       'native_report_page',{revision,filter,after,limit},'reads'),
     save:data=>tracked('save_data',{data},'saves'),

@@ -2,7 +2,7 @@
 
 mod storage;
 
-use storage::{ManagementJob, ReadExcel, ReadFilter, ReportHeader, Rule, Storage};
+use storage::{AnalysisScope, ManagementJob, RangeQuery, RangeSummary, ReadExcel, ReadFilter, ReportHeader, Rule, Storage};
 use std::sync::Arc;
 use tauri::{Manager, State};
 
@@ -127,6 +127,108 @@ async fn native_group_rename(
     .map_err(|error| error.to_string())?
 }
 
+
+#[derive(serde::Serialize)]
+struct NativeAnalysisProgress {
+    processed: usize,
+    next: Option<NativeReportCursor>,
+    done: bool,
+}
+
+#[tauri::command]
+async fn native_analysis_index_page(
+    app: tauri::AppHandle,
+    revision: i64,
+    report_type: String,
+    after: Option<NativeReportCursor>,
+    limit: usize,
+) -> Result<NativeAnalysisProgress, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<NativeAnalysisProgress, String> {
+        if !matches!(report_type.as_str(), "day" | "week" | "month") {
+            return Err("Unknown analysis report type".into());
+        }
+        if !(1..=20).contains(&limit) {
+            return Err("Analysis indexing batch must contain 1..=20 reports".into());
+        }
+        let store = app.state::<Storage>();
+        let filter = ReadFilter { report_type: Some(report_type), ..Default::default() };
+        let headers = store.report_page(
+            revision,
+            &filter,
+            after.as_ref().map(|cursor| (cursor.start.as_str(), cursor.id.as_str())),
+            limit,
+        )?;
+        for item in &headers {
+            store.analysis_index_report(&item.id, revision)?;
+        }
+        let done = headers.len() < limit;
+        let next = if done { None } else {
+            headers.last().map(|item| NativeReportCursor {
+                start: item.period_start.clone(),
+                id: item.id.clone(),
+            })
+        };
+        Ok(NativeAnalysisProgress { processed: headers.len(), next, done })
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn native_analysis_index_settings(
+    app: tauri::AppHandle,
+    revision: i64,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Storage>().analysis_index_settings(revision)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn native_analysis_range(
+    app: tauri::AppHandle,
+    revision: i64,
+    report_type: String,
+    from: String,
+    to: String,
+    organizations: Vec<String>,
+) -> Result<RangeSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<RangeSummary, String> {
+        if !matches!(report_type.as_str(), "day" | "week" | "month") {
+            return Err("Unknown analysis report type".into());
+        }
+        if organizations.is_empty() || organizations.len() > 100 {
+            return Err("Select 1..=100 organizations for analysis".into());
+        }
+        let store = app.state::<Storage>();
+        // A temporary on-disk exact-match selection; no saved filter presets
+        // or unbounded string arrays in report JSON.
+        let id = store.analysis_filter_create(revision, "organizations")?;
+        let result = (|| {
+            store.analysis_filter_append(revision, &id, &organizations)?;
+            store.analysis_filter_seal(revision, &id)?;
+            let scope = AnalysisScope {
+                report_type,
+                organizations: id.clone(),
+                names: None,
+            };
+            store.analysis_range_summary(
+                revision, &scope, &RangeQuery { from, to },
+            )
+        })();
+        let cleanup = store.analysis_filter_delete(&id);
+        match (result, cleanup) {
+            (Err(error), _) => Err(error),
+            (Ok(summary), Ok(())) => Ok(summary),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 fn get_info(store: State<'_, Storage>) -> Result<serde_json::Value, String> {
     store.info()
@@ -185,6 +287,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             updater_configured, load_data, save_data, native_read_revision, native_report_page,
             native_settings_bootstrap, native_group_page, native_group_rename,
+            native_analysis_index_page, native_analysis_index_settings, native_analysis_range,
             get_info, set_folder, set_rule,
             list_excel, read_excel, check_excel, open_data_folder
         ])
