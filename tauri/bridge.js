@@ -27,6 +27,8 @@
       'native_analysis_range',{revision,reportType,from,to,organizations},'reads'),
     nativeAnalysisOrganizations:(revision,reportType,from,to,organizations)=>tracked(
       'native_analysis_organizations',{revision,reportType,from,to,organizations},'reads'),
+    nativeAnalysisRangePage:(revision,reportType,from,to,organizations,organization=null,after=null,limit=50)=>tracked(
+      'native_analysis_range_page',{revision,reportType,from,to,organizations,organization,after,limit},'reads'),
     nativeReportPage:(revision,filter,after=null,limit=100)=>tracked(
       'native_report_page',{revision,filter,after,limit},'reads'),
     save:data=>tracked('save_data',{data},'saves'),
