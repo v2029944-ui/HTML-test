@@ -131,7 +131,7 @@ async function load(){
       tr.append(
         make('td',file.name),
         make('td',Math.ceil(file.size/1024)+' КБ'),
-        make('td',(file.nativeTooLarge??file.tooLarge)?'Превышен предел нативного импорта (50 МиБ)':hasRule?'Есть правило':'Правило не задано')
+        make('td',(file.nativeTooLarge??file.tooLarge)?'Превышен предел нативного импорта (100 МиБ)':hasRule?'Есть правило':'Правило не задано')
       );
       const action=make('td'),button=make('button','Настроить');
       button.type='button';button.disabled=(file.nativeTooLarge??file.tooLarge)||!file.signature;

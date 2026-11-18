@@ -686,7 +686,7 @@ mod tests {
         assert!(store.set_rule_checked("native-only.xlsx".into(),
             rule.clone(), rev, folder.to_string_lossy().to_string(),
             sig.into()).is_ok());
-        f.set_len(51 * 1024 * 1024).unwrap();
+        f.set_len(101 * 1024 * 1024).unwrap();
         let refreshed = store.list_excel().unwrap();
         assert_eq!(refreshed["files"][0]["nativeTooLarge"], true);
         assert_eq!(refreshed["files"][0]["tooLarge"], true);

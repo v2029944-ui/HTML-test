@@ -213,7 +213,7 @@ test('missing source revision cannot authorize a rule change',async()=>{
 
 test('SQL folder accepts 40-MiB files in native mode while classic 30-MiB indicator remains',async()=>{
  const small={name:'forty.xlsx',size:40*1024*1024,signature:'40m:1:2',tooLarge:true,nativeTooLarge:false};
- const tooBig={name:'fifty-one.xlsx',size:51*1024*1024,signature:'51m:1:2',tooLarge:true,nativeTooLarge:true};
+ const tooBig={name:'hundred-one.xlsx',size:101*1024*1024,signature:'101m:1:2',tooLarge:true,nativeTooLarge:true};
  const panel=mount({listing:{folder:'C:/Excel',revision:12,files:[small,tooBig],rules:{}}});
  await panel.window.nativeFolderReady;
  const rows=panel.nodes.sourceFolderRows.children;
@@ -222,6 +222,6 @@ test('SQL folder accepts 40-MiB files in native mode while classic 30-MiB indica
  rows[0].children[3].children[0].events.click();
  assert.equal(panel.nodes.sourceRuleSave.disabled,false);
  assert.equal(rows[1].children[3].children[0].disabled,true);
- assert.match(rows[1].children[2].textContent,/50 МиБ/);
+ assert.match(rows[1].children[2].textContent,/100 МиБ/);
  assert.equal(panel.calls.some(x=>x.kind==='rule'),false);
 });

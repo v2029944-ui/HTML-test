@@ -361,11 +361,11 @@ fn undefined_namespace_prefixes_in_cells_and_elements_are_not_accepted() {
 fn expanded_native_limits_keep_anti_bomb_guards_and_support_older_row_gap() {
     let l=Limits::default();
     assert_eq!(l.archive_bytes,analiz_import_core::NATIVE_XLSX_ARCHIVE_LIMIT);
-    assert_eq!(l.archive_bytes,50*1024*1024);
-    assert_eq!(l.component_bytes,96*1024*1024);
-    assert_eq!(l.total_bytes,384*1024*1024);
-    assert_eq!(l.stage_bytes,2*1024*1024*1024);
-    assert_eq!(l.cells,5_000_000);
+    assert_eq!(l.archive_bytes,100*1024*1024);
+    assert_eq!(l.component_bytes,128*1024*1024);
+    assert_eq!(l.total_bytes,768*1024*1024);
+    assert_eq!(l.stage_bytes,4*1024*1024*1024);
+    assert_eq!(l.cells,15_000_000);
     assert_eq!(l.rows,100_000);
     assert_eq!(l.columns,2048);
     assert_eq!(l.ratio,1000);
