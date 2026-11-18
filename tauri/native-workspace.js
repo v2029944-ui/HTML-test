@@ -21,6 +21,7 @@ $('workspaceRefresh').disabled=reportsBusy||groupsBusy||refreshBusy||analysisBus
 $('backupSqlite').disabled=backupBusy||exportBusy||analysisBusy||workBusy||refreshBusy||restoreBusy;
 $('restoreChoose').disabled=restoreBusy||backupBusy||analysisBusy||exportBusy||refreshBusy;
 $('restoreCopy').disabled=restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy;
+$('restoreSchedule').disabled=restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy;
 $('analysisPrepare').disabled=analysisBusy||refreshBusy||exportBusy||revision===null;
 $('analysisCancel').disabled=!analysisBusy;
 $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!analysisReady;
@@ -162,6 +163,22 @@ async function writeRestoreCopy(){
  }catch(err){status('restoreStatus',restoreError(err),true);}
  finally{restoreBusy=false;controlState();}
 }
+async function scheduleRestoreAtStartup(){
+ if(restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy)return;
+ if(!window.confirm('При следующем запуске будет заменена текущая рабочая база SQLite на выбранную резервную копию. Программа заранее сохранит защитные копии текущей базы. Продолжить?'))return;
+ restoreBusy=true;controlState();
+ try{
+  const selected=restoreSelection;
+  status('restoreStatus','Подготавливаем отдельную проверенную копию для следующего запуска…');
+  const request=await api.nativeRestoreSchedule(selected.source,selected.verification);
+  if(!request?.restartRequired)throw Error('Не удалось запланировать восстановление.');
+  restoreSelection=null;
+  status('restoreStatus','Восстановление запланировано: '+request.reportCount+
+    ' отчётов. Полностью закройте приложение и откройте снова. До перезапуска рабочая база не изменена.');
+ }catch(err){status('restoreStatus',restoreError(err),true);}
+ finally{restoreBusy=false;controlState();}
+}
+$('restoreSchedule').addEventListener('click',scheduleRestoreAtStartup);
 $('restoreChoose').addEventListener('click',inspectBackup);
 $('restoreCopy').addEventListener('click',writeRestoreCopy);
 $('workspaceRefresh').addEventListener('click',()=>{void refresh();});
@@ -365,4 +382,9 @@ for(const id of ['analysisFrom','analysisTo','analysisOrganization']){
 
 controlState();
 window.nativeWorkspaceReady=refresh();
+if(typeof api.nativeRestoreLaunchInfo==='function'){
+ void api.nativeRestoreLaunchInfo().then(result=>{
+  if(result?.message)status('restoreStatus',result.message,!result.restored);
+ }).catch(err=>status('restoreStatus',restoreError(err),true));
+}
 })();
