@@ -39,6 +39,11 @@ impl ImportPreview {
     pub fn counts(&self) -> &ImportCounts {
         &self.counts
     }
+    // A deterministic review identity for native UI revalidation. A second
+    // preparation must compare both the live DB generation and the conflict plan.
+    pub fn review_identity(&self) -> (&str, &str) {
+        (&self.generation, &self.plan_hash)
+    }
 }
 /// Folder replacement and quality notices require independent explicit acknowledgments.
 #[derive(Clone, Copy, Default)]
