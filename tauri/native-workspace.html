@@ -42,7 +42,15 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <div class="controls">
 <button id="backupSqlite" type="button">Сохранить резервную копию SQLite</button>
 </div>
-<p id="backupStatus" class="status muted" role="status" aria-live="polite">Копия включает отчёты, настройки и служебные данные SQLite. Для восстановления потребуется отдельная проверенная процедура; не заменяйте файл открытой базы вручную.</p>
+<p id="backupStatus" class="status muted" role="status" aria-live="polite">Копия включает отчёты, настройки и служебные данные SQLite. Не заменяйте файл открытой базы вручную.</p>
+<h3>Проверить и подготовить восстановление</h3>
+<p class="intro">Выберите существующую резервную копию SQLite. Приложение проверит её целостность, структуру, JSON отчётов и настроек. После проверки можно создать <strong>отдельный восстановленный файл</strong>, не заменяя рабочую базу. Для переключения рабочей базы необходим дополнительный безопасный этап при закрытой программе.</p>
+<div class="controls">
+<button id="restoreChoose" type="button">Проверить резервную копию</button>
+<button id="restoreCopy" type="button" disabled>Создать отдельную восстановленную копию</button>
+</div>
+<p id="restoreSelected" class="intro">Резервная копия не выбрана.</p>
+<p id="restoreStatus" class="status muted" role="status" aria-live="polite">Рабочая база не изменяется.</p>
 </section>
 <section class="panel" aria-label="Отчёты SQL">
 <h2>Отчёты</h2><div class="controls"><label for="nativeReportType">Периоды</label>
