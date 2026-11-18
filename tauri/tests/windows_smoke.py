@@ -6,6 +6,7 @@ from playwright.sync_api import sync_playwright, Error as PlaywrightError, Timeo
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests'))
 from test_daily_wide import wide_xlsx
+from test_import_controls import daily_workbook_bytes
 sys.path.insert(0,str(ROOT/'tauri'/'examples'))
 from make_metric_xlsx import create_example
 
@@ -246,6 +247,22 @@ def run():
                 assert page.evaluate('window.nativeWorkspaceRefresh()') is True
                 assert page.evaluate("typeof window.appReady === 'undefined'")
                 report['checks'].append('SQL-only folder metadata, no full-history bootstrap or implicit import')
+                # Read-only end-to-end native ordinary Excel preview; tests real Rust parser
+                # without adding or replacing user reports or loading XLSX bytes in JS.
+                legacy_source=tmp/'legacy-preview.xlsx'
+                legacy_source.write_bytes(daily_workbook_bytes())
+                sheets=page.evaluate('source => window.desktopAPI.nativeLegacyImportSheets(source)',str(legacy_source))
+                assert 'xl/worksheets/sheet1.xml' in sheets,sheets
+                legacy_options={'sheet':'xl/worksheets/sheet1.xml','kind':'week',
+                                'start':'2026-11-09','organizations':['СМУ16','АВТО','ТРАК','ЦЕНТР']}
+                legacy_preview=page.evaluate(
+                    'args => window.desktopAPI.nativeLegacyImportPreview(args.source,args.options)',
+                    {'source':str(legacy_source),'options':legacy_options})
+                assert legacy_preview['reportCount']>=1
+                assert len(legacy_preview['reviewToken'])==64
+                assert legacy_preview['sampleReports']
+                assert page.evaluate("typeof window.appReady === 'undefined'")
+                report['checks'].append('read-only streamed Rust legacy XLSX preview with real cells')
                 # Opt in to SQL-first startup; the setting must survive closing WebView2.
                 page.locator('#sqlStartupPreference').check()
                 assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") == 'sql'
