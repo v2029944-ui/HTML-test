@@ -19,6 +19,11 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
 th,td{text-align:left;border-bottom:1px solid #e4e9ef;padding:10px 9px;vertical-align:middle;font-size:13px;overflow-wrap:anywhere}
 th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 @media(max-width:650px){header{padding:16px}main{padding:16px 10px}.panel{padding:15px}h1{font-size:20px}}
+
+.division-title{font-size:17px;margin:22px 0 10px}
+.division-track{width:100%;min-width:110px;height:12px;border-radius:6px;background:#e7edf5;overflow:hidden}
+.division-fill{height:100%;background:#346d9d;border-radius:6px}
+.division-fill.negative{background:#846d9d}
 </style>
 </head>
 <body>
@@ -68,6 +73,14 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </div>
 <p id="analysisStatus" class="status muted" role="status" aria-live="polite">Подготовка не выполнена.</p>
 <div id="analysisValues" class="overview" aria-live="polite"></div>
+<h3 class="division-title">Сравнение подразделений</h3>
+<p class="intro">Положительные суммы показаны синим, отрицательные — фиолетовым. При отсутствии полного ряда сумма и количество скрываются, а пропуски остаются видимыми.</p>
+<p id="divisionStatus" class="status muted" role="status" aria-live="polite">После расчёта здесь появятся результаты по подразделениям.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Подразделение</th><th>Полнота</th><th>Пропусков</th><th>Количество</th><th>Сумма</th><th>Относительная сумма</th></tr></thead>
+<tbody id="divisionRows"></tbody>
+</table></div>
+
 <p class="intro">Когда отсутствуют периоды, итоговые сумма и количество не показываются как ноль. Группы, совпадающие даты и ошибки проверяются по правилам D2; это не простая сумма всех строк.</p>
 </section>
 </main>

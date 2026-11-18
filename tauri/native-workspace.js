@@ -74,6 +74,7 @@ try{
  if(!Number.isSafeInteger(snapshot.revision)||snapshot.revision<0)throw Error('Ревизия SQLite слишком велика для JavaScript');
  revision=snapshot.revision;
  analysisReady=false;
+ $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
  orgNames=snapshot.org_names.slice();
  const orgSelect=$('analysisOrganization');orgSelect.replaceChildren();
  const all=make('option','Все из настроек');all.value='*';orgSelect.append(all);
@@ -124,6 +125,43 @@ async function prepareAnalysis(){
    status('analysisStatus','Индексы не готовы: '+String(err?.message||err),true);
  }finally{analysisBusy=false;controlState();}
 }
+
+function showDivisionComparison(rows){
+ const tbody=$('divisionRows');tbody.replaceChildren();
+ if(!Array.isArray(rows)||rows.length>100)throw Error('Некорректный размер SQL-сравнения');
+ const finite=x=>typeof x==='number'&&Number.isFinite(x);
+ const format=value=>value===null||value===undefined?'—':Number(value).toLocaleString('ru-RU',{maximumFractionDigits:3});
+ const sorted=rows.slice().sort((a,b)=>{
+   const av=a.complete&&finite(a.total?.amount)?a.total.amount:null;
+   const bv=b.complete&&finite(b.total?.amount)?b.total.amount:null;
+   if(av===null)return bv===null?String(a.org).localeCompare(String(b.org),'ru'):1;
+   if(bv===null)return -1;
+   return bv-av||String(a.org).localeCompare(String(b.org),'ru');
+ });
+ const maximum=Math.max(0,...sorted.map(item=>
+     item.complete&&finite(item.total?.amount)?Math.abs(item.total.amount):0));
+ for(const item of sorted){
+   const tr=make('tr');
+   const complete=item.complete===true;
+   const sum=complete&&finite(item.total?.amount)?item.total.amount:null;
+   tr.append(make('td',item.org??''),make('td',complete?'Полная':'Неполная'),
+       make('td',format(item.missing)),
+       make('td',complete?format(item.total?.count):'—'),
+       make('td',sum===null?'—':format(sum)));
+   const graph=make('td');
+   if(sum===null){
+     graph.append(make('span','Нет полного ряда'));
+   }else{
+     const track=make('div');track.className='division-track';
+     track.setAttribute('aria-hidden','true');
+     const fill=make('div');fill.className='division-fill'+(sum<0?' negative':'');
+     fill.style.width=(maximum?Math.min(100,Math.abs(sum)/maximum*100):0)+'%';
+     track.append(fill);graph.append(track);
+   }
+   tr.append(graph);tbody.append(tr);
+ }
+ status('divisionStatus','Подразделений в сравнении: '+rows.length+'. Порядок: по подтверждённой сумме.');
+}
 async function calculateAnalysis(){
  if(!analysisReady||analysisBusy||revision===null)return;
  const kind=$('analysisType').value,from=$('analysisFrom').value,to=$('analysisTo').value;
@@ -134,6 +172,7 @@ async function calculateAnalysis(){
  analysisBusy=true;controlState();
  try{
    const result=await api.nativeAnalysisRange(revision,kind,from,to,organizations);
+   const divisions=await api.nativeAnalysisOrganizations(revision,kind,from,to,organizations);
    const total=result.total||{},number=value=>value===null||value===undefined?'—':Number(value).toLocaleString('ru-RU',{maximumFractionDigits:3});
    const metrics=[
      ['Полнота',result.complete?'Полная':'Есть пропуски'],
@@ -144,9 +183,11 @@ async function calculateAnalysis(){
    ];
    const box=$('analysisValues');box.replaceChildren();
    for(const [label,value] of metrics){const item=make('div');item.className='metric';item.append(make('strong',value),make('span',label));box.append(item);}
+   showDivisionComparison(divisions);
    status('analysisStatus',result.complete?'Расчёт выполнен по полной последовательности периодов.':'Расчёт выполнен, но не все периоды подтверждены. Итоги скрыты до устранения пропусков.',!result.complete);
  }catch(err){
-   $('analysisValues').replaceChildren();
+   $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
+   status('divisionStatus','Сравнение не выполнено из-за ошибки.',true);
    status('analysisStatus','Ошибка расчёта: '+String(err?.message||err),true);
  }finally{analysisBusy=false;controlState();}
 }
@@ -154,13 +195,19 @@ const year=String(new Date().getFullYear());
 $('analysisFrom').value=year+'-01-01';
 $('analysisTo').value=year+'-12-31';
 $('analysisType').addEventListener('change',()=>{
- analysisReady=false;$('analysisValues').replaceChildren();
+ analysisReady=false;$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
  status('analysisStatus','Выбран другой тип периода. Подготовьте соответствующие индексы.');
  controlState();
 });
 $('analysisPrepare').addEventListener('click',prepareAnalysis);
 $('analysisCancel').addEventListener('click',()=>{analysisCancelled=true;status('analysisStatus','Остановка после текущей порции…');});
 $('analysisRun').addEventListener('click',calculateAnalysis);
+for(const id of ['analysisFrom','analysisTo','analysisOrganization']){
+ $(id).addEventListener('change',()=>{
+  $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
+  status('divisionStatus','Параметры изменены. Нажмите «Рассчитать» ещё раз.');
+ });
+}
 
 controlState();
 window.nativeWorkspaceReady=refresh();
