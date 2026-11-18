@@ -513,7 +513,13 @@ impl Storage {
     pub fn list_excel(&self) -> Result<Value, String> {
         let _guard = self.gate.lock().map_err(err)?;
         let conn = self.connect()?;
-        let config = self.config(&conn)?;
+        // Read the config and revision under one SQLite read transaction.
+        // Release it before filesystem enumeration so large directories do
+        // not hold a database read lock while their metadata is scanned.
+        let snapshot = conn.unchecked_transaction().map_err(err)?;
+        let config = self.config(&snapshot)?;
+        let current_revision = read_model::revision(&snapshot)?;
+        snapshot.commit().map_err(err)?;
         let mut files = Vec::new();
         if let Some(ref folder) = config.folder {
             for entry in fs::read_dir(folder).map_err(err)? {
@@ -531,7 +537,7 @@ impl Storage {
         }
         serde_json::to_value(Listing {
             folder: config.folder,
-            revision: read_model::revision(&conn)?,
+            revision: current_revision,
             files,
             rules: config.rules,
         }).map_err(err)
