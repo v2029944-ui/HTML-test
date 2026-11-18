@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::io::Read;
 
 const MAX_IMPORT_BYTES: u64 = 8 * 1024 * 1024;
-const MAX_ROWS: usize = 10_000;
+pub(super) const MAX_ROWS: usize = 10_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -34,20 +34,20 @@ pub struct MetricKind {
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct MetricRow {
-    organization: Option<String>,
-    dimension: String,
-    values: BTreeMap<String, f64>,
+pub(super) struct MetricRow {
+    pub(super) organization: Option<String>,
+    pub(super) dimension: String,
+    pub(super) values: BTreeMap<String, f64>,
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct MetricDocument {
-    kind: String,
-    id: String,
-    start: String,
-    end: String,
-    source_name: String,
-    rows: Vec<MetricRow>,
+pub(super) struct MetricDocument {
+    pub(super) kind: String,
+    pub(super) id: String,
+    pub(super) start: String,
+    pub(super) end: String,
+    pub(super) source_name: String,
+    pub(super) rows: Vec<MetricRow>,
 }
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -81,7 +81,7 @@ fn symbol(s: &str) -> bool {
     s.as_bytes()[0].is_ascii_lowercase() &&
     s.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_')
 }
-fn label(s: &str) -> bool {
+pub(super) fn label(s: &str) -> bool {
     !s.trim().is_empty() && s.len() <= 240 && !s.contains('\0')
 }
 fn catalog() -> Result<Vec<MetricKind>, String> {
@@ -123,7 +123,7 @@ fn catalog() -> Result<Vec<MetricKind>, String> {
 }
 pub fn kinds() -> Result<Vec<MetricKind>, String> { catalog() }
 
-fn kind_by_id(id: &str) -> Result<MetricKind, String> {
+pub(super) fn kind_by_id(id: &str) -> Result<MetricKind, String> {
     catalog()?.into_iter().find(|k| k.id == id)
         .ok_or_else(|| "Unknown report kind".into())
 }
@@ -180,6 +180,10 @@ fn read_source(source: &str) -> Result<(Vec<u8>, MetricDocument, MetricKind), St
     }
     let document: MetricDocument = serde_json::from_slice(&bytes).map_err(err)?;
     let kind = kind_by_id(&document.kind)?;
+    validate_document(&document, &kind)?;
+    Ok((bytes, document, kind))
+}
+pub(super) fn validate_document(document: &MetricDocument, kind: &MetricKind) -> Result<(), String> {
     if !label(&document.id) || document.id.len() > 128
         || !valid_date(&document.start) || !valid_date(&document.end)
         || document.start > document.end || !label(&document.source_name)
@@ -196,7 +200,7 @@ fn read_source(source: &str) -> Result<(Vec<u8>, MetricDocument, MetricKind), St
             return Err("Report row must provide all and only declared additive metrics".into());
         }
     }
-    Ok((bytes, document, kind))
+    Ok(())
 }
 fn derived(kind: &MetricKind, sums: &BTreeMap<String, f64>) -> Result<BTreeMap<String,Option<f64>>,String> {
     let mut values = BTreeMap::new();
@@ -241,8 +245,15 @@ fn preview_values(document: &MetricDocument, kind: &MetricKind)
 
 impl Storage {
     pub fn metric_preview(&self, source: &str) -> Result<MetricReview,String> {
+        let (bytes, document, _)=read_source(source)?;
+        self.metric_preview_decoded(document,&bytes)
+    }
+    pub(super) fn metric_preview_decoded(
+        &self, document: MetricDocument, source_digest: &[u8],
+    ) -> Result<MetricReview,String> {
+        let kind=kind_by_id(&document.kind)?;
+        validate_document(&document,&kind)?;
         let _guard=self.gate.lock().map_err(err)?;
-        let (bytes, document, kind)=read_source(source)?;
         let conn=self.connect()?;
         let exists:i64=conn.query_row(
             "SELECT COUNT(*) FROM metric_report_docs WHERE id=?1",[&document.id],|r|r.get(0)
@@ -256,19 +267,26 @@ impl Storage {
             kind:kind.id.clone(),name:kind.name.clone(),report_id:document.id.clone(),
             start:document.start.clone(),end:document.end.clone(),
             row_count:document.rows.len(),values:preview_values(&document,&kind)?,
-            review_token:review_token(&bytes,revision,&kind)?,
+            review_token:review_token(source_digest,revision,&kind)?,
         })
     }
     pub fn metric_apply(&self, source: &str, expected_token: &str) -> Result<MetricReceipt,String> {
+        let (bytes,document,_)=read_source(source)?;
+        self.metric_apply_decoded(document,&bytes,expected_token)
+    }
+    pub(super) fn metric_apply_decoded(
+        &self, document: MetricDocument, source_digest: &[u8], expected_token: &str,
+    ) -> Result<MetricReceipt,String> {
         if expected_token.len()!=64 || !expected_token.bytes().all(|c|c.is_ascii_hexdigit()){
             return Err("Invalid review token".into());
         }
+        let kind=kind_by_id(&document.kind)?;
+        validate_document(&document,&kind)?;
         let _guard=self.gate.lock().map_err(err)?;
-        let (bytes,document,kind)=read_source(source)?;
         let mut conn=self.connect()?;
         let tx=conn.transaction_with_behavior(TransactionBehavior::Immediate).map_err(err)?;
         let revision=metric_revision(&tx)?;
-        if review_token(&bytes,revision,&kind)? != expected_token {
+        if review_token(source_digest,revision,&kind)? != expected_token {
             return Err("Source or metric data changed: preview again".into());
         }
         if duplicate_source_period(&tx,&document)? {
