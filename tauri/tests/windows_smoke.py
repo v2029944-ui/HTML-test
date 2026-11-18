@@ -361,13 +361,18 @@ def run():
                 with closing(sqlite3.connect(str(snapshot))) as original_copy:
                     expected_rows=original_copy.execute(
                         'SELECT id,json FROM reports ORDER BY id').fetchall()
+                    expected_kv=original_copy.execute(
+                        'SELECT name,json FROM kv ORDER BY name').fetchall()
                 assert len(expected_rows)==366
                 with closing(sqlite3.connect(str(before_native))) as restored_copy:
                     assert restored_copy.execute('PRAGMA quick_check').fetchone()[0]=='ok'
                     assert restored_copy.execute('SELECT COUNT(*) FROM reports').fetchone()[0]==366
                     actual_rows=restored_copy.execute(
                         'SELECT id,json FROM reports ORDER BY id').fetchall()
-                    assert actual_rows==expected_rows, 'Backup differs from pre-import SQLite'
+                    actual_kv=restored_copy.execute(
+                        'SELECT name,json FROM kv ORDER BY name').fetchall()
+                    assert actual_rows==expected_rows, 'Backup differs from pre-import reports'
+                    assert actual_kv==expected_kv, 'Backup differs from pre-import settings'
                 report['checks'].append('Native import IPC refuses replacement without verified SQLite backup')
                 assert receipt['reports']==366
                 assert receipt['replaced']==366
