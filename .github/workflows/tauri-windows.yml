@@ -37,7 +37,7 @@ jobs:
       - name: Check frontend bridge and prepare HTML
         shell: pwsh
         run: |
-          node --test tauri/tests/*.test.cjs tests/*.cjs
+          node --test tauri/tests/*.test.cjs tests/test_*.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Node regression tests failed' }
           npm --prefix tauri run prepare:frontend
           if ($LASTEXITCODE -ne 0) { throw 'Frontend preparation failed' }
