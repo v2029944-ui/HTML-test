@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),path=require('node:path');
-function fixture({existing=false,signature='signature',failInstaller=false,missingNotes=false,placeholderNotes=false}={}){
+function fixture({existing=false,signature='signature',failInstaller=false,missingNotes=false,placeholderNotes=false,stable=false}={}){
   const commands=[],repo='v2029944-ui/HTML-test',version='0.1.1',installer='Analiz-rabot-Tauri-Windows-x64-setup.exe';
   const api={readFileSync(file){
     if(file.endsWith('tauri.conf.json'))return JSON.stringify({version});
@@ -19,7 +19,7 @@ function fixture({existing=false,signature='signature',failInstaller=false,missi
     if(args[0]==='release'&&args[1]==='view')value=JSON.stringify({assets:[{name:installer},{name:installer+'.sig'}]});
     return {status:0,stdout:value};
   };
-  const module={exports:{}},ctx={module,__dirname:'/repo/tauri',console:{log(){}},process:{env:{GITHUB_SHA:'commit'}},require:name=>({
+  const module={exports:{}},ctx={module,__dirname:'/repo/tauri',console:{log(){}},process:{env:{GITHUB_SHA:'commit',ANALIZ_RELEASE_CHANNEL:stable?'stable':''}},require:name=>({
     'node:fs':api,'node:path':path,'node:os':{tmpdir:()=>'/tmp'},'node:child_process':{spawnSync}
   })[name]};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../publish.cjs'),'utf8'),ctx);
@@ -59,4 +59,13 @@ test('versioned release uses the exact changelog file rather than generic notes'
  assert.ok(index>0);
  assert.match(creation[index+1],/release-notes[\\/]0\.1\.1\.md$/);
  assert.equal(creation.includes('--notes'),false);
+});
+
+test('explicit stable release becomes Latest but channel stays prerelease',()=>{
+ const f=fixture({stable:true});f.run();
+ const version=f.commands.find(x=>x[1]==='create'&&x[2]==='tauri-v0.1.1');
+ const channel=f.commands.find(x=>x[1]==='create'&&x[2]==='tauri-updates');
+ assert.ok(version.includes('--latest'));
+ assert.equal(version.includes('--prerelease'),false);
+ assert.ok(channel.includes('--prerelease')&&channel.includes('--latest=false'));
 });
