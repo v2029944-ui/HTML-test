@@ -553,7 +553,14 @@ def run():
                 listing=page.evaluate('window.desktopAPI.list()')
                 assert listing['rules']['synthetic-year.xlsx']['format']=='daily-wide'
                 assert listing['rules']['synthetic-year.xlsx']['year']==2024
-                assert page.locator('#metricReports').inner_text()=='366'
+                # Verify the persisted report count in SQLite, then await its
+                # propagation to the SQL view. Do not silently accept a smaller
+                # number or an incomplete asynchronous refresh.
+                actual_reports=page.evaluate('window.desktopAPI.nativeSettingsBootstrap()')['reports']
+                assert actual_reports==366,('SQLite report count changed after rule edit',actual_reports)
+                wait_for_app_state(page,
+                    'document.querySelector("#metricReports")?.textContent === "366"',
+                    'SQL report count after editing rule')
                 assert page.evaluate("typeof window.appReady === 'undefined'")
                 report['checks'].append('SQL-only Excel rule write with native revision and file validation')
             except BaseException as error:
