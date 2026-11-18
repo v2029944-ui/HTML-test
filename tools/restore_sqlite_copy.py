@@ -46,7 +46,7 @@ def _digest(conn: sqlite3.Connection) -> tuple[str, int]:
         'FROM reports ORDER BY id',
         'SELECT name,typeof(json),json FROM kv ORDER BY name',
     ):
-        h.update(b'\\xffQUERY\\x00' + sql.encode('utf-8'))
+        h.update(b'\xffQUERY\x00' + sql.encode('utf-8'))
         for row in conn.execute(sql):
             for value in row:
                 if value is None:
@@ -54,7 +54,7 @@ def _digest(conn: sqlite3.Connection) -> tuple[str, int]:
                 else:
                     data = value if isinstance(value, bytes) else str(value).encode('utf-8')
                     h.update(b'V' + len(data).to_bytes(8, 'big') + data)
-            h.update(b'\\xfeROW\\x00')
+            h.update(b'\xfeROW\x00')
             records += 1
     return h.hexdigest(), records
 
