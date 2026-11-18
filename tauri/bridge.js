@@ -36,6 +36,13 @@
     },
     nativeExportRangeCsv:(revision,reportType,from,to,organizations,organization,destination)=>tracked(
       'native_export_range_csv',{revision,reportType,from,to,organizations,organization,destination},'saves'),
+    chooseWideXlsx:async()=>{
+      if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
+      return tauri.dialog.open({multiple:false,directory:false,title:'Выберите XLSX для нативного импорта',filters:[{name:'Excel XLSX',extensions:['xlsx']}]});
+    },
+    nativeWideImportPreview:(source,options)=>tracked('native_wide_import_preview',{source,options},'reads'),
+    nativeWideImportApply:(source,options,reviewToken,confirmation)=>tracked(
+      'native_wide_import_apply',{source,options,reviewToken,confirmation},'saves'),
     nativeReportPage:(revision,filter,after=null,limit=100)=>tracked(
       'native_report_page',{revision,filter,after,limit},'reads'),
     save:data=>tracked('save_data',{data},'saves'),

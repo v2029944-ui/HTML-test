@@ -1,6 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod storage;
+mod native_import;
+
+use native_import::{native_wide_import_preview, native_wide_import_apply};
 
 use storage::{AnalysisScope, ManagementJob, RangeQuery, RangeSummary, ReadExcel, ReadFilter, ReportHeader, Rule, Storage};
 use std::sync::Arc;
@@ -474,7 +477,7 @@ fn main() {
             native_settings_bootstrap, native_group_page, native_group_rename,
             native_analysis_index_page, native_analysis_index_settings, native_analysis_range,
             native_analysis_organizations, native_analysis_range_page,
-            native_export_range_csv,
+            native_export_range_csv, native_wide_import_preview, native_wide_import_apply,
             get_info, set_folder, set_rule,
             list_excel, read_excel, check_excel, open_data_folder
         ])
