@@ -383,6 +383,29 @@ mod tests {
     }
 
     #[test]
+    fn crash_after_candidate_is_placed_restores_old_db_before_next_launch() {
+        let dir=tempdir().unwrap();let root=dir.path().join("live");
+        let store=Storage::new(root.clone()).unwrap();
+        store.save(data(64.0)).unwrap();
+        let backup=dir.path().join("source.sqlite3");
+        store.backup_sqlite_verified(&backup).unwrap();
+        store.save(data(88.0)).unwrap();
+        let digest=store.restore_preview(&backup).unwrap().verification;
+        store.schedule_restore(&backup,&digest).unwrap();
+        let req=load_request(&root).unwrap().unwrap();
+        drop(store);
+        fs::rename(root.join("reports.sqlite3"),root.join(&req.previous)).unwrap();
+        fs::rename(root.join(&req.stage),root.join("reports.sqlite3")).unwrap();
+        let _lock=AppRestoreLock::acquire(&root).unwrap();
+        let result=apply_pending_restore(&root).unwrap().unwrap();
+        assert!(!result.restored);
+        assert_eq!(Storage::new(root.clone()).unwrap().load().unwrap(),data(88.0));
+        assert!(load_request(&root).unwrap().is_none());
+        let interrupted=req.stage.replace(".analiz-restore-stage-", ".analiz-restore-interrupted-");
+        assert!(root.join(interrupted).exists(),"interrupted candidate is not overwritten");
+    }
+
+    #[test]
     fn invalid_request_path_never_touches_live_database() {
         let dir=tempdir().unwrap();let root=dir.path().join("live");
         let store=Storage::new(root.clone()).unwrap();store.save(data(2.0)).unwrap();
