@@ -108,11 +108,12 @@ $('wideApply').addEventListener('click',async()=>{
  if(!window.confirm('Повторно проверить XLSX и атомарно сохранить '+review.reportCount+' отчётов в SQLite?'))return;
  busy=true;updateControls();
  try{
+  let backupDestination=null;
   if(counts.replacements>0){
-   // Replacing old report documents is irreversible from the UI. Require
-   // a verified, independent SQLite Online Backup before C3 publication.
-   if(typeof api.chooseSqliteBackupPath!=='function'||typeof api.nativeBackupSqlite!=='function')
-    throw Error('Резервное копирование SQLite недоступно. Замена отчётов запрещена.');
+   // The Rust apply IPC creates a verified backup before any replacement.
+   // The UI only selects the path; it cannot attest a backup was made.
+   if(typeof api.chooseSqliteBackupPath!=='function')
+    throw Error('Выбор резервной копии SQLite недоступен. Замена отчётов запрещена.');
    status('Перед заменой существующих отчётов требуется резервная копия SQLite.');
    const backupPath=await api.chooseSqliteBackupPath(
       'analiz-before-import-'+new Date().toISOString().slice(0,10)+'.sqlite3');
@@ -121,15 +122,14 @@ $('wideApply').addEventListener('click',async()=>{
     return;
    }
    if(typeof backupPath!=='string')throw Error('Некорректный путь резервной копии.');
-   const backupRevision=await api.nativeBackupSqlite(backupPath);
-   if(!Number.isSafeInteger(backupRevision)||backupRevision!==review.revision)
-    throw Error('Ревизия базы изменилась во время резервного копирования. Проверьте XLSX заново.');
-   status('Резервная копия SQLite проверена и сохранена. Повторно проверяется Excel перед записью…');
+   backupDestination=backupPath;
+   status('Выбран путь резервной копии. Rust проверит SQLite и сохранит копию перед заменой…');
   }
   const result=await api.nativeWideImportApply(source,options,review.reviewToken,{
    replaceExact:$('wideReplace').checked,
    acceptCrossType:$('wideOverlap').checked,
-   acceptQuality:$('wideQuality').checked
+   acceptQuality:$('wideQuality').checked,
+   backupDestination
   });
   resetReview();
   status('Сохранено отчётов: '+result.reports+'. Строк: '+result.rows+

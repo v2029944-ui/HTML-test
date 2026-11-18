@@ -343,10 +343,27 @@ def run():
                 assert native_preview['conflicts']['replacements']==366
                 token=native_preview['reviewToken']
                 assert len(token)==64
-                receipt=page.evaluate(
-                    'async args => window.__TAURI__.core.invoke("native_wide_import_apply",args)',
-                    {'source':str(excel),'options':native_options,'reviewToken':token,
-                     'confirmation':{'replaceExact':True,'acceptCrossType':True,'acceptQuality':True}})
+                direct_apply='async args => window.__TAURI__.core.invoke("native_wide_import_apply",args)'
+                refused={'source':str(excel),'options':native_options,'reviewToken':token,
+                         'confirmation':{'replaceExact':True,'acceptCrossType':True,'acceptQuality':True}}
+                try:
+                    page.evaluate(direct_apply,refused)
+                except Exception as error:
+                    assert 'backup' in str(error).lower(),str(error)
+                else:
+                    raise RuntimeError('Native IPC replaced reports without a backup destination')
+                before_native=tmp/'before-native-import.sqlite3'
+                approved={'source':str(excel),'options':native_options,'reviewToken':token,
+                          'confirmation':{'replaceExact':True,'acceptCrossType':True,
+                                          'acceptQuality':True,'backupDestination':str(before_native)}}
+                receipt=page.evaluate(direct_apply,approved)
+                assert before_native.is_file()
+                with closing(sqlite3.connect(str(before_native))) as restored_copy:
+                    assert restored_copy.execute('PRAGMA quick_check').fetchone()[0]=='ok'
+                    assert restored_copy.execute('SELECT COUNT(*) FROM reports').fetchone()[0]==366
+                    raw=restored_copy.execute('SELECT json FROM reports LIMIT 1').fetchone()[0]
+                    assert 'sourceFormat' not in json.loads(raw)
+                report['checks'].append('Native import IPC refuses replacement without verified SQLite backup')
                 assert receipt['reports']==366
                 assert receipt['replaced']==366
                 assert receipt['revision']>native_preview['revision']

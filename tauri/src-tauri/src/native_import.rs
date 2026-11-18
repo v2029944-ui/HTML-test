@@ -41,6 +41,9 @@ pub struct NativeWideConfirmation {
     replace_exact: bool,
     accept_cross_type: bool,
     accept_quality: bool,
+    // The native IPC itself must require the backup destination. The UI is
+    // not a security boundary: a direct invoke must not bypass this guard.
+    backup_destination: Option<String>,
 }
 fn with_prepared<T>(
     store: &Storage,
@@ -168,6 +171,28 @@ pub async fn native_wide_import_apply(
             let current=review(prepared,preview,options)?;
             if current.review_token!=review_token {
                 return Err("Source, report quality, conflicts or database changed. Preview again.".into());
+            }
+            if preview.counts().replacements>0 && !confirmation.replace_exact {
+                return Err("Exact replacement needs explicit confirmation.".into());
+            }
+            if preview.counts().cross_type_overlaps>0 && !confirmation.accept_cross_type {
+                return Err("Cross-type overlaps need explicit confirmation.".into());
+            }
+            if preview.quality().requires_acknowledgment() && !confirmation.accept_quality {
+                return Err("Source quality notices need explicit confirmation.".into());
+            }
+            if preview.counts().replacements>0 {
+                let destination=confirmation.backup_destination.as_deref()
+                    .ok_or("A verified SQLite backup destination is required before replacing reports.")?;
+                if destination.len()>32767 {
+                    return Err("SQLite backup destination is too long".into());
+                }
+                // The online snapshot is created here in the trusted Rust
+                // command, not accepted as a caller-supplied success claim.
+                let backed_revision=storage.backup_sqlite_verified(Path::new(destination))?;
+                if backed_revision!=preview.revision() {
+                    return Err("SQLite revision changed while backing up. Preview again.".into());
+                }
             }
             let flags=ImportConfirmation {
                 replace_exact:confirmation.replace_exact,

@@ -35,6 +35,10 @@ function setup(options={}){
    },
    nativeWideImportApply:async(source,config,reviewToken,confirmation)=>{
      calls.push({kind:'apply',source,config,reviewToken,confirmation});
+     if(preview.conflicts.replacements>0&&!confirmation.backupDestination)
+       throw Error('A verified SQLite backup destination is required');
+     if(options.backupRevision!==undefined && options.backupRevision!==preview.revision)
+       throw Error('Ревизия базы изменилась во время резервного копирования');
      return {reports:366,rows:12000,revision:8,replaced:364};
    }
  };
@@ -83,9 +87,11 @@ test('native wide import requires review and independent acknowledgements',async
  await e.wideApply.events.click();
  assert.equal(calls.filter(c=>c.kind==='apply').length,1);
  assert.equal(calls.find(c=>c.kind==='backup_dialog').defaultPath.endsWith('.sqlite3'),true);
- assert.equal(calls.find(c=>c.kind==='backup').destination,'C:/Backups/before-import.sqlite3');
- assert.ok(calls.findIndex(c=>c.kind==='backup')<calls.findIndex(c=>c.kind==='apply'),
-   'a verified backup must exist before replacing any report');
+ assert.equal(calls.filter(c=>c.kind==='backup').length,0,
+   'the UI cannot invent a successful backup; Rust does the write');
+ assert.equal(calls.at(-1).confirmation.backupDestination,'C:/Backups/before-import.sqlite3');
+ assert.ok(calls.findIndex(c=>c.kind==='backup_dialog')<calls.findIndex(c=>c.kind==='apply'),
+   'choose backup destination before native atomic apply');
  assert.equal(calls.at(-1).reviewToken,'a'.repeat(64));
  assert.equal(calls.at(-1).confirmation.acceptQuality,true);
  assert.equal(confirmCount(),1);
@@ -123,8 +129,9 @@ test('a different backed-up database revision blocks replacement and invalidates
  await e.widePreview.events.click();
  e.wideReplace.checked=true;e.wideOverlap.checked=true;e.wideQuality.checked=true;
  await e.wideApply.events.click();
- assert.equal(calls.filter(c=>c.kind==='backup').length,1);
- assert.equal(calls.filter(c=>c.kind==='apply').length,0);
+ assert.equal(calls.filter(c=>c.kind==='backup_dialog').length,1);
+ assert.equal(calls.filter(c=>c.kind==='apply').length,1,
+   'native apply owns the backup and rejects a stale database revision');
  assert.equal(e.wideApply.disabled,true);
  assert.match(e.wideStatus.textContent,/Ревизия базы изменилась/);
 });
@@ -142,4 +149,5 @@ test('new daily reports without replacement do not require an unrelated backup',
  assert.equal(calls.filter(c=>c.kind==='backup_dialog').length,0);
  assert.equal(calls.filter(c=>c.kind==='backup').length,0);
  assert.equal(calls.filter(c=>c.kind==='apply').length,1);
+ assert.equal(calls.at(-1).confirmation.backupDestination,null);
 });
