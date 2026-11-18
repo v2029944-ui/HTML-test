@@ -134,3 +134,21 @@ test('CSV Save dialog only opts into tracked native streaming export',async()=>{
  await result;
  assert.equal(window.tauriOperations.saves,0);
 });
+
+test('native online backup is only launched after Save dialog',async()=>{
+ const calls=[],pending=[],window={__TAURI__:{
+  core:{invoke:(command,args)=>{calls.push({command,args});return new Promise((resolve,reject)=>pending.push({resolve,reject}));}},
+  dialog:{open:async()=>null,save:async()=> 'C:/Backups/new.sqlite3'}
+ }};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../bridge.js'),'utf8'),{window,setInterval(){},clearInterval(){}});
+ const path=await window.desktopAPI.chooseSqliteBackupPath('new.sqlite3');
+ assert.equal(path,'C:/Backups/new.sqlite3');
+ assert.equal(calls.length,0);
+ const result=window.desktopAPI.nativeBackupSqlite(path);
+ assert.equal(window.tauriOperations.saves,1);
+ assert.equal(calls[0].command,'native_backup_sqlite');
+ assert.equal(calls[0].args.destination,path);
+ pending[0].resolve(12);
+ assert.equal(await result,12);
+ assert.equal(window.tauriOperations.saves,0);
+});

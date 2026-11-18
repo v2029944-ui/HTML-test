@@ -29,7 +29,7 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
@@ -42,6 +42,8 @@ function mount(){
    nativeGroupRename:async(rev,handle,name)=>{calls.push({kind:'rename',rev,handle,name});return 13;},
    nativeAnalysisIndexPage:async(rev,kind,after,limit)=>{calls.push({kind:'index',rev,reportType:kind,after,limit});return {processed:2,next:null,done:true};},
    nativeAnalysisIndexSettings:async rev=>{calls.push({kind:'settings_index',rev});},
+   chooseSqliteBackupPath:async defaultPath=>{calls.push({kind:'choose_backup',defaultPath});return 'C:/Backups/new.sqlite3';},
+   nativeBackupSqlite:async destination=>{calls.push({kind:'sqlite_backup',destination});return 12;},
    chooseCsvPath:async defaultPath=>{calls.push({kind:'save_csv',defaultPath});return 'C:/Exports/new.csv';},
    nativeExportRangeCsv:async(rev,kind,from,to,organizations,organization,destination)=>{
      calls.push({kind:'export_csv',rev,reportType:kind,from,to,organizations,organization,destination});
@@ -205,4 +207,14 @@ test('native CSV export waits for explicit Save selection and preserves selected
  e.analysisOrganization.value='СМУ16';
  e.analysisOrganization.events.change();
  assert.equal(e.analysisExport.disabled,true,'scope changes invalidate previous export');
+});
+
+test('native SQLite backup is a user-initiated copy, not a report rewrite',async()=>{
+ const {e,calls,window}=mount();await window.nativeWorkspaceReady;
+ await e.backupSqlite.events.click();
+ assert.match(calls.find(x=>x.kind==='choose_backup').defaultPath,/\.sqlite3$/);
+ assert.equal(calls.find(x=>x.kind==='sqlite_backup').destination,'C:/Backups/new.sqlite3');
+ assert.match(e.backupStatus.textContent,/Копия SQLite сохранена/);
+ assert.equal(calls.some(x=>x.kind==='rename'),false);
+ assert.equal(e.reportRows.children.length,100);
 });
