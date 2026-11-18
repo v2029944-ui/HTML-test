@@ -250,6 +250,16 @@ fn insert_key(tx: &Transaction<'_>, key: &str, value: &str) -> Result<(), String
 
 fn write_data(tx: &Transaction<'_>, data: &Value) -> Result<(), String> {
     validate_data(data)?;
+    // The legacy full-snapshot writer cannot rebuild wide source-diagnostic
+    // links. Refuse the entire transaction instead of silently orphaning days.
+    let protected: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM report_source_diagnostic_links)",
+        [],
+        |row| row.get(0),
+    ).map_err(err)?;
+    if protected {
+        return Err("Legacy full-history save cannot preserve shared source diagnostics; use prepared or bounded management operations.".into());
+    }
     tx.execute("DELETE FROM reports", []).map_err(err)?;
     let mut stmt = tx.prepare(
         "INSERT INTO reports(id, report_type, period_start, period_end, source_name, json)

@@ -487,7 +487,9 @@ fn wide_folder_shrink_repeat_other_folder_and_failure_rollbacks_preserve_c2() {
             storage.connect().unwrap().execute_batch("CREATE TRIGGER fail_wide BEFORE INSERT ON report_rows BEGIN SELECT RAISE(ABORT,'test write failure'); END").unwrap();
         }
         if fault == "revision" {
-            storage.save(storage.load().unwrap()).unwrap();
+            storage.connect().unwrap().execute(
+                "UPDATE kv SET json=json WHERE name='settings'", [],
+            ).unwrap();
         }
         let before = storage.load().unwrap();
         let job = ImportJob::new();
@@ -536,6 +538,14 @@ fn wide_folder_shrink_repeat_other_folder_and_failure_rollbacks_preserve_c2() {
             receipt
         );
         let loaded = storage.load().unwrap();
+        // The old anchor must be gone with its days; the new source has only
+        // valid references, even when a shorter book removes a date.
+        let con = storage.connect().unwrap();
+        let orphaned: i64 = con.query_row(
+            "SELECT COUNT(*) FROM report_source_diagnostic_links l LEFT JOIN reports r ON r.id=l.anchor_id WHERE r.id IS NULL",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(orphaned, 0);
         assert_eq!(loaded["reports"].as_array().unwrap().len(), 4);
         assert!(!loaded["reports"]
             .as_array()
@@ -758,4 +768,57 @@ fn wide_declared_quarter_preserves_valid_actual_days_outside_coverage_with_quali
             if zero { 0 } else { 2 }
         );
     }
+}
+
+#[test]
+fn wide_manual_exact_anchor_replacement_and_legacy_save_fail_closed() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("wide.xlsx");
+    fixture(&source, 2, false, false, false);
+    let area = StageArea::open(root.path().join("stage")).unwrap();
+    let original_wide = prepared(&area, &source, "2024-03-01");
+    assert_eq!(original_wide.report_count(), 2);
+    let anchor = original_wide.next_report(0).unwrap().unwrap();
+    let dependent = original_wide.next_report(anchor.ordinal).unwrap().unwrap();
+    let storage = Storage::new(root.path().join("live")).unwrap();
+    storage.revision().unwrap();
+    let preview = storage.preview_import(&original_wide).unwrap();
+    storage.apply_import(
+        &original_wide, &preview,
+        ImportConfirmation { accept_quality: true, ..Default::default() },
+        &ImportJob::new(), |_| {},
+    ).unwrap();
+    let before = storage.load().unwrap();
+    assert_eq!(before["reports"].as_array().unwrap().len(), 2);
+    assert_eq!(before["reports"][1]["sourceDiagnosticsReport"], anchor.id);
+
+    let manual_source = root.path().join("manual.xlsx");
+    fixture_at(&manual_source, 1, false, false, false, "2024-02-28", "Работа");
+    let manual_area = StageArea::open(root.path().join("manual-stage")).unwrap();
+    let manual = converted(&manual_area, &manual_source, "2024-03-01")
+        .prepare_with_mode(ImportMode::Manual, &AtomicBool::new(false), |_| {})
+        .unwrap();
+    let manual_preview = storage.preview_import(&manual).unwrap();
+    assert_eq!(manual_preview.counts().replacements, 1);
+    let failed = storage.apply_import(
+        &manual, &manual_preview,
+        ImportConfirmation { replace_exact: true, accept_quality: true, ..Default::default() },
+        &ImportJob::new(), |_| {},
+    ).unwrap_err();
+    assert!(failed.contains("Shared source diagnostics"), "{failed}");
+    assert_eq!(storage.load().unwrap(), before);
+
+    let conn = storage.connect().unwrap();
+    let protected: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM report_source_diagnostic_links WHERE anchor_id=?1",
+        [&anchor.id], |r| r.get(0),
+    ).unwrap();
+    assert_eq!(protected, 2);
+    let direct = conn.execute("DELETE FROM reports WHERE id=?1", [&anchor.id]).unwrap_err();
+    assert!(direct.to_string().contains("Shared source diagnostics"));
+    let legacy = storage.save(before.clone()).unwrap_err();
+    assert!(legacy.contains("shared source diagnostics"), "{legacy}");
+    assert_eq!(storage.load().unwrap(), before);
+    assert!(storage.load().unwrap()["reports"].as_array().unwrap()
+        .iter().any(|r| r["id"]==dependent.id));
 }

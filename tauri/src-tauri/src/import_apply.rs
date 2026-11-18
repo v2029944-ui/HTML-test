@@ -115,7 +115,20 @@ pub(super) fn initialize(conn: &Connection) -> Result<(), String> {
     CREATE TABLE IF NOT EXISTS report_source_ownership(report_id TEXT PRIMARY KEY, source_name TEXT NOT NULL, folder TEXT NOT NULL, mode TEXT NOT NULL);
     CREATE TRIGGER IF NOT EXISTS source_ownership_insert AFTER INSERT ON reports BEGIN DELETE FROM report_source_ownership WHERE report_id=NEW.id; END;
     CREATE TRIGGER IF NOT EXISTS source_ownership_update AFTER UPDATE ON reports BEGIN DELETE FROM report_source_ownership WHERE report_id IN (OLD.id,NEW.id); END;
-    CREATE TRIGGER IF NOT EXISTS source_ownership_delete AFTER DELETE ON reports BEGIN DELETE FROM report_source_ownership WHERE report_id=OLD.id; END;").map_err(err)
+    CREATE TRIGGER IF NOT EXISTS source_ownership_delete AFTER DELETE ON reports BEGIN DELETE FROM report_source_ownership WHERE report_id=OLD.id; END;
+    -- Explicit links are needed because only the first wide day stores full sourceIssues.
+    -- Protect against manual exact replacement, legacy bulk saves and direct SQL deletes.
+    CREATE TABLE IF NOT EXISTS report_source_diagnostic_links(report_id TEXT PRIMARY KEY, anchor_id TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS diagnostic_anchor_lookup ON report_source_diagnostic_links(anchor_id);
+    CREATE TRIGGER IF NOT EXISTS diagnostic_anchor_delete BEFORE DELETE ON reports
+      WHEN EXISTS(SELECT 1 FROM report_source_diagnostic_links l WHERE l.anchor_id=OLD.id AND l.report_id<>OLD.id)
+      BEGIN SELECT RAISE(ABORT,'Shared source diagnostics anchor has surviving reports; replace the whole source'); END;
+    CREATE TRIGGER IF NOT EXISTS diagnostic_protected_update BEFORE UPDATE OF id,json ON reports
+      WHEN (NEW.id IS NOT OLD.id OR NEW.json IS NOT OLD.json)
+       AND EXISTS(SELECT 1 FROM report_source_diagnostic_links l WHERE l.report_id=OLD.id)
+      BEGIN SELECT RAISE(ABORT,'Shared source diagnostics require a prepared replacement'); END;
+    CREATE TRIGGER IF NOT EXISTS diagnostic_link_delete AFTER DELETE ON reports
+      BEGIN DELETE FROM report_source_diagnostic_links WHERE report_id=OLD.id; END;").map_err(err)
 }
 fn receipt(conn: &Connection, operation: &str) -> Result<Option<ImportReceipt>, String> {
     if operation.len() != 64 || !operation.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -476,6 +489,11 @@ fn apply_in_connection_inner(
                 .into(),
         );
     }
+    // Wide documents share one diagnostic anchor. Deletion triggers forbid an
+    // anchor disappearing while any dependent report survives. A whole-source
+    // replacement must therefore remove its non-anchor days first.
+    let diagnostic_anchor = prepared.next_report(0).map_err(err)?
+        .and_then(|first| first.provenance.map(|_| first.id));
     // Delete one owned report at a time so cancellation stays observable and all
     // removals (including absent days) remain inside the same rollback boundary.
     if prepared.mode() == ImportMode::Folder {
@@ -483,7 +501,7 @@ fn apply_in_connection_inner(
             job.check()?;
             let target: Option<String> = tx
                 .query_row(
-                    "SELECT report_id FROM temp.import_source_plan ORDER BY report_id LIMIT 1",
+                    "SELECT p.report_id FROM temp.import_source_plan p LEFT JOIN report_source_diagnostic_links l ON l.report_id=p.report_id ORDER BY CASE WHEN l.anchor_id=p.report_id THEN 1 ELSE 0 END, p.report_id LIMIT 1",
                     [],
                     |r| r.get(0),
                 )
@@ -536,6 +554,15 @@ fn apply_in_connection_inner(
             ],
         )
         .map_err(err)?;
+        if report.provenance.is_some() {
+            let anchor = diagnostic_anchor.as_ref().ok_or(
+                "Mixed prepared wide reports cannot safely publish shared source diagnostics."
+            )?;
+            tx.execute(
+                "INSERT INTO report_source_diagnostic_links(report_id,anchor_id) VALUES(?1,?2)",
+                params![report.id, anchor],
+            ).map_err(err)?;
+        }
         {
             let mut blob = tx
                 .blob_open("main", "reports", "json", rowid, false)

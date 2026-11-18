@@ -317,3 +317,19 @@ manual replace_exact may delete the first artifact report while other old wide
 days retain sourceDiagnosticsReport links. Complete source diagnostics can become
 orphaned. This backend has no preservation/reference check or partial-anchor block;
 full-source replacement is safe when all old references are removed atomically.
+
+
+## C3 shared source diagnostic anchor lifetime (2026-11-18)
+
+The first prepared daily-wide report is the single full source-diagnostics anchor.
+Every wide report receives a transactional `report_source_diagnostic_links` row
+pointing to that anchor. SQLite refuses to delete an anchor while any linked
+day survives, including a confirmed manual `replace_exact` or direct SQL
+delete. Full owned-folder replacements remove dependents before their anchor
+in the same atomic transaction; a failure leaves both reports and links intact.
+Direct edits of tracked JSON/identifiers and the legacy full-history `save()`
+fail closed rather than silently invalidating diagnostic provenance.
+The link index does not retroactively reconstruct arbitrary old experimental
+wide documents that were published before this schema existed; such databases
+need explicit migration/review before activation. No IPC or production UI is
+enabled by this change.
