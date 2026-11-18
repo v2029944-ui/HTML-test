@@ -3,6 +3,11 @@
 name: Tauri signed Windows release
 
 on:
+  # Verify existing secrets automatically when this workflow is first merged.
+  # This event can never publish: the publish job requires workflow_dispatch inputs.
+  push:
+    branches: [main]
+    paths: ['.github/workflows/tauri-signed-release.yml']
   workflow_dispatch:
     inputs:
       operation:
