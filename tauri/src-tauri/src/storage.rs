@@ -26,6 +26,9 @@ mod backup;
 #[path = "metric_reports.rs"]
 mod metric_reports;
 pub use metric_reports::{kinds as metric_kinds, MetricKind, MetricReceipt, MetricReview, MetricSummary};
+#[path = "metric_xlsx.rs"]
+mod metric_xlsx;
+pub use metric_xlsx::{profiles as metric_xlsx_profiles, MetricXlsxProfile};
 
 #[path = "read_model.rs"]
 mod read_model;
