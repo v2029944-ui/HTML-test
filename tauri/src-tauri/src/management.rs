@@ -217,7 +217,7 @@ INSERT INTO management_settings SELECT * FROM management_stage.management_settin
 }
 struct Stage {
     dir: PathBuf,
-    lease: fs::File,
+    lease: Option<fs::File>,
     quota: u64,
 }
 impl Stage {
@@ -249,8 +249,12 @@ impl Stage {
 }
 impl Drop for Stage {
     fn drop(&mut self) {
+        // Windows cannot remove an open lease file, even after unlocking it.
+        if let Some(lease) = self.lease.take() {
+            let _ = FileExt::unlock(&lease);
+            drop(lease);
+        }
         let _ = self.cleanup();
-        let _ = FileExt::unlock(&self.lease);
     }
 }
 fn stage_root(store: &Storage) -> PathBuf {
@@ -313,10 +317,20 @@ fn cleanup(store: &Storage) -> Result<(i64, i64), String> {
             .map_err(err)?;
         match lease.try_lock_exclusive() {
             Ok(()) => {
+                // All cleanup/new-stage calls hold the lifecycle lock. Close the
+                // lease handle before deletion; NTFS refuses an open lease file.
+                FileExt::unlock(&lease).map_err(err)?;
+                drop(lease);
                 fs::remove_dir_all(path).map_err(err)?;
                 removed += 1
             }
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => active += 1,
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || (cfg!(windows) && e.raw_os_error() == Some(33)) =>
+            {
+                // Windows LockFileEx contention reports ERROR_LOCK_VIOLATION (33).
+                active += 1;
+            }
             Err(e) => return Err(err(e)),
         }
     }
@@ -352,7 +366,7 @@ fn new_stage(store: &Storage, quota: u64) -> Result<Stage, String> {
         .open(dir.join("lease"))
         .map_err(err)?;
     lease.lock_exclusive().map_err(err)?;
-    Ok(Stage { dir, lease, quota })
+    Ok(Stage { dir, lease: Some(lease), quota })
 }
 impl Storage {
     fn management_connect(&self) -> Result<Connection, String> {
