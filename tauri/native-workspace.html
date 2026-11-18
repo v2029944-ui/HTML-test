@@ -123,8 +123,32 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p id="sourceFolderLocation" class="intro">Получение папки…</p>
 <p id="sourceFolderCount" class="intro"></p>
 <p id="sourceFolderStatus" class="status muted" role="status" aria-live="polite"></p>
-<div class="table-scroll"><table><thead><tr><th>Файл</th><th>Размер</th><th>Правило импорта</th></tr></thead>
+<div class="controls" aria-label="Настройка правил Excel">
+  <strong id="sourceRuleFile">Файл не выбран.</strong>
+  <label for="sourceRuleFormat">Формат</label>
+  <select id="sourceRuleFormat" disabled>
+    <option value="legacy">Обычные периоды</option>
+    <option value="auto">Автоматическое распознавание</option>
+    <option value="daily-wide">Широкая таблица по дням</option>
+  </select>
+  <label for="sourceRuleType">Период</label>
+  <select id="sourceRuleType" disabled>
+    <option value="day">День</option><option value="week">Неделя</option><option value="month">Месяц</option>
+  </select>
+  <label for="sourceRuleStart">Начало первого периода</label>
+  <input id="sourceRuleStart" type="date" disabled>
+  <label for="sourceRuleSheet">Лист Excel (необязательно)</label>
+  <input id="sourceRuleSheet" type="text" maxlength="120" placeholder="Автоматически" disabled>
+  <label for="sourceRuleYear">Год широкой таблицы (необязательно)</label>
+  <input id="sourceRuleYear" type="number" min="1900" max="9999" placeholder="Из заголовков" disabled>
+  <button id="sourceRuleSave" type="button" disabled>Сохранить правило</button>
+</div>
+<p id="sourceRuleStatus" class="status muted" role="status" aria-live="polite">
+  Выберите файл и настройте его формат. Импорт данных выполняется отдельно с предпросмотром.
+</p>
+<div class="table-scroll"><table><thead><tr><th>Файл</th><th>Размер</th><th>Правило импорта</th><th>Действие</th></tr></thead>
 <tbody id="sourceFolderRows"></tbody></table></div>
+<p class="intro">Правила сохраняются в SQLite с проверкой ревизии, имени исходной папки и состояния файла. Сохранение правила само по себе не импортирует Excel. Изменение правил может повлиять на автоматический импорт, если одновременно открыт классический интерфейс. Расширенные сопоставления столбцов пока редактируются там же.</p>
 <p class="intro">При выборе другой папки существующие правила файлов могут быть сброшены; перед сменой программа запрашивает подтверждение. Уже сохранённые отчёты остаются в SQLite.</p>
 </section>
 
