@@ -241,6 +241,9 @@ def run():
                     'SQL source folder metadata')
                 assert page.locator('#sourceFolderRows tr').count()==1
                 assert '1' in page.locator('#sourceFolderCount').inner_text()
+                # set_folder changed the SQLite config revision; reload the bounded
+                # read model so subsequent range queries do not use a stale revision.
+                assert page.evaluate('window.nativeWorkspaceRefresh()') is True
                 assert page.evaluate("typeof window.appReady === 'undefined'")
                 report['checks'].append('SQL-only folder metadata, no full-history bootstrap or implicit import')
                 # Opt in to SQL-first startup; the setting must survive closing WebView2.
