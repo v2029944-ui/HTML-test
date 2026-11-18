@@ -2,11 +2,11 @@
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const {spawnSync}=require('node:child_process');
 const ARTIFACT='Analiz-rabot-Tauri-Windows-x64-setup.exe';
-function manifest(version,tag,signature){
+function manifest(version,tag,signature,notes='Обновление «Анализ работ»'){
   if(!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version))throw Error('Некорректная версия выпуска.');
   if(!/^[0-9A-Za-z._-]+$/.test(tag)||tag==='tauri-updates')throw Error('Укажите отдельный тег версии Tauri.');
   if(!signature.trim())throw Error('Отсутствует подпись установщика.');
-  return {version,notes:'Обновление «Анализ работ»',pub_date:new Date().toISOString(),platforms:{
+  return {version,notes:String(notes).trim(),pub_date:new Date().toISOString(),platforms:{
     'windows-x86_64':{signature:signature.trim(),url:'https://github.com/v2029944-ui/HTML-test/releases/download/'+tag+'/'+ARTIFACT}
   }};
 }
@@ -38,7 +38,8 @@ function build(){
     const out=path.join(__dirname,'release',tag);fs.mkdirSync(out,{recursive:true});
     fs.copyFileSync(source,path.join(out,ARTIFACT));
     fs.writeFileSync(path.join(out,ARTIFACT+'.sig'),signature);
-    fs.writeFileSync(path.join(out,'tauri-latest.json'),JSON.stringify(manifest(config.version,tag,signature),null,2)+'\n');
+    const changelog=fs.readFileSync(require('./publish.cjs').releaseNotesFile(config.version),'utf8').trim();
+    fs.writeFileSync(path.join(out,'tauri-latest.json'),JSON.stringify(manifest(config.version,tag,signature,changelog),null,2)+'\n');
     process.stdout.write('Подписанный выпуск подготовлен: '+out+'\nПубликация в GitHub не выполнялась.\n');
   }finally{fs.rmSync(temp,{recursive:true,force:true});}
 }
