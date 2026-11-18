@@ -2,6 +2,7 @@
 (function(){
 'use strict';
 const api=window.desktopAPI,$=id=>document.getElementById(id);
+const userError=window.analizUserError||(()=>'Операция не выполнена. Перезапустите программу и повторите действие.');
 const make=(tag,text)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);return el;};
 function status(id,text,error=false){$(id).textContent=String(text);$(id).className='status '+(error?'error':'muted');}
 const reportSize=100,groupSize=50;
@@ -43,7 +44,7 @@ try{
  for(const item of rows){const tr=make('tr');for(const value of [item.period_start,item.period_end,item.report_type,item.source_name||'—',item.id])tr.append(make('td',value??''));tbody.append(tr);}
  status('reportStatus','На странице: '+rows.length+' отчётов. Сортировка по дате и идентификатору.');
  return true;
-}catch(err){reportNext=null;reportBack=[];status('reportStatus','Ошибка SQLite: '+String(err?.message||err)+'. Нажмите «Обновить данные».',true);return false;}
+}catch(err){reportNext=null;reportBack=[];status('reportStatus','Ошибка SQLite: '+userError(err)+'. Нажмите «Обновить данные».',true);return false;}
 finally{reportsBusy=false;controlState();}
 }
 async function groups(cursor,reset=false){
@@ -66,13 +67,13 @@ try{
    if(!window.confirm('Переименовать группу «'+group.name+'» в «'+name+'»?'))return;
    save.disabled=true;
    try{await api.nativeGroupRename(revision,group.handle,name);await refresh();status('workspaceStatus','Название группы изменено и сохранено в SQLite.');}
-   catch(err){status('groupStatus','Группа не изменена: '+String(err?.message||err),true);save.disabled=false;}
+   catch(err){status('groupStatus','Группа не изменена: '+userError(err),true);save.disabled=false;}
   });
   const action=make('td');action.append(save);tr.append(action);tbody.append(tr);
  }
  status('groupStatus','На странице: '+rows.length+' групп. Данные отчётов не меняются.');
  return true;
-}catch(err){groupNext=null;groupBack=[];status('groupStatus','Ошибка групп: '+String(err?.message||err),true);return false;}
+}catch(err){groupNext=null;groupBack=[];status('groupStatus','Ошибка групп: '+userError(err),true);return false;}
 finally{groupsBusy=false;controlState();}
 }
 async function refresh(){
@@ -94,7 +95,7 @@ try{
 }catch(err){
  revision=null;$('reportRows').replaceChildren();$('groupRows').replaceChildren();
  reportNext=null;groupNext=null;reportBack=[];groupBack=[];
- status('workspaceStatus','Невозможно открыть SQL-режим: '+String(err?.message||err),true);return;
+ status('workspaceStatus','Невозможно открыть SQL-режим: '+userError(err),true);return;
 }finally{refreshBusy=false;controlState();}
 await reports(null,true);await groups(null,true);
 }
@@ -113,7 +114,7 @@ async function backupSqlite(){
   const captured=await api.nativeBackupSqlite(destination);
   status('backupStatus','Копия SQLite сохранена. Ревизия снимка: '+captured+'. Оригинальная база не изменена.');
  }catch(err){
-  status('backupStatus','Не удалось сохранить копию SQLite: '+String(err?.message||err)+'. Выберите новое имя и проверьте свободное место.',true);
+  status('backupStatus','Не удалось сохранить копию SQLite: '+userError(err)+'. Выберите новое имя и проверьте свободное место.',true);
  }finally{backupBusy=false;controlState();}
 }
 $('workspaceRefresh').addEventListener('click',()=>{void refresh();});
@@ -152,7 +153,7 @@ controlState();
    analysisReady=true;
    status('analysisStatus','Индексы готовы: '+processed+' отчётов. Теперь выберите даты и нажмите «Рассчитать».');
  }catch(err){
-   status('analysisStatus','Индексы не готовы: '+String(err?.message||err),true);
+   status('analysisStatus','Индексы не готовы: '+userError(err),true);
  }finally{analysisBusy=false;controlState();}
 }
 
@@ -228,7 +229,7 @@ async function workPage(cursor,reset=false){
  }catch(err){
   workNext=null;workBack=[];workScope=null;
   $('workRows').replaceChildren();
-  status('workStatus','Ошибка SQL-чтения: '+String(err?.message||err)+'. Повторите расчёт.',true);
+  status('workStatus','Ошибка SQL-чтения: '+userError(err)+'. Повторите расчёт.',true);
   return false;
  }finally{workBusy=false;controlState();}
 }
@@ -259,7 +260,7 @@ async function calculateAnalysis(){
  }catch(err){
    $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
    status('divisionStatus','Сравнение не выполнено из-за ошибки.',true);
-   status('analysisStatus','Ошибка расчёта: '+String(err?.message||err),true);
+   status('analysisStatus','Ошибка расчёта: '+userError(err),true);
  }finally{analysisBusy=false;controlState();}
  if(workScope)await workPage(null,true);
 }
@@ -281,7 +282,7 @@ async function exportAnalysisCsv(){
   );
   status('exportStatus','CSV сохранён. Исходные отчёты не изменены.');
  }catch(err){
-  status('exportStatus','Экспорт не выполнен: '+String(err?.message||err)+'. Выберите новый CSV-файл.',true);
+  status('exportStatus','Экспорт не выполнен: '+userError(err)+'. Выберите новый CSV-файл.',true);
  }finally{exportBusy=false;controlState();}
 }
 const year=String(new Date().getFullYear());
