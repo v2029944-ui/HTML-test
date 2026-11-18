@@ -14,6 +14,11 @@
   window.desktopAPI=Object.freeze({
     load:()=>invoke('load_data'),
     nativeRevision:()=>tracked('native_read_revision',{},'reads'),
+    nativeSettingsBootstrap:()=>tracked('native_settings_bootstrap',{},'reads'),
+    nativeGroupPage:(revision,afterHandle=null,limit=50)=>tracked(
+      'native_group_page',{revision,afterHandle,limit},'reads'),
+    nativeGroupRename:(revision,handle,name)=>tracked(
+      'native_group_rename',{revision,handle,name},'saves'),
     nativeReportPage:(revision,filter,after=null,limit=100)=>tracked(
       'native_report_page',{revision,filter,after,limit},'reads'),
     save:data=>tracked('save_data',{data},'saves'),

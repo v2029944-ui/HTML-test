@@ -38,7 +38,10 @@
   const body=node('div');body.hidden=true;
   controls.append(label,refresh,back,next);
   body.append(controls,status,items);
-  panel.append(heading,description,toggle,body);
+  const newMode=node('a','Перейти в отдельный SQL-режим (без загрузки истории)');
+  newMode.id='openNativeWorkspace';
+  newMode.href='native-workspace.html';
+  panel.append(heading,description,newMode,toggle,body);
   mount.insertBefore(panel,mount.firstChild);
 
   let revision=null,after=null,history=[],busy=false,stale=false,nextCursor=null;
