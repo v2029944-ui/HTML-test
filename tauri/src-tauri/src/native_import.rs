@@ -22,6 +22,7 @@ pub struct NativeWideReview {
     pub quality: QualityCounts,
     pub diagnostics: SourceDiagnostics,
     pub sample_reports: Vec<NativeReportSample>,
+    pub sample_report_issues: Vec<serde_json::Value>,
     pub sample_source_issues: serde_json::Value,
 }
 #[derive(Serialize)]
@@ -81,6 +82,7 @@ fn review(
         prepared.source_diagnostics(),options,identity.0,identity.1,
     )).map_err(|e|e.to_string())?);
     let mut samples=Vec::new();
+    let mut report_issues=Vec::new();
     let mut after=0;
     let mut reports=0u64;
     let mut rows=0u64;
@@ -96,6 +98,20 @@ fn review(
         // operation ID; those are deliberately NOT part of the review token.
         // Hash stable converted metadata + source SHA instead, so a second
         // fully validated parse can match the review without replaying stage IDs.
+        if report.quality.issues!=0 && report_issues.len()<12 {
+            // Read a bounded sample of per-report cell issues in addition to
+            // source-wide controls. The UI must identify the actual Excel cells.
+            let page=prepared.issues(&report,0,12-report_issues.len())
+                .map_err(|e|e.to_string())?;
+            for issue in page {
+                let mut value=serde_json::to_value(issue).map_err(|e|e.to_string())?;
+                if let Some(map)=value.as_object_mut() {
+                    map.insert("report_start".into(),serde_json::Value::String(report.start.clone()));
+                    map.insert("source_report".into(),serde_json::Value::String(report.info.id.clone()));
+                }
+                report_issues.push(value);
+            }
+        }
         hash.update(serde_json::to_vec(&(
             report.ordinal,&report.info,&report.kind,&report.start,&report.end,
             report.rows,&report.quality,&report.provenance,
@@ -118,6 +134,7 @@ fn review(
         quality:prepared.quality().clone(),
         diagnostics:prepared.source_diagnostics().clone(),
         sample_reports:samples,
+        sample_report_issues:report_issues,
         sample_source_issues:serde_json::to_value(issues).map_err(|e|e.to_string())?,
     })
 }

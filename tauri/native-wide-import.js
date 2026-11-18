@@ -80,13 +80,16 @@ $('widePreview').addEventListener('click',async()=>{
    for(const value of [row.id,row.kind,row.start,row.end,row.rows,row.issues])tr.append(make('td',value));
    rows.append(tr);
   }
-  const issues=result.sampleSourceIssues||[];
+  const issues=[...(result.sampleReportIssues||[]),...(result.sampleSourceIssues||[])];
   $('wideIssues').textContent=issues.length?
-    'Первые замечания источника: '+issues.map(issue=>{
-      const cell=[issue.work_cell,issue.count_cell,issue.amount_cell].filter(Boolean).join(', ');
-      return (issue.reason||issue.type||'Замечание')+(cell?' ['+cell+']':'');
+    'Первые замечания и ячейки Excel: '+issues.map(issue=>{
+      const cells=Array.isArray(issue.cells)?issue.cells:
+        [issue.work_cell,issue.count_cell,issue.amount_cell].filter(Boolean);
+      const cell=cells.filter(Boolean).join(', ');
+      const report=issue.report_start||issue.date||'';
+      return (report?report+': ':'')+(issue.reason||issue.type||'Замечание')+(cell?' ['+cell+']':'');
     }).join('; '):
-    'Для источника нет замечаний в первой проверенной выборке.';
+    'В первой проверенной выборке замечаний источника и отчётов не обнаружено.';
   status('Проверка завершена. Перед сохранением проверьте количество замен, даты и замечания.');
  }catch(error){
   resetReview();status('Нативная проверка не завершена: '+String(error?.message||error),true);

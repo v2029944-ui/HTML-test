@@ -18,6 +18,7 @@ function setup(options={}){
    conflicts:{new_reports:2,replacements:364,cross_type_overlaps:1},
    quality:{issues:3,mismatch_reports:1,relevant_source_issues:0},
    sampleReports:[{id:'day-2024-02-29',kind:'day',start:'2024-02-29',end:'2024-02-29',rows:14,issues:1}],
+   sampleReportIssues:[{reason:'Invalid number',cells:['E27'],report_start:'2024-02-29'}],
    sampleSourceIssues:[{reason:'Source control mismatch',count_cell:'Q43'}]
  };
  const api={
@@ -61,6 +62,8 @@ test('native wide import requires review and independent acknowledgements',async
  assert.equal(e.wideSummary.children.length,7);
  assert.equal(e.wideReportRows.children[0].children[0].textContent,'day-2024-02-29');
  assert.match(e.wideIssues.textContent,/Q43/);
+ assert.match(e.wideIssues.textContent,/E27/);
+ assert.match(e.wideIssues.textContent,/2024-02-29/);
  assert.equal(e.wideApply.disabled,false);
  await e.wideApply.events.click();
  assert.equal(calls.length,1,'required confirmations missing');
