@@ -106,7 +106,7 @@ fn checked_cell(data:&BTreeMap<u32,RawCell>,col:u32,row:u32) -> Result<&str,Stri
 fn number(input:&str,row:u32,col:u32) -> Result<f64,String> {
     let normalized:String=input.chars()
         .filter(|&c| c!=' '&&c!='\u{00a0}'&&c!='\u{202f}')
-        .collect::<String>().replace(',','.');
+        .collect::<String>().replace(',',".");
     let value=normalized.parse::<f64>().map_err(|_|
         format!("Invalid numeric metric at Excel row {row}, column {col}"))?;
     if !value.is_finite() || value.abs()>1e12 {
