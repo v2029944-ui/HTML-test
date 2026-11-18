@@ -528,6 +528,12 @@ def run():
                 # Save an Excel rule through real WebView2 + Rust IPC, after all
                 # classic autoimport assertions so the new rule cannot alter them.
                 page.locator('#openNativeWorkspace').click()
+                # Finish both independent SQL startup tasks before editing a
+                # rule. Folder listing can finish before the bounded SQLite
+                # bootstrap; a save during bootstrap cannot refresh the page.
+                wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)',
+                    'SQL workspace ready before rule edit')
+                page.evaluate('window.nativeWorkspaceReady')
                 wait_for_app_state(page,'Boolean(window.nativeFolderReady)', 'SQL folder rule editor startup')
                 page.evaluate('window.nativeFolderReady')
                 # Re-establish the isolated test folder after the classic UI
