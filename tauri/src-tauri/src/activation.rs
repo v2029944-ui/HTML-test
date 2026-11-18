@@ -336,8 +336,12 @@ mod tests {
         assert!(info.restored);
         assert_eq!(Storage::new(root.clone()).unwrap().load().unwrap(),data(10.0));
         assert!(load_request(&root).unwrap().is_none());
+        // SQLite may leave a WAL/SHM sidecar next to the verified backup.
+        // Count only the durable .sqlite3 backup, not its sidecars.
         assert_eq!(fs::read_dir(&root).unwrap().filter_map(Result::ok)
-            .filter(|p|p.file_name().to_string_lossy().contains("restore-safety-")).count(),1);
+            .filter(|p|p.file_name().to_string_lossy().contains("restore-safety-")
+                && p.path().extension().and_then(|x|x.to_str()) == Some("sqlite3"))
+            .count(),1);
     }
 
     #[test]
