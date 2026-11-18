@@ -132,8 +132,16 @@ $('wideApply').addEventListener('click',async()=>{
    backupDestination
   });
   resetReview();
+  // A verified commit has finished. Reload only bounded SQL metadata and current
+  // pages; never invoke the legacy full-history load_data path.
+  let reloaded=false;
+  try{
+    if(typeof window.nativeWorkspaceRefresh==='function')
+      reloaded=await window.nativeWorkspaceRefresh()===true;
+  }catch{/* The import is committed even if the view cannot refresh. */}
   status('Сохранено отчётов: '+result.reports+'. Строк: '+result.rows+
-    '. Ревизия SQLite: '+result.revision+'. Нажмите «Обновить данные» для новой сводки.');
+    '. Ревизия SQLite: '+result.revision+
+    (reloaded?'. Сводка SQLite обновлена.':'. Нажмите «Обновить данные» для новой сводки.'));
  }catch(error){
   resetReview();
   status('Импорт не сохранён: '+String(error?.message||error)+'. Проверьте XLSX заново.',true);
