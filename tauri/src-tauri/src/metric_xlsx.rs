@@ -263,3 +263,109 @@ impl Storage {
         self.metric_apply_decoded(document,&digest,token)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use std::io::Write;
+    use zip::{ZipWriter,write::SimpleFileOptions};
+
+    fn book(path:&Path, header:&str, hours:&str, formula:bool) {
+        let rows=[
+            [("A1","Подразделение"),("B1","Работа"),("C1",header),("D1","Объём")],
+            [("A2","СМУ16"),("B2","Монтаж"),("C2",hours),("D2","16")],
+            [("A3","АВТО"),("B3","Ремонт"),("C3","4"),("D3","3")],
+        ];
+        let mut xml=String::from("<worksheet><sheetData>");
+        for row in rows {
+            xml.push_str("<row>");
+            for (address,value) in row {
+                if formula && address=="C2" {
+                    xml.push_str(&format!("<c r=\"{address}\"><f>2+6</f><v>8</v></c>"));
+                } else {
+                    xml.push_str(&format!(
+                        "<c r=\"{address}\" t=\"inlineStr\"><is><t>{value}</t></is></c>"
+                    ));
+                }
+            }
+            xml.push_str("</row>");
+        }
+        xml.push_str("</sheetData></worksheet>");
+        let mut zip=ZipWriter::new(fs::File::create(path).unwrap());
+        for (name,content) in [
+            ("xl/worksheets/sheet1.xml",xml),
+            ("xl/workbook.xml","<workbook xmlns:r=\"r\"><sheets><sheet name=\"Data\" r:id=\"r1\"/></sheets></workbook>".to_string()),
+            ("xl/_rels/workbook.xml.rels","<Relationships><Relationship Id=\"r1\" Target=\"/xl/worksheets/sheet1.xml\" Type=\"worksheet\"/></Relationships>".to_string()),
+        ] {
+            zip.start_file(name,SimpleFileOptions::default()).unwrap();
+            zip.write_all(content.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+    #[test]
+    fn profiles_are_valid_and_reject_unmapped_derived_values() {
+        let all=profiles().unwrap();
+        assert_eq!(all.len(),2);
+        assert_eq!(all[0].id,"labor_simple");
+        let mut bad=all[0].clone();
+        bad.values.insert("units_per_hour".into(),"E".into());
+        assert!(validate(&bad,&metric_reports::kind_by_id("labor").unwrap()).is_err());
+        let mut bad_header=all[0].clone();
+        bad_header.headers.remove("D");
+        assert!(validate(&bad_header,&metric_reports::kind_by_id("labor").unwrap()).is_err());
+    }
+    #[test]
+    fn mapped_xlsx_preview_and_save_keep_classic_reports_untouched() {
+        let t=tempdir().unwrap();
+        let source=t.path().join("worked.xlsx");
+        book(&source,"Часы","8",false);
+        let store=Storage::new(t.path().join("data")).unwrap();
+        let source=source.to_str().unwrap();
+        let preview=store.metric_xlsx_preview(source,"labor_simple","2026-11-18","2026-11-18").unwrap();
+        assert_eq!(preview.kind,"labor");
+        assert_eq!(preview.row_count,2);
+        assert_eq!(preview.values["hours"],Some(12.0));
+        assert_eq!(preview.values["units"],Some(19.0));
+        assert_eq!(preview.values["units_per_hour"],Some(19.0/12.0));
+        let receipt=store.metric_xlsx_apply(source,"labor_simple","2026-11-18","2026-11-18",&preview.review_token).unwrap();
+        assert_eq!(receipt.row_count,2);
+        let summary=store.metric_summary("labor","2026-11-18","2026-11-18").unwrap();
+        assert_eq!(summary.report_count,1);
+        assert_eq!(summary.row_count,2);
+        assert_eq!(summary.values["units_per_hour"],Some(19.0/12.0));
+        assert!(store.load().unwrap()["reports"].as_array().unwrap().is_empty());
+        assert!(store.metric_xlsx_apply(source,"labor_simple","2026-11-18","2026-11-18",&preview.review_token).is_err());
+    }
+    #[test]
+    fn wrong_column_name_and_formula_are_rejected_before_sql_write() {
+        let t=tempdir().unwrap();
+        let source=t.path().join("checked.xlsx");
+        let store=Storage::new(t.path().join("data")).unwrap();
+        book(&source,"Затраты","8",false);
+        let input=source.to_str().unwrap();
+        assert!(store.metric_xlsx_preview(input,"labor_simple","2026-11-18","2026-11-18")
+            .unwrap_err().contains("header mismatch"));
+        book(&source,"Часы","8",true);
+        assert!(store.metric_xlsx_preview(input,"labor_simple","2026-11-18","2026-11-18")
+            .unwrap_err().contains("Formula"));
+        book(&source,"Часы","not a number",false);
+        assert!(store.metric_xlsx_preview(input,"labor_simple","2026-11-18","2026-11-18")
+            .unwrap_err().contains("Invalid numeric"));
+        let result=store.metric_summary("labor","2026-11-18","2026-11-18").unwrap();
+        assert_eq!(result.report_count,0);
+    }
+    #[test]
+    fn source_and_requested_dates_are_bound_to_review_token() {
+        let t=tempdir().unwrap();
+        let source=t.path().join("changed.xlsx");
+        let store=Storage::new(t.path().join("data")).unwrap();
+        book(&source,"Часы","8",false);
+        let input=source.to_str().unwrap();
+        let preview=store.metric_xlsx_preview(input,"labor_simple","2026-11-18","2026-11-18").unwrap();
+        assert!(store.metric_xlsx_apply(input,"labor_simple","2026-11-19","2026-11-19",&preview.review_token).is_err());
+        book(&source,"Часы","9",false);
+        assert!(store.metric_xlsx_apply(input,"labor_simple","2026-11-18","2026-11-18",&preview.review_token).is_err());
+        assert_eq!(store.metric_summary("labor","2026-11-18","2026-11-18").unwrap().report_count,0);
+    }
+}
