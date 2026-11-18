@@ -89,9 +89,16 @@ fn check_snapshot(path: &Path) -> Result<RestorePreview, String> {
     if fk.query([]).map_err(err)?.next().map_err(err)?.is_some() {
         return Err("В резервной копии нарушены связи между таблицами.".into());
     }
+    let page_count: i64 = conn.query_row("PRAGMA page_count", [], |row| row.get(0))
+        .map_err(err)?;
+    let page_size: i64 = conn.query_row("PRAGMA page_size", [], |row| row.get(0))
+        .map_err(err)?;
+    let bytes = u64::try_from(page_count).map_err(err)?
+        .checked_mul(u64::try_from(page_size).map_err(err)?)
+        .ok_or("Слишком большой размер SQLite-копии.")?;
     Ok(RestorePreview {
         report_count,
-        bytes: fs::metadata(path).map_err(err)?.len(),
+        bytes,
         verification: format!("{:x}", hasher.finalize()),
     })
 }
@@ -130,6 +137,12 @@ impl Storage {
         let current = check_snapshot(&source)?;
         if current.verification != expected {
             return Err("Резервная копия изменилась после проверки. Проверьте её заново.".into());
+        }
+        // The source can have uncheckpointed WAL pages; use SQLite's logical
+        // size rather than file metadata and leave headroom for staging.
+        let required = current.bytes.saturating_add(16 * 1024 * 1024);
+        if fs2::available_space(parent).map_err(err)? < required {
+            return Err("Недостаточно свободного места для восстановления. Освободите место на диске.".into());
         }
         let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(err)?.as_nanos();
         let mut temporary = None;
