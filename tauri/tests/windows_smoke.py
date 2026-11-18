@@ -1,7 +1,7 @@
 """Run the packaged Tauri app through its real WebView2 and SQLite on an isolated Windows CI runner."""
-import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib
+import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib,sqlite3
 from pathlib import Path
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 from playwright.sync_api import sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests'))
@@ -312,6 +312,24 @@ def run():
                     raise RuntimeError('Native SQL export overwrote an existing CSV')
                 assert export_path.read_bytes()==exported
                 report['checks'].append('Native SQL CSV export with UTF-8 BOM and no-overwrite guarantee')
+                snapshot=tmp/'online-backup.sqlite3'
+                backup_call="async path=>window.__TAURI__.core.invoke('native_backup_sqlite',{destination:path})"
+                stored_rev=page.evaluate(backup_call,str(snapshot))
+                assert isinstance(stored_rev,int)
+                assert snapshot.is_file()
+                with closing(sqlite3.connect(str(snapshot))) as backed_up:
+                    assert backed_up.execute('PRAGMA quick_check').fetchone()[0]=='ok'
+                    assert backed_up.execute('SELECT COUNT(*) FROM reports').fetchone()[0]==366
+                    assert backed_up.execute("SELECT json FROM kv WHERE name='settings'").fetchone() is not None
+                previous=snapshot.read_bytes()
+                try:
+                    page.evaluate(backup_call,str(snapshot))
+                except Exception as error:
+                    assert 'already exists' in str(error)
+                else:
+                    raise RuntimeError('Online backup overwrote existing SQLite')
+                assert snapshot.read_bytes()==previous
+                report['checks'].append('Online SQLite backup includes WAL and refuses overwrites')
                 # E1: native wide import must be inspected and explicitly
                 # approved; repeat preparation validates same source/DB content
                 # before publishing new report documents atomically.

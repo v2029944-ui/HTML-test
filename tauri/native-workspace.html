@@ -39,6 +39,10 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <div class="metric"><strong id="metricCatalog">—</strong><span>Позиций справочника</span></div></div>
 <p id="workspaceStatus" class="status muted" role="status" aria-live="polite">Открытие SQL-режима…</p>
 <button id="workspaceRefresh" type="button">Обновить данные</button>
+<div class="controls">
+<button id="backupSqlite" type="button">Сохранить резервную копию SQLite</button>
+</div>
+<p id="backupStatus" class="status muted" role="status" aria-live="polite">Копия включает отчёты, настройки и служебные данные SQLite. Для восстановления потребуется отдельная проверенная процедура; не заменяйте файл открытой базы вручную.</p>
 </section>
 <section class="panel" aria-label="Отчёты SQL">
 <h2>Отчёты</h2><div class="controls"><label for="nativeReportType">Периоды</label>

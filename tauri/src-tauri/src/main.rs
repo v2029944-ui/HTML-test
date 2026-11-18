@@ -418,6 +418,21 @@ async fn native_export_range_csv(
 }
 
 #[tauri::command]
+async fn native_backup_sqlite(
+    app: tauri::AppHandle,
+    destination: String,
+) -> Result<i64, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if destination.len()>32767 {
+            return Err("Backup destination is too long".to_string());
+        }
+        app.state::<Storage>().backup_sqlite_verified(std::path::Path::new(&destination))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 fn get_info(store: State<'_, Storage>) -> Result<serde_json::Value, String> {
     store.info()
 }
@@ -477,7 +492,7 @@ fn main() {
             native_settings_bootstrap, native_group_page, native_group_rename,
             native_analysis_index_page, native_analysis_index_settings, native_analysis_range,
             native_analysis_organizations, native_analysis_range_page,
-            native_export_range_csv, native_wide_import_preview, native_wide_import_apply,
+            native_export_range_csv, native_backup_sqlite, native_wide_import_preview, native_wide_import_apply,
             get_info, set_folder, set_rule,
             list_excel, read_excel, check_excel, open_data_folder
         ])

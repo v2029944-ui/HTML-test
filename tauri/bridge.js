@@ -43,6 +43,12 @@
     nativeWideImportPreview:(source,options)=>tracked('native_wide_import_preview',{source,options},'reads'),
     nativeWideImportApply:(source,options,reviewToken,confirmation)=>tracked(
       'native_wide_import_apply',{source,options,reviewToken,confirmation},'saves'),
+    chooseSqliteBackupPath:async defaultPath=>{
+      if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
+      if(typeof tauri.dialog.save!=='function')throw Error('Диалог резервного копирования недоступен.');
+      return tauri.dialog.save({title:'Сохранить резервную копию SQLite',defaultPath,filters:[{name:'База SQLite',extensions:['sqlite3']}]});
+    },
+    nativeBackupSqlite:destination=>tracked('native_backup_sqlite',{destination},'saves'),
     nativeReportPage:(revision,filter,after=null,limit=100)=>tracked(
       'native_report_page',{revision,filter,after,limit},'reads'),
     save:data=>tracked('save_data',{data},'saves'),

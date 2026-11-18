@@ -21,6 +21,9 @@ mod management_tree;
 mod analytics;
 pub use analytics::*;
 
+#[path = "backup.rs"]
+mod backup;
+
 #[path = "read_model.rs"]
 mod read_model;
 #[path = "import_apply.rs"]
