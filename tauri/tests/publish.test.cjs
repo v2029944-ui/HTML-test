@@ -5,9 +5,9 @@ function fixture({existing=false,signature='signature',failInstaller=false,missi
   const api={readFileSync(file){
     if(file.endsWith('tauri.conf.json'))return JSON.stringify({version});
     if(file.endsWith('tauri-latest.json'))return JSON.stringify({version,platforms:{'windows-x86_64':{signature:'signature',url:`https://github.com/${repo}/releases/download/tauri-v${version}/${installer}`}}});
-    if(file.endsWith('/0.1.1.md')){
+    if(path.basename(file)===version+'.md' && file.includes('release-notes')){
       if(missingNotes)throw Error('ENOENT');
-      return placeholderNotes?'# TODO\\n- заполнить':'# Что изменилось\\n- Исправлена обработка повторного ввода Excel.\\n- Улучшена проверка резервного копирования пользовательской базы.';
+      return placeholderNotes?'# TODO\n- заполнить':'# Что изменилось\n- Исправлена обработка повторного ввода Excel.\n- Улучшена проверка резервного копирования пользовательской базы.';
     }
     return signature;
   },statSync:()=>({size:1}),mkdtempSync:()=>'/tmp/test-release',rmSync(){}};
@@ -43,7 +43,7 @@ test('retry never replaces an installer already published with another signature
 
 test('release publication refuses missing notes before contacting GitHub',()=>{
  const f=fixture({missingNotes:true});
- assert.throws(f.run,/необходим tauri\\/release-notes/);
+ assert.throws(f.run,/необходим tauri\/release-notes/);
  assert.equal(f.commands.length,0);
 });
 test('release publication refuses placeholder-only notes',()=>{
@@ -57,6 +57,6 @@ test('versioned release uses the exact changelog file rather than generic notes'
  assert.ok(creation);
  const index=creation.indexOf('--notes-file');
  assert.ok(index>0);
- assert.match(creation[index+1],/release-notes[\\/]0\\.1\\.1\\.md$/);
+ assert.match(creation[index+1],/release-notes[\\/]0\.1\.1\.md$/);
  assert.equal(creation.includes('--notes'),false);
 });

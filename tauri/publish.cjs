@@ -4,16 +4,16 @@ const fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:
 // A GitHub Release must describe this exact version; generic default text is
 // not acceptable. Read it before running any GitHub CLI operations.
 function releaseNotesFile(version){
-  if(!/^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$/.test(version))
+  if(!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version))
     throw Error('Некорректный номер версии для release notes.');
   const file=path.join(__dirname,'release-notes',version+'.md');
   let notes;
   try{notes=fs.readFileSync(file,'utf8');}
   catch{throw Error('Для выпуска '+version+' необходим tauri/release-notes/'+version+'.md с описанием изменений.');}
-  const normalized=notes.replace(/\\r\\n/g,'\\n').trim();
-  if(normalized.length<55||!/^#{1,3}\\s+.+/m.test(normalized)||
-     !/^\\s*[-*]\\s+\\S.+/m.test(normalized)||
-     /\\b(?:TODO|TBD)\\b|ЗАПОЛНИТЬ|ОПИСАНИЕ ИЗМЕНЕНИЙ/i.test(normalized))
+  const normalized=notes.replace(/\r\n/g,'\n').trim();
+  if(normalized.length<55||!/^#{1,3}\s+.+/m.test(normalized)||
+     !/^\s*[-*]\s+\S.+/m.test(normalized)||
+     /\b(?:TODO|TBD)\b|ЗАПОЛНИТЬ|ОПИСАНИЕ ИЗМЕНЕНИЙ/i.test(normalized))
     throw Error('Release notes должны содержать заголовок и конкретный список изменений, без заглушек.');
   return file;
 }
