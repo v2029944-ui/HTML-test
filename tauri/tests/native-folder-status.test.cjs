@@ -69,7 +69,7 @@ test('metadata-only list is capped to 100 rendered names and escapes untrusted d
     size:i===0?100:1048576,
     tooLarge:i===2
   }));
-  const panel=mount({listing:{folder:'C:/Excel',files,rules:{'report-1.xlsx':{type:'day'}}}});
+  const panel=mount({listing:{folder:'C:/Excel',revision:12,files,rules:{'report-1.xlsx':{type:'day'}}}});
   await panel.window.nativeFolderReady;
   const {nodes,calls}=panel;
   assert.deepEqual(calls,['list']);
