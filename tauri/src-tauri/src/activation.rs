@@ -178,18 +178,24 @@ pub fn apply_pending_restore_or_open_original(
     match apply_pending_restore(root) {
         Ok(outcome) => Ok(outcome),
         Err(problem) => {
-            if let Ok(Some(req)) = load_request(root) {
-                let previous = leaf(root, &req.previous, ".analiz-restore-previous-")?;
-                let live = root.join("reports.sqlite3");
-                if !previous.exists() && ensure_regular(&live).is_ok()
-                    && recovery::check_snapshot(&live).is_ok() {
-                    return Ok(Some(RestoreLaunchResult {
-                        restored: false,
-                        message: format!(
-                            "Отложенное восстановление не выполнено: {problem}.                              Текущая база не заменена. Проверьте копию или отмените запрос."
-                        ),
-                    }));
+            let live = root.join("reports.sqlite3");
+            let original_is_still_present = match load_request(root) {
+                Ok(Some(req)) => {
+                    let previous = leaf(root, &req.previous, ".analiz-restore-previous-")?;
+                    !previous.exists()
                 }
+                // A completed rollback deletes the pending request.
+                Ok(None) => true,
+                Err(_) => false,
+            };
+            if original_is_still_present && ensure_regular(&live).is_ok()
+                && recovery::check_snapshot(&live).is_ok() {
+                return Ok(Some(RestoreLaunchResult {
+                    restored: false,
+                    message: format!(
+                        "Отложенное восстановление не выполнено: {problem}. Текущая база сохранена. Проверьте копию или отмените запрос."
+                    ),
+                }));
             }
             Err(problem)
         }
