@@ -318,7 +318,7 @@ for(const id of ['analysisFrom','analysisTo','analysisOrganization']){
 }
 
 controlState();
-// Called only after a verified native SQLite commit; bounded pages, never full load_data.
+// Called after a verified native SQLite commit; reads only bounded metadata/pages.
 window.nativeWorkspaceRefresh=refresh;
 window.nativeWorkspaceReady=refresh();
 })();
