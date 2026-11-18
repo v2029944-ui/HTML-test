@@ -22,6 +22,10 @@ function mount(options={}){
  const calls=[];
  const api={
   chooseWideXlsx:async()=>options.file===undefined?'C:/Excel/report.xlsx':options.file,
+  nativeLegacyImportSheets:async(source)=>{
+    calls.push({kind:'sheets',source});
+    return options.sheets===undefined?['xl/worksheets/sheet1.xml']:options.sheets;
+  },
   nativeSettingsBootstrap:async()=>({org_names:['СМУ16','АВТО','ТРАК','ЦЕНТР']}),
   nativeLegacyImportPreview:async(source,args)=>{
     calls.push({kind:'preview',source,args});
@@ -46,7 +50,7 @@ function mount(options={}){
 async function review(ui){
  const {e}=ui;
  await e.legacyChoose.events.click();
- e.legacySheet.value='Лист1';
+ e.legacySheet.value='xl/worksheets/sheet1.xml';
  e.legacyStart.value='2026-11-16';
  await e.legacyPreview.events.click();
 }
@@ -66,11 +70,12 @@ test('SQL-only legacy importer is packaged, never embedded in standalone HTML',(
 test('legacy preview passes exact sheet/date and only bounded metadata, not Excel bytes',async()=>{
  const ui=mount();await review(ui);
  const {e,calls}=ui;
- assert.equal(calls[0].kind,'preview');
- assert.equal(calls[0].args.kind,'week');
- assert.equal(calls[0].args.start,'2026-11-16');
- assert.equal(calls[0].args.sheet,'Лист1');
- assert.equal(calls[0].args.organizations.length,4);
+ assert.equal(calls[0].kind,'sheets');
+ assert.equal(calls.find(x=>x.kind==='preview').kind,'preview');
+ assert.equal(calls.find(x=>x.kind==='preview').args.kind,'week');
+ assert.equal(calls.find(x=>x.kind==='preview').args.start,'2026-11-16');
+ assert.equal(calls.find(x=>x.kind==='preview').args.sheet,'xl/worksheets/sheet1.xml');
+ assert.equal(calls.find(x=>x.kind==='preview').args.organizations.length,4);
  assert.equal(e.legacyRows.children.length,1);
  assert.equal(e.legacyRows.children[0].children[0].textContent,'2026-11-16');
  assert.match(e.legacyIssues.textContent,/E29/);
@@ -135,4 +140,23 @@ test('new reports without replacement do not request an unrelated backup',async(
  const call=ui.calls.find(x=>x.kind==='apply');
  assert.equal(call.flags.backupDestination,null);
  assert.equal(ui.calls.some(x=>x.kind==='backup_path'),false);
+});
+
+test('worksheet selector only offers bounded discovered physical sheets and handles cancellation',async()=>{
+ const multi=mount({sheets:['xl/worksheets/sheet1.xml','xl/worksheets/sheet3.xml']});
+ await multi.e.legacyChoose.events.click();
+ assert.equal(multi.e.legacySheet.children.length,2);
+ assert.equal(multi.e.legacySheet.value,'xl/worksheets/sheet1.xml');
+ multi.e.legacySheet.value='xl/worksheets/sheet3.xml';
+ multi.e.legacyStart.value='2026-11-16';
+ await multi.e.legacyPreview.events.click();
+ assert.equal(multi.calls.find(x=>x.kind==='preview').args.sheet,'xl/worksheets/sheet3.xml');
+ const no=mount({file:null});
+ await no.e.legacyChoose.events.click();
+ assert.equal(no.e.legacyPreview.disabled,true);
+ assert.equal(no.calls.some(x=>x.kind==='preview'),false);
+ const empty=mount({sheets:[]});
+ await empty.e.legacyChoose.events.click();
+ assert.equal(empty.e.legacyPreview.disabled,true);
+ assert.match(empty.e.legacyStatus.textContent,/не найдены поддерживаемые листы/);
 });
