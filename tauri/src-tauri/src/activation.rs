@@ -252,6 +252,12 @@ pub fn apply_pending_restore(root: &Path) -> Result<Option<RestoreLaunchResult>,
     // Refuse to move the live file with pending WAL pages or any remaining
     // SQLite readers. A previous app version may not honor our process lock.
     ensure_no_wal(&live)?;
+    // An older application may not honor our process lock. Abort if the
+    // source changed after the verified safety backup was made.
+    if recovery::check_snapshot(&live)?.verification != current.verification {
+        return Err("Рабочая база изменилась во время подготовки восстановления. Повторите действие.".into());
+    }
+    ensure_no_wal(&live)?;
     fs::rename(&live, &previous).map_err(err)?;
     let attempt = (|| {
         // A second process that does not use our lock must not create a new
@@ -267,6 +273,10 @@ pub fn apply_pending_restore(root: &Path) -> Result<Option<RestoreLaunchResult>,
         // Confirm current Rust schema can be opened before committing swap.
         let storage = Storage::new(root.to_path_buf())?;
         storage.revision()?;
+        // Initialization must not silently import/migrate a different data set.
+        if recovery::check_snapshot(&live)?.verification != req.digest {
+            return Err("Структура или данные изменились при открытии восстановленной базы.".into());
+        }
         fs::remove_file(request_file(root)).map_err(err)?;
         Ok(RestoreLaunchResult {
             restored: true,
