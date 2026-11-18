@@ -2,11 +2,13 @@
 mod prepared;
 mod report_stage;
 pub use prepared::{PrepareProgress, PreparedImport, PreparedReport};
+mod wide;
+pub use wide::{Coverage, ReportProvenance, SourceIssue, WideMapping, WideOptions, WideSheet};
 mod zip_index;
 use fs2::FileExt;
 use quick_xml::{
     events::{BytesStart, Event},
-    Reader,
+    NsReader,
 };
 pub use report_stage::{
     ConversionSummary, LegacyOptions, ReportInfo, ReportIssue, ReportOrganization, ReportRow,
@@ -144,6 +146,11 @@ impl StageArea {
           CREATE TABLE cells(sheet TEXT,row_num INTEGER,col_num INTEGER,address TEXT,kind TEXT,style TEXT,value TEXT,formula INTEGER,PRIMARY KEY(sheet,row_num,col_num)) WITHOUT ROWID;
           CREATE TABLE strings(id INTEGER PRIMARY KEY,value TEXT NOT NULL);
           CREATE TABLE metadata(component TEXT,seq INTEGER,event TEXT,name TEXT,value TEXT,PRIMARY KEY(component,seq)) WITHOUT ROWID;
+          CREATE TABLE nodes(component TEXT,seq INTEGER,tag TEXT,parent TEXT,PRIMARY KEY(component,seq)) WITHOUT ROWID;
+          CREATE TABLE attributes(component TEXT,seq INTEGER,key TEXT,value TEXT,namespace_uri TEXT,PRIMARY KEY(component,seq,key)) WITHOUT ROWID;
+          CREATE INDEX node_tag ON nodes(component,tag,seq);
+          CREATE TABLE merges(sheet TEXT,seq INTEGER,r INTEGER,c INTEGER,end_row INTEGER,end_col INTEGER,PRIMARY KEY(sheet,seq)) WITHOUT ROWID;
+          CREATE INDEX merge_position ON merges(sheet,c,end_col,r,end_row);
           CREATE TABLE manifest(name TEXT PRIMARY KEY,value TEXT); BEGIN;")?;
         let pages = (limits.stage_bytes / 4096).min(524288);
         if pages < 16 {
@@ -375,7 +382,7 @@ fn parse_component<R: Read>(
     cancel: &AtomicBool,
     progress: &mut impl FnMut(&Stats),
 ) -> Result<()> {
-    let mut reader = Reader::from_reader(EventBudget {
+    let mut reader = NsReader::from_reader(EventBudget {
         inner: BufReader::with_capacity(32768, input),
         used: 0,
         max: l.token_bytes,
@@ -389,7 +396,9 @@ fn parse_component<R: Read>(
     let mut depth = 0usize;
     let mut roots = 0usize;
     reader.config_mut().check_comments = true;
-    let sheet = name.starts_with("xl/worksheets/");
+    let mut sheet = false;
+    let mut tags: Vec<String> = Vec::new();
+    let mut merge_count = 0;
     let strings = name == "xl/sharedStrings.xml";
     loop {
         check_cancel(cancel)?;
@@ -413,7 +422,30 @@ fn parse_component<R: Read>(
                 }
                 let local = e.local_name();
                 let tag = std::str::from_utf8(local.as_ref())?;
+                if depth == if empty { 0 } else { 1 } {
+                    sheet = tag == "worksheet";
+                }
+                if matches!(
+                    reader.resolve_element(e.name()).0,
+                    quick_xml::name::ResolveResult::Unknown(_)
+                ) {
+                    return Err(fail("undefined XML element prefix"));
+                }
                 let attrs = attributes(e)?;
+                for (key, _) in &attrs {
+                    if key != "xmlns"
+                        && !key.starts_with("xmlns:")
+                        && matches!(
+                            reader
+                                .resolve_attribute(quick_xml::name::QName(key.as_bytes()))
+                                .0,
+                            quick_xml::name::ResolveResult::Unknown(_)
+                        )
+                    {
+                        return Err(fail("undefined XML attribute prefix"));
+                    }
+                }
+
                 let get = |key: &str| {
                     attrs
                         .iter()
@@ -471,10 +503,50 @@ fn parse_component<R: Read>(
                 }
                 if !sheet && !strings || tag == "mergeCell" {
                     if tag == "mergeCell" {
-                        let range = get("ref");
-                        for end in range.split(':') {
-                            address(end, l)?;
+                        merge_count += 1;
+                        if merge_count > 20000 {
+                            return Err(fail("worksheet merge limit"));
                         }
+                        let range = get("ref");
+                        let ends = range.split(':').collect::<Vec<_>>();
+                        if ends.len() != 2 {
+                            return Err(fail("invalid merge range"));
+                        }
+                        let (r, c) = address(ends[0], l)?;
+                        let (er, ec) = address(ends[1], l)?;
+                        if er < r || ec < c {
+                            return Err(fail("reversed merge range"));
+                        }
+                        stage.db.execute(
+                            "INSERT INTO merges VALUES(?1,?2,?3,?4,?5,?6)",
+                            params![name, merge_count, r, c, er, ec],
+                        )?;
+                    }
+                    stage.db.execute(
+                        "INSERT INTO nodes VALUES(?1,?2,?3,?4)",
+                        params![name, seq, tag, tags.last().map(String::as_str)],
+                    )?;
+                    for (key, value) in &attrs {
+                        let uri = if key == "xmlns" || key.starts_with("xmlns:") {
+                            Some("http://www.w3.org/2000/xmlns/".to_owned())
+                        } else {
+                            match reader
+                                .resolve_attribute(quick_xml::name::QName(key.as_bytes()))
+                                .0
+                            {
+                                quick_xml::name::ResolveResult::Bound(ns) => {
+                                    Some(std::str::from_utf8(ns.as_ref())?.to_owned())
+                                }
+                                quick_xml::name::ResolveResult::Unbound => None,
+                                quick_xml::name::ResolveResult::Unknown(_) => {
+                                    return Err(fail("undefined XML attribute prefix"))
+                                }
+                            }
+                        };
+                        stage.db.execute(
+                            "INSERT INTO attributes VALUES(?1,?2,?3,?4,?5)",
+                            params![name, seq, key, value, uri],
+                        )?;
                     }
                     stage.db.execute(
                         "INSERT INTO metadata VALUES(?1,?2,?3,?4,?5)",
@@ -488,12 +560,16 @@ fn parse_component<R: Read>(
                     )?;
                     seq += 1;
                 }
+                if !empty {
+                    tags.push(tag.into());
+                }
             }
             Event::End(e) => {
                 if depth == 0 {
                     return Err(fail("unbalanced XML"));
                 }
                 depth -= 1;
+                tags.pop();
                 match e.local_name().as_ref() {
                     b"c" if sheet => {
                         let c = cell.take().ok_or_else(|| fail("invalid cell end"))?;
