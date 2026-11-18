@@ -31,6 +31,9 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + S
 fn fail(s: &str) -> Box<dyn std::error::Error + Send + Sync> {
     io::Error::other(s).into()
 }
+/// Maximum compressed XLSX for disk-backed native import only; browser stays at 30 MiB.
+pub const NATIVE_XLSX_ARCHIVE_LIMIT: u64 = 50 * 1024 * 1024;
+
 #[derive(Clone, Copy)]
 pub struct Limits {
     pub archive_bytes: u64,
@@ -48,17 +51,17 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            archive_bytes: 30 * 1024 * 1024,
+            archive_bytes: NATIVE_XLSX_ARCHIVE_LIMIT,
             stage_bytes: 2 * 1024 * 1024 * 1024,
-            component_bytes: 48 * 1024 * 1024,
-            total_bytes: 192 * 1024 * 1024,
+            component_bytes: 96 * 1024 * 1024,
+            total_bytes: 384 * 1024 * 1024,
             token_bytes: 1024 * 1024,
             text_bytes: 65536,
             entries: 4096,
             ratio: 1000,
-            rows: 60000,
+            rows: 100_000,
             columns: 2048,
-            cells: 3_000_000,
+            cells: 5_000_000,
         }
     }
 }

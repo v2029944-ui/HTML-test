@@ -356,3 +356,39 @@ fn undefined_namespace_prefixes_in_cells_and_elements_are_not_accepted() {
         );
     }
 }
+
+#[test]
+fn expanded_native_limits_keep_anti_bomb_guards_and_support_older_row_gap() {
+    let l=Limits::default();
+    assert_eq!(l.archive_bytes,analiz_import_core::NATIVE_XLSX_ARCHIVE_LIMIT);
+    assert_eq!(l.archive_bytes,50*1024*1024);
+    assert_eq!(l.component_bytes,96*1024*1024);
+    assert_eq!(l.total_bytes,384*1024*1024);
+    assert_eq!(l.stage_bytes,2*1024*1024*1024);
+    assert_eq!(l.cells,5_000_000);
+    assert_eq!(l.rows,100_000);
+    assert_eq!(l.columns,2048);
+    assert_eq!(l.ratio,1000);
+    assert_eq!(l.token_bytes,1024*1024);
+
+    let tmp=tempfile::tempdir().unwrap();
+    let source=tmp.path().join("large-row.xlsx");
+    let area=StageArea::open(tmp.path().join("stage")).unwrap();
+    book(&source,"<worksheet><sheetData><row r=\"60001\"><c r=\"A60001\"><v>42</v></c></row></sheetData></worksheet>");
+    let result=area.ingest(&source,l,&AtomicBool::new(false),|_|{}).unwrap();
+    assert_eq!(result.stats.cells,1);
+    drop(result);
+    book(&source,"<worksheet><sheetData><row r=\"100001\"><c r=\"A100001\"><v>1</v></c></row></sheetData></worksheet>");
+    assert!(area.ingest(&source,l,&AtomicBool::new(false),|_|{}).is_err());
+    let mut constrained=l;
+    constrained.cells=1;
+    book(&source,"<worksheet><c r=\"A1\"><v>1</v></c><c r=\"B1\"><v>2</v></c></worksheet>");
+    assert!(area.ingest(&source,constrained,&AtomicBool::new(false),|_|{}).is_err());
+    let large_source=tmp.path().join("over-archive-limit.xlsx");
+    let f=fs::File::create(&large_source).unwrap();
+    f.set_len(analiz_import_core::NATIVE_XLSX_ARCHIVE_LIMIT+1).unwrap();
+    let error=area.ingest(&large_source,l,&AtomicBool::new(false),|_|{})
+        .err().unwrap().to_string();
+    assert!(error.contains("XLSX archive byte limit"),"unexpected error: {error}");
+    assert!(!tmp.path().join("reports.sqlite3").exists());
+}

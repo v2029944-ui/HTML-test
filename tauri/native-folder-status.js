@@ -55,7 +55,7 @@ function invalidate(message='Выберите файл из списка, что
 }
 function openEditor(file,rule){
   if(busy||changing)return;
-  if(!file.signature||file.tooLarge){
+  if(!file.signature||(file.nativeTooLarge??file.tooLarge)){
     invalidate();
     ruleMessage('Невозможно настроить правило: файл недоступен или слишком велик.',true);
     return;
@@ -131,10 +131,10 @@ async function load(){
       tr.append(
         make('td',file.name),
         make('td',Math.ceil(file.size/1024)+' КБ'),
-        make('td',file.tooLarge?'Превышен предел 30 МБ':hasRule?'Есть правило':'Правило не задано')
+        make('td',(file.nativeTooLarge??file.tooLarge)?'Превышен предел нативного импорта (50 МиБ)':hasRule?'Есть правило':'Правило не задано')
       );
       const action=make('td'),button=make('button','Настроить');
-      button.type='button';button.disabled=file.tooLarge||!file.signature;
+      button.type='button';button.disabled=(file.nativeTooLarge??file.tooLarge)||!file.signature;
       button.setAttribute('aria-label','Настроить правило для '+file.name);
       button.addEventListener('click',()=>openEditor(file,hasRule?rules[file.name]:null));
       action.append(button);tr.append(action);rows.append(tr);

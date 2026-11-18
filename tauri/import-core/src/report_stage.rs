@@ -341,10 +341,10 @@ impl Stage<'_> {
         }
         for m in &mappings {
             if m.header_row == 0
-                || m.header_row > 60000
+                || m.header_row > self.limits.rows
                 || [m.work_col, m.count_col, m.amount_col]
                     .iter()
-                    .any(|c| *c == 0 || *c > 2048)
+                    .any(|c| *c == 0 || *c > self.limits.columns)
                 || m.work_col == m.count_col
                 || m.work_col == m.amount_col
                 || m.count_col == m.amount_col

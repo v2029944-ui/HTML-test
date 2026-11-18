@@ -102,6 +102,8 @@ struct ExcelFile {
     size: u64,
     signature: String,
     too_large: bool,
+    /// Independent from the old browser 30-MiB limit.
+    native_too_large: bool,
 }
 
 #[derive(Serialize)]
@@ -497,7 +499,8 @@ impl Storage {
         }
         let path = Path::new(folder).join(&name);
         let meta = fs::symlink_metadata(&path).map_err(err)?;
-        if !meta.file_type().is_file() || meta.len() > MAX_EXCEL_BYTES
+        if !meta.file_type().is_file()
+            || meta.len() > analiz_import_core::NATIVE_XLSX_ARCHIVE_LIMIT
             || file_signature(&meta)? != expected_signature
         {
             return Err("Файл Excel изменился или недоступен. Обновите список файлов.".into());
@@ -531,6 +534,7 @@ impl Storage {
                 files.push(ExcelFile {
                     name, size:meta.len(),signature:file_signature(&meta)?,
                     too_large:meta.len()>MAX_EXCEL_BYTES,
+                    native_too_large:meta.len()>analiz_import_core::NATIVE_XLSX_ARCHIVE_LIMIT,
                 });
             }
             files.sort_by(|a,b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
