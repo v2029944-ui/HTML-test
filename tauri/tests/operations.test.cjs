@@ -98,3 +98,19 @@ test('native division comparison forwards only a bounded SQL scope and balances 
  assert.equal((await rows)[0].total.amount,null);
  assert.equal(window.tauriOperations.reads,0);
 });
+
+test('native bounded work/group page IPC includes exact key cursor and selected org',async()=>{
+ const calls=[],pending=[],window={__TAURI__:{core:{invoke:(command,args)=>{calls.push({command,args});return new Promise((resolve,reject)=>pending.push({resolve,reject}));}},dialog:{open:async()=>null}}};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../bridge.js'),'utf8'),{window,setInterval(){},clearInterval(){}});
+ const req=window.desktopAPI.nativeAnalysisRangePage(13,'day','2024-02-01','2024-02-29',['СМУ16'],'СМУ16','work:0002',50);
+ assert.equal(calls[0].command,'native_analysis_range_page');
+ assert.equal(calls[0].args.revision,13);
+ assert.equal(calls[0].args.reportType,'day');
+ assert.equal(calls[0].args.organization,'СМУ16');
+ assert.equal(calls[0].args.after,'work:0002');
+ assert.equal(calls[0].args.limit,50);
+ assert.equal(window.tauriOperations.reads,1);
+ pending[0].resolve([{key:'work:0003',count:null,amount:null}]);
+ assert.equal((await req)[0].amount,null);
+ assert.equal(window.tauriOperations.reads,0);
+});

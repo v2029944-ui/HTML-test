@@ -276,6 +276,14 @@ def run():
                     for row in page.locator('#divisionRows tr').all())
                 report['checks'].append('D2 incomplete SQL range keeps missing totals null')
                 report['checks'].append('Native division comparison preserves unknown incomplete amounts')
+                # D4e: the group/work keyset API must also run on the real
+                # installed app; an empty weekly range produces no fake zeros.
+                wait_for_app_state(page,
+                    'document.querySelector("#workStatus")?.textContent.includes("На странице: 0")',
+                    'Native SQL group/work breakdown for absent weekly reports')
+                assert page.locator('#workRows tr').count()==0
+                assert page.locator('#workNext').is_disabled()
+                report['checks'].append('Native work/group keyset breakdown is empty for missing weekly data')
                 report['checks'].append('SQL-only native page, bounded report navigation, settings bootstrap')
                 page.locator('#legacyWorkspaceLink').click()
                 wait_for_app_state(page,'Boolean(window.appReady)','Legacy workspace after native route')

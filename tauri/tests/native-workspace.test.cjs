@@ -29,7 +29,7 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
@@ -43,6 +43,11 @@ function mount(){
    nativeAnalysisIndexPage:async(rev,kind,after,limit)=>{calls.push({kind:'index',rev,reportType:kind,after,limit});return {processed:2,next:null,done:true};},
    nativeAnalysisIndexSettings:async rev=>{calls.push({kind:'settings_index',rev});},
    nativeAnalysisRange:async(rev,kind,from,to,organizations)=>{calls.push({kind:'range',rev,reportType:kind,from,to,organizations});return {complete:false,periods:366,missing:1,total:{count:null,amount:null,average:null},invalid_reports:1,duplicate_issues:0,overlap_issues:0};},
+   nativeAnalysisRangePage:async(rev,kind,from,to,organizations,organization,after,limit)=>{
+     calls.push({kind:'work',rev,reportType:kind,from,to,organizations,organization,after,limit});
+     const row=n=>({key:'work:'+String(n).padStart(4,'0'),name:n===0?'<b>Работа</b>':'Работа '+n,kind:'work',count:null,amount:null,average:null,active:true});
+     return after?[row(50)]:Array.from({length:50},(_,i)=>row(i));
+   },
    nativeAnalysisOrganizations:async(rev,kind,from,to,organizations)=>{calls.push({kind:'divisions',rev,reportType:kind,from,to,organizations});return [
      {org:'СМУ16',complete:true,missing:0,total:{count:8,amount:1200,average:150}},
      {org:'АВТО',complete:false,missing:2,total:{count:null,amount:null,average:null}}
@@ -137,4 +142,38 @@ test('D2 per-division comparison keeps partial periods unknown and plots complet
  e.analysisOrganization.value='СМУ16';
  e.analysisOrganization.events.change();
  assert.equal(e.divisionRows.children.length,0);
+});
+
+test('bounded work/group SQL pages preserve unknown totals, keyset cursors and selected scope',async()=>{
+ const {e,calls,window}=mount();
+ await window.nativeWorkspaceReady;
+ e.analysisFrom.value='2024-01-01';e.analysisTo.value='2024-12-31';
+ await e.analysisPrepare.events.click();
+ await e.analysisRun.events.click();
+ const first=calls.find(c=>c.kind==='work');
+ assert.equal(first.rev,12);
+ assert.equal(first.reportType,'day');
+ assert.equal(first.limit,50);
+ assert.equal(first.after,null);
+ assert.equal(first.organization,null);
+ assert.equal(first.organizations.length,2);
+ assert.equal(e.workRows.children.length,50);
+ assert.equal(e.workRows.children[0].children[0].textContent,'<b>Работа</b>');
+ assert.equal(e.workRows.children[0].children[2].textContent,'—');
+ assert.equal(e.workRows.children[0].children[3].textContent,'—');
+ assert.equal(e.workNext.disabled,false);
+ await e.workNext.events.click();
+ const requests=calls.filter(c=>c.kind==='work');
+ assert.equal(requests[1].after,'work:0049');
+ assert.equal(e.workRows.children.length,1);
+ assert.equal(e.workNext.disabled,true);
+ await e.workBack.events.click();
+ assert.equal(calls.filter(c=>c.kind==='work').at(-1).after,null);
+ assert.equal(e.workRows.children.length,50);
+ e.analysisOrganization.value='СМУ16';
+ e.analysisOrganization.events.change();
+ assert.equal(e.workRows.children.length,0,'changing scope clears old data');
+ assert.equal(e.workNext.disabled,true);
+ await e.analysisRun.events.click();
+ assert.equal(calls.filter(c=>c.kind==='work').at(-1).organization,'СМУ16');
 });
