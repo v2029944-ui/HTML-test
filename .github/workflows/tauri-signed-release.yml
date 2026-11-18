@@ -1,12 +1,29 @@
+# Signed Tauri releases reuse the existing updater key for every new version.
+# Default operation only checks keys. Publication requires explicit owner dispatch.
 name: Tauri signed Windows release
 
 on:
+  # Verify existing secrets automatically when this workflow is first merged.
+  # This event can never publish: the publish job requires workflow_dispatch inputs.
   push:
-    branches: [build/tauri-signed-20261116]
+    branches: [main]
+    paths: ['.github/workflows/tauri-signed-release.yml']
   workflow_dispatch:
+    inputs:
+      operation:
+        description: "Check keys without publishing, or publish an approved new version"
+        required: true
+        type: choice
+        default: check-keys
+        options: [check-keys, publish]
+      version:
+        description: "For publish: new version, e.g. 0.1.6"
+        type: string
+        required: false
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: tauri-signed-release
@@ -14,39 +31,92 @@ concurrency:
 
 jobs:
   signing-ready:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     outputs:
       configured: ${{ steps.keys.outputs.configured }}
     steps:
-      - name: Check signing secrets without disclosing them
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check existing secrets without exposing values
         id: keys
+        shell: python
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           ANALIZ_UPDATER_PUBLIC_KEY: ${{ secrets.ANALIZ_UPDATER_PUBLIC_KEY }}
-        shell: python
+          OPERATION: ${{ inputs.operation }}
         run: |
-          import os
-          required = ['TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD', 'ANALIZ_UPDATER_PUBLIC_KEY']
-          missing = [name for name in required if not os.environ.get(name, '').strip()]
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write('configured=' + ('false' if missing else 'true') + '\n')
-          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-              if missing:
-                  summary.write('## Signing is not configured\nAdd repository secrets: ' + ', '.join(missing) + '.\nThen use Re-run all jobs. No Windows runner was started.\n')
-              else:
-                  summary.write('Signing secrets are configured. Values were not printed.\n')
+          import os, sys
+          required = ('TAURI_SIGNING_PRIVATE_KEY', 'ANALIZ_UPDATER_PUBLIC_KEY')
+          missing = [k for k in required if not os.environ.get(k, '').strip()]
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf8') as out:
+              out.write('configured=' + ('false' if missing else 'true') + '\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf8') as out:
+              out.write('Missing: ' + ', '.join(missing) + '. No release published.\n'
+                        if missing else 'Existing signing secrets present. No values disclosed.\n')
+          if missing:
+              sys.exit('Signing secrets are missing; no release published')
+      - name: Confirm public key matches previous signed release 0.1.2
+        if: steps.keys.outputs.configured == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANALIZ_UPDATER_PUBLIC_KEY: ${{ secrets.ANALIZ_UPDATER_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p historical
+          gh release download tauri-v0.1.2 --repo "$GITHUB_REPOSITORY" \
+            --pattern 'Analiz-rabot-Tauri-Windows-x64-setup.exe.sig' --dir historical
+          node tauri/check-update-signing.cjs historical/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig
+          echo 'Public key identity matches signed 0.1.2.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Require new version, release notes and successful main Windows CI
+        if: inputs.operation == 'publish' && steps.keys.outputs.configured == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Enter new version"; exit 1; }
+          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$GITHUB_SHA" == "$main_sha" ]] || { echo "::error::Main moved"; exit 1; }
+          node - <<'NODE'
+          const fs=require('node:fs'),v=process.env.EXPECTED_VERSION;
+          const config=JSON.parse(fs.readFileSync('tauri/src-tauri/tauri.conf.json','utf8'));
+          const pkg=JSON.parse(fs.readFileSync('tauri/package.json','utf8'));
+          const cargo=fs.readFileSync('tauri/src-tauri/Cargo.toml','utf8').match(/^version\s*=\s*"([^"]+)"/m);
+          if(v!==config.version||v!==pkg.version||v!==cargo?.[1])throw Error('Versions differ');
+          require('./tauri/publish.cjs').releaseNotesFile(v);
+          if(config.plugins.updater.endpoints[0]!=='https://github.com/v2029944-ui/HTML-test/releases/download/tauri-updates/tauri-latest.json')
+            throw Error('Unexpected updater channel');
+          NODE
+          tag="tauri-v$EXPECTED_VERSION"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+             gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$tag" >/dev/null 2>&1; then
+            echo "::error::Existing version/tag cannot be reused"; exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&status=success&per_page=100" |
+            jq -e '[.workflow_runs[] | select(.name == "Tauri 2 Windows (experimental)" and .event == "push" and .head_branch == "main" and .conclusion == "success")] | length > 0' >/dev/null ||
+            { echo "::error::No successful Windows CI for this main commit"; exit 1; }
+          echo "Approved $tag on verified commit $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
 
   build-and-publish:
     needs: signing-ready
-    if: needs.signing-ready.outputs.configured == 'true'
+    if: inputs.operation == 'publish' && needs.signing-ready.outputs.configured == 'true'
     runs-on: windows-latest
-    timeout-minutes: 65
+    timeout-minutes: 75
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -54,30 +124,88 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: 'tauri/src-tauri -> target'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Install Tauri CLI
-        run: npm install --prefix tauri --no-audit --no-fund
-      - name: Verify frontend and calculation regressions
-        run: node --test tests/*.cjs tauri/tests/*.test.cjs
-      - name: Prepare frontend for Rust tests
+        shell: pwsh
         run: |
+          npm install --prefix tauri --no-audit --no-fund --include=optional
+          if ($LASTEXITCODE -ne 0) { throw 'Tauri CLI installation failed' }
+          $cliVersion = (Get-Content 'tauri/node_modules/@tauri-apps/cli/package.json' -Raw | ConvertFrom-Json).version
+          if (-not (Test-Path 'tauri/node_modules/@tauri-apps/cli-win32-x64-msvc/package.json')) {
+            npm install --prefix tauri --no-save --no-package-lock --no-audit --no-fund "@tauri-apps/cli-win32-x64-msvc@$cliVersion"
+            if ($LASTEXITCODE -ne 0) { throw 'Tauri Windows native CLI installation failed' }
+          }
+          node -e "require('./tauri/node_modules/@tauri-apps/cli')"
+          if ($LASTEXITCODE -ne 0) { throw 'Tauri Windows native CLI verification failed' }
+      - name: Test frontend, Rust, SQLite and recovery
+        shell: pwsh
+        run: |
+          node --test tauri/tests/*.test.cjs tests/test_*.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Node tests failed' }
           npm --prefix tauri run prepare:frontend
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend preparation failed' }
           npm --prefix tauri run icons
-      - name: Verify SQLite migration
-        run: cargo test --manifest-path tauri/src-tauri/Cargo.toml
-      - name: Build and sign Windows update
+          if ($LASTEXITCODE -ne 0) { throw 'Icon generation failed' }
+          cargo test --manifest-path tauri/src-tauri/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'App Rust tests failed' }
+          cargo test --locked --manifest-path tauri/import-core/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'XLSX tests failed' }
+          cargo test --locked --manifest-path tauri/storage-core/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'SQLite tests failed' }
+          python -m unittest discover -s tests -p test_sqlite_restore_copy.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Recovery test failed' }
+      - name: Sign release with the existing key
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           ANALIZ_UPDATER_PUBLIC_KEY: ${{ secrets.ANALIZ_UPDATER_PUBLIC_KEY }}
         run: npm --prefix tauri run build:signed:windows
-      - name: Preserve signed installer and update manifest
+      - name: Check signature key identity and preserve distributable installer
+        shell: pwsh
+        env:
+          ANALIZ_UPDATER_PUBLIC_KEY: ${{ secrets.ANALIZ_UPDATER_PUBLIC_KEY }}
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          $exe = "tauri/release/tauri-v$env:EXPECTED_VERSION/Analiz-rabot-Tauri-Windows-x64-setup.exe"
+          if (!(Test-Path $exe) -or !(Test-Path "$exe.sig")) { throw 'Missing signed release files' }
+          node tauri/check-update-signing.cjs "$exe.sig"
+          if ($LASTEXITCODE -ne 0) { throw 'Signing key mismatch' }
+          New-Item -ItemType Directory -Force 'tauri/test-artifacts' | Out-Null
+          Copy-Item $exe 'tauri/test-artifacts/setup.exe'
+          Copy-Item "$exe.sig" 'tauri/test-artifacts/setup.exe.sig'
+      - name: Build isolated non-distributable WebView2 test installer
+        shell: pwsh
+        run: |
+          Push-Location tauri
+          try {
+            npx tauri build --config tests/ci-webview2.json
+            if ($LASTEXITCODE -ne 0) { throw 'WebView2 test build failed' }
+          } finally { Pop-Location }
+      - name: Test installed app through real WebView2
+        shell: pwsh
+        run: |
+          python -m pip install playwright==1.62.0
+          if ($LASTEXITCODE -ne 0) { throw 'Playwright install failed' }
+          python tauri/tests/windows_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw 'Installed GUI test failed' }
+      - name: Retain signed artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Tauri-signed-Windows
           path: tauri/release/tauri-v*/*
           if-no-files-found: error
           retention-days: 14
-      - name: Publish installer, then update channel
+      - name: Publish signed GitHub Release and advance updater channel
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node tauri/publish.cjs
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          $current = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha'
+          if ($LASTEXITCODE -ne 0 -or $current.Trim() -ne $env:GITHUB_SHA) { throw 'Main moved; release aborted' }
+          gh release view "tauri-v$env:EXPECTED_VERSION" --repo "$env:GITHUB_REPOSITORY" *> $null
+          if ($LASTEXITCODE -eq 0) { throw 'Existing release cannot be overwritten' }
+          node tauri/publish.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Publication failed' }
