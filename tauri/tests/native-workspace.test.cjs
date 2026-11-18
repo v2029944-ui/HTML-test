@@ -29,7 +29,7 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSelected','restoreStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
@@ -44,6 +44,13 @@ function mount(){
    nativeAnalysisIndexSettings:async rev=>{calls.push({kind:'settings_index',rev});},
    chooseSqliteBackupPath:async defaultPath=>{calls.push({kind:'choose_backup',defaultPath});return 'C:/Backups/new.sqlite3';},
    nativeBackupSqlite:async destination=>{calls.push({kind:'sqlite_backup',destination});return 12;},
+   chooseRestoreBackupPath:async()=>{calls.push({kind:'restore_picker'});return 'C:/Backups/snapshot.sqlite3';},
+   nativeRestorePreview:async source=>{calls.push({kind:'restore_preview',source});return {reportCount:366,bytes:8192,verification:'a'.repeat(64)};},
+   chooseRestoreDestination:async name=>{calls.push({kind:'restore_dest',name});return 'C:/Backups/recovered.sqlite3';},
+   nativeRestoreCopy:async(source,verification,destination)=>{
+     calls.push({kind:'restore_copy',source,verification,destination});
+     return {reportCount:366,bytes:8192,verification:'a'.repeat(64)};
+   },
    chooseCsvPath:async defaultPath=>{calls.push({kind:'save_csv',defaultPath});return 'C:/Exports/new.csv';},
    nativeExportRangeCsv:async(rev,kind,from,to,organizations,organization,destination)=>{
      calls.push({kind:'export_csv',rev,reportType:kind,from,to,organizations,organization,destination});
@@ -217,4 +224,23 @@ test('native SQLite backup is a user-initiated copy, not a report rewrite',async
  assert.match(e.backupStatus.textContent,/Копия SQLite сохранена/);
  assert.equal(calls.some(x=>x.kind==='rename'),false);
  assert.equal(e.reportRows.children.length,100);
+});
+
+test('recovery UI validates a chosen backup before offering a separate copy',async()=>{
+ const {e,calls,window}=mount();await window.nativeWorkspaceReady;
+ assert.equal(e.restoreCopy.disabled,true);
+ await e.restoreChoose.events.click();
+ assert.equal(calls.some(x=>x.kind==='restore_preview'),true);
+ assert.equal(e.restoreCopy.disabled,false);
+ assert.match(e.restoreStatus.textContent,/Копия проверена/);
+ assert.match(e.restoreSelected.textContent,/snapshot\.sqlite3/);
+ assert.equal(calls.some(x=>x.kind==='restore_copy'),false);
+ await e.restoreCopy.events.click();
+ const restore=calls.find(x=>x.kind==='restore_copy');
+ assert.equal(restore.source,'C:/Backups/snapshot.sqlite3');
+ assert.equal(restore.verification,'a'.repeat(64));
+ assert.equal(restore.destination,'C:/Backups/recovered.sqlite3');
+ assert.match(e.restoreStatus.textContent,/Рабочая база не изменена/);
+ assert.equal(calls.some(x=>x.kind==='sqlite_backup'),false);
+ assert.equal(calls.some(x=>x.kind==='rename'),false);
 });
