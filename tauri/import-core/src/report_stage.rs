@@ -6,7 +6,7 @@ use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::{collections::HashSet, sync::atomic::AtomicBool};
 #[derive(Clone, Debug, Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct TripleMapping {
     pub header_row: u32,
     pub work_col: u32,
