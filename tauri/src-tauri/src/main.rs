@@ -202,6 +202,16 @@ async fn native_analysis_range(
         if organizations.is_empty() || organizations.len() > 100 {
             return Err("Select 1..=100 organizations for analysis".into());
         }
+        // A request spanning thousands of years would create millions of SQL
+        // period rows. Explicitly bound native UI work; D2 still validates
+        // period alignment and the underlying report completeness.
+        let first = chrono::NaiveDate::parse_from_str(&from, "%Y-%m-%d")
+            .map_err(|_| "Invalid analysis start date".to_string())?;
+        let last = chrono::NaiveDate::parse_from_str(&to, "%Y-%m-%d")
+            .map_err(|_| "Invalid analysis end date".to_string())?;
+        if last < first || (last - first).num_days() > 3660 {
+            return Err("Analysis range must not exceed ten years".into());
+        }
         let store = app.state::<Storage>();
         // A temporary on-disk exact-match selection; no saved filter presets
         // or unbounded string arrays in report JSON.
