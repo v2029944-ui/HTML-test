@@ -54,8 +54,8 @@ jobs:
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf8') as out:
               out.write('Missing: ' + ', '.join(missing) + '. No release published.\n'
                         if missing else 'Existing signing secrets present. No values disclosed.\n')
-          if missing and os.environ['OPERATION'] == 'publish':
-              sys.exit('Missing signing secrets; release blocked')
+          if missing:
+              sys.exit('Signing secrets are missing; no release published')
       - name: Confirm public key matches previous signed release 0.1.2
         if: steps.keys.outputs.configured == 'true'
         shell: bash
