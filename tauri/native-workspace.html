@@ -48,9 +48,11 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <div class="controls">
 <button id="restoreChoose" type="button">Проверить резервную копию</button>
 <button id="restoreCopy" type="button" disabled>Создать отдельную восстановленную копию</button>
+<button id="restoreSchedule" type="button" disabled>Восстановить рабочую базу при следующем запуске</button>
 </div>
 <p id="restoreSelected" class="intro">Резервная копия не выбрана.</p>
 <p id="restoreStatus" class="status muted" role="status" aria-live="polite">Рабочая база не изменяется.</p>
+<p class="intro">Переключение рабочей базы доступно только после явного подтверждения. Приложение сохранит две защитные копии прежних данных и выполнит замену до открытия SQLite при следующем запуске. После подтверждения полностью закройте программу и откройте снова. Если проверка или безопасное переключение не удастся, приложение не начнёт работать с сомнительными данными.</p>
 </section>
 <section class="panel" aria-label="Отчёты SQL">
 <h2>Отчёты</h2><div class="controls"><label for="nativeReportType">Периоды</label>
