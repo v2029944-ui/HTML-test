@@ -48,6 +48,28 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <div class="controls"><button id="groupBack" type="button" disabled>Назад</button><button id="groupNext" type="button" disabled>Далее</button></div>
 <p id="groupStatus" class="status muted" role="status" aria-live="polite"></p>
 <div class="table-scroll"><table><thead><tr><th>ID группы</th><th>Название</th><th>Работ</th><th>Действие</th></tr></thead><tbody id="groupRows"></tbody></table></div>
-</section></main>
+</section>
+
+<section class="panel" aria-label="Аналитика SQL">
+<h2>Анализ периодов через SQLite</h2>
+<p class="intro">Нативный расчёт с проверкой полноты. Сначала подготовьте индексы выбранного типа (не более 20 отчётов за запрос). Обрабатываются только исходные отчёты в SQLite, полная история не загружается в браузер. Подготовку можно остановить после текущей порции.</p>
+<div class="controls">
+<label for="analysisType">Тип периода</label>
+<select id="analysisType"><option value="day">Дни</option><option value="week">Недели</option><option value="month">Месяцы</option></select>
+<label for="analysisFrom">С</label><input type="date" id="analysisFrom">
+<label for="analysisTo">По</label><input type="date" id="analysisTo">
+<label for="analysisOrganization">Подразделение</label>
+<select id="analysisOrganization"><option value="*">Все из настроек</option></select>
+</div>
+<div class="controls">
+<button id="analysisPrepare" type="button">Подготовить индексы</button>
+<button id="analysisCancel" type="button" disabled>Остановить</button>
+<button id="analysisRun" type="button" disabled>Рассчитать</button>
+</div>
+<p id="analysisStatus" class="status muted" role="status" aria-live="polite">Подготовка не выполнена.</p>
+<div id="analysisValues" class="overview" aria-live="polite"></div>
+<p class="intro">Когда отсутствуют периоды, итоговые сумма и количество не показываются как ноль. Группы, совпадающие даты и ошибки проверяются по правилам D2; это не простая сумма всех строк.</p>
+</section>
+</main>
 <script src="tauri-bridge.js"></script><script src="tauri-native-workspace.js"></script>
 </body></html>
