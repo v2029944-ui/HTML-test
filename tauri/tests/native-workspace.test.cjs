@@ -2,6 +2,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),os=require('node:os');
 const {prepare}=require('../prepare.cjs');
+const {userError}=require('../native-errors.js');
 
 test('SQL workspace is independently built without legacy app or full-history load',()=>{
  const root=path.resolve(__dirname,'../..'),out=fs.mkdtempSync(path.join(os.tmpdir(),'sql-workspace-'));
@@ -28,7 +29,7 @@ class Element{
  addEventListener(name,callback){this.events[name]=callback;}
  setAttribute(name,value){this[name]=value;}
 }
-function mount(){
+function mount(options={}){
  const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
@@ -37,7 +38,7 @@ function mount(){
  const report=n=>({id:'r'+n,period_start:'2024-02-'+String(n%28+1).padStart(2,'0'),period_end:'2024-02-29',report_type:'day',source_name:'<b>untrusted</b>'});
  const api={
    nativeSettingsBootstrap:async()=>({revision:12,reports:366,indexed_reports:366,groups:1,catalog:0,org_names:['СМУ16','АВТО']}),
-   nativeReportPage:async(rev,filter,after,limit)=>{calls.push({kind:'report',rev,filter,after,limit});return !after?Array.from({length:100},(_,n)=>report(n)):[report(101)];},
+   nativeReportPage:async(rev,filter,after,limit)=>{calls.push({kind:'report',rev,filter,after,limit});if(options.failReports)throw Error('No active organization');return !after?Array.from({length:100},(_,n)=>report(n)):[report(101)];},
    nativeGroupPage:async(rev,after,limit)=>{calls.push({kind:'group',rev,after,limit});return [{handle:'922337203685477580',id:'g',name:'Old',members:4}];},
    nativeGroupRename:async(rev,handle,name)=>{calls.push({kind:'rename',rev,handle,name});return 13;},
    nativeAnalysisIndexPage:async(rev,kind,after,limit)=>{calls.push({kind:'index',rev,reportType:kind,after,limit});return {processed:2,next:null,done:true};},
@@ -59,7 +60,7 @@ function mount(){
      {org:'АВТО',complete:false,missing:2,total:{count:null,amount:null,average:null}}
    ];}
  };
- const window={desktopAPI:api,confirm:()=>true};
+ const window={desktopAPI:api,confirm:()=>true,analizUserError:userError};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-workspace.js'),'utf8'),{window,document:{getElementById:id=>e[id],createElement:tag=>new Element(tag)}});
  return {e,calls,window};
 }
@@ -217,4 +218,12 @@ test('native SQLite backup is a user-initiated copy, not a report rewrite',async
  assert.match(e.backupStatus.textContent,/Копия SQLite сохранена/);
  assert.equal(calls.some(x=>x.kind==='rename'),false);
  assert.equal(e.reportRows.children.length,100);
+});
+
+test('SQL read failures show a Russian action rather than a Rust exception',async()=>{
+ const {e,window}=mount({failReports:true});
+ await window.nativeWorkspaceReady;
+ assert.match(e.reportStatus.textContent,/Не выбрано подразделение/);
+ assert.ok(!e.reportStatus.textContent.includes('No active organization'));
+ assert.equal(e.reportRows.children.length,0);
 });
