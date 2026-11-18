@@ -70,8 +70,10 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <button id="analysisPrepare" type="button">Подготовить индексы</button>
 <button id="analysisCancel" type="button" disabled>Остановить</button>
 <button id="analysisRun" type="button" disabled>Рассчитать</button>
+<button id="analysisExport" type="button" disabled>Экспорт CSV</button>
 </div>
 <p id="analysisStatus" class="status muted" role="status" aria-live="polite">Подготовка не выполнена.</p>
+<p id="exportStatus" class="status muted" role="status" aria-live="polite">Экспорт доступен после расчёта. CSV сохраняется в новый файл без замены существующего.</p>
 <div id="analysisValues" class="overview" aria-live="polite"></div>
 <h3 class="division-title">Сравнение подразделений</h3>
 <p class="intro">Положительные суммы показаны синим, отрицательные — фиолетовым. При отсутствии полного ряда сумма и количество скрываются, а пропуски остаются видимыми.</p>

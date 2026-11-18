@@ -9,6 +9,7 @@ let revision=null,reportAfter=null,reportBack=[],reportNext=null,groupAfter=null
 let reportsBusy=false,groupsBusy=false,refreshBusy=false;
 let analysisBusy=false,analysisReady=false,analysisCancelled=false,orgNames=[];
 let workBusy=false,workScope=null,workAfter=null,workBack=[],workNext=null;
+let exportBusy=false;
 const workSize=50;
 function controlState(){
 $('reportBack').disabled=reportsBusy||refreshBusy||!reportBack.length;
@@ -16,16 +17,17 @@ $('reportNext').disabled=reportsBusy||refreshBusy||!reportNext;
 $('nativeReportType').disabled=reportsBusy||refreshBusy;
 $('groupBack').disabled=groupsBusy||refreshBusy||!groupBack.length;
 $('groupNext').disabled=groupsBusy||refreshBusy||!groupNext;
-$('workspaceRefresh').disabled=reportsBusy||groupsBusy||refreshBusy||analysisBusy||workBusy;
-$('analysisPrepare').disabled=analysisBusy||refreshBusy||revision===null;
+$('workspaceRefresh').disabled=reportsBusy||groupsBusy||refreshBusy||analysisBusy||workBusy||exportBusy;
+$('analysisPrepare').disabled=analysisBusy||refreshBusy||exportBusy||revision===null;
 $('analysisCancel').disabled=!analysisBusy;
-$('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||!analysisReady;
+$('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!analysisReady;
+$('analysisExport').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!workScope;
 $('workBack').disabled=workBusy||analysisBusy||refreshBusy||!workBack.length;
 $('workNext').disabled=workBusy||analysisBusy||refreshBusy||!workNext;
-$('analysisType').disabled=analysisBusy||refreshBusy||workBusy;
-$('analysisOrganization').disabled=analysisBusy||refreshBusy||workBusy;
-$('analysisFrom').disabled=analysisBusy||refreshBusy||workBusy;
-$('analysisTo').disabled=analysisBusy||refreshBusy||workBusy;
+$('analysisType').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
+$('analysisOrganization').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
+$('analysisFrom').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
+$('analysisTo').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
 }
 async function reports(cursor,reset=false){
 if(reportsBusy||revision===null)return false;
@@ -73,7 +75,7 @@ try{
 finally{groupsBusy=false;controlState();}
 }
 async function refresh(){
-if(refreshBusy||reportsBusy||groupsBusy||analysisBusy||workBusy)return;
+if(refreshBusy||reportsBusy||groupsBusy||analysisBusy||workBusy||exportBusy)return;
 refreshBusy=true;controlState();
 try{
  const snapshot=await api.nativeSettingsBootstrap();
@@ -172,6 +174,7 @@ function showDivisionComparison(rows){
 }
 
 function clearWork(message='Расшифровка появится после расчёта.'){
+ status('exportStatus','Экспорт доступен после расчёта. CSV сохраняется в новый файл.');
  workScope=null;workAfter=null;workBack=[];workNext=null;
  $('workRows').replaceChildren();
  status('workStatus',message);
@@ -240,6 +243,27 @@ async function calculateAnalysis(){
  }finally{analysisBusy=false;controlState();}
  if(workScope)await workPage(null,true);
 }
+
+async function exportAnalysisCsv(){
+ if(exportBusy||analysisBusy||workBusy||refreshBusy||!workScope||revision===null)return;
+ exportBusy=true;controlState();
+ try{
+  const scope=workScope;
+  const proposed='analiz-'+scope.type+'-'+scope.from+'-'+scope.to+'.csv';
+  const destination=await api.chooseCsvPath(proposed);
+  if(destination===null||destination===undefined||destination===''){
+   status('exportStatus','Сохранение CSV отменено.');return;
+  }
+  if(typeof destination!=='string')throw Error('Некорректный путь CSV');
+  await api.nativeExportRangeCsv(
+   revision,scope.type,scope.from,scope.to,
+   scope.organizations,scope.organization,destination
+  );
+  status('exportStatus','CSV сохранён. Исходные отчёты не изменены.');
+ }catch(err){
+  status('exportStatus','Экспорт не выполнен: '+String(err?.message||err)+'. Выберите новый CSV-файл.',true);
+ }finally{exportBusy=false;controlState();}
+}
 const year=String(new Date().getFullYear());
 $('analysisFrom').value=year+'-01-01';
 $('analysisTo').value=year+'-12-31';
@@ -251,6 +275,7 @@ $('analysisType').addEventListener('change',()=>{
 $('analysisPrepare').addEventListener('click',prepareAnalysis);
 $('analysisCancel').addEventListener('click',()=>{analysisCancelled=true;status('analysisStatus','Остановка после текущей порции…');});
 $('analysisRun').addEventListener('click',calculateAnalysis);
+$('analysisExport').addEventListener('click',exportAnalysisCsv);
 $('workNext').addEventListener('click',async()=>{
  if(!workNext)return;
  const previous=workAfter;
