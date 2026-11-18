@@ -13,6 +13,44 @@
   }
   window.desktopAPI=Object.freeze({
     load:()=>invoke('load_data'),
+    nativeRevision:()=>tracked('native_read_revision',{},'reads'),
+    nativeSettingsBootstrap:()=>tracked('native_settings_bootstrap',{},'reads'),
+    nativeGroupPage:(revision,afterHandle=null,limit=50)=>tracked(
+      'native_group_page',{revision,afterHandle,limit},'reads'),
+    nativeGroupRename:(revision,handle,name)=>tracked(
+      'native_group_rename',{revision,handle,name},'saves'),
+    nativeAnalysisIndexPage:(revision,reportType,after=null,limit=20)=>tracked(
+      'native_analysis_index_page',{revision,reportType,after,limit},'reads'),
+    nativeAnalysisIndexSettings:revision=>tracked(
+      'native_analysis_index_settings',{revision},'reads'),
+    nativeAnalysisRange:(revision,reportType,from,to,organizations)=>tracked(
+      'native_analysis_range',{revision,reportType,from,to,organizations},'reads'),
+    nativeAnalysisOrganizations:(revision,reportType,from,to,organizations)=>tracked(
+      'native_analysis_organizations',{revision,reportType,from,to,organizations},'reads'),
+    nativeAnalysisRangePage:(revision,reportType,from,to,organizations,organization=null,after=null,limit=50)=>tracked(
+      'native_analysis_range_page',{revision,reportType,from,to,organizations,organization,after,limit},'reads'),
+    chooseCsvPath:async defaultPath=>{
+      if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
+      if(typeof tauri.dialog.save!=='function')throw Error('Диалог сохранения CSV недоступен.');
+      return tauri.dialog.save({title:'Сохранить результаты анализа',defaultPath,filters:[{name:'CSV',extensions:['csv']}]});
+    },
+    nativeExportRangeCsv:(revision,reportType,from,to,organizations,organization,destination)=>tracked(
+      'native_export_range_csv',{revision,reportType,from,to,organizations,organization,destination},'saves'),
+    chooseWideXlsx:async()=>{
+      if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
+      return tauri.dialog.open({multiple:false,directory:false,title:'Выберите XLSX для нативного импорта',filters:[{name:'Excel XLSX',extensions:['xlsx']}]});
+    },
+    nativeWideImportPreview:(source,options)=>tracked('native_wide_import_preview',{source,options},'reads'),
+    nativeWideImportApply:(source,options,reviewToken,confirmation)=>tracked(
+      'native_wide_import_apply',{source,options,reviewToken,confirmation},'saves'),
+    chooseSqliteBackupPath:async defaultPath=>{
+      if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
+      if(typeof tauri.dialog.save!=='function')throw Error('Диалог резервного копирования недоступен.');
+      return tauri.dialog.save({title:'Сохранить резервную копию SQLite',defaultPath,filters:[{name:'База SQLite',extensions:['sqlite3']}]});
+    },
+    nativeBackupSqlite:destination=>tracked('native_backup_sqlite',{destination},'saves'),
+    nativeReportPage:(revision,filter,after=null,limit=100)=>tracked(
+      'native_report_page',{revision,filter,after,limit},'reads'),
     save:data=>tracked('save_data',{data},'saves'),
     info:()=>invoke('get_info'),
     chooseFolder:async()=>{

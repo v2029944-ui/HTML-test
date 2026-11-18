@@ -1,7 +1,7 @@
 """Run the packaged Tauri app through its real WebView2 and SQLite on an isolated Windows CI runner."""
-import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib
+import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib,sqlite3
 from pathlib import Path
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 from playwright.sync_api import sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests'))
@@ -184,6 +184,35 @@ def run():
                 loaded=page.evaluate('window.desktopAPI.load()');assert len(loaded['reports'])==366
                 assert abs(sum(r['amount'] for r in loaded['reports'])-7320)<.001
                 report['checks'].append('Excel import and 366 reports persisted through native SQLite')
+                # D4a read-only SQLite browsing must operate through the actual
+                # installed Tauri IPC, not an in-memory JS model or mocked bridge.
+                native=page.locator('section[aria-label="Постраничный просмотр SQLite"]')
+                native.get_by_role('button',name='Открыть список отчётов').click()
+                inspector_css='section[aria-label="Постраничный просмотр SQLite"]'
+                wait_for_app_state(page,
+                    'document.querySelectorAll('+json.dumps(inspector_css+' tbody tr')+').length === 100',
+                    'First bounded SQLite metadata page')
+                assert native.locator('tbody tr').count()==100
+                original_id=native.locator('tbody tr').first.locator('td').nth(4).inner_text()
+                native.get_by_role('button',name='Далее').click()
+                wait_for_app_state(page,
+                    'document.querySelector('+json.dumps(inspector_css+' tbody tr td:last-child')+')?.textContent !== '+json.dumps(original_id),
+                    'Second bounded SQLite metadata page')
+                assert native.locator('tbody tr').count()==100
+                native.get_by_role('button',name='Назад').click()
+                wait_for_app_state(page,
+                    'document.querySelector('+json.dumps(inspector_css+' tbody tr td:last-child')+')?.textContent === '+json.dumps(original_id),
+                    'SQLite keyset back navigation')
+                native.get_by_label('Фильтр типа отчёта в SQLite').select_option('week')
+                wait_for_app_state(page,
+                    'document.querySelector('+json.dumps(inspector_css+' [role="status"]')+')?.textContent.includes("записей на странице: 0")',
+                    'SQLite type-filtered empty report page')
+                assert native.locator('tbody tr').count()==0
+                native.get_by_label('Фильтр типа отчёта в SQLite').select_option('day')
+                wait_for_app_state(page,
+                    'document.querySelectorAll('+json.dumps(inspector_css+' tbody tr')+').length === 100',
+                    'SQLite daily reports re-filtered page')
+                report['checks'].append('native SQLite revision-checked pagination and period filter')
                 page.locator('[data-view=dashboard]').click()
                 page.locator('#periodType').click();page.keyboard.press('End');page.keyboard.press('Enter')
                 assert page.locator('#periodType').input_value()=='day'
@@ -194,6 +223,170 @@ def run():
                 page.locator('#calendarYearSelect').select_option('2024');page.locator('#calendarType').select_option('day')
                 page.locator('[data-month="2024-02"]').click();assert page.locator('#calendarDetails button[data-date]').count()==29
                 report['checks'].append('leap February calendar')
+                # D4b: the alternate SQL-only page must render without starting
+                # the original in-memory report model. Exercise real Tauri IPC.
+                page.locator('#reportsShortcut').click()
+                page.locator('#openNativeWorkspace').click()
+                wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)','Native SQLite workspace startup')
+                page.evaluate('window.nativeWorkspaceReady')
+                if page.evaluate("typeof window.appReady !== 'undefined'"):
+                    raise RuntimeError('Native workspace unexpectedly imported legacy full-history bootstrap')
+                assert page.locator('#metricReports').inner_text()=='366'
+                assert page.locator('#reportRows tr').count()==100
+                assert page.locator('#metricGroups').inner_text()=='0'
+                first_native=page.locator('#reportRows tr').first.locator('td').nth(4).inner_text()
+                page.locator('#reportNext').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#reportRows tr td:last-child")?.textContent !== '+json.dumps(first_native),
+                    'Native SQL next page')
+                assert page.locator('#reportRows tr').count()==100
+                page.locator('#reportBack').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#reportRows tr td:last-child")?.textContent === '+json.dumps(first_native),
+                    'Native SQL previous page')
+                page.locator('#nativeReportType').select_option('week')
+                wait_for_app_state(page,
+                    'document.querySelector("#reportStatus")?.textContent.includes("На странице: 0")',
+                    'Native SQLite filter without week reports')
+                assert page.locator('#reportRows tr').count()==0
+                # D4c: a type with no reports can be indexed without loading
+                # history, then its incomplete SQL range must have NULL totals.
+                page.locator('#analysisType').select_option('week')
+                page.locator('#analysisFrom').fill('2026-11-02')
+                page.locator('#analysisTo').fill('2026-11-09')
+                page.locator('#analysisPrepare').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#analysisRun")?.disabled === false',
+                    'Bounded SQL analysis index preparation')
+                page.locator('#analysisRun').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#analysisStatus")?.textContent.includes("не все периоды")',
+                    'SQL incomplete-range detection')
+                assert page.locator('#analysisValues .metric').count()==9
+                assert page.locator('#analysisValues .metric').nth(3).locator('strong').inner_text()=='—'
+                assert page.locator('#analysisValues .metric').nth(4).locator('strong').inner_text()=='—'
+                # D4d comparison derives complete/incomplete per-division rows
+                # through bounded D2 SQL, not through JS history data.
+                wait_for_app_state(page,
+                    'document.querySelectorAll("#divisionRows tr").length > 0',
+                    'Native organization summary table')
+                assert all(row.locator('td').nth(4).inner_text()=='—'
+                    for row in page.locator('#divisionRows tr').all())
+                assert all(row.locator('td').nth(2).inner_text()!='0'
+                    for row in page.locator('#divisionRows tr').all())
+                report['checks'].append('D2 incomplete SQL range keeps missing totals null')
+                report['checks'].append('Native division comparison preserves unknown incomplete amounts')
+                # D4e: the group/work keyset API must also run on the real
+                # installed app; an empty weekly range produces no fake zeros.
+                wait_for_app_state(page,
+                    'document.querySelector("#workStatus")?.textContent.includes("На странице: 0")',
+                    'Native SQL group/work breakdown for absent weekly reports')
+                assert page.locator('#workRows tr').count()==0
+                assert page.locator('#workNext').is_disabled()
+                report['checks'].append('Native work/group keyset breakdown is empty for missing weekly data')
+                # D4f: export uses an on-disk CSV from SQLite, not report JSON,
+                # and must reject an existing output path without replacement.
+                export_path=tmp/'analysis-empty-week.csv'
+                if export_path.exists():
+                    raise RuntimeError('CSV export test destination unexpectedly exists')
+                export_call="""
+                  async path => {
+                    const snapshot=await window.desktopAPI.nativeSettingsBootstrap();
+                    return window.__TAURI__.core.invoke('native_export_range_csv',{
+                      revision:snapshot.revision, reportType:'week',
+                      from:'2026-11-02', to:'2026-11-09',
+                      organizations:snapshot.org_names, organization:null,
+                      destination:path
+                    });
+                  }
+                """
+                page.evaluate(export_call,str(export_path))
+                exported=export_path.read_bytes()
+                assert exported.startswith(b'\xef\xbb\xbf"key";"name";"kind";"count";"amount";"average";"active"')
+                assert b'\r\n' in exported
+                try:
+                    page.evaluate(export_call,str(export_path))
+                except Exception as error:
+                    assert 'already exists' in str(error)
+                else:
+                    raise RuntimeError('Native SQL export overwrote an existing CSV')
+                assert export_path.read_bytes()==exported
+                report['checks'].append('Native SQL CSV export with UTF-8 BOM and no-overwrite guarantee')
+                snapshot=tmp/'online-backup.sqlite3'
+                backup_call="async path=>window.__TAURI__.core.invoke('native_backup_sqlite',{destination:path})"
+                stored_rev=page.evaluate(backup_call,str(snapshot))
+                assert isinstance(stored_rev,int)
+                assert snapshot.is_file()
+                with closing(sqlite3.connect(str(snapshot))) as backed_up:
+                    assert backed_up.execute('PRAGMA quick_check').fetchone()[0]=='ok'
+                    assert backed_up.execute('SELECT COUNT(*) FROM reports').fetchone()[0]==366
+                    assert backed_up.execute("SELECT json FROM kv WHERE name='settings'").fetchone() is not None
+                previous=snapshot.read_bytes()
+                try:
+                    page.evaluate(backup_call,str(snapshot))
+                except Exception as error:
+                    assert 'already exists' in str(error)
+                else:
+                    raise RuntimeError('Online backup overwrote existing SQLite')
+                assert snapshot.read_bytes()==previous
+                report['checks'].append('Online SQLite backup includes WAL and refuses overwrites')
+                # E1: native wide import must be inspected and explicitly
+                # approved; repeat preparation validates same source/DB content
+                # before publishing new report documents atomically.
+                native_options={'year':2024,'sheets':[],'mappings':{},
+                    'organizations':['СМУ16','АВТО','ТРАК','ЦЕНТР']}
+                native_preview=page.evaluate(
+                    'async args => window.__TAURI__.core.invoke("native_wide_import_preview",args)',
+                    {'source':str(excel),'options':native_options})
+                assert native_preview['reportCount']==366
+                assert native_preview['rowCount']>0
+                assert native_preview['conflicts']['replacements']==366
+                token=native_preview['reviewToken']
+                assert len(token)==64
+                direct_apply='async args => window.__TAURI__.core.invoke("native_wide_import_apply",args)'
+                refused={'source':str(excel),'options':native_options,'reviewToken':token,
+                         'confirmation':{'replaceExact':True,'acceptCrossType':True,'acceptQuality':True}}
+                try:
+                    page.evaluate(direct_apply,refused)
+                except Exception as error:
+                    assert 'backup' in str(error).lower(),str(error)
+                else:
+                    raise RuntimeError('Native IPC replaced reports without a backup destination')
+                before_native=tmp/'before-native-import.sqlite3'
+                approved={'source':str(excel),'options':native_options,'reviewToken':token,
+                          'confirmation':{'replaceExact':True,'acceptCrossType':True,
+                                          'acceptQuality':True,'backupDestination':str(before_native)}}
+                receipt=page.evaluate(direct_apply,approved)
+                assert before_native.is_file()
+                with closing(sqlite3.connect(str(snapshot))) as original_copy:
+                    expected_rows=original_copy.execute(
+                        'SELECT id,json FROM reports ORDER BY id').fetchall()
+                    expected_kv=original_copy.execute(
+                        'SELECT name,json FROM kv ORDER BY name').fetchall()
+                assert len(expected_rows)==366
+                with closing(sqlite3.connect(str(before_native))) as restored_copy:
+                    assert restored_copy.execute('PRAGMA quick_check').fetchone()[0]=='ok'
+                    assert restored_copy.execute('SELECT COUNT(*) FROM reports').fetchone()[0]==366
+                    actual_rows=restored_copy.execute(
+                        'SELECT id,json FROM reports ORDER BY id').fetchall()
+                    actual_kv=restored_copy.execute(
+                        'SELECT name,json FROM kv ORDER BY name').fetchall()
+                    assert actual_rows==expected_rows, 'Backup differs from pre-import reports'
+                    assert actual_kv==expected_kv, 'Backup differs from pre-import settings'
+                report['checks'].append('Native import IPC refuses replacement without verified SQLite backup')
+                assert receipt['reports']==366
+                assert receipt['replaced']==366
+                assert receipt['revision']>native_preview['revision']
+                updated=page.evaluate('window.desktopAPI.load()')
+                assert len(updated['reports'])==366
+                assert all(r.get('sourceFormat')=='daily-wide' for r in updated['reports'])
+                report['checks'].append('reviewed native wide XLSX preview and atomic 366-report replacement')
+                report['checks'].append('SQL-only native page, bounded report navigation, settings bootstrap')
+                page.locator('#legacyWorkspaceLink').click()
+                wait_for_app_state(page,'Boolean(window.appReady)','Legacy workspace after native route')
+                page.evaluate('window.appReady')
+                assert page.evaluate('state.reports.length')==366
+                page.locator('#reportsShortcut').click()
                 page.screenshot(path=str(output/'windows-webview2.png'))
                 assert not errors,errors
                 before_restart=page.evaluate("({view:document.querySelector('.view.active').id,saved:localStorage.getItem('work-reports-view-v1')})")

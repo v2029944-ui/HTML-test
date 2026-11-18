@@ -1,0 +1,105 @@
+# One-time owner-approved 0.1.4 manual prerelease. Never advances tauri-updates.
+# This workflow runs only after the Windows verification for the merged PR #40
+# succeeds on the exact current main commit. No untrusted PR artifacts are used.
+name: Publish Tauri 0.1.4 manual prerelease
+
+on:
+  workflow_run:
+    workflows: ["Tauri 2 Windows (experimental)"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: tauri-v0.1.4-manual-prerelease
+  cancel-in-progress: false
+
+jobs:
+  publish-once:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CI_SHA: ${{ github.event.workflow_run.head_sha }}
+      CI_RUN_ID: ${{ github.event.workflow_run.id }}
+      RELEASE_TAG: tauri-v0.1.4
+      RELEASE_ASSET: Analiz-rabot-0.1.4-Windows-x64-setup.exe
+    steps:
+      - name: Validate authorized merge, exact main SHA and missing release
+        shell: bash
+        run: |
+          set -euo pipefail
+          merged="$(gh api "repos/$GITHUB_REPOSITORY/pulls/40" --jq '.merged')"
+          approved_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/40" --jq '.merge_commit_sha')"
+          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          if [[ "$merged" != "true" || "$approved_sha" != "$CI_SHA" || "$main_sha" != "$CI_SHA" ]]; then
+            echo "::error::Only the exact merged PR #40 commit on current main may publish 0.1.4."
+            exit 1
+          fi
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Release already exists: no asset overwrites or tag reuse permitted."
+            exit 1
+          fi
+          echo "Authorized main SHA: $CI_SHA. Successful Windows run: $CI_RUN_ID."
+      - name: Checkout the exact verified commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Verify package version and release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, pathlib, re
+          root=pathlib.Path('tauri')
+          config=json.loads((root/'src-tauri/tauri.conf.json').read_text(encoding='utf-8'))
+          package=json.loads((root/'package.json').read_text(encoding='utf-8'))
+          cargo=(root/'src-tauri/Cargo.toml').read_text(encoding='utf-8')
+          version=re.search(r'^version\s*=\s*"([^"]+)"',cargo,re.M)
+          assert version and version.group(1)==package['version']==config['version']=='0.1.4'
+          note=(root/'release-notes/0.1.4.md').read_text(encoding='utf-8')
+          assert len(note)>400 and '## Что добавлено' in note and '## Обновление и ограничения' in note
+          assert 'не переключаются' in note
+          PY
+      - name: Download CI-built unsigned installer (not diagnostic WebView2 bundle)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-asset
+          gh run download "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name Tauri-Windows-experimental --dir release-asset
+          test -f release-asset/setup.exe
+          test "$(stat -c %s release-asset/setup.exe)" -gt 1000000
+          cp release-asset/setup.exe "release-asset/$RELEASE_ASSET"
+          sha256sum "release-asset/$RELEASE_ASSET" | tee release-asset/SHA256SUMS.txt
+      - name: Create manual prerelease with versioned changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" "release-asset/$RELEASE_ASSET" \
+            --repo "$GITHUB_REPOSITORY" --target "$CI_SHA" \
+            --title "Tauri 0.1.4 — Windows x64 (ручная установка)" \
+            --notes-file tauri/release-notes/0.1.4.md \
+            --prerelease --latest=false
+      - name: Verify release and asset checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json tagName,isPrerelease,assets --jq \
+            '.tagName == "tauri-v0.1.4" and .isPrerelease and ([.assets[].name] == ["Analiz-rabot-0.1.4-Windows-x64-setup.exe"])' \
+            | grep -qx true
+          mkdir -p release-verify
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$RELEASE_ASSET" --dir release-verify
+          cmp "release-asset/$RELEASE_ASSET" "release-verify/$RELEASE_ASSET"
+          echo "Published and checksum verified: https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG" \
+            >> "$GITHUB_STEP_SUMMARY"

@@ -39,7 +39,7 @@ impl Default for WideOptions {
         }
     }
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Coverage {
     pub start: String,
     pub end: String,
@@ -52,7 +52,7 @@ pub struct WideSheet {
     pub work_col: u32,
     pub pairs: usize,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ReportProvenance {
     pub sheet_name: String,
     pub source_format: String,
@@ -61,7 +61,7 @@ pub struct ReportProvenance {
     pub source_control_date: Option<String>,
     pub coverage: Coverage,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct SourceIssue {
     pub sequence: u64,
     pub sheet: String,
@@ -79,6 +79,45 @@ pub struct SourceIssue {
     pub actual_count: Option<f64>,
     pub actual_amount: Option<f64>,
     pub relevant: bool,
+}
+impl Serialize for SourceIssue {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        // Share the diagnostic boundary, including nullable source-control comparisons.
+        #[derive(Serialize)]
+        struct View<'a> {
+            #[serde(flatten)]
+            diagnostic: crate::ReportIssue,
+            sheet: &'a str,
+            report_id: &'a Option<String>,
+            relevant: bool,
+        }
+        View {
+            diagnostic: crate::ReportIssue {
+                sequence: self.sequence,
+                kind: self.kind.clone(),
+                reason: self.reason.clone(),
+                source_row: self.source_row,
+                organization: self.organization.clone(),
+                work_cell: None,
+                count_cell: self.count_cell.clone(),
+                amount_cell: self.amount_cell.clone(),
+                expected_count: self.expected_count,
+                expected_amount: self.expected_amount,
+                actual_count: self.actual_count,
+                actual_amount: self.actual_amount,
+                scope: Some(self.scope.clone()),
+                date: self.date.clone(),
+                source_issue_sequence: Some(self.sequence),
+            },
+            sheet: &self.sheet,
+            report_id: &self.report_id,
+            relevant: self.relevant,
+        }
+        .serialize(serializer)
+    }
 }
 #[derive(Clone, Copy)]
 struct Pair {
@@ -982,7 +1021,7 @@ impl Stage<'_> {
                         [&id],
                         |r| r.get(0),
                     )?;
-                    self.db.execute("INSERT INTO converted_issues SELECT ?1,?2+row_number() OVER(ORDER BY seq),kind,reason,source_row,organization,NULL,count_cell,amount_cell,expected_count,expected_amount,actual_count,actual_amount FROM wide_source_issues WHERE sheet=?3 AND relevant=1 ORDER BY seq",params![id,offset,name])?;
+                    self.db.execute("INSERT INTO converted_issues SELECT ?1,?2+row_number() OVER(ORDER BY seq),kind,reason,source_row,organization,NULL,count_cell,amount_cell,expected_count,expected_amount,actual_count,actual_amount,'source-period',date,seq FROM wide_source_issues WHERE sheet=?3 AND relevant=1 ORDER BY seq",params![id,offset,name])?;
                     self.db.execute("UPDATE converted_reports SET has_mismatch=1 WHERE id=?1 AND EXISTS(SELECT 1 FROM wide_source_issues WHERE sheet=?2 AND relevant=1 AND kind='mismatch')",params![id,name])?;
                     summary.issues += relevant;
                 }
@@ -1120,6 +1159,17 @@ impl Stage<'_> {
         }
         Ok(self.db.query_row("SELECT p.sheet_name,p.source_block,p.explicit_zero,p.source_control_date,p.coverage_start,p.coverage_end FROM wide_provenance p JOIN converted_reports r ON r.id=p.report_id WHERE p.report_id=?1",[id],|r|Ok(ReportProvenance{sheet_name:r.get(0)?,source_format:"daily-wide".into(),source_block:r.get(1)?,explicit_zero:r.get(2)?,source_control_date:r.get(3)?,coverage:Coverage{start:r.get(4)?,end:r.get(5)?}})).optional()?)
     }
+    pub fn source_issue_page(&self, after: u64, limit: usize) -> Result<Vec<SourceIssue>> {
+        page_limit(limit)?;
+        self.conversion_ready()?;
+        let wide:bool=self.db.query_row("SELECT EXISTS(SELECT 1 FROM manifest WHERE name='conversion_complete' AND value='daily-wide')",[],|r|r.get(0))?;
+        if !wide {
+            return Ok(Vec::new());
+        }
+        let mut st=self.db.prepare("SELECT seq,sheet,report_id,kind,reason,date,source_row,organization,count_cell,amount_cell,expected_count,expected_amount,actual_count,actual_amount,relevant FROM wide_source_issues WHERE seq>?1 ORDER BY seq LIMIT ?2")?;
+        let rows = st.query_map(params![after, limit], read_source_issue)?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
     pub fn source_issues(
         &self,
         sheet_name: &str,
@@ -1133,29 +1183,31 @@ impl Stage<'_> {
             return Ok(Vec::new());
         }
         let mut st=self.db.prepare("SELECT seq,sheet,report_id,kind,reason,date,source_row,organization,count_cell,amount_cell,expected_count,expected_amount,actual_count,actual_amount,relevant FROM wide_source_issues WHERE sheet=?1 AND seq>?2 ORDER BY seq LIMIT ?3")?;
-        let rows = st.query_map(params![sheet_name, after, limit], |r| {
-            Ok(SourceIssue {
-                sequence: r.get(0)?,
-                sheet: r.get(1)?,
-                report_id: r.get(2)?,
-                scope: "source-period".into(),
-                kind: r.get(3)?,
-                reason: r.get(4)?,
-                date: r.get(5)?,
-                source_row: r.get(6)?,
-                organization: r.get(7)?,
-                count_cell: r.get(8)?,
-                amount_cell: r.get(9)?,
-                expected_count: r.get(10)?,
-                expected_amount: r.get(11)?,
-                actual_count: r.get(12)?,
-                actual_amount: r.get(13)?,
-                relevant: r.get(14)?,
-            })
-        })?;
+        let rows = st.query_map(params![sheet_name, after, limit], read_source_issue)?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 }
+fn read_source_issue(r: &rusqlite::Row<'_>) -> rusqlite::Result<SourceIssue> {
+    Ok(SourceIssue {
+        sequence: r.get(0)?,
+        sheet: r.get(1)?,
+        report_id: r.get(2)?,
+        scope: "source-period".into(),
+        kind: r.get(3)?,
+        reason: r.get(4)?,
+        date: r.get(5)?,
+        source_row: r.get(6)?,
+        organization: r.get(7)?,
+        count_cell: r.get(8)?,
+        amount_cell: r.get(9)?,
+        expected_count: r.get(10)?,
+        expected_amount: r.get(11)?,
+        actual_count: r.get(12)?,
+        actual_amount: r.get(13)?,
+        relevant: r.get(14)?,
+    })
+}
+
 fn validate(cfg: &WideOptions) -> Result<()> {
     if cfg.year.is_some_and(|y| !(1900..=9999).contains(&y))
         || cfg.sheets.len() > 12

@@ -52,8 +52,11 @@ pub struct ReportRow {
     pub count_cell: String,
     pub amount_cell: String,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct ReportIssue {
+    pub scope: Option<String>,
+    pub date: Option<String>,
+    pub source_issue_sequence: Option<u64>,
     pub sequence: u64,
     pub kind: String,
     pub reason: String,
@@ -67,7 +70,80 @@ pub struct ReportIssue {
     pub actual_count: Option<f64>,
     pub actual_amount: Option<f64>,
 }
-#[derive(Debug, Serialize)]
+/// Compatibility aliases are additive: retain every native provenance field.
+impl Serialize for ReportIssue {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        #[derive(Serialize)]
+        struct Numbers {
+            count: Option<f64>,
+            amount: Option<f64>,
+        }
+        let cells: Vec<_> = [
+            self.work_cell.as_deref(),
+            self.count_cell.as_deref(),
+            self.amount_cell.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let comparison = self
+            .actual_count
+            .zip(self.actual_amount)
+            .filter(|(c, a)| c.is_finite() && a.is_finite())
+            .filter(|_| {
+                [self.expected_count, self.expected_amount]
+                    .into_iter()
+                    .flatten()
+                    .all(f64::is_finite)
+            });
+        let (expected, actual) = match comparison {
+            Some((count, amount)) => (
+                Some(Numbers {
+                    count: self.expected_count,
+                    amount: self.expected_amount,
+                }),
+                Some(Numbers {
+                    count: Some(count),
+                    amount: Some(amount),
+                }),
+            ),
+            None => (None, None),
+        };
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("type", &self.kind)?;
+        map.serialize_entry("row", &self.source_row)?;
+        map.serialize_entry("cells", &cells)?;
+        map.serialize_entry("expected", &expected)?;
+        map.serialize_entry("actual", &actual)?;
+        if let Some(scope) = &self.scope {
+            map.serialize_entry("scope", scope)?;
+        }
+        if let Some(date) = &self.date {
+            map.serialize_entry("date", date)?;
+        }
+        if let Some(sequence) = self.source_issue_sequence {
+            map.serialize_entry("source_issue_sequence", &sequence)?;
+        }
+        map.serialize_entry("sequence", &self.sequence)?;
+        map.serialize_entry("kind", &self.kind)?;
+        map.serialize_entry("reason", &self.reason)?;
+        map.serialize_entry("source_row", &self.source_row)?;
+        map.serialize_entry("organization", &self.organization)?;
+        map.serialize_entry("work_cell", &self.work_cell)?;
+        map.serialize_entry("count_cell", &self.count_cell)?;
+        map.serialize_entry("amount_cell", &self.amount_cell)?;
+        map.serialize_entry("expected_count", &self.expected_count)?;
+        map.serialize_entry("expected_amount", &self.expected_amount)?;
+        map.serialize_entry("actual_count", &self.actual_count)?;
+        map.serialize_entry("actual_amount", &self.actual_amount)?;
+        map.end()
+    }
+}
+#[derive(Debug)]
 pub struct ReportTotal {
     pub sequence: u64,
     pub kind: String,
@@ -79,6 +155,28 @@ pub struct ReportTotal {
     pub count_cell: String,
     pub amount_cell: String,
 }
+impl Serialize for ReportTotal {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(12))?;
+        map.serialize_entry("type", &self.kind)?;
+        map.serialize_entry("row", &self.source_row)?;
+        map.serialize_entry("name", &self.organization)?;
+        map.serialize_entry("sequence", &self.sequence)?;
+        map.serialize_entry("kind", &self.kind)?;
+        map.serialize_entry("source_row", &self.source_row)?;
+        map.serialize_entry("organization", &self.organization)?;
+        map.serialize_entry("count", &self.count)?;
+        map.serialize_entry("amount", &self.amount)?;
+        map.serialize_entry("work_cell", &self.work_cell)?;
+        map.serialize_entry("count_cell", &self.count_cell)?;
+        map.serialize_entry("amount_cell", &self.amount_cell)?;
+        map.end()
+    }
+}
 #[derive(Debug, Serialize)]
 pub struct ReportOrganization {
     pub organization: String,
@@ -87,7 +185,7 @@ pub struct ReportOrganization {
 }
 pub(crate) const SCHEMA:&str="CREATE TABLE IF NOT EXISTS converted_reports(ordinal INTEGER PRIMARY KEY,id TEXT UNIQUE,sheet TEXT,kind TEXT,start TEXT,end TEXT,row_count INTEGER,count REAL,amount REAL,has_mismatch INTEGER,header_row INTEGER,work_col INTEGER,count_col INTEGER,amount_col INTEGER);
  CREATE TABLE IF NOT EXISTS converted_rows(report_id TEXT,row_index INTEGER,organization TEXT,work TEXT,count REAL,amount REAL,source_row INTEGER,work_cell TEXT,count_cell TEXT,amount_cell TEXT,PRIMARY KEY(report_id,row_index)) WITHOUT ROWID;
- CREATE TABLE IF NOT EXISTS converted_issues(report_id TEXT,seq INTEGER,kind TEXT,reason TEXT,source_row INTEGER,organization TEXT,work_cell TEXT,count_cell TEXT,amount_cell TEXT,expected_count REAL,expected_amount REAL,actual_count REAL,actual_amount REAL,PRIMARY KEY(report_id,seq)) WITHOUT ROWID;
+ CREATE TABLE IF NOT EXISTS converted_issues(report_id TEXT,seq INTEGER,kind TEXT,reason TEXT,source_row INTEGER,organization TEXT,work_cell TEXT,count_cell TEXT,amount_cell TEXT,expected_count REAL,expected_amount REAL,actual_count REAL,actual_amount REAL,scope TEXT,date TEXT,source_issue_seq INTEGER,PRIMARY KEY(report_id,seq)) WITHOUT ROWID;
  CREATE TABLE IF NOT EXISTS converted_totals(report_id TEXT,seq INTEGER,kind TEXT,organization TEXT,source_row INTEGER,count REAL,amount REAL,PRIMARY KEY(report_id,seq)) WITHOUT ROWID;
  CREATE TABLE IF NOT EXISTS converted_organizations(report_id TEXT,seq INTEGER,organization TEXT,count REAL,amount REAL,PRIMARY KEY(report_id,seq)) WITHOUT ROWID;";
 pub(crate) fn js_space(c: char) -> bool {
@@ -488,7 +586,7 @@ impl Stage<'_> {
     pub fn report_issues(&self, id: &str, after: u64, limit: usize) -> Result<Vec<ReportIssue>> {
         page_limit(limit)?;
         self.conversion_ready()?;
-        let mut s=self.db.prepare("SELECT seq,kind,reason,source_row,organization,work_cell,count_cell,amount_cell,expected_count,expected_amount,actual_count,actual_amount FROM converted_issues WHERE report_id=?1 AND seq>?2 ORDER BY seq LIMIT ?3")?;
+        let mut s=self.db.prepare("SELECT seq,kind,reason,source_row,organization,work_cell,count_cell,amount_cell,expected_count,expected_amount,actual_count,actual_amount,scope,date,source_issue_seq FROM converted_issues WHERE report_id=?1 AND seq>?2 ORDER BY seq LIMIT ?3")?;
         let r = s.query_map(params![id, after, limit], |r| {
             Ok(ReportIssue {
                 sequence: r.get(0)?,
@@ -503,6 +601,9 @@ impl Stage<'_> {
                 expected_amount: r.get(9)?,
                 actual_count: r.get(10)?,
                 actual_amount: r.get(11)?,
+                scope: r.get(12)?,
+                date: r.get(13)?,
+                source_issue_sequence: r.get(14)?,
             })
         })?;
         Ok(r.collect::<std::result::Result<_, _>>()?)
@@ -574,7 +675,7 @@ impl Context<'_> {
     ) -> Result<()> {
         self.issues += 1;
         self.db.execute(
-            "INSERT INTO converted_issues VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+            "INSERT INTO converted_issues VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,NULL,NULL,NULL)",
             params![
                 self.id,
                 self.issues,

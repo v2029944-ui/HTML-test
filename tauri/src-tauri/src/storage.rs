@@ -11,6 +11,26 @@ use std::{
     time::UNIX_EPOCH,
 };
 
+#[path = "management.rs"]
+mod management;
+pub use management::*;
+#[path = "management_tree.rs"]
+mod management_tree;
+
+#[path = "analytics.rs"]
+mod analytics;
+pub use analytics::*;
+
+#[path = "backup.rs"]
+mod backup;
+
+#[path = "read_model.rs"]
+mod read_model;
+#[path = "import_apply.rs"]
+mod import_apply;
+pub use import_apply::{ImportConfirmation, ImportCounts, ImportJob, ImportPreview, ImportProgress, ImportReceipt};
+pub use read_model::{Aggregate, IndexedRow, ReadFilter, ReportHeader, MAX_PAGE_ROWS};
+
 const MAX_EXCEL_BYTES: u64 = 30 * 1024 * 1024;
 const MAX_PAYLOAD_BYTES: usize = 200 * 1024 * 1024;
 // Keep synchronized with REPORT_TYPES in the root index.html.
@@ -205,15 +225,15 @@ fn new_connection(path: &Path) -> Result<Connection, String> {
            source_name TEXT,
            json TEXT NOT NULL
          );
-         CREATE INDEX IF NOT EXISTS reports_by_period
-           ON reports(report_type, period_start);
-         CREATE INDEX IF NOT EXISTS reports_by_source
-           ON reports(source_name);
          CREATE TABLE IF NOT EXISTS kv (
            name TEXT PRIMARY KEY,
            json TEXT NOT NULL
          );",
     ).map_err(err)?;
+    read_model::initialize(&conn)?;
+    analytics::initialize(&conn)?;
+    management::initialize(&conn)?;
+    import_apply::initialize(&conn)?;
     Ok(conn)
 }
 
@@ -229,7 +249,11 @@ fn read_key(conn: &Connection, key: &str) -> Result<Option<String>, String> {
     let mut stmt = conn.prepare("SELECT json FROM kv WHERE name=?1").map_err(err)?;
     let mut rows = stmt.query([key]).map_err(err)?;
     match rows.next().map_err(err)? {
-        Some(row) => row.get::<_, String>(0).map(Some).map_err(err),
+        Some(row) => match row.get_ref(0).map_err(err)? {
+            rusqlite::types::ValueRef::Text(bytes) | rusqlite::types::ValueRef::Blob(bytes) =>
+                String::from_utf8(bytes.to_vec()).map(Some).map_err(err),
+            _ => Err("Invalid stored kv JSON type".into()),
+        },
         None => Ok(None),
     }
 }
@@ -245,6 +269,16 @@ fn insert_key(tx: &Transaction<'_>, key: &str, value: &str) -> Result<(), String
 
 fn write_data(tx: &Transaction<'_>, data: &Value) -> Result<(), String> {
     validate_data(data)?;
+    // The legacy full-snapshot writer cannot rebuild wide source-diagnostic
+    // links. Refuse the entire transaction instead of silently orphaning days.
+    let protected: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM report_source_diagnostic_links)",
+        [],
+        |row| row.get(0),
+    ).map_err(err)?;
+    if protected {
+        return Err("Legacy full-history save cannot preserve shared source diagnostics; use prepared or bounded management operations.".into());
+    }
     tx.execute("DELETE FROM reports", []).map_err(err)?;
     let mut stmt = tx.prepare(
         "INSERT INTO reports(id, report_type, period_start, period_end, source_name, json)
@@ -259,6 +293,7 @@ fn write_data(tx: &Transaction<'_>, data: &Value) -> Result<(), String> {
             report["desktopSource"].as_str(),
             report.to_string(),
         ]).map_err(err)?;
+        read_model::index_value(tx, report["id"].as_str().ok_or("Missing id")?, report)?;
     }
     drop(stmt);
     insert_key(tx, "settings", &data["settings"].to_string())?;
@@ -341,10 +376,15 @@ impl Storage {
         let _guard = self.gate.lock().map_err(err)?;
         let conn = self.connect()?;
         let mut stmt = conn.prepare("SELECT json FROM reports ORDER BY period_start,id").map_err(err)?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(0)).map_err(err)?;
+        let mut rows = stmt.query([]).map_err(err)?;
         let mut reports = Vec::new();
-        for row in rows {
-            reports.push(serde_json::from_str::<Value>(&row.map_err(err)?).map_err(err)?);
+        while let Some(row) = rows.next().map_err(err)? {
+            let raw = row.get_ref(0).map_err(err)?;
+            let bytes = match raw {
+                rusqlite::types::ValueRef::Text(b) | rusqlite::types::ValueRef::Blob(b) => b,
+                _ => return Err("Invalid stored report JSON type.".into()),
+            };
+            reports.push(serde_json::from_slice::<Value>(bytes).map_err(err)?);
         }
         let settings = match read_key(&conn, "settings")? {
             Some(text) => serde_json::from_str::<Value>(&text).map_err(err)?,
@@ -778,3 +818,21 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+#[path = "read_model_tests.rs"]
+mod read_model_tests;
+
+#[cfg(test)]
+#[path = "import_apply_tests.rs"]
+mod import_apply_tests;
+
+#[cfg(test)]
+#[path = "import_wide_apply_tests.rs"]
+mod import_wide_apply_tests;
+#[cfg(test)]
+#[path = "analytics_tests.rs"]
+mod analytics_tests;
+
+#[cfg(test)]
+#[path = "management_tests.rs"]
+mod management_tests;

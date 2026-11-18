@@ -1,4 +1,4 @@
-use analiz_import_core::{Limits, StageArea, WideMapping, WideOptions};
+use analiz_import_core::{ImportMode, Limits, StageArea, WideMapping, WideOptions};
 use std::{
     fs,
     io::Write,
@@ -80,6 +80,25 @@ fn detects_converts_merges_and_nonstandard_relationship_target() {
     assert!(!p.explicit_zero);
     assert_eq!(p.coverage.start, "2024-02-28");
     assert_eq!(s.report_totals(&r[0].id, 0, 100).unwrap().len(), 2);
+    // C3 prepares the wide reports with their shared diagnostic anchor intact.
+    let manual = s.prepare(c.as_ref(), |_| {}).unwrap();
+    assert_eq!(manual.report_count(), 2);
+    let first = manual.next_report(0).unwrap().unwrap();
+    let second = manual.next_report(first.ordinal).unwrap().unwrap();
+    assert!(first.provenance.is_some());
+    assert!(second.provenance.is_some());
+    let doc: serde_json::Value =
+        serde_json::from_reader(manual.open_document(&second).unwrap()).unwrap();
+    assert_eq!(doc["sourceDiagnosticsReport"], first.id);
+    let mut folder_stage = a
+        .ingest(&t.path().join("w.xlsx"), Limits::default(), c.as_ref(), |_| {})
+        .unwrap();
+    folder_stage.convert_wide(&cfg, c.clone(), |_| {}).unwrap();
+    let folder = folder_stage
+        .prepare_with_mode(ImportMode::Folder, c.as_ref(), |_| {})
+        .unwrap();
+    assert_eq!(folder.report_count(), 2);
+    assert!(folder.next_report(0).unwrap().unwrap().provenance.is_some());
 }
 #[test]
 fn blank_days_source_totals_and_zero_are_distinct() {

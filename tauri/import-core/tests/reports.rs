@@ -93,6 +93,35 @@ fn invalid_values_keep_source_coordinates_and_do_not_invent_zero() {
     assert!(issues.iter().any(|i| i.kind == "invalid"
         && i.source_row == Some(4)
         && i.count_cell.as_deref() == Some("B4")));
+    let invalid =
+        serde_json::to_value(issues.iter().find(|i| i.kind == "invalid").unwrap()).unwrap();
+    assert_eq!(invalid["expected"], serde_json::Value::Null);
+    assert_eq!(invalid["actual"], serde_json::Value::Null);
+    assert_eq!(invalid["cells"], serde_json::json!(["B4"]));
+    assert_eq!(invalid["type"], "invalid");
+    assert_eq!(invalid["row"], 4);
+    assert_eq!(invalid["count_cell"], "B4");
+    assert_eq!(invalid["work_cell"], serde_json::Value::Null);
+    let mismatch = serde_json::to_value(
+        issues
+            .iter()
+            .find(|i| i.kind == "mismatch" && i.source_row == Some(2))
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(mismatch["cells"], serde_json::json!(["B2", "C2"]));
+    assert_eq!(
+        mismatch["expected"],
+        serde_json::json!({"count":3.0,"amount":12.3})
+    );
+    assert_eq!(
+        mismatch["actual"],
+        serde_json::json!({"count":1.2,"amount":5.3})
+    );
+    assert_eq!(mismatch["expected_count"], 3.0);
+    assert_eq!(mismatch["expected_amount"], 12.3);
+    assert_eq!(mismatch["actual_count"], 1.2);
+    assert_eq!(mismatch["actual_amount"], 5.3);
     assert_eq!(r[0].count, 1.2);
     assert!(r[0].has_mismatch);
 }
@@ -265,6 +294,14 @@ fn unnamed_invalid_cells_match_raw_presence_and_parsed_numbers() {
         assert_eq!(issue.work_cell.as_deref(), Some("A3"));
         assert_eq!(issue.count_cell.as_deref(), count_cell);
         assert_eq!(issue.amount_cell.as_deref(), amount_cell);
+        let serialized = serde_json::to_value(&issue).unwrap();
+        let expected_cells: Vec<_> = [Some("A3"), count_cell, amount_cell]
+            .into_iter()
+            .flatten()
+            .collect();
+        assert_eq!(serialized["cells"], serde_json::json!(expected_cells));
+        assert_eq!(serialized["expected"], serde_json::Value::Null);
+        assert_eq!(serialized["actual"], serde_json::Value::Null);
     }
 }
 #[test]

@@ -1,5 +1,9 @@
 # Ordinary report conversion (B2a)
 
+C1 now adds opaque disk preparation and atomic live application through the
+[storage harness APIs](../storage-core/IMPORT_APPLICATION.md). Conversion behavior
+and the B2a limitations documented below remain unchanged.
+
 `Stage::convert_legacy` sequentially reads three mapped columns at a time from staged SQLite cells and writes report detail, totals and diagnostics to separate SQLite tables. One source row and four organization accumulators are held in memory. Report detail and diagnostics are never collected into report-sized arrays. The entire conversion transaction is on the private staging database; it does not lock or mutate the live user database. Failure/cancellation rolls back the new conversion and retains the previous complete preview.
 
 `LegacyOptions` requires one component path, explicit kind (`day`, `week`, `month`), explicit ISO start date and four configured organization names. No start date is inferred from the filename. Monthly starts must be the first day. `TripleMapping` row and columns are **one-based**, unlike existing UI mapping indexes; the future adapter must convert explicitly. Without mappings, headers are detected in the first ten rows using the same quantity/amount labels as `readTripleColumns`. At most684 triples,2048 columns,60000 rows are permitted. Dates advance one day/week/month per triple.
