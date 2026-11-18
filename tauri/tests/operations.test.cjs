@@ -118,11 +118,11 @@ test('native bounded work/group page IPC includes exact key cursor and selected 
 test('CSV Save dialog only opts into tracked native streaming export',async()=>{
  const commands=[],pending=[],saves=[];
  const window={__TAURI__:{core:{invoke:(name,args)=>{commands.push({name,args});return new Promise((resolve,reject)=>pending.push({resolve,reject}));}},dialog:{
-  open:async()=>null,save:async options=>{saves.push(options);return 'C:\\\\Reports\\\\new.csv';}
+  open:async()=>null,save:async options=>{saves.push(options);return 'C:/Reports/new.csv';}
  }}};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../bridge.js'),'utf8'),{window,setInterval(){},clearInterval(){}});
  const filename=await window.desktopAPI.chooseCsvPath('analiz-day.csv');
- assert.equal(filename,'C:\\\\Reports\\\\new.csv');
+ assert.equal(filename,'C:/Reports/new.csv');
  assert.equal(saves[0].filters[0].extensions[0],'csv');
  assert.equal(commands.length,0,'dialog must not export by itself');
  const result=window.desktopAPI.nativeExportRangeCsv(12,'day','2024-01-01','2024-12-31',['СМУ16'],null,filename);

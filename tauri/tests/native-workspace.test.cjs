@@ -42,7 +42,7 @@ function mount(){
    nativeGroupRename:async(rev,handle,name)=>{calls.push({kind:'rename',rev,handle,name});return 13;},
    nativeAnalysisIndexPage:async(rev,kind,after,limit)=>{calls.push({kind:'index',rev,reportType:kind,after,limit});return {processed:2,next:null,done:true};},
    nativeAnalysisIndexSettings:async rev=>{calls.push({kind:'settings_index',rev});},
-   chooseCsvPath:async defaultPath=>{calls.push({kind:'save_csv',defaultPath});return 'C:\\\\Exports\\\\new.csv';},
+   chooseCsvPath:async defaultPath=>{calls.push({kind:'save_csv',defaultPath});return 'C:/Exports/new.csv';},
    nativeExportRangeCsv:async(rev,kind,from,to,organizations,organization,destination)=>{
      calls.push({kind:'export_csv',rev,reportType:kind,from,to,organizations,organization,destination});
    },
@@ -198,9 +198,9 @@ test('native CSV export waits for explicit Save selection and preserves selected
  assert.equal(exportCall.rev,12);
  assert.equal(exportCall.from,'2024-01-01');
  assert.equal(exportCall.to,'2024-12-31');
- assert.deepEqual(exportCall.organizations,['СМУ16','АВТО']);
+ assert.equal(JSON.stringify(exportCall.organizations),JSON.stringify(['СМУ16','АВТО']));
  assert.equal(exportCall.organization,null);
- assert.equal(exportCall.destination,'C:\\\\Exports\\\\new.csv');
+ assert.equal(exportCall.destination,'C:/Exports/new.csv');
  assert.match(e.exportStatus.textContent,/CSV сохранён/);
  e.analysisOrganization.value='СМУ16';
  e.analysisOrganization.events.change();

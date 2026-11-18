@@ -302,8 +302,8 @@ def run():
                 """
                 page.evaluate(export_call,str(export_path))
                 exported=export_path.read_bytes()
-                assert exported.startswith(b'\\xef\\xbb\\xbf"key";"name";"kind";"count";"amount";"average";"active"')
-                assert b'\\r\\n' in exported
+                assert exported.startswith(b'\xef\xbb\xbf"key";"name";"kind";"count";"amount";"average";"active"')
+                assert b'\r\n' in exported
                 try:
                     page.evaluate(export_call,str(export_path))
                 except Exception as error:
