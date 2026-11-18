@@ -662,6 +662,42 @@ mod tests {
     }
 
     #[test]
+    fn native_40_mib_rule_does_not_raise_classic_browser_excel_budget() {
+        let tmp = tempdir().unwrap();
+        let folder = tmp.path().join("sources");
+        fs::create_dir_all(&folder).unwrap();
+        let source = folder.join("native-only.xlsx");
+        let f = fs::File::create(&source).unwrap();
+        f.set_len(40 * 1024 * 1024).unwrap(); // Sparse file; no workbook content is read.
+        let store = Storage::new(tmp.path().join("db")).unwrap();
+        store.set_folder(folder.to_string_lossy().to_string()).unwrap();
+        let listing = store.list_excel().unwrap();
+        assert_eq!(listing["files"][0]["tooLarge"], true);
+        assert_eq!(listing["files"][0]["nativeTooLarge"], false);
+        assert!(store.read_excel("native-only.xlsx".into()).is_err());
+        let rule = Rule {
+            kind: "week".into(),
+            start: "2026-11-16".into(),
+            format: Some("legacy".into()),
+            ..Default::default()
+        };
+        let rev = listing["revision"].as_i64().unwrap();
+        let sig = listing["files"][0]["signature"].as_str().unwrap();
+        assert!(store.set_rule_checked("native-only.xlsx".into(),
+            rule.clone(), rev, folder.to_string_lossy().to_string(),
+            sig.into()).is_ok());
+        f.set_len(51 * 1024 * 1024).unwrap();
+        let refreshed = store.list_excel().unwrap();
+        assert_eq!(refreshed["files"][0]["nativeTooLarge"], true);
+        assert_eq!(refreshed["files"][0]["tooLarge"], true);
+        let current = refreshed["revision"].as_i64().unwrap();
+        assert!(store.set_rule_checked("native-only.xlsx".into(), rule, current,
+            folder.to_string_lossy().to_string(),
+            refreshed["files"][0]["signature"].as_str().unwrap().into()).is_err());
+        assert_eq!(store.revision().unwrap(), current);
+    }
+
+    #[test]
     fn full_leap_year_round_trips_and_duplicate_replacement_rolls_back() {
         let tmp = tempdir().unwrap();
         let original = leap_year_source();
