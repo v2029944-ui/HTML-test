@@ -3,7 +3,7 @@
 //! bounded parse, verifies the exact reviewed digest, then invokes C3's atomic
 //! revision-checked publication. No report JSON enters the WebView.
 use crate::storage::{ImportConfirmation, ImportCounts, ImportJob, ImportPreview, ImportReceipt, Storage};
-use analiz_import_core::{Limits, PreparedImport, QualityCounts, SourceDiagnostics, StageArea, WideOptions};
+use analiz_import_core::{LegacyOptions, Limits, PreparedImport, QualityCounts, SourceDiagnostics, StageArea, WideOptions};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{path::Path, sync::{atomic::AtomicBool, Arc}};
@@ -71,14 +71,15 @@ fn with_prepared<T>(
     let preview=store.preview_import(&prepared)?;
     action(&prepared,&preview,&options)
 }
-fn review(
+fn review<T: serde::Serialize>(
     prepared: &PreparedImport<'_>,
     preview: &ImportPreview,
-    options: &WideOptions,
+    options: &T,
+    domain: &[u8],
 ) -> Result<NativeWideReview,String> {
     let mut hash=Sha256::new();
     let identity=preview.review_identity();
-    hash.update(b"wide-manual-review-v1\0");
+    hash.update(domain);
     hash.update(serde_json::to_vec(&(
         prepared.source_hash(),prepared.source_name(),prepared.source_folder(),
         preview.revision(),preview.counts(),prepared.quality(),
@@ -150,7 +151,7 @@ pub async fn native_wide_import_preview(
     tauri::async_runtime::spawn_blocking(move || {
         let storage=app.state::<Storage>();
         with_prepared(&storage,&source,options,|prepared,preview,options| {
-            review(prepared,preview,options)
+            review(prepared,preview,options,b"wide-manual-review-v1\0")
         })
     }).await.map_err(|e|e.to_string())?
 }
@@ -168,7 +169,7 @@ pub async fn native_wide_import_apply(
         }
         let storage=app.state::<Storage>();
         with_prepared(&storage,&source,options,|prepared,preview,options| {
-            let current=review(prepared,preview,options)?;
+            let current=review(prepared,preview,options,b"wide-manual-review-v1\0")?;
             if current.review_token!=review_token {
                 return Err("Source, report quality, conflicts or database changed. Preview again.".into());
             }
@@ -198,6 +199,98 @@ pub async fn native_wide_import_apply(
                 replace_exact:confirmation.replace_exact,
                 accept_cross_type:confirmation.accept_cross_type,
                 replace_source:false, // manual mode; no folder-lifecycle bypass
+                accept_quality:confirmation.accept_quality,
+            };
+            let job=ImportJob::new();
+            storage.apply_import(prepared,preview,flags,&job,|_|{})
+        })
+    }).await.map_err(|e|e.to_string())?
+}
+
+
+/// The ordinary triple-column Excel format uses the same two-stage,
+/// disk-backed native import, with a separately domain-bound review token.
+fn with_legacy_prepared<T>(
+    store: &Storage,
+    source: &str,
+    options: LegacyOptions,
+    action: impl FnOnce(&PreparedImport<'_>, &ImportPreview, &LegacyOptions) -> Result<T,String>,
+) -> Result<T,String> {
+    if source.len()>32767 { return Err("Excel path is too long".into()); }
+    let path=Path::new(source);
+    if !path.is_absolute() || !path.extension().and_then(|e|e.to_str()).is_some_and(|e|e.eq_ignore_ascii_case("xlsx")) {
+        return Err("Choose an absolute .xlsx file".into());
+    }
+    store.revision()?;
+    let area=StageArea::open(store.root().join("native-import-stages"))
+        .map_err(|e|e.to_string())?;
+    let cancelled=Arc::new(AtomicBool::new(false));
+    let mut stage=area.ingest(path,Limits::default(),&cancelled,|_|{})
+        .map_err(|e|e.to_string())?;
+    stage.convert_legacy(&options,&cancelled,|_|{})
+        .map_err(|e|e.to_string())?;
+    let prepared=stage.prepare(&cancelled,|_|{})
+        .map_err(|e|e.to_string())?;
+    let preview=store.preview_import(&prepared)?;
+    action(&prepared,&preview,&options)
+}
+
+#[tauri::command]
+pub async fn native_legacy_import_preview(
+    app: tauri::AppHandle,
+    source: String,
+    options: LegacyOptions,
+) -> Result<NativeWideReview,String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage=app.state::<Storage>();
+        with_legacy_prepared(&storage,&source,options,|prepared,preview,options| {
+            review(prepared,preview,options,b"legacy-manual-review-v1\0")
+        })
+    }).await.map_err(|e|e.to_string())?
+}
+
+#[tauri::command]
+pub async fn native_legacy_import_apply(
+    app: tauri::AppHandle,
+    source: String,
+    options: LegacyOptions,
+    review_token: String,
+    confirmation: NativeWideConfirmation,
+) -> Result<ImportReceipt,String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if review_token.len()!=64 || !review_token.bytes().all(|b|b.is_ascii_hexdigit()) {
+            return Err("Invalid import review token".into());
+        }
+        let storage=app.state::<Storage>();
+        with_legacy_prepared(&storage,&source,options,|prepared,preview,options| {
+            let current=review(prepared,preview,options,b"legacy-manual-review-v1\0")?;
+            if current.review_token!=review_token {
+                return Err("Excel, report quality, conflicts or SQLite changed. Preview again.".into());
+            }
+            if preview.counts().replacements>0 && !confirmation.replace_exact {
+                return Err("Replacing existing reports requires confirmation.".into());
+            }
+            if preview.counts().cross_type_overlaps>0 && !confirmation.accept_cross_type {
+                return Err("Overlapping report types require confirmation.".into());
+            }
+            if preview.quality().requires_acknowledgment() && !confirmation.accept_quality {
+                return Err("Excel quality warnings require confirmation.".into());
+            }
+            if preview.counts().replacements>0 {
+                let destination=confirmation.backup_destination.as_deref()
+                    .ok_or("Verified SQLite backup required before replacement.")?;
+                if destination.len()>32767 {
+                    return Err("SQLite backup path too long".into());
+                }
+                let backed_revision=storage.backup_sqlite_verified(Path::new(destination))?;
+                if backed_revision!=preview.revision() {
+                    return Err("SQLite changed during backup. Preview again.".into());
+                }
+            }
+            let flags=ImportConfirmation {
+                replace_exact:confirmation.replace_exact,
+                accept_cross_type:confirmation.accept_cross_type,
+                replace_source:false, // manual import cannot bypass source ownership
                 accept_quality:confirmation.accept_quality,
             };
             let job=ImportJob::new();
