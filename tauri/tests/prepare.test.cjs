@@ -28,8 +28,13 @@ test('bridge passes load, save and configured Excel directory operations to nati
   await window.desktopAPI.save({reports:[],settings:{}});
   await window.desktopAPI.chooseFolder();
   await window.desktopAPI.setRule('Анализ.xlsx',{type:'week',start:'2026-10-19'});
+  await window.desktopAPI.nativeSetRuleChecked('Анализ.xlsx',{type:'week',start:'2026-10-19'},42,'C:/Reports','10:11:12');
   const methods=calls.map(x=>x[0]);
-  assert.deepEqual(methods,['load_data','save_data','set_folder','set_rule']);
+  assert.deepEqual(methods,['load_data','save_data','set_folder','set_rule','native_set_rule_checked']);
+  assert.deepEqual(calls[4][1],{
+    name:'Анализ.xlsx',rule:{type:'week',start:'2026-10-19'},
+    revision:42,folder:'C:/Reports',signature:'10:11:12'
+  });
 });
 
 test('native command bridge is absent from the original browser-only HTML',()=>{
