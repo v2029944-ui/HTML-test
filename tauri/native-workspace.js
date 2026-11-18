@@ -22,6 +22,7 @@ $('backupSqlite').disabled=backupBusy||exportBusy||analysisBusy||workBusy||refre
 $('restoreChoose').disabled=restoreBusy||backupBusy||analysisBusy||exportBusy||refreshBusy;
 $('restoreCopy').disabled=restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy;
 $('restoreSchedule').disabled=restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy;
+$('restoreCancel').disabled=restoreBusy||backupBusy||analysisBusy||exportBusy||refreshBusy;
 $('analysisPrepare').disabled=analysisBusy||refreshBusy||exportBusy||revision===null;
 $('analysisCancel').disabled=!analysisBusy;
 $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!analysisReady;
@@ -178,6 +179,20 @@ async function scheduleRestoreAtStartup(){
  }catch(err){status('restoreStatus',restoreError(err),true);}
  finally{restoreBusy=false;controlState();}
 }
+async function cancelScheduledRestore(){
+ if(restoreBusy||backupBusy||analysisBusy||exportBusy||refreshBusy)return;
+ if(!window.confirm('Отменить запланированное восстановление? Рабочая база не изменится.'))return;
+ restoreBusy=true;controlState();
+ try{
+  const removed=await api.nativeRestoreCancel();
+  restoreSelection=null;
+  status('restoreStatus',removed?
+    'Отложенное восстановление отменено. Рабочая база сохранена.':
+    'Запланированных восстановлений нет. Рабочая база не изменена.');
+ }catch(err){status('restoreStatus',restoreError(err),true);}
+ finally{restoreBusy=false;controlState();}
+}
+$('restoreCancel').addEventListener('click',cancelScheduledRestore);
 $('restoreSchedule').addEventListener('click',scheduleRestoreAtStartup);
 $('restoreChoose').addEventListener('click',inspectBackup);
 $('restoreCopy').addEventListener('click',writeRestoreCopy);
