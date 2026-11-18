@@ -540,6 +540,13 @@ fn native_restore_launch_info(
 }
 
 #[tauri::command]
+async fn native_restore_cancel(app: tauri::AppHandle) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Storage>().cancel_scheduled_restore()
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 fn get_info(store: State<'_, Storage>) -> Result<serde_json::Value, String> {
     store.info()
 }
@@ -608,7 +615,7 @@ fn main() {
             native_analysis_index_page, native_analysis_index_settings, native_analysis_range,
             native_analysis_organizations, native_analysis_range_page,
             native_export_range_csv, native_backup_sqlite, native_restore_preview, native_restore_copy,
-            native_restore_schedule, native_restore_launch_info,
+            native_restore_schedule, native_restore_launch_info, native_restore_cancel,
             native_wide_import_preview, native_wide_import_apply,
             native_metric_kinds, native_metric_preview, native_metric_apply, native_metric_summary,
             native_metric_xlsx_profiles, native_metric_xlsx_preview, native_metric_xlsx_apply,
