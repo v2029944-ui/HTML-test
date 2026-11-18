@@ -25,7 +25,7 @@ pub use analytics::*;
 mod backup;
 #[path = "metric_reports.rs"]
 mod metric_reports;
-pub use metric_reports::{MetricKind, MetricReceipt, MetricReview, MetricSummary};
+pub use metric_reports::{kinds as metric_kinds, MetricKind, MetricReceipt, MetricReview, MetricSummary};
 
 #[path = "read_model.rs"]
 mod read_model;
