@@ -87,14 +87,18 @@ fn review(
     while let Some(report)=prepared.next_report(after).map_err(|e|e.to_string())? {
         if samples.len()<12 {
             samples.push(NativeReportSample {
-                id:report.id.clone(),kind:report.kind.clone(),
+                id:report.info.id.clone(),kind:report.kind.clone(),
                 start:report.start.clone(),end:report.end.clone(),
                 rows:report.rows,issues:report.quality.issues,
             });
         }
+        // The C3 prepared report ID and document SHA contain a random stage
+        // operation ID; those are deliberately NOT part of the review token.
+        // Hash stable converted metadata + source SHA instead, so a second
+        // fully validated parse can match the review without replaying stage IDs.
         hash.update(serde_json::to_vec(&(
-            report.ordinal,&report.id,&report.kind,&report.start,&report.end,
-            report.rows,&report.sha256,&report.quality,&report.provenance,
+            report.ordinal,&report.info,&report.kind,&report.start,&report.end,
+            report.rows,&report.quality,&report.provenance,
         )).map_err(|e|e.to_string())?);
         after=report.ordinal;
         reports+=1;
