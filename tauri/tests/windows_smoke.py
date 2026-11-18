@@ -265,7 +265,17 @@ def run():
                 assert page.locator('#analysisValues .metric').count()==9
                 assert page.locator('#analysisValues .metric').nth(3).locator('strong').inner_text()=='—'
                 assert page.locator('#analysisValues .metric').nth(4).locator('strong').inner_text()=='—'
+                # D4d comparison derives complete/incomplete per-division rows
+                # through bounded D2 SQL, not through JS history data.
+                wait_for_app_state(page,
+                    'document.querySelectorAll("#divisionRows tr").length > 0',
+                    'Native organization summary table')
+                assert all(row.locator('td').nth(4).inner_text()=='—'
+                    for row in page.locator('#divisionRows tr').all())
+                assert all(row.locator('td').nth(2).inner_text()!='0'
+                    for row in page.locator('#divisionRows tr').all())
                 report['checks'].append('D2 incomplete SQL range keeps missing totals null')
+                report['checks'].append('Native division comparison preserves unknown incomplete amounts')
                 report['checks'].append('SQL-only native page, bounded report navigation, settings bootstrap')
                 page.locator('#legacyWorkspaceLink').click()
                 wait_for_app_state(page,'Boolean(window.appReady)','Legacy workspace after native route')

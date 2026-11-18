@@ -84,3 +84,17 @@ test('native D2 analytics leases and bounded page parameters are forwarded witho
  assert.equal((await summary).complete,false);
  assert.equal(window.tauriOperations.reads,0);
 });
+
+test('native division comparison forwards only a bounded SQL scope and balances reads',async()=>{
+ const calls=[],pending=[],window={__TAURI__:{core:{invoke:(command,args)=>{calls.push({command,args});return new Promise((resolve,reject)=>pending.push({resolve,reject}));}},dialog:{open:async()=>null}}};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../bridge.js'),'utf8'),{window,setInterval(){},clearInterval(){}});
+ const rows=window.desktopAPI.nativeAnalysisOrganizations(13,'month','2024-01-01','2024-12-01',['СМУ16','АВТО']);
+ assert.equal(window.tauriOperations.reads,1);
+ assert.equal(calls[0].command,'native_analysis_organizations');
+ assert.equal(calls[0].args.revision,13);
+ assert.equal(calls[0].args.reportType,'month');
+ assert.equal(calls[0].args.organizations.length,2);
+ pending[0].resolve([{org:'СМУ16',complete:false,missing:2,total:{amount:null}}]);
+ assert.equal((await rows)[0].total.amount,null);
+ assert.equal(window.tauriOperations.reads,0);
+});
