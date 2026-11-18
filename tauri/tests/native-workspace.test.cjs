@@ -29,7 +29,7 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreSelected','restoreStatus'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
@@ -56,6 +56,7 @@ function mount(){
      return {reportCount:366,restartRequired:true};
    },
    nativeRestoreLaunchInfo:async()=>null,
+   nativeRestoreCancel:async()=>{calls.push({kind:'restore_cancel'});return true;},
    chooseCsvPath:async defaultPath=>{calls.push({kind:'save_csv',defaultPath});return 'C:/Exports/new.csv';},
    nativeExportRangeCsv:async(rev,kind,from,to,organizations,organization,destination)=>{
      calls.push({kind:'export_csv',rev,reportType:kind,from,to,organizations,organization,destination});
@@ -265,4 +266,7 @@ test('requesting live SQLite restore requires explicit review, confirmation and 
  assert.match(e.restoreStatus.textContent,/Полностью закройте приложение/);
  assert.equal(e.restoreSchedule.disabled,true);
  assert.equal(calls.some(c=>c.kind==='sqlite_backup'),false,'do not overwrite or back up live SQLite in the running WebView');
+ await e.restoreCancel.events.click();
+ assert.equal(calls.filter(c=>c.kind==='restore_cancel').length,1);
+ assert.match(e.restoreStatus.textContent,/отменено/);
 });
