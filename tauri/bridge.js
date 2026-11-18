@@ -13,6 +13,9 @@
   }
   window.desktopAPI=Object.freeze({
     load:()=>invoke('load_data'),
+    nativeRevision:()=>tracked('native_read_revision',{},'reads'),
+    nativeReportPage:(revision,filter,after=null,limit=100)=>tracked(
+      'native_report_page',{revision,filter,after,limit},'reads'),
     save:data=>tracked('save_data',{data},'saves'),
     info:()=>invoke('get_info'),
     chooseFolder:async()=>{

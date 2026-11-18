@@ -21,3 +21,25 @@ test('shared Excel lifetime guard restores counters on error and refuses import 
  await assert.rejects(run(()=>{throw Error('parse');}),/parse/);assert.equal(context.state.excelImports,0);
  context.state.appUpdating=true;await assert.rejects(run(()=>{}),/обновления/);
 });
+
+test('native report browsing holds a read lease, forwards bounded cursor, and blocks updates',async()=>{
+ const calls=[],pending=[],window={__TAURI__:{core:{invoke:(command,args)=>{calls.push({command,args});return new Promise((resolve,reject)=>pending.push({resolve,reject}));}},dialog:{open:async()=>null}}};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../bridge.js'),'utf8'),{window,setInterval(){},clearInterval(){}});
+ const revision=window.desktopAPI.nativeRevision();
+ assert.equal(window.tauriOperations.reads,1);
+ assert.equal(calls[0].command,'native_read_revision');
+ pending[0].resolve(7);assert.equal(await revision,7);
+ const page=window.desktopAPI.nativeReportPage(7,{report_type:'day'},{start:'2026-11-01',id:'r1'},25);
+ assert.equal(window.tauriOperations.reads,1);
+ assert.equal(calls[1].command,'native_report_page');
+ assert.equal(calls[1].args.revision,7);
+ assert.equal(calls[1].args.filter.report_type,'day');
+ assert.equal(calls[1].args.after.id,'r1');
+ assert.equal(calls[1].args.limit,25);
+ pending[1].reject(Error('Stale storage revision'));
+ await assert.rejects(page,/Stale/);
+ assert.equal(window.tauriOperations.reads,0);
+ window.tauriOperations.updating=true;
+ await assert.rejects(window.desktopAPI.nativeRevision(),/обновления/);
+ assert.equal(calls.length,2);
+});
