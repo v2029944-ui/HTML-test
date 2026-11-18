@@ -683,9 +683,10 @@ mod tests {
         };
         let rev = listing["revision"].as_i64().unwrap();
         let sig = listing["files"][0]["signature"].as_str().unwrap();
-        assert!(store.set_rule_checked("native-only.xlsx".into(),
+        let saved = store.set_rule_checked("native-only.xlsx".into(),
             rule.clone(), rev, folder.to_string_lossy().to_string(),
-            sig.into()).is_ok());
+            sig.into());
+        assert!(saved.is_ok(), "40-MiB native rule was rejected: {:?}", saved.err());
         f.set_len(101 * 1024 * 1024).unwrap();
         let refreshed = store.list_excel().unwrap();
         assert_eq!(refreshed["files"][0]["nativeTooLarge"], true);
