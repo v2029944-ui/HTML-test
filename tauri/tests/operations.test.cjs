@@ -134,3 +134,30 @@ test('CSV Save dialog only opts into tracked native streaming export',async()=>{
  await result;
  assert.equal(window.tauriOperations.saves,0);
 });
+
+test('native XLSX preview and apply use tracked reads/writes and OS filter dialog',async()=>{
+ const calls=[],pending=[],dialogs=[],window={__TAURI__:{core:{invoke:(command,args)=>{
+  calls.push({command,args});
+  return new Promise((resolve,reject)=>pending.push({resolve,reject}));
+ }},dialog:{open:async args=>{dialogs.push(args);return 'C:/Data/annual.xlsx';},save:async()=>null}}};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../bridge.js'),'utf8'),{window,setInterval(){},clearInterval(){}});
+ const path=await window.desktopAPI.chooseWideXlsx();
+ assert.equal(path,'C:/Data/annual.xlsx');
+ assert.equal(dialogs[0].filters[0].extensions[0],'xlsx');
+ const options={year:2024,organizations:['СМУ16','АВТО','ТРАК','ЦЕНТР'],sheets:[],mappings:{}};
+ const preview=window.desktopAPI.nativeWideImportPreview(path,options);
+ assert.equal(window.tauriOperations.reads,1);
+ assert.equal(calls[0].command,'native_wide_import_preview');
+ assert.equal(calls[0].args.source,path);
+ pending[0].resolve({reviewToken:'a'.repeat(64)});await preview;
+ assert.equal(window.tauriOperations.reads,0);
+ const confirmation={replaceExact:true,acceptCrossType:false,acceptQuality:true};
+ const save=window.desktopAPI.nativeWideImportApply(path,options,'a'.repeat(64),confirmation);
+ assert.equal(window.tauriOperations.saves,1);
+ assert.equal(calls[1].command,'native_wide_import_apply');
+ assert.equal(calls[1].args.reviewToken,'a'.repeat(64));
+ assert.equal(calls[1].args.confirmation.replaceExact,true);
+ pending[1].reject(Error('Source changed since ingestion'));
+ await assert.rejects(save,/Source changed/);
+ assert.equal(window.tauriOperations.saves,0);
+});

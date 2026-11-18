@@ -25,6 +25,7 @@ function prepare(options={}){
   fs.copyFileSync(path.join(__dirname,'updates.js'),path.join(output,'tauri-updates.js'));
   fs.copyFileSync(path.join(__dirname,'native-reader.js'),path.join(output,'tauri-native-reader.js'));
   fs.copyFileSync(path.join(__dirname,'native-workspace.js'),path.join(output,'tauri-native-workspace.js'));
+  fs.copyFileSync(path.join(__dirname,'native-wide-import.js'),path.join(output,'tauri-native-wide-import.js'));
   fs.copyFileSync(path.join(__dirname,'native-workspace.html'),path.join(output,'native-workspace.html'));
   const renderer=fs.readFileSync(path.join(__dirname,'folder-importer.js'),'utf8');
   // The folder importer uses Tauri's compatible API; adjust only storage hints.

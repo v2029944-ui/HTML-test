@@ -312,6 +312,30 @@ def run():
                     raise RuntimeError('Native SQL export overwrote an existing CSV')
                 assert export_path.read_bytes()==exported
                 report['checks'].append('Native SQL CSV export with UTF-8 BOM and no-overwrite guarantee')
+                # E1: native wide import must be inspected and explicitly
+                # approved; repeat preparation validates same source/DB content
+                # before publishing new report documents atomically.
+                native_options={'year':2024,'sheets':[],'mappings':{},
+                    'organizations':['СМУ16','АВТО','ТРАК','ЦЕНТР']}
+                native_preview=page.evaluate(
+                    'async args => window.__TAURI__.core.invoke("native_wide_import_preview",args)',
+                    {'source':str(excel),'options':native_options})
+                assert native_preview['reportCount']==366
+                assert native_preview['rowCount']>0
+                assert native_preview['conflicts']['replacements']==366
+                token=native_preview['reviewToken']
+                assert len(token)==64
+                receipt=page.evaluate(
+                    'async args => window.__TAURI__.core.invoke("native_wide_import_apply",args)',
+                    {'source':str(excel),'options':native_options,'reviewToken':token,
+                     'confirmation':{'replaceExact':True,'acceptCrossType':True,'acceptQuality':True}})
+                assert receipt['reports']==366
+                assert receipt['replaced']==366
+                assert receipt['revision']>native_preview['revision']
+                updated=page.evaluate('window.desktopAPI.load()')
+                assert len(updated['reports'])==366
+                assert all(r.get('sourceFormat')=='daily-wide' for r in updated['reports'])
+                report['checks'].append('reviewed native wide XLSX preview and atomic 366-report replacement')
                 report['checks'].append('SQL-only native page, bounded report navigation, settings bootstrap')
                 page.locator('#legacyWorkspaceLink').click()
                 wait_for_app_state(page,'Boolean(window.appReady)','Legacy workspace after native route')
