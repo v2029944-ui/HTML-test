@@ -26,6 +26,9 @@ mod backup;
 #[path = "recovery.rs"]
 mod recovery;
 pub use recovery::RestorePreview;
+#[path = "activation.rs"]
+mod activation;
+pub use activation::{AppRestoreLock, RestoreLaunchInfo, RestoreLaunchResult, ScheduledRestore, apply_pending_restore};
 #[path = "metric_reports.rs"]
 mod metric_reports;
 pub use metric_reports::{kinds as metric_kinds, MetricKind, MetricReceipt, MetricReview, MetricSummary};
