@@ -354,7 +354,10 @@
   }
   function scheduleSync(){
     clearTimeout(scheduleTimer);
-    scheduleTimer=setTimeout(async()=>{await showFiles();await syncFiles();},1800);
+    scheduleTimer=setTimeout(async()=>{
+      try{await showFiles();await syncFiles();}
+      catch(err){message('Не удалось проверить изменения в папке Excel: '+err.message,true);}
+    },1800);
   }
   choose.addEventListener('click',async()=>{
     try{
