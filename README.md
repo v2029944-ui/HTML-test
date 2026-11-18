@@ -53,7 +53,7 @@ HTML-test анализирует отчёты о выполненных рабо
 
 **Новый установщик 0.1.3 ещё не запускался в настоящей Windows/WebView2.** Подтверждены кросс-сборка, версия и архитектура PE, содержимое установщика и локальные тесты; результаты прежней GUI-проверки беты не заменяют испытание этого EXE.
 
-> Прежние исходники Electron остаются для совместимости; разработка версии 0.1.3 ведётся на Tauri. Их очистка подготовлена в [PR #13](https://github.com/v2029944-ui/HTML-test/pull/13). Tauri пока использует общий модуль импорта `desktop/renderer.js`.
+В исходниках этой ветки устаревший Electron удалён, а Tauri использует `tauri/folder-importer.js`. Уже опубликованные Electron EXE в GitHub Releases не изменяются. Однократная миграция прежних `reports.json` и `desktop-config.json` в SQLite сохранена.
 
 ## Интерфейс
 
@@ -96,7 +96,7 @@ Excel, база отчётов и настройки не отправляютс
 Сборка Tauri и Windows-проверка описаны в [tauri/README.md](tauri/README.md). Для текущих исходников предусмотрены:
 
 ```text
-node --test tauri/tests/*.test.cjs tests/*.cjs desktop/core.test.cjs
+node --test tauri/tests/*.test.cjs tests/*.cjs
 python -m unittest discover -s tests -v
 cargo test --manifest-path tauri/src-tauri/Cargo.toml
 ```

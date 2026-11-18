@@ -1,4 +1,4 @@
-// Выполняется только внутри Electron; обычный index.html работает без этого файла.
+// Модуль импорта из папки для Tauri; автономный index.html работает без этого файла.
 (async function desktopWorkspace(){
   'use strict';
   if(!window.desktopAPI)return;

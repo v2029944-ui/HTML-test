@@ -52,7 +52,7 @@
 ## Проверки
 
 ```
-node --test tests/*.cjs tauri/tests/*.test.cjs desktop/core.test.cjs
+node --test tests/*.cjs tauri/tests/*.test.cjs
 PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
 cargo test --manifest-path tauri/src-tauri/Cargo.toml
 ```

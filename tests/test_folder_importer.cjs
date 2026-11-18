@@ -3,7 +3,7 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const vm=require('node:vm');
-const source=fs.readFileSync(require('node:path').join(__dirname,'../desktop/renderer.js'),'utf8');
+const source=fs.readFileSync(require('node:path').join(__dirname,'../tauri/folder-importer.js'),'utf8');
 const html=fs.readFileSync(require('node:path').join(__dirname,'../index.html'),'utf8');
 const dateHelpers=html.slice(html.indexOf('function normalized('),html.indexOf('// Prefixes precede substrings'))+
  html.slice(html.indexOf('function readTripleColumns('),html.indexOf('function parseSheet('))+

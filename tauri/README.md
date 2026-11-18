@@ -27,7 +27,7 @@ Tauri использует системный WebView2 на Windows и инте�
 
 [Описание 0.1.3](../docs/TAURI_013.md) · [Сборка без Actions](../docs/TAURI_WITHOUT_ACTIONS.md) · [Прежняя GUI-проверка беты](../docs/TAURI_PREVIEW.md).
 
-Прежний Electron сохранён для совместимости; версия 0.1.3 использует только Tauri. Общий модуль импорта пока находится в `desktop/renderer.js`; очистка исходников подготовлена отдельно в [PR #13](https://github.com/v2029944-ui/HTML-test/pull/13).
+В исходниках этой ветки устаревший Electron удалён. Его ранее опубликованные EXE не изменяются; для Tauri сохраняется миграция прежних пользовательских JSON-файлов.
 
 ## Устройство программы
 
@@ -35,7 +35,7 @@ Tauri использует системный WebView2 на Windows и инте�
 - `prepare.cjs` — создаёт `tauri/web/` и добавляет только в эту копию Tauri-скрипты.
 - `bridge.js` — совместимый интерфейс `window.desktopAPI` к Rust-командам и SQLite.
 - `updates.js` — интерфейс проверки и подтверждения подписанных обновлений.
-- `../desktop/renderer.js` — пока ещё общий модуль импорта из папки, используемый Tauri через `prepare.cjs`. Перенос в `tauri/` предложен в PR #13; удалять файл до переноса нельзя.
+- `folder-importer.js` — модуль импорта Excel из выбранной папки. При подготовке frontend он включается только в Tauri; автономная HTML-версия не изменяется.
 - `src-tauri/src/storage.rs` и `src-tauri/src/main.rs` — SQLite, миграция, работа с папками и команды приложения.
 - `import-core/` — отдельный Rust-модуль потокового чтения и конвертации обычных и широких дневных XLSX во временной SQLite. Он **не сохраняет данные в пользовательской базе** и пока не подключён к командам Tauri. [Текущий статус](../docs/NATIVE_IMPORT_PROGRESS.md).
 
@@ -62,14 +62,14 @@ Tauri использует системный WebView2 на Windows и инте�
 
 ```powershell
 npm install --prefix tauri
-node --test tauri/tests/*.test.cjs tests/*.cjs desktop/core.test.cjs
+node --test tauri/tests/*.test.cjs tests/*.cjs
 npm --prefix tauri run prepare:frontend
 npm --prefix tauri run icons
 cargo test --manifest-path tauri/src-tauri/Cargo.toml
 npm --prefix tauri run build:windows
 ```
 
-Готовый NSIS-установщик появляется в `tauri/src-tauri/target/release/bundle/nsis/`. Команда `build:windows` создаёт локальную сборку без настройки публикации обновлений. Тесты `desktop/core.test.cjs` остаются в команде, пока существующий общий модуль не перенесён по PR #13.
+Готовый NSIS-установщик появляется в `tauri/src-tauri/target/release/bundle/nsis/`. Команда `build:windows` создаёт локальную сборку без настройки публикации обновлений. Тесты папочного импорта находятся в `tests/test_folder_importer.cjs`; устаревшие Electron-тесты исключены.
 
 ### Подписанные обновления
 
