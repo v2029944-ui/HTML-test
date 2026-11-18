@@ -236,6 +236,32 @@ fn with_legacy_prepared<T>(
 }
 
 #[tauri::command]
+pub async fn native_legacy_import_sheets(
+    app: tauri::AppHandle,
+    source: String,
+) -> Result<Vec<String>,String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if source.len()>32767 {
+            return Err("Excel path too long".into());
+        }
+        let path=Path::new(&source);
+        if !path.is_absolute() || !path.extension().and_then(|e|e.to_str())
+            .is_some_and(|e|e.eq_ignore_ascii_case("xlsx"))
+        {
+            return Err("Choose an absolute .xlsx file".into());
+        }
+        let storage=app.state::<Storage>();
+        storage.revision()?;
+        let area=StageArea::open(storage.root().join("native-import-stages"))
+            .map_err(|e|e.to_string())?;
+        let cancel=AtomicBool::new(false);
+        let stage=area.ingest(path,Limits::default(),&cancel,|_|{})
+            .map_err(|e|e.to_string())?;
+        stage.worksheet_components().map_err(|e|e.to_string())
+    }).await.map_err(|e|e.to_string())?
+}
+
+#[tauri::command]
 pub async fn native_legacy_import_preview(
     app: tauri::AppHandle,
     source: String,
