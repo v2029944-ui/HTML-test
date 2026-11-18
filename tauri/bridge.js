@@ -43,6 +43,12 @@
     nativeWideImportPreview:(source,options)=>tracked('native_wide_import_preview',{source,options},'reads'),
     nativeWideImportApply:(source,options,reviewToken,confirmation)=>tracked(
       'native_wide_import_apply',{source,options,reviewToken,confirmation},'saves'),
+    nativeLegacyImportSheets:source=>tracked(
+      'native_legacy_import_sheets',{source},'reads'),
+    nativeLegacyImportPreview:(source,options)=>tracked(
+      'native_legacy_import_preview',{source,options},'reads'),
+    nativeLegacyImportApply:(source,options,reviewToken,confirmation)=>tracked(
+      'native_legacy_import_apply',{source,options,reviewToken,confirmation},'saves'),
     chooseSqliteBackupPath:async defaultPath=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
       if(typeof tauri.dialog.save!=='function')throw Error('Диалог резервного копирования недоступен.');
@@ -91,6 +97,8 @@
     },
     list:()=>invoke('list_excel'),
     setRule:(name,rule)=>tracked('set_rule',{name,rule},'saves'),
+    nativeSetRuleChecked:(name,rule,revision,folder,signature)=>tracked(
+      'native_set_rule_checked',{name,rule,revision,folder,signature},'saves'),
     readExcel:name=>tracked('read_excel',{name},'reads'),
     checkExcel:(name,signature)=>invoke('check_excel',{name,signature}),
     openDataFolder:()=>invoke('open_data_folder'),
