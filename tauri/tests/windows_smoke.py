@@ -231,6 +231,21 @@ def run():
                 page.locator('#openNativeWorkspace').click()
                 wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)','Native SQLite workspace startup')
                 page.evaluate('window.nativeWorkspaceReady')
+                # SQL source panel must only enumerate Excel metadata via Rust.
+                wait_for_app_state(page, 'Boolean(window.nativeFolderReady)', 'SQL source folder startup')
+                page.evaluate('window.nativeFolderReady')
+                page.evaluate('async folder => window.__TAURI__.core.invoke("set_folder", {folder})', str(tmp))
+                page.locator('#sourceFolderRefresh').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#sourceFolderRows tr td")?.textContent === "synthetic-year.xlsx"',
+                    'SQL source folder metadata')
+                assert page.locator('#sourceFolderRows tr').count()==1
+                assert '1' in page.locator('#sourceFolderCount').inner_text()
+                # set_folder changed the SQLite config revision; reload the bounded
+                # read model so subsequent range queries do not use a stale revision.
+                assert page.evaluate('window.nativeWorkspaceRefresh()') is True
+                assert page.evaluate("typeof window.appReady === 'undefined'")
+                report['checks'].append('SQL-only folder metadata, no full-history bootstrap or implicit import')
                 # Opt in to SQL-first startup; the setting must survive closing WebView2.
                 page.locator('#sqlStartupPreference').check()
                 assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") == 'sql'

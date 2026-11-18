@@ -43,6 +43,11 @@ function setup(options={}){
    }
  };
  const window={desktopAPI:api,confirm:()=>{confirmCount++;return true;}};
+ if(options.refresh!==undefined)window.nativeWorkspaceRefresh=async()=>{
+   calls.push({kind:'refresh'});
+   if(options.refresh==='reject')throw Error('view unavailable');
+   return options.refresh===true;
+ };
  const document={getElementById:id=>elements[id],createElement:tag=>new Node(tag)};
  vm.runInNewContext(fs.readFileSync(filename,'utf8'),{window,document});
  return {elements,calls,window,confirmCount:()=>confirmCount};
@@ -150,4 +155,38 @@ test('new daily reports without replacement do not require an unrelated backup',
  assert.equal(calls.filter(c=>c.kind==='backup').length,0);
  assert.equal(calls.filter(c=>c.kind==='apply').length,1);
  assert.equal(calls.at(-1).confirmation.backupDestination,null);
+});
+
+test('a committed import refreshes only native SQL pages, never full history',async()=>{
+ const {elements:e,calls}=setup({refresh:true,preview:{
+   reviewToken:'d'.repeat(64),reportCount:1,rowCount:2,revision:7,
+   conflicts:{new_reports:1,replacements:0,cross_type_overlaps:0},
+   quality:{issues:0,mismatch_reports:0,relevant_source_issues:0},
+   sampleReports:[],sampleReportIssues:[],sampleSourceIssues:[]
+ }});
+ await e.wideChoose.events.click();
+ await e.widePreview.events.click();
+ await e.wideApply.events.click();
+ assert.deepEqual(calls.slice(-2).map(x=>x.kind),['apply','refresh']);
+ assert.match(e.wideStatus.textContent,/Сводка SQLite обновлена/);
+ assert.equal(calls.some(x=>x.kind==='load'),false);
+});
+
+test('if native view refresh fails, successful SQLite commit stays successful',async()=>{
+ for(const refresh of ['reject',false]){
+   const {elements:e,calls}=setup({refresh,preview:{
+     reviewToken:'d'.repeat(64),reportCount:1,rowCount:2,revision:7,
+     conflicts:{new_reports:1,replacements:0,cross_type_overlaps:0},
+     quality:{issues:0,mismatch_reports:0,relevant_source_issues:0},
+     sampleReports:[],sampleReportIssues:[],sampleSourceIssues:[]
+   }});
+   await e.wideChoose.events.click();
+   await e.widePreview.events.click();
+   await e.wideApply.events.click();
+   assert.equal(calls.some(x=>x.kind==='apply'),true);
+   assert.equal(e.wideApply.disabled,true);
+   assert.match(e.wideStatus.textContent,/Сохранено отчётов/);
+   assert.match(e.wideStatus.textContent,/Нажмите «Обновить данные»/);
+   assert.doesNotMatch(e.wideStatus.textContent,/Импорт не сохранён/);
+ }
 });
