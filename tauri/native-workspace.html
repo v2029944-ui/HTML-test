@@ -140,9 +140,14 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </div>
 <p id="metricKindCount" class="intro">Показатели загруженных отчётов. Пустые даты — всё время.</p>
 <div id="metricKindTotals" class="overview"></div>
-<div class="controls"><button type="button" id="metricKindChoose">Выбрать JSON-отчёт</button>
-<button type="button" id="metricKindApply" disabled>Подтвердить импорт</button></div>
-<p id="metricKindFile" class="intro">Новый вид отчёта использует описанные в каталоге показатели. Для импорта предусмотрен единый нормализованный JSON; адаптеры XLSX будут подключаться отдельно.</p>
+<div class="controls">
+<label for="metricXlsxProfile">Шаблон столбцов XLSX</label>
+<select id="metricXlsxProfile"></select>
+<button type="button" id="metricKindChooseXlsx">Выбрать XLSX по шаблону</button>
+<button type="button" id="metricKindChoose">Выбрать JSON-отчёт</button>
+<button type="button" id="metricKindApply" disabled>Подтвердить импорт</button>
+</div>
+<p id="metricKindFile" class="intro">Для Excel выберите шаблон и укажите даты «С» и «По» выше. Названия листов, заголовки и столбцы определяются шаблоном. Перед записью показывается проверенный результат. Дополнительно поддерживается нормализованный JSON.</p>
 <div id="metricKindPreview" class="overview"></div>
 <p id="metricKindStatus" class="status muted" role="status" aria-live="polite">Загрузка каталога видов отчётов…</p>
 </section>
