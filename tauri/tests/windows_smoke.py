@@ -249,6 +249,23 @@ def run():
                     'document.querySelector("#reportStatus")?.textContent.includes("На странице: 0")',
                     'Native SQLite filter without week reports')
                 assert page.locator('#reportRows tr').count()==0
+                # D4c: a type with no reports can be indexed without loading
+                # history, then its incomplete SQL range must have NULL totals.
+                page.locator('#analysisType').select_option('week')
+                page.locator('#analysisFrom').fill('2026-11-02')
+                page.locator('#analysisTo').fill('2026-11-09')
+                page.locator('#analysisPrepare').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#analysisRun")?.disabled === false',
+                    'Bounded SQL analysis index preparation')
+                page.locator('#analysisRun').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#analysisStatus")?.textContent.includes("не все периоды")',
+                    'SQL incomplete-range detection')
+                assert page.locator('#analysisValues .metric').count()==9
+                assert page.locator('#analysisValues .metric').nth(3).locator('strong').inner_text()=='—'
+                assert page.locator('#analysisValues .metric').nth(4).locator('strong').inner_text()=='—'
+                report['checks'].append('D2 incomplete SQL range keeps missing totals null')
                 report['checks'].append('SQL-only native page, bounded report navigation, settings bootstrap')
                 page.locator('#legacyWorkspaceLink').click()
                 wait_for_app_state(page,'Boolean(window.appReady)','Legacy workspace after native route')
