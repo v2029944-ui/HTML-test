@@ -76,7 +76,7 @@ try{
 finally{groupsBusy=false;controlState();}
 }
 async function refresh(){
-if(refreshBusy||reportsBusy||groupsBusy||analysisBusy||workBusy||exportBusy||backupBusy)return;
+if(refreshBusy||reportsBusy||groupsBusy||analysisBusy||workBusy||exportBusy||backupBusy)return false;
 refreshBusy=true;controlState();
 try{
  const snapshot=await api.nativeSettingsBootstrap();
@@ -94,9 +94,11 @@ try{
 }catch(err){
  revision=null;$('reportRows').replaceChildren();$('groupRows').replaceChildren();
  reportNext=null;groupNext=null;reportBack=[];groupBack=[];
- status('workspaceStatus','Невозможно открыть SQL-режим: '+String(err?.message||err),true);return;
+ status('workspaceStatus','Невозможно открыть SQL-режим: '+String(err?.message||err),true);return false;
 }finally{refreshBusy=false;controlState();}
-await reports(null,true);await groups(null,true);
+const reportsLoaded=await reports(null,true);
+const groupsLoaded=await groups(null,true);
+return reportsLoaded&&groupsLoaded;
 }
 
 async function backupSqlite(){
@@ -316,5 +318,7 @@ for(const id of ['analysisFrom','analysisTo','analysisOrganization']){
 }
 
 controlState();
+// Called only after a verified native SQLite commit; bounded pages, never full load_data.
+window.nativeWorkspaceRefresh=refresh;
 window.nativeWorkspaceReady=refresh();
 })();
