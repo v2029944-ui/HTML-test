@@ -27,6 +27,7 @@ function prepare(options={}){
   fs.copyFileSync(path.join(__dirname,'native-workspace.js'),path.join(output,'tauri-native-workspace.js'));
   fs.copyFileSync(path.join(__dirname,'native-folder-status.js'),path.join(output,'tauri-native-folder-status.js'));
   fs.copyFileSync(path.join(__dirname,'native-wide-import.js'),path.join(output,'tauri-native-wide-import.js'));
+  fs.copyFileSync(path.join(__dirname,'native-legacy-import.js'),path.join(output,'tauri-native-legacy-import.js'));
   fs.copyFileSync(path.join(__dirname,'native-metric-kinds.js'),path.join(output,'tauri-native-metric-kinds.js'));
   fs.copyFileSync(path.join(__dirname,'native-workspace.html'),path.join(output,'native-workspace.html'));
   fs.copyFileSync(path.join(__dirname,'startup.html'),path.join(output,'startup.html'));
