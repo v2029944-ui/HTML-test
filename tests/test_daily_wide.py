@@ -111,7 +111,7 @@ class DailyWideImport(unittest.TestCase):
             readExcel:async()=>({bytes:wideBytes,signature,sha256:'hash'}),checkExcel:async(name,value)=>value===signature,
             save:async data=>{writes++;window.saved=structuredClone(data)},onFilesChanged:()=>()=>{},setRule:async(name,value)=>{rule=value;return value}};
         }''',list(wide_xlsx(2024)))
-        self.page.add_script_tag(content=(ROOT/'desktop/renderer.js').read_text());self.page.wait_for_function('writes===1&&state.reports.length===366')
+        self.page.add_script_tag(content=(ROOT/'tauri/folder-importer.js').read_text());self.page.wait_for_function('writes===1&&state.reports.length===366')
         for width in [320,390,1280]:
             self.page.set_viewport_size({'width':width,'height':900})
             self.assertTrue(self.page.evaluate('document.documentElement.scrollWidth<=innerWidth'))
@@ -140,7 +140,7 @@ class DailyWideImport(unittest.TestCase):
             readExcel:async()=>({bytes:payload,signature:'1',sha256:'hash'}),checkExcel:async()=>true,
             save:async()=>{writes++},onFilesChanged:()=>()=>{},setRule:async(name,value)=>{rule=value;return value}};
         }''',list(wide_xlsx(2024)))
-        self.page.add_script_tag(content=(ROOT/'desktop/renderer.js').read_text())
+        self.page.add_script_tag(content=(ROOT/'tauri/folder-importer.js').read_text())
         self.page.wait_for_function('writes===1&&state.reports.length===1')
         self.assertEqual(self.page.evaluate('state.reports[0].type'),'week')
         self.assertEqual(self.page.evaluate('state.reports[0].sheetName'),'Legacy')

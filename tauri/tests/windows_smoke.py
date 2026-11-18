@@ -101,16 +101,20 @@ def run():
     installers=list((ROOT/'tauri/src-tauri/target/release/bundle/nsis').glob('*.exe'))
     if len(installers)!=1:raise RuntimeError('Expected one freshly built installer')
     output=ROOT/'tauri/test-artifacts';output.mkdir(exist_ok=True)
-    # The signed preview was copied before the test-only CDP-enabled build overwrote
-    # the bundle directory. Only the signed preview is uploaded to Actions artifacts.
+    # Production installer is preserved before building the isolated CDP-enabled bundle.
+    # For PRs this is unsigned; the release-preview branch retains its signed artifact.
+    unsigned_ci=os.environ.get('ANALIZ_SMOKE_UNSIGNED_CI')=='true'
     installer=output/'setup.exe';signature=output/'setup.exe.sig'
-    if not installer.is_file() or not signature.is_file():
-        raise RuntimeError('Original signed preview installer and signature must be preserved')
+    if not installer.is_file() or (not unsigned_ci and not signature.is_file()):
+        raise RuntimeError('Original installer (and signature for signed preview) must be preserved')
+    if unsigned_ci and signature.exists():
+        raise RuntimeError('Unsigned PR smoke must not reuse a signed-release artifact')
     gui_installer=installers[0]
     if hashlib.sha256(gui_installer.read_bytes()).digest()==hashlib.sha256(installer.read_bytes()).digest():
-        raise RuntimeError('GUI test bundle is not distinct from the signed production preview')
+        raise RuntimeError('GUI test bundle must differ from the distributable installer')
     report={'installer':str(installer.relative_to(ROOT)),'bytes':installer.stat().st_size,
             'sha256':hashlib.sha256(installer.read_bytes()).hexdigest(),
+            'mode':'unsigned PR' if unsigned_ci else 'signed preview',
             'gui_check':'separately compiled non-distributable WebView2 CDP build','checks':[]}
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print('INSTALLER_PATH='+report['installer'],flush=True);print('INSTALLER_BYTES='+str(report['bytes']),flush=True)

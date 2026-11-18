@@ -100,7 +100,7 @@ class PeriodDateEvidence(unittest.TestCase):
             save:async data=>{dateWrites++;window.dateSaved=data;},setRule:async()=>{dateRuleWrites++;},onFilesChanged:()=>()=>{}};
           state.reports=[{id:'kept',type:'day',start:'2025-01-01',end:'2025-01-01',fileName:'kept.xlsx',organizations:['СМУ16'],rows:[{organization:'СМУ16',work:'Keep',count:1,amount:1}],warnings:[],issues:[],totals:[],count:1,amount:1}];
         }''',{'start':start,'bytes':list(payload)})
-        self.page.add_script_tag(content=(ROOT/'desktop/renderer.js').read_text())
+        self.page.add_script_tag(content=(ROOT/'tauri/folder-importer.js').read_text())
     def test_folder_contradiction_preserves_rule_and_reports(self):
         self.folder('2026-10-19')
         self.page.wait_for_function("document.querySelector('#upload').textContent.includes('Дата правила не согласуется')")
