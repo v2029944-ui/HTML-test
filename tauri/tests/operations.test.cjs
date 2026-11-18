@@ -141,13 +141,13 @@ test('native online backup is only launched after Save dialog',async()=>{
   dialog:{open:async()=>null,save:async()=> 'C:/Backups/new.sqlite3'}
  }};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../bridge.js'),'utf8'),{window,setInterval(){},clearInterval(){}});
- const path=await window.desktopAPI.chooseSqliteBackupPath('new.sqlite3');
- assert.equal(path,'C:/Backups/new.sqlite3');
+ const destination=await window.desktopAPI.chooseSqliteBackupPath('new.sqlite3');
+ assert.equal(destination,'C:/Backups/new.sqlite3');
  assert.equal(calls.length,0);
- const result=window.desktopAPI.nativeBackupSqlite(path);
+ const result=window.desktopAPI.nativeBackupSqlite(destination);
  assert.equal(window.tauriOperations.saves,1);
  assert.equal(calls[0].command,'native_backup_sqlite');
- assert.equal(calls[0].args.destination,path);
+ assert.equal(calls[0].args.destination,destination);
  pending[0].resolve(12);
  assert.equal(await result,12);
  assert.equal(window.tauriOperations.saves,0);
