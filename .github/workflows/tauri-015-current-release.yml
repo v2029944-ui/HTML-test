@@ -71,7 +71,7 @@ jobs:
           assert conf['plugins']['updater']['endpoints']==['https://github.com/v2029944-ui/HTML-test/releases/download/tauri-updates/tauri-latest.json']
           assert not conf['plugins']['updater']['pubkey'], 'Unexpected signed updater configuration'
           notes=(root/'release-notes/0.1.5.md').read_text(encoding='utf-8')
-          assert len(notes)>1800 and '## Что добавлено' in notes and '## Обновление и известные ограничения' in notes
+          assert len(notes)>1800 and '## Что добавлено' in notes and '## Обновление и ограничения' in notes
           assert 'не подписан' in notes and 'tauri-updates' in notes
           PY
       - name: Download installer built by verified Windows workflow
