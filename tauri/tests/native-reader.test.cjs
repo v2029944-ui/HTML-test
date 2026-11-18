@@ -32,7 +32,7 @@ function mount(api){
   const upload=new Element('div');
   const document={getElementById:id=>id==='upload'?upload:null,createElement:tag=>new Element(tag)};
   vm.runInNewContext(fs.readFileSync(file,'utf8'),{window:{desktopAPI:api},document});
-  const panel=upload.children[0],toggle=panel.children[2],body=panel.children[3];
+  const panel=upload.children[0],toggle=panel.children[3],body=panel.children[4];
   const controls=body.children[0],status=body.children[1],items=body.children[2];
   const type=controls.children[0].children[1];
   return {panel,toggle,body,controls,status,items,type,refresh:controls.children[1],back:controls.children[2],next:controls.children[3]};

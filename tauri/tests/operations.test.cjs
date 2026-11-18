@@ -43,3 +43,22 @@ test('native report browsing holds a read lease, forwards bounded cursor, and bl
  await assert.rejects(window.desktopAPI.nativeRevision(),/обновления/);
  assert.equal(calls.length,2);
 });
+
+test('native settings operations keep balanced leases and exact SQLite group IDs',async()=>{
+ const calls=[],pending=[],window={__TAURI__:{core:{invoke:(command,args)=>{calls.push({command,args});return new Promise((resolve,reject)=>pending.push({resolve,reject}));}},dialog:{open:async()=>null}}};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../bridge.js'),'utf8'),{window,setInterval(){},clearInterval(){}});
+ const boot=window.desktopAPI.nativeSettingsBootstrap();
+ assert.equal(window.tauriOperations.reads,1);
+ assert.equal(calls[0].command,'native_settings_bootstrap');
+ pending[0].resolve({revision:3});await boot;
+ const groups=window.desktopAPI.nativeGroupPage(3,'922337203685477580',50);
+ assert.equal(calls[1].command,'native_group_page');
+ assert.equal(calls[1].args.afterHandle,'922337203685477580');
+ pending[1].resolve([]);await groups;
+ const update=window.desktopAPI.nativeGroupRename(3,'922337203685477580','A');
+ assert.equal(window.tauriOperations.saves,1);
+ assert.equal(calls[2].command,'native_group_rename');
+ assert.equal(calls[2].args.handle,'922337203685477580');
+ pending[2].resolve(4);await update;
+ assert.equal(window.tauriOperations.saves,0);
+});
