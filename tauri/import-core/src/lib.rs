@@ -228,6 +228,19 @@ impl StageArea {
     }
 }
 impl Stage<'_> {
+    /// Bounded physical worksheet components discovered in the staged workbook.
+    /// Empty worksheets without cells are deliberately not offered for report import.
+    pub fn worksheet_components(&self) -> Result<Vec<String>> {
+        let mut stmt=self.db.prepare(
+            "SELECT DISTINCT sheet FROM cells WHERE sheet LIKE '%/worksheets/%.xml' ORDER BY sheet LIMIT 65"
+        )?;
+        let sheets=stmt.query_map([],|row|row.get::<_,String>(0))?
+            .collect::<std::result::Result<Vec<_>,_>>()?;
+        if sheets.len()>64 {
+            return Err(fail("Too many Excel worksheets for native review"));
+        }
+        Ok(sheets)
+    }
     pub fn path(&self) -> &Path {
         self.dir.path()
     }
