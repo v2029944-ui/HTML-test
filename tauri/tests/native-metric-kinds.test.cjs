@@ -2,6 +2,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),vm=require('node:vm');
 const {prepare}=require('../prepare.cjs');
+const {userError}=require('../native-errors.js');
 const script=fs.readFileSync(path.join(__dirname,'../native-metric-kinds.js'),'utf8');
 const labor={id:'labor',name:'Трудозатраты',dimensionLabel:'Вид работы',metrics:[
  {id:'hours',name:'Часы',unit:'ч',operation:'sum'},
@@ -51,7 +52,7 @@ function mount(opts={}){
   nativeMetricApply:async(source,token)=>{calls.push(['apply',source,token]);
     return {reportId:'lab1',rowCount:2};}
  };
- const window={desktopAPI:api,confirm:()=>{confirmations++;return !opts.decline;}};
+ const window={desktopAPI:api,confirm:()=>{confirmations++;return !opts.decline;},analizUserError:userError};
  vm.runInNewContext(script,{window,document:{
   getElementById:id=>elements[id],createElement:tag=>new Node(tag)
  }});
@@ -151,4 +152,6 @@ test('cancelled or rejected XLSX import never reports success',async()=>{
  await failed.elements.metricKindApply.events.click();
  assert.equal(failed.elements.metricKindApply.disabled,true);
  assert.match(failed.elements.metricKindStatus.textContent,/Импорт отклонён/);
+ assert.match(failed.elements.metricKindStatus.textContent,/Файл изменился после проверки/);
+ assert.ok(!failed.elements.metricKindStatus.textContent.includes('source changed'));
 });

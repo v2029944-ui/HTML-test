@@ -4,6 +4,7 @@
 'use strict';
 const api=window.desktopAPI,$=id=>document.getElementById(id);
 if(!api?.nativeMetricKinds)return;
+const userError=window.analizUserError||(()=>'Операция не выполнена. Перезапустите программу и повторите действие.');
 let kinds=[],profiles=[],source=null,review=null,format=null,xlsxArgs=null,busy=false;
 const make=(tag,value)=>{
  const e=document.createElement(tag);
@@ -64,7 +65,7 @@ async function calculate(){
   status('Показатели рассчитаны по отдельной схеме вида отчёта.');
  }catch(err){
   $('metricKindTotals').replaceChildren();
-  status('Ошибка расчёта: '+String(err?.message||err),true);
+  status('Ошибка расчёта: '+userError(err),true);
  }finally{busy=false;controls();}
 }
 $('metricKindCalculate').addEventListener('click',calculate);
@@ -93,7 +94,7 @@ $('metricKindChoose').addEventListener('click',async()=>{
   showPreview(result);
   source=selected;format='json';
  }catch(err){
-  clearReview();status('Импорт не подготовлен: '+String(err?.message||err),true);
+  clearReview();status('Импорт не подготовлен: '+userError(err),true);
  }finally{busy=false;controls();}
 });
 $('metricKindChooseXlsx').addEventListener('click',async()=>{
@@ -114,7 +115,7 @@ $('metricKindChooseXlsx').addEventListener('click',async()=>{
   showPreview(result);
   source=selected;format='xlsx';xlsxArgs={profile,start,end};
  }catch(err){
-  clearReview();status('Импорт XLSX не подготовлен: '+String(err?.message||err),true);
+  clearReview();status('Импорт XLSX не подготовлен: '+userError(err),true);
  }finally{busy=false;controls();}
 });
 $('metricKindApply').addEventListener('click',async()=>{
@@ -134,7 +135,7 @@ $('metricKindApply').addEventListener('click',async()=>{
   status('Отчёт добавлен: '+receipt.reportId+'. Строк: '+receipt.rowCount+'.');
  }catch(err){
   clearReview();
-  status('Импорт отклонён: '+String(err?.message||err)+'. Выберите файл заново.',true);
+  status('Импорт отклонён: '+userError(err)+'. Выберите файл заново.',true);
  }finally{busy=false;controls();}
 });
 controls();
@@ -158,7 +159,7 @@ window.metricKindWorkspaceReady=(async()=>{
   return kinds;
  }catch(err){
   kinds=[];profiles=[];
-  status('Ошибка загрузки видов отчётов: '+String(err?.message||err),true);
+  status('Ошибка загрузки видов отчётов: '+userError(err),true);
   return [];
  }finally{controls();}
 })();

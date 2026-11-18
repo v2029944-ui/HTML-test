@@ -170,13 +170,13 @@ fn read_source(source: &str) -> Result<(Vec<u8>, MetricDocument, MetricKind), St
     }
     let metadata = fs::symlink_metadata(path).map_err(err)?;
     if !metadata.file_type().is_file() || metadata.len() > MAX_IMPORT_BYTES {
-        return Err("A regular JSON file <=8 MiB is required".into());
+        return Err("Выберите обычный файл JSON размером не более 8 МиБ. Если файл больше, уменьшите его размер и повторите проверку.".into());
     }
     let mut bytes = Vec::new();
     fs::File::open(path).map_err(err)?.take(MAX_IMPORT_BYTES+1)
         .read_to_end(&mut bytes).map_err(err)?;
     if bytes.len() as u64 > MAX_IMPORT_BYTES {
-        return Err("JSON file exceeds 8 MiB".into());
+        return Err("JSON превышает 8 МиБ. Уменьшите файл и повторите проверку.".into());
     }
     let document: MetricDocument = serde_json::from_slice(&bytes).map_err(err)?;
     let kind = kind_by_id(&document.kind)?;
@@ -187,8 +187,11 @@ pub(super) fn validate_document(document: &MetricDocument, kind: &MetricKind) ->
     if !label(&document.id) || document.id.len() > 128
         || !valid_date(&document.start) || !valid_date(&document.end)
         || document.start > document.end || !label(&document.source_name)
-        || document.rows.is_empty() || document.rows.len() > MAX_ROWS {
+        || document.rows.is_empty() {
         return Err("Invalid report ID, period, source or row count".into());
+    }
+    if document.rows.len() > MAX_ROWS {
+        return Err("В отчёте более 10 000 строк данных. Уменьшите их число и повторите проверку.".into());
     }
     let required: HashSet<_> = kind.metrics.iter().filter(|f| f.operation == "sum")
         .map(|f|f.id.as_str()).collect();

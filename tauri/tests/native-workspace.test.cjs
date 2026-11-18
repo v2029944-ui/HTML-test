@@ -2,6 +2,7 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),os=require('node:os');
 const {prepare}=require('../prepare.cjs');
+const {userError}=require('../native-errors.js');
 
 test('SQL workspace is independently built without legacy app or full-history load',()=>{
  const root=path.resolve(__dirname,'../..'),out=fs.mkdtempSync(path.join(os.tmpdir(),'sql-workspace-'));
@@ -28,8 +29,8 @@ class Element{
  addEventListener(name,callback){this.events[name]=callback;}
  setAttribute(name,value){this[name]=value;}
 }
-function mount(){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus'];
+function mount(options={}){
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
@@ -37,13 +38,26 @@ function mount(){
  const report=n=>({id:'r'+n,period_start:'2024-02-'+String(n%28+1).padStart(2,'0'),period_end:'2024-02-29',report_type:'day',source_name:'<b>untrusted</b>'});
  const api={
    nativeSettingsBootstrap:async()=>({revision:12,reports:366,indexed_reports:366,groups:1,catalog:0,org_names:['СМУ16','АВТО']}),
-   nativeReportPage:async(rev,filter,after,limit)=>{calls.push({kind:'report',rev,filter,after,limit});return !after?Array.from({length:100},(_,n)=>report(n)):[report(101)];},
+   nativeReportPage:async(rev,filter,after,limit)=>{calls.push({kind:'report',rev,filter,after,limit});if(options.failReports)throw Error('No active organization');return !after?Array.from({length:100},(_,n)=>report(n)):[report(101)];},
    nativeGroupPage:async(rev,after,limit)=>{calls.push({kind:'group',rev,after,limit});return [{handle:'922337203685477580',id:'g',name:'Old',members:4}];},
    nativeGroupRename:async(rev,handle,name)=>{calls.push({kind:'rename',rev,handle,name});return 13;},
    nativeAnalysisIndexPage:async(rev,kind,after,limit)=>{calls.push({kind:'index',rev,reportType:kind,after,limit});return {processed:2,next:null,done:true};},
    nativeAnalysisIndexSettings:async rev=>{calls.push({kind:'settings_index',rev});},
    chooseSqliteBackupPath:async defaultPath=>{calls.push({kind:'choose_backup',defaultPath});return 'C:/Backups/new.sqlite3';},
    nativeBackupSqlite:async destination=>{calls.push({kind:'sqlite_backup',destination});return 12;},
+   chooseRestoreBackupPath:async()=>{calls.push({kind:'restore_picker'});return 'C:/Backups/snapshot.sqlite3';},
+   nativeRestorePreview:async source=>{calls.push({kind:'restore_preview',source});return {reportCount:366,bytes:8192,verification:'a'.repeat(64)};},
+   chooseRestoreDestination:async name=>{calls.push({kind:'restore_dest',name});return 'C:/Backups/recovered.sqlite3';},
+   nativeRestoreCopy:async(source,verification,destination)=>{
+     calls.push({kind:'restore_copy',source,verification,destination});
+     return {reportCount:366,bytes:8192,verification:'a'.repeat(64)};
+   },
+   nativeRestoreSchedule:async(source,verification)=>{
+     calls.push({kind:'restore_schedule',source,verification});
+     return {reportCount:366,restartRequired:true};
+   },
+   nativeRestoreLaunchInfo:async()=>null,
+   nativeRestoreCancel:async()=>{calls.push({kind:'restore_cancel'});return true;},
    chooseCsvPath:async defaultPath=>{calls.push({kind:'save_csv',defaultPath});return 'C:/Exports/new.csv';},
    nativeExportRangeCsv:async(rev,kind,from,to,organizations,organization,destination)=>{
      calls.push({kind:'export_csv',rev,reportType:kind,from,to,organizations,organization,destination});
@@ -59,7 +73,7 @@ function mount(){
      {org:'АВТО',complete:false,missing:2,total:{count:null,amount:null,average:null}}
    ];}
  };
- const window={desktopAPI:api,confirm:()=>true};
+ const window={desktopAPI:api,confirm:()=>true,analizUserError:userError};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-workspace.js'),'utf8'),{window,document:{getElementById:id=>e[id],createElement:tag=>new Element(tag)}});
  return {e,calls,window};
 }
@@ -217,4 +231,51 @@ test('native SQLite backup is a user-initiated copy, not a report rewrite',async
  assert.match(e.backupStatus.textContent,/Копия SQLite сохранена/);
  assert.equal(calls.some(x=>x.kind==='rename'),false);
  assert.equal(e.reportRows.children.length,100);
+});
+
+test('SQL read failures show a Russian action rather than a Rust exception',async()=>{
+ const {e,window}=mount({failReports:true});
+ await window.nativeWorkspaceReady;
+ assert.match(e.reportStatus.textContent,/Не выбрано подразделение/);
+ assert.ok(!e.reportStatus.textContent.includes('No active organization'));
+ assert.equal(e.reportRows.children.length,0);
+});
+
+test('recovery UI validates a chosen backup before offering a separate copy',async()=>{
+ const {e,calls,window}=mount();await window.nativeWorkspaceReady;
+ assert.equal(e.restoreCopy.disabled,true);
+ await e.restoreChoose.events.click();
+ assert.equal(calls.some(x=>x.kind==='restore_preview'),true);
+ assert.equal(e.restoreCopy.disabled,false);
+ assert.match(e.restoreStatus.textContent,/Копия проверена/);
+ assert.match(e.restoreSelected.textContent,/snapshot\.sqlite3/);
+ assert.equal(calls.some(x=>x.kind==='restore_copy'),false);
+ await e.restoreCopy.events.click();
+ const restore=calls.find(x=>x.kind==='restore_copy');
+ assert.equal(restore.source,'C:/Backups/snapshot.sqlite3');
+ assert.equal(restore.verification,'a'.repeat(64));
+ assert.equal(restore.destination,'C:/Backups/recovered.sqlite3');
+ assert.match(e.restoreStatus.textContent,/Рабочая база не изменена/);
+ assert.equal(calls.some(x=>x.kind==='sqlite_backup'),false);
+ assert.equal(calls.some(x=>x.kind==='rename'),false);
+});
+
+test('requesting live SQLite restore requires explicit review, confirmation and restart',async()=>{
+ const {e,calls,window}=mount();
+ await window.nativeWorkspaceReady;
+ assert.equal(e.restoreSchedule.disabled,true);
+ await e.restoreChoose.events.click();
+ assert.equal(e.restoreSchedule.disabled,false);
+ assert.equal(calls.some(c=>c.kind==='restore_schedule'),false);
+ await e.restoreSchedule.events.click();
+ const request=calls.find(c=>c.kind==='restore_schedule');
+ assert.ok(request,'a verified source can be scheduled after confirmation');
+ assert.equal(request.source,'C:/Backups/snapshot.sqlite3');
+ assert.equal(request.verification,'a'.repeat(64));
+ assert.match(e.restoreStatus.textContent,/Полностью закройте приложение/);
+ assert.equal(e.restoreSchedule.disabled,true);
+ assert.equal(calls.some(c=>c.kind==='sqlite_backup'),false,'do not overwrite or back up live SQLite in the running WebView');
+ await e.restoreCancel.events.click();
+ assert.equal(calls.filter(c=>c.kind==='restore_cancel').length,1);
+ assert.match(e.restoreStatus.textContent,/отменено/);
 });

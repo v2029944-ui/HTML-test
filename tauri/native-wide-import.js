@@ -3,6 +3,7 @@
 (function(){
 'use strict';
 const api=window.desktopAPI,$=id=>document.getElementById(id);
+const userError=window.analizUserError||(()=>'Операция не выполнена. Перезапустите программу и повторите действие.');
 if(!api?.nativeWideImportPreview||!api?.nativeWideImportApply)return;
 let source=null,review=null,options=null,busy=false;
 const make=(tag,text)=>{
@@ -42,7 +43,7 @@ $('wideChoose').addEventListener('click',async()=>{
    status('Файл выбран. Выполните проверку перед сохранением.');
   }else status('Выбор XLSX отменён.');
  }catch(error){
-  resetReview();status('Ошибка выбора файла: '+String(error?.message||error),true);
+  resetReview();status('Ошибка выбора файла: '+userError(error),true);
  }finally{busy=false;updateControls();}
 });
 $('wideYear').addEventListener('input',()=>resetReview('Год изменён. Проверьте Excel заново.'));
@@ -92,7 +93,7 @@ $('widePreview').addEventListener('click',async()=>{
     'В первой проверенной выборке замечаний источника и отчётов не обнаружено.';
   status('Проверка завершена. Перед сохранением проверьте количество замен, даты и замечания.');
  }catch(error){
-  resetReview();status('Нативная проверка не завершена: '+String(error?.message||error),true);
+  resetReview();status('Нативная проверка не завершена: '+userError(error),true);
  }finally{busy=false;updateControls();}
 });
 $('wideApply').addEventListener('click',async()=>{
@@ -144,7 +145,7 @@ $('wideApply').addEventListener('click',async()=>{
     (reloaded?'. Сводка SQLite обновлена.':'. Нажмите «Обновить данные» для новой сводки.'));
  }catch(error){
   resetReview();
-  status('Импорт не сохранён: '+String(error?.message||error)+'. Проверьте XLSX заново.',true);
+  status('Импорт не сохранён: '+userError(error)+'. Проверьте XLSX заново.',true);
  }finally{busy=false;updateControls();}
 });
 updateControls();
