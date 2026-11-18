@@ -11,17 +11,18 @@ test('native import limits are visible before file choices and match bounded Rus
  const kinds=read('tauri/src-tauri/src/metric_reports.rs');
  const mapping=read('tauri/src-tauri/src/metric_xlsx.rs');
 
- assert.match(limits,/archive_bytes:\s*30\s*\*\s*1024\s*\*\s*1024/);
- assert.match(limits,/rows:\s*60000/);
+ assert.match(limits,/NATIVE_XLSX_ARCHIVE_LIMIT:\s*u64\s*=\s*100\s*\*\s*1024\s*\*\s*1024/);
+ assert.match(limits,/archive_bytes:\s*NATIVE_XLSX_ARCHIVE_LIMIT/);
+ assert.match(limits,/rows:\s*100_000/);
  assert.match(limits,/columns:\s*2048/);
- assert.match(limits,/cells:\s*3_000_000/);
+ assert.match(limits,/cells:\s*15_000_000/);
  assert.match(kinds,/MAX_IMPORT_BYTES:\s*u64\s*=\s*8\s*\*\s*1024\s*\*\s*1024/);
  assert.match(kinds,/MAX_ROWS:\s*usize\s*=\s*10_000/);
  assert.match(mapping,/out\.len\(\)\s*>=\s*metric_reports::MAX_ROWS/);
 
  const wide=html.slice(html.indexOf('id="wideImportLimits"'),html.indexOf('id="wideChoose"'));
  assert.ok(wide.length>100);
- for(const required of ['30 МиБ','60 000 строк','2 048 столбцов','3 000 000 ячеек','До выбора файла']){
+ for(const required of ['100 МиБ','100 000 строк','2 048 столбцов','15 000 000 ячеек','До выбора файла']){
   assert.ok(wide.includes(required),'missing wide import limit '+required);
  }
  const metrics=html.slice(html.indexOf('id="metricImportLimits"'),html.indexOf('id="metricKindFile"'));

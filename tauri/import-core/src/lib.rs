@@ -31,6 +31,9 @@ pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + S
 fn fail(s: &str) -> Box<dyn std::error::Error + Send + Sync> {
     io::Error::other(s).into()
 }
+/// Maximum compressed XLSX for disk-backed native import only; browser stays at 30 MiB.
+pub const NATIVE_XLSX_ARCHIVE_LIMIT: u64 = 100 * 1024 * 1024;
+
 #[derive(Clone, Copy)]
 pub struct Limits {
     pub archive_bytes: u64,
@@ -48,17 +51,17 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            archive_bytes: 30 * 1024 * 1024,
-            stage_bytes: 2 * 1024 * 1024 * 1024,
-            component_bytes: 48 * 1024 * 1024,
-            total_bytes: 192 * 1024 * 1024,
+            archive_bytes: NATIVE_XLSX_ARCHIVE_LIMIT,
+            stage_bytes: 4 * 1024 * 1024 * 1024,
+            component_bytes: 128 * 1024 * 1024,
+            total_bytes: 768 * 1024 * 1024,
             token_bytes: 1024 * 1024,
             text_bytes: 65536,
             entries: 4096,
             ratio: 1000,
-            rows: 60000,
+            rows: 100_000,
             columns: 2048,
-            cells: 3_000_000,
+            cells: 15_000_000,
         }
     }
 }
@@ -144,7 +147,7 @@ impl StageArea {
             .rand_bytes(24)
             .tempdir_in(&self.root)?;
         let db = Connection::open(dir.path().join("stage.sqlite3"))?;
-        db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; PRAGMA max_page_count=524288;
+        db.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; PRAGMA max_page_count=1048576;
           CREATE TABLE cells(sheet TEXT,row_num INTEGER,col_num INTEGER,address TEXT,kind TEXT,style TEXT,value TEXT,formula INTEGER,PRIMARY KEY(sheet,row_num,col_num)) WITHOUT ROWID;
           CREATE TABLE strings(id INTEGER PRIMARY KEY,value TEXT NOT NULL);
           CREATE TABLE metadata(component TEXT,seq INTEGER,event TEXT,name TEXT,value TEXT,PRIMARY KEY(component,seq)) WITHOUT ROWID;
@@ -154,7 +157,7 @@ impl StageArea {
           CREATE TABLE merges(sheet TEXT,seq INTEGER,r INTEGER,c INTEGER,end_row INTEGER,end_col INTEGER,PRIMARY KEY(sheet,seq)) WITHOUT ROWID;
           CREATE INDEX merge_position ON merges(sheet,c,end_col,r,end_row);
           CREATE TABLE manifest(name TEXT PRIMARY KEY,value TEXT); BEGIN;")?;
-        let pages = (limits.stage_bytes / 4096).min(524288);
+        let pages = (limits.stage_bytes / 4096).min(1_048_576);
         if pages < 16 {
             return Err(fail("staging disk budget too small"));
         }
@@ -228,6 +231,19 @@ impl StageArea {
     }
 }
 impl Stage<'_> {
+    /// Bounded physical worksheet components discovered in the staged workbook.
+    /// Empty worksheets without cells are deliberately not offered for report import.
+    pub fn worksheet_components(&self) -> Result<Vec<String>> {
+        let mut stmt=self.db.prepare(
+            "SELECT DISTINCT sheet FROM cells WHERE sheet LIKE '%/worksheets/%.xml' ORDER BY sheet LIMIT 65"
+        )?;
+        let sheets=stmt.query_map([],|row|row.get::<_,String>(0))?
+            .collect::<std::result::Result<Vec<_>,_>>()?;
+        if sheets.len()>64 {
+            return Err(fail("Too many Excel worksheets for native review"));
+        }
+        Ok(sheets)
+    }
     pub fn path(&self) -> &Path {
         self.dir.path()
     }

@@ -3,7 +3,10 @@
 mod storage;
 mod native_import;
 
-use native_import::{native_wide_import_preview, native_wide_import_apply};
+use native_import::{
+    native_wide_import_preview, native_wide_import_apply,
+    native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
+};
 
 use storage::{AnalysisScope, ManagementJob, RangeQuery, RangeSummary, ReadExcel, ReadFilter, ReportHeader, Rule, Storage};
 use std::sync::Arc;
@@ -562,6 +565,22 @@ fn set_rule(store: State<'_, Storage>, name: String, rule: Rule) -> Result<Rule,
 }
 
 #[tauri::command]
+async fn native_set_rule_checked(
+    app: tauri::AppHandle,
+    name: String,
+    rule: Rule,
+    revision: i64,
+    folder: String,
+    signature: String,
+) -> Result<i64, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Storage>().set_rule_checked(name, rule, revision, folder, signature)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 fn list_excel(store: State<'_, Storage>) -> Result<serde_json::Value, String> {
     store.list_excel()
 }
@@ -617,9 +636,10 @@ fn main() {
             native_export_range_csv, native_backup_sqlite, native_restore_preview, native_restore_copy,
             native_restore_schedule, native_restore_launch_info, native_restore_cancel,
             native_wide_import_preview, native_wide_import_apply,
+            native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
             native_metric_kinds, native_metric_preview, native_metric_apply, native_metric_summary,
             native_metric_xlsx_profiles, native_metric_xlsx_preview, native_metric_xlsx_apply,
-            get_info, set_folder, set_rule,
+            get_info, set_folder, set_rule, native_set_rule_checked,
             list_excel, read_excel, check_excel, open_data_folder
         ])
         .run(tauri::generate_context!())
