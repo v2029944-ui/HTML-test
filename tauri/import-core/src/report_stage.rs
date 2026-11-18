@@ -5,14 +5,16 @@ use chrono::{Datelike, Duration, Months, NaiveDate};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::{collections::HashSet, sync::atomic::AtomicBool};
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TripleMapping {
     pub header_row: u32,
     pub work_col: u32,
     pub count_col: u32,
     pub amount_col: u32,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LegacyOptions {
     pub sheet: String,
     pub kind: String,
