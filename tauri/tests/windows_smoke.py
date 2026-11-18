@@ -530,6 +530,8 @@ def run():
                 page.locator('#openNativeWorkspace').click()
                 wait_for_app_state(page,'Boolean(window.nativeFolderReady)', 'SQL folder rule editor startup')
                 page.evaluate('window.nativeFolderReady')
+                # Re-establish the isolated test folder after the classic UI
+                # round-trip, then await metadata instead of assuming it survived.
                 page.evaluate('async folder => window.__TAURI__.core.invoke("set_folder", {folder})', str(tmp))
                 page.locator('#sourceFolderRefresh').click()
                 wait_for_app_state(page,
