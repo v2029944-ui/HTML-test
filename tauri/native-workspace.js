@@ -8,20 +8,24 @@ const reportSize=100,groupSize=50;
 let revision=null,reportAfter=null,reportBack=[],reportNext=null,groupAfter=null,groupBack=[],groupNext=null;
 let reportsBusy=false,groupsBusy=false,refreshBusy=false;
 let analysisBusy=false,analysisReady=false,analysisCancelled=false,orgNames=[];
+let workBusy=false,workScope=null,workAfter=null,workBack=[],workNext=null;
+const workSize=50;
 function controlState(){
 $('reportBack').disabled=reportsBusy||refreshBusy||!reportBack.length;
 $('reportNext').disabled=reportsBusy||refreshBusy||!reportNext;
 $('nativeReportType').disabled=reportsBusy||refreshBusy;
 $('groupBack').disabled=groupsBusy||refreshBusy||!groupBack.length;
 $('groupNext').disabled=groupsBusy||refreshBusy||!groupNext;
-$('workspaceRefresh').disabled=reportsBusy||groupsBusy||refreshBusy||analysisBusy;
+$('workspaceRefresh').disabled=reportsBusy||groupsBusy||refreshBusy||analysisBusy||workBusy;
 $('analysisPrepare').disabled=analysisBusy||refreshBusy||revision===null;
 $('analysisCancel').disabled=!analysisBusy;
-$('analysisRun').disabled=analysisBusy||refreshBusy||!analysisReady;
-$('analysisType').disabled=analysisBusy||refreshBusy;
-$('analysisOrganization').disabled=analysisBusy||refreshBusy;
-$('analysisFrom').disabled=analysisBusy||refreshBusy;
-$('analysisTo').disabled=analysisBusy||refreshBusy;
+$('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||!analysisReady;
+$('workBack').disabled=workBusy||analysisBusy||refreshBusy||!workBack.length;
+$('workNext').disabled=workBusy||analysisBusy||refreshBusy||!workNext;
+$('analysisType').disabled=analysisBusy||refreshBusy||workBusy;
+$('analysisOrganization').disabled=analysisBusy||refreshBusy||workBusy;
+$('analysisFrom').disabled=analysisBusy||refreshBusy||workBusy;
+$('analysisTo').disabled=analysisBusy||refreshBusy||workBusy;
 }
 async function reports(cursor,reset=false){
 if(reportsBusy||revision===null)return false;
@@ -69,14 +73,14 @@ try{
 finally{groupsBusy=false;controlState();}
 }
 async function refresh(){
-if(refreshBusy||reportsBusy||groupsBusy||analysisBusy)return;
+if(refreshBusy||reportsBusy||groupsBusy||analysisBusy||workBusy)return;
 refreshBusy=true;controlState();
 try{
  const snapshot=await api.nativeSettingsBootstrap();
  if(!Number.isSafeInteger(snapshot.revision)||snapshot.revision<0)throw Error('Ревизия SQLite слишком велика для JavaScript');
  revision=snapshot.revision;
  analysisReady=false;
- $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
+ $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  orgNames=snapshot.org_names.slice();
  const orgSelect=$('analysisOrganization');orgSelect.replaceChildren();
  const all=make('option','Все из настроек');all.value='*';orgSelect.append(all);
@@ -105,7 +109,7 @@ function analysisOrganizations(){
 async function prepareAnalysis(){
  if(analysisBusy||refreshBusy||revision===null)return;
  analysisBusy=true;analysisReady=false;analysisCancelled=false;
-$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
+$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
 controlState();
  const kind=$('analysisType').value;
  let processed=0,cursor=null;
@@ -166,6 +170,45 @@ function showDivisionComparison(rows){
  }
  status('divisionStatus','Подразделений в сравнении: '+rows.length+'. Порядок: по подтверждённой сумме.');
 }
+
+function clearWork(message='Расшифровка появится после расчёта.'){
+ workScope=null;workAfter=null;workBack=[];workNext=null;
+ $('workRows').replaceChildren();
+ status('workStatus',message);
+ controlState();
+}
+async function workPage(cursor,reset=false){
+ if(workBusy||analysisBusy||refreshBusy||!workScope||revision===null)return false;
+ workBusy=true;controlState();
+ try{
+  const scope=workScope;
+  const rows=await api.nativeAnalysisRangePage(
+    revision,scope.type,scope.from,scope.to,
+    scope.organizations,scope.organization,cursor,workSize
+  );
+  if(!Array.isArray(rows)||rows.length>workSize)throw Error('Некорректная страница групп и работ');
+  if(reset)workBack=[];
+  workAfter=cursor;
+  workNext=rows.length===workSize?rows[rows.length-1].key:null;
+  const tbody=$('workRows');tbody.replaceChildren();
+  const number=x=>x===null||x===undefined?'—':Number(x).toLocaleString('ru-RU',{maximumFractionDigits:3});
+  for(const item of rows){
+   const tr=make('tr');
+   for(const value of [
+     item.name??'',item.kind==='group'?'Группа':item.kind==='work'?'Работа':item.kind??'',
+     number(item.count),number(item.amount),number(item.average),item.active?'Да':'Нет'
+   ])tr.append(make('td',value));
+   tbody.append(tr);
+  }
+  status('workStatus','На странице: '+rows.length+' позиций. Сортировка по ключу SQLite.');
+  return true;
+ }catch(err){
+  workNext=null;workBack=[];workScope=null;
+  $('workRows').replaceChildren();
+  status('workStatus','Ошибка SQL-чтения: '+String(err?.message||err)+'. Повторите расчёт.',true);
+  return false;
+ }finally{workBusy=false;controlState();}
+}
 async function calculateAnalysis(){
  if(!analysisReady||analysisBusy||revision===null)return;
  const kind=$('analysisType').value,from=$('analysisFrom').value,to=$('analysisTo').value;
@@ -173,7 +216,7 @@ async function calculateAnalysis(){
  if(!from||!to||from>to||organizations.some(x=>!x)||!organizations.length){
    status('analysisStatus','Укажите корректный диапазон дат и хотя бы одно подразделение.',true);return;
  }
- analysisBusy=true;controlState();
+ analysisBusy=true;clearWork();controlState();
  try{
    const result=await api.nativeAnalysisRange(revision,kind,from,to,organizations);
    const divisions=await api.nativeAnalysisOrganizations(revision,kind,from,to,organizations);
@@ -188,27 +231,41 @@ async function calculateAnalysis(){
    const box=$('analysisValues');box.replaceChildren();
    for(const [label,value] of metrics){const item=make('div');item.className='metric';item.append(make('strong',value),make('span',label));box.append(item);}
    showDivisionComparison(divisions);
+   workScope={type:kind,from,to,organizations,organization:$('analysisOrganization').value==='*'?null:$('analysisOrganization').value};
    status('analysisStatus',result.complete?'Расчёт выполнен по полной последовательности периодов.':'Расчёт выполнен, но не все периоды подтверждены. Итоги скрыты до устранения пропусков.',!result.complete);
  }catch(err){
    $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
    status('divisionStatus','Сравнение не выполнено из-за ошибки.',true);
    status('analysisStatus','Ошибка расчёта: '+String(err?.message||err),true);
  }finally{analysisBusy=false;controlState();}
+ if(workScope)await workPage(null,true);
 }
 const year=String(new Date().getFullYear());
 $('analysisFrom').value=year+'-01-01';
 $('analysisTo').value=year+'-12-31';
 $('analysisType').addEventListener('change',()=>{
- analysisReady=false;$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
+ analysisReady=false;$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  status('analysisStatus','Выбран другой тип периода. Подготовьте соответствующие индексы.');
  controlState();
 });
 $('analysisPrepare').addEventListener('click',prepareAnalysis);
 $('analysisCancel').addEventListener('click',()=>{analysisCancelled=true;status('analysisStatus','Остановка после текущей порции…');});
 $('analysisRun').addEventListener('click',calculateAnalysis);
+$('workNext').addEventListener('click',async()=>{
+ if(!workNext)return;
+ const previous=workAfter;
+ if(await workPage(workNext))workBack.push(previous);
+ controlState();
+});
+$('workBack').addEventListener('click',async()=>{
+ if(!workBack.length)return;
+ const previous=workBack[workBack.length-1];
+ if(await workPage(previous))workBack.pop();
+ controlState();
+});
 for(const id of ['analysisFrom','analysisTo','analysisOrganization']){
  $(id).addEventListener('change',()=>{
-  $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
+  $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork('Параметры изменены. Повторите расчёт.');
   status('divisionStatus','Параметры изменены. Нажмите «Рассчитать» ещё раз.');
  });
 }

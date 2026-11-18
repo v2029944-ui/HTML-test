@@ -80,6 +80,18 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <thead><tr><th>Подразделение</th><th>Полнота</th><th>Пропусков</th><th>Количество</th><th>Сумма</th><th>Относительная сумма</th></tr></thead>
 <tbody id="divisionRows"></tbody>
 </table></div>
+<h3 class="division-title">Группы и отдельные работы</h3>
+<p class="intro">Расшифровка выбранного периода: не более 50 строк за запрос в порядке ключей SQLite. Чтобы показать только одно подразделение, выберите его выше и повторите расчёт.</p>
+<div class="controls">
+<button id="workBack" type="button" disabled>Назад</button>
+<button id="workNext" type="button" disabled>Далее</button>
+</div>
+<p id="workStatus" class="status muted" role="status" aria-live="polite">Расшифровка появится после расчёта.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Группа / работа</th><th>Тип</th><th>Количество</th><th>Сумма</th><th>Среднее</th><th>Активна</th></tr></thead>
+<tbody id="workRows"></tbody>
+</table></div>
+
 
 <p class="intro">Когда отсутствуют периоды, итоговые сумма и количество не показываются как ноль. Группы, совпадающие даты и ошибки проверяются по правилам D2; это не простая сумма всех строк.</p>
 </section>
