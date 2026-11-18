@@ -56,6 +56,8 @@ function getOptions(organizations){
 }
 nodes.choose.addEventListener('click',async()=>{
   if(busy)return;
+  source=null;
+  nodes.file.textContent='Файл не выбран.';
   busy=true;reset();lock();
   try{
     const path=await api.chooseWideXlsx();
