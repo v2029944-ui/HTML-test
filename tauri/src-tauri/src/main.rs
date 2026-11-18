@@ -9,6 +9,46 @@ use storage::{AnalysisScope, ManagementJob, RangeQuery, RangeSummary, ReadExcel,
 use std::sync::Arc;
 use tauri::{Manager, State};
 
+// Report kind (family) is independent of day/week/month periodicity.
+// Commands only exchange bounded metadata and measured totals with WebView.
+#[tauri::command]
+fn native_metric_kinds() -> Result<Vec<storage::MetricKind>, String> {
+    storage::metric_kinds()
+}
+
+#[tauri::command]
+async fn native_metric_preview(
+    app: tauri::AppHandle,
+    source: String,
+) -> Result<storage::MetricReview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Storage>().metric_preview(&source)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn native_metric_apply(
+    app: tauri::AppHandle,
+    source: String,
+    review_token: String,
+) -> Result<storage::MetricReceipt, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Storage>().metric_apply(&source, &review_token)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn native_metric_summary(
+    app: tauri::AppHandle,
+    kind: String,
+    start: String,
+    end: String,
+) -> Result<storage::MetricSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Storage>().metric_summary(&kind, &start, &end)
+    }).await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn load_data(store: State<'_, Storage>) -> Result<serde_json::Value, String> {
     store.load()
@@ -493,6 +533,7 @@ fn main() {
             native_analysis_index_page, native_analysis_index_settings, native_analysis_range,
             native_analysis_organizations, native_analysis_range_page,
             native_export_range_csv, native_backup_sqlite, native_wide_import_preview, native_wide_import_apply,
+            native_metric_kinds, native_metric_preview, native_metric_apply, native_metric_summary,
             get_info, set_folder, set_rule,
             list_excel, read_excel, check_excel, open_data_folder
         ])
