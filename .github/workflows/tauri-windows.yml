@@ -2,7 +2,7 @@ name: Tauri 2 Windows (experimental)
 
 on:
   push:
-    branches: [work/tauri-dropdown-updates-20261117]
+    branches: [main, work/tauri-dropdown-updates-20261117]
   pull_request:
     paths:
       - "tauri/**"
@@ -77,7 +77,7 @@ jobs:
           Copy-Item $setups[0].FullName "tauri/test-artifacts/setup.exe"
           Copy-Item ($setups[0].FullName + ".sig") "tauri/test-artifacts/setup.exe.sig"
       - name: Build non-distributable GUI test installer with WebView2 CDP
-        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         shell: pwsh
         run: |
           Push-Location tauri
@@ -87,13 +87,13 @@ jobs:
           }
           finally { Pop-Location }
       - uses: actions/setup-python@v5
-        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         with:
           python-version: '3.12'
       - name: Run installed Windows application with real WebView2
-        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         env:
-          ANALIZ_SMOKE_UNSIGNED_CI: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
+          ANALIZ_SMOKE_UNSIGNED_CI: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/main') && 'true' || 'false' }}
         run: |
           python -m pip install playwright==1.62.0
           if ($LASTEXITCODE -ne 0) { throw 'Playwright installation failed' }
@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Upload isolated Windows GUI smoke diagnostics
-        if: always() && github.event_name == 'pull_request'
+        if: always() && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
         uses: actions/upload-artifact@v4
         with:
           name: Tauri-Windows-WebView2-smoke
