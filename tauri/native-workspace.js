@@ -20,6 +20,8 @@ $('analysisCancel').disabled=!analysisBusy;
 $('analysisRun').disabled=analysisBusy||refreshBusy||!analysisReady;
 $('analysisType').disabled=analysisBusy||refreshBusy;
 $('analysisOrganization').disabled=analysisBusy||refreshBusy;
+$('analysisFrom').disabled=analysisBusy||refreshBusy;
+$('analysisTo').disabled=analysisBusy||refreshBusy;
 }
 async function reports(cursor,reset=false){
 if(reportsBusy||revision===null)return false;
@@ -102,7 +104,9 @@ function analysisOrganizations(){
 }
 async function prepareAnalysis(){
  if(analysisBusy||refreshBusy||revision===null)return;
- analysisBusy=true;analysisReady=false;analysisCancelled=false;controlState();
+ analysisBusy=true;analysisReady=false;analysisCancelled=false;
+$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
+controlState();
  const kind=$('analysisType').value;
  let processed=0,cursor=null;
  try{
