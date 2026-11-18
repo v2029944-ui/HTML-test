@@ -49,10 +49,10 @@ test('cancelled asynchronous Excel import clears pending-import counter',async()
   const source=fs.readFileSync(path.join(__dirname,'../../index.html'),'utf8');
   const start=source.indexOf('async function withExcelImport(');
   assert.ok(start>=0);
-  const end=source.indexOf('\n }',start);
-  assert.ok(end>start);
+  const end=source.indexOf('\n}',start);
+  assert.ok(end>start,'withExcelImport must have a closing brace');
   const context={state:{}};
-  const importGuard=vm.runInNewContext('('+source.slice(start,end+3).trim()+')',context);
+  const importGuard=vm.runInNewContext('('+source.slice(start,end+2).trim()+')',context);
   await assert.rejects(importGuard(()=>Promise.reject(Error('Импорт отменён'))),/Импорт отменён/);
   assert.equal(context.state.excelImports,0);
 });
