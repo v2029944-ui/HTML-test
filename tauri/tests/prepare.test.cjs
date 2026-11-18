@@ -217,4 +217,10 @@ test('WebView2 DevTools is enabled only in the non-distributable GUI test config
   assert.match(workflow,/Preserve signed preview before building test-only WebView2 bundle/);
   assert.match(workflow,/tauri build --config tests\/ci-webview2\.json/);
   assert.match(workflow,/if: github\.ref != 'refs\/heads\/work\/tauri-dropdown-updates-20261117'/);
+  assert.match(workflow,/cargo test --locked --manifest-path tauri\/import-core\/Cargo\.toml/);
+  const unsigned=workflow.indexOf('Preserve unsigned CI installer before GUI test build');
+  const gui=workflow.indexOf('Build non-distributable GUI test installer with WebView2 CDP');
+  assert.ok(unsigned>=0&&unsigned<gui,'Original installer must be preserved before GUI build');
+  assert.match(workflow,/ANALIZ_SMOKE_UNSIGNED_CI/);
+  assert.match(workflow,/path: tauri\/test-artifacts\/setup\.exe/);
 });
