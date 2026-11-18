@@ -221,7 +221,7 @@ fn preview_values(document: &MetricDocument, kind: &MetricKind)
     for row in &document.rows {
         for (metric,value) in &row.values {
             let total = sums.entry(metric.clone()).or_insert(0.0);
-            *total += value;
+            *total += *value;
             if !total.is_finite() { return Err("Metric aggregation overflow".into()); }
         }
     }
@@ -320,7 +320,7 @@ mod tests {
             "kind":"labor","id":id,"start":"2026-11-01","end":"2026-11-30",
             "sourceName":"hours.xlsx","rows":[
                 {"organization":"СМУ16","dimension":"Монтаж","values":{"hours":2.0,"units":3.0}},
-                {"organization":"СМУ16","dimension":"Ремонт","values":{"hours":6.0,"units":9.0}}
+                {"organization":"СМУ16","dimension":"Ремонт","values":{"hours":6.0,"units":12.0}}
             ]
         }).to_string()).unwrap();
         file.to_str().unwrap().to_owned()
@@ -341,13 +341,13 @@ mod tests {
         let store=Storage::new(dir.path().join("data")).unwrap();
         let path=fixture(dir.path(),"labor-1");
         let preview=store.metric_preview(&path).unwrap();
-        assert_eq!(preview.values["units_per_hour"],Some(1.5));
+        assert_eq!(preview.values["units_per_hour"],Some(1.875));
         let result=store.metric_apply(&path,&preview.review_token).unwrap();
         assert_eq!(result.row_count,2);
         let summary=store.metric_summary("labor","2026-01-01","2026-12-31").unwrap();
         assert_eq!(summary.report_count,1);
         assert_eq!(summary.values["hours"],Some(8.0));
-        assert_eq!(summary.values["units_per_hour"],Some(1.5));
+        assert_eq!(summary.values["units_per_hour"],Some(1.875));
         let empty=store.metric_summary("labor","2025-01-01","2025-12-31").unwrap();
         assert_eq!(empty.values["hours"],None);
         assert_eq!(empty.values["units_per_hour"],None);
@@ -367,7 +367,7 @@ mod tests {
         assert!(store.metric_preview(&path).is_err());
         let current=store.metric_summary("labor","2026-01-01","2026-12-31").unwrap();
         assert_eq!(current.report_count,1);
-        assert_eq!(current.values["units"],Some(13.0));
+        assert_eq!(current.values["units"],Some(16.0));
     }
     #[test]
     fn rejects_missing_base_metrics_and_unknown_kinds() {
