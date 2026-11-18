@@ -573,9 +573,30 @@ fn cleanup_failure_is_separate_from_committed_receipt() {
         )
         .unwrap();
     let path = p.directory().to_path_buf();
-    fs::rename(&path, path.with_extension("orphan")).unwrap();
-    fs::write(&path, b"blocks cleanup").unwrap();
+    // Unix permits renaming a directory with an open SQLite handle; Windows
+    // rejects that rename. Block deletion with an exclusive file handle instead.
+    #[cfg(not(windows))]
+    {
+        fs::rename(&path, path.with_extension("orphan")).unwrap();
+        fs::write(&path, b"blocks cleanup").unwrap();
+    }
+    #[cfg(windows)]
+    let blocker = {
+        use std::os::windows::fs::OpenOptionsExt;
+        let file = path.join("cleanup-blocker");
+        fs::write(&file, b"locked").unwrap();
+        fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&file)
+            .unwrap()
+    };
     assert!(p.discard().is_err());
+    #[cfg(windows)]
+    {
+        drop(blocker);
+        fs::remove_dir_all(&path).unwrap();
+    }
     assert_eq!(
         storage.committed_import(&receipt.operation_id).unwrap(),
         Some(receipt)

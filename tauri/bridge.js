@@ -40,7 +40,7 @@
           const recovered=hadError;
           previous=fingerprint;
           hadError=false;
-          if(changed||recovered)handler();
+          if(active&&(changed||recovered))handler();
         }catch(err){
           hadError=true;
           // The renderer reports errors during its regular scan.

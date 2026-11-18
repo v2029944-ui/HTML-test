@@ -2,7 +2,7 @@
 
 This is a synchronous Rust foundation, compiled by the GUI-independent storage
 harness. It is **not registered as a Tauri command** and does not switch production
-import/UI paths. Ordinary B2a triples are the only current converter. Daily-wide,
+import/UI paths. Ordinary B2a triples are the only currently supported prepared-apply format. The XLSX core can also convert daily-wide, but C1 explicitly rejects it at preparation time until provenance, source-wide diagnostics and proven zero days have a compatible lifecycle. Daily-wide,
 full multi-source UI, and whole-source/folder replacement remain later work.
 
 ## API and ownership

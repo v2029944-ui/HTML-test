@@ -85,12 +85,12 @@ pub struct ReportOrganization {
     pub count: f64,
     pub amount: f64,
 }
-const SCHEMA:&str="CREATE TABLE IF NOT EXISTS converted_reports(ordinal INTEGER PRIMARY KEY,id TEXT UNIQUE,sheet TEXT,kind TEXT,start TEXT,end TEXT,row_count INTEGER,count REAL,amount REAL,has_mismatch INTEGER,header_row INTEGER,work_col INTEGER,count_col INTEGER,amount_col INTEGER);
+pub(crate) const SCHEMA:&str="CREATE TABLE IF NOT EXISTS converted_reports(ordinal INTEGER PRIMARY KEY,id TEXT UNIQUE,sheet TEXT,kind TEXT,start TEXT,end TEXT,row_count INTEGER,count REAL,amount REAL,has_mismatch INTEGER,header_row INTEGER,work_col INTEGER,count_col INTEGER,amount_col INTEGER);
  CREATE TABLE IF NOT EXISTS converted_rows(report_id TEXT,row_index INTEGER,organization TEXT,work TEXT,count REAL,amount REAL,source_row INTEGER,work_cell TEXT,count_cell TEXT,amount_cell TEXT,PRIMARY KEY(report_id,row_index)) WITHOUT ROWID;
  CREATE TABLE IF NOT EXISTS converted_issues(report_id TEXT,seq INTEGER,kind TEXT,reason TEXT,source_row INTEGER,organization TEXT,work_cell TEXT,count_cell TEXT,amount_cell TEXT,expected_count REAL,expected_amount REAL,actual_count REAL,actual_amount REAL,PRIMARY KEY(report_id,seq)) WITHOUT ROWID;
  CREATE TABLE IF NOT EXISTS converted_totals(report_id TEXT,seq INTEGER,kind TEXT,organization TEXT,source_row INTEGER,count REAL,amount REAL,PRIMARY KEY(report_id,seq)) WITHOUT ROWID;
  CREATE TABLE IF NOT EXISTS converted_organizations(report_id TEXT,seq INTEGER,organization TEXT,count REAL,amount REAL,PRIMARY KEY(report_id,seq)) WITHOUT ROWID;";
-fn js_space(c: char) -> bool {
+pub(crate) fn js_space(c: char) -> bool {
     matches!(
         c,
         '\u{0009}'
@@ -109,7 +109,7 @@ fn js_space(c: char) -> bool {
             | '\u{feff}'
     ) || ('\u{2000}'..='\u{200a}').contains(&c)
 }
-fn normalize(s: &str) -> String {
+pub(crate) fn normalize(s: &str) -> String {
     s.trim_end_matches(['.', ',', ';', ':'])
         .split(js_space)
         .filter(|s| !s.is_empty())
@@ -117,7 +117,7 @@ fn normalize(s: &str) -> String {
         .join(" ")
         .to_lowercase()
 }
-fn number(s: Option<&str>) -> Option<f64> {
+pub(crate) fn number(s: Option<&str>) -> Option<f64> {
     let s = s?;
     if s.trim_matches(js_space).is_empty() {
         return None;
@@ -172,7 +172,7 @@ fn round(n: f64, places: i32) -> f64 {
         rounded / p
     }
 }
-fn cell(col: u32, row: u32) -> String {
+pub(crate) fn cell(col: u32, row: u32) -> String {
     let mut c = col;
     let mut bytes = Vec::with_capacity(3);
     while c > 0 {
@@ -183,7 +183,7 @@ fn cell(col: u32, row: u32) -> String {
     bytes.reverse();
     format!("{}{row}", String::from_utf8(bytes).unwrap())
 }
-fn page_limit(n: usize) -> Result<()> {
+pub(crate) fn page_limit(n: usize) -> Result<()> {
     if (1..=100).contains(&n) {
         Ok(())
     } else {
@@ -306,6 +306,7 @@ impl Stage<'_> {
                     sum: (0., 0.),
                     mismatch: false,
                     overall: false,
+                    daily: false,
                 };
                 let mut stmt=self.db.prepare("SELECT c.row_num,c.col_num,CASE WHEN c.kind='s' THEN s.value WHEN c.kind='b' THEN CASE c.value WHEN '1' THEN 'true' ELSE 'false' END ELSE c.value END FROM cells c LEFT JOIN strings s ON c.kind='s' AND s.id=CAST(c.value AS INTEGER) WHERE c.sheet=?1 AND c.row_num>?2 AND c.col_num IN (?3,?4,?5) ORDER BY c.row_num,c.col_num")?;
                 let mut rows = stmt.query(params![
@@ -393,7 +394,7 @@ impl Stage<'_> {
         }
         result
     }
-    fn conversion_ready(&self) -> Result<()> {
+    pub(crate) fn conversion_ready(&self) -> Result<()> {
         let ready: i64 = self.db.query_row(
             "SELECT COUNT(*) FROM manifest WHERE name='conversion_complete'",
             [],
@@ -541,6 +542,7 @@ struct Active {
     count: f64,
     amount: f64,
     row: u32,
+    unchecked: bool,
 }
 struct Context<'a> {
     db: &'a Connection,
@@ -557,6 +559,7 @@ struct Context<'a> {
     sum: (f64, f64),
     mismatch: bool,
     overall: bool,
+    daily: bool,
 }
 impl Context<'_> {
     fn issue(
@@ -592,6 +595,9 @@ impl Context<'_> {
     }
     fn check_block(&mut self) -> Result<()> {
         if let Some(a) = self.active {
+            if a.unchecked {
+                return Ok(());
+            }
             let actual = self.by_org[a.org];
             if (actual.0 - a.count).abs() > 0.001 || (actual.1 - a.amount).abs() > 0.03 {
                 self.mismatch = true;
@@ -680,6 +686,7 @@ impl Context<'_> {
                 .as_deref()
                 .is_some_and(|s| !s.trim_matches(js_space).is_empty())
         };
+        let blank_pair = !raw_present(1) && !raw_present(2);
         if work.is_empty() {
             if let (Some(q), Some(a), Some(_)) = (q, a, active) {
                 self.add(row, &format!("[Без названия — строка {row}]"), q, a)?;
@@ -724,7 +731,10 @@ impl Context<'_> {
         });
         if total {
             self.check_block()?;
-            if self.rows > 0 {
+            if self.daily && blank_pair {
+                return Ok(self.rows > 0);
+            }
+            if self.rows > 0 || self.daily {
                 self.overall = true;
                 self.totals += 1;
                 self.db.execute(
@@ -770,12 +780,23 @@ impl Context<'_> {
             .position(|n| normalize(n) == normalize(work))
         {
             self.check_block()?;
+            if self.daily && blank_pair {
+                self.active = Some(Active {
+                    org,
+                    count: 0.,
+                    amount: 0.,
+                    row,
+                    unchecked: true,
+                });
+                return Ok(false);
+            }
             if let (Some(q), Some(a)) = (q, a) {
                 self.active = Some(Active {
                     org,
                     count: q,
                     amount: a,
                     row,
+                    unchecked: false,
                 });
                 self.mark_present(org);
                 self.totals += 1;
@@ -795,6 +816,9 @@ impl Context<'_> {
                 )?;
                 self.active = None;
             }
+            return Ok(false);
+        }
+        if self.daily && blank_pair {
             return Ok(false);
         }
         if let (Some(q), Some(a)) = (q, a) {
@@ -862,4 +886,118 @@ mod numeric_tests {
         assert_eq!(number(Some("1,2,3")), None);
         assert_eq!(number(Some("1e999")), None);
     }
+}
+
+pub(crate) fn convert_day(
+    db: &Connection,
+    cfg: &LegacyOptions,
+    mapping: &TripleMapping,
+    id: &str,
+    cancel: &AtomicBool,
+    mut progress: impl FnMut(ConversionSummary),
+) -> Result<(ConversionSummary, bool)> {
+    let mut context = Context {
+        db,
+        cfg,
+        m: mapping,
+        id,
+        active: None,
+        by_org: [(0., 0.); 4],
+        present: [0; 4],
+        present_count: 0,
+        rows: 0,
+        issues: 0,
+        totals: 0,
+        sum: (0., 0.),
+        mismatch: false,
+        overall: false,
+        daily: true,
+    };
+    let mut stmt=db.prepare("SELECT c.row_num,c.col_num,CASE WHEN c.kind='s' THEN s.value WHEN c.kind='b' THEN CASE c.value WHEN '1' THEN 'true' ELSE 'false' END ELSE c.value END FROM cells c INDEXED BY cells_by_column LEFT JOIN strings s ON c.kind='s' AND s.id=CAST(c.value AS INTEGER) WHERE c.sheet=?1 AND c.row_num>?2 AND c.col_num IN (?3,?4,?5) ORDER BY c.row_num,c.col_num")?;
+    let mut rows = stmt.query(params![
+        cfg.sheet,
+        mapping.header_row,
+        mapping.work_col,
+        mapping.count_col,
+        mapping.amount_col
+    ])?;
+    let mut row_num = 0;
+    let mut values: [Option<String>; 3] = [None, None, None];
+    let mut done = false;
+    while let Some(row) = rows.next()? {
+        check_cancel(cancel)?;
+        let current: u32 = row.get(0)?;
+        if row_num != 0 && current != row_num {
+            if context.process(row_num, &values)? {
+                done = true;
+                break;
+            }
+            values = [None, None, None];
+            if row_num % 2048 == 0 {
+                progress(ConversionSummary {
+                    reports: 0,
+                    rows: context.rows,
+                    issues: context.issues,
+                });
+            }
+        }
+        row_num = current;
+        let col: u32 = row.get(1)?;
+        let slot = if col == mapping.work_col {
+            0
+        } else if col == mapping.count_col {
+            1
+        } else {
+            2
+        };
+        values[slot] = row.get(2)?;
+    }
+    if !done && row_num != 0 {
+        context.process(row_num, &values)?;
+    }
+    if !context.overall {
+        context.check_block()?;
+    }
+    let explicit_zero: bool = context.rows == 0 && db.query_row("SELECT EXISTS(SELECT 1 FROM converted_totals WHERE report_id=?1 AND kind='org') AND NOT EXISTS(SELECT 1 FROM converted_totals WHERE report_id=?1 AND (count IS NULL OR amount IS NULL OR count!=0 OR amount!=0))",[id],|r|r.get(0))?;
+    if context.rows == 0 && !explicit_zero {
+        context.issue(
+            "empty",
+            "Нет распознанных работ",
+            None,
+            None,
+            (None, None, None),
+            None,
+            None,
+        )?;
+    }
+    for (j, (q, a)) in context.by_org.iter().enumerate() {
+        if context.present[j] != 0 {
+            context.db.execute(
+                "INSERT INTO converted_organizations VALUES(?1,?2,?3,?4,?5)",
+                params![id, context.present[j], cfg.organizations[j], q, a],
+            )?;
+        }
+    }
+    if !round(context.sum.0, 6).is_finite() || !round(context.sum.1, 2).is_finite() {
+        return Err(fail("Итог не помещается в числовой диапазон."));
+    }
+    context.db.execute(
+        "UPDATE converted_reports SET row_count=?2,count=?3,amount=?4,has_mismatch=?5 WHERE id=?1",
+        params![
+            id,
+            context.rows,
+            round(context.sum.0, 6),
+            round(context.sum.1, 2),
+            context.mismatch
+        ],
+    )?;
+
+    Ok((
+        ConversionSummary {
+            reports: 1,
+            rows: context.rows,
+            issues: context.issues,
+        },
+        explicit_zero,
+    ))
 }
