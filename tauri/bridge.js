@@ -43,6 +43,10 @@
     nativeWideImportPreview:(source,options)=>tracked('native_wide_import_preview',{source,options},'reads'),
     nativeWideImportApply:(source,options,reviewToken,confirmation)=>tracked(
       'native_wide_import_apply',{source,options,reviewToken,confirmation},'saves'),
+    nativeLegacyImportPreview:(source,options)=>tracked(
+      'native_legacy_import_preview',{source,options},'reads'),
+    nativeLegacyImportApply:(source,options,reviewToken,confirmation)=>tracked(
+      'native_legacy_import_apply',{source,options,reviewToken,confirmation},'saves'),
     chooseSqliteBackupPath:async defaultPath=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
       if(typeof tauri.dialog.save!=='function')throw Error('Диалог резервного копирования недоступен.');
