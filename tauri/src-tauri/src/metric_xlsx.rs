@@ -233,6 +233,11 @@ fn from_excel(
     let sheet=sheets.iter().find(|(name,_)|name==&profile.sheet)
         .ok_or("XLSX worksheet named in the profile was not found")?.1.as_str();
     let rows=decode_stage(&stage,sheet,&profile)?;
+    // The source must still be the same workbook after decoding the staged cells.
+    if analiz_import_core::fingerprint(path,&cancel,Limits::default().archive_bytes)
+        .map_err(err)? != stage.source_hash {
+        return Err("XLSX source changed while preparing the report".into());
+    }
     let mut hasher=Sha256::new();
     hasher.update(b"metric-xlsx-v1\0");
     hasher.update(stage.source_hash.as_bytes());
