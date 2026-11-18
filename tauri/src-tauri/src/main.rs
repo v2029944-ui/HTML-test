@@ -424,7 +424,7 @@ async fn native_backup_sqlite(
         if destination.len()>32767 {
             return Err("Backup destination is too long".to_string());
         }
-        app.state::<Storage>().backup_sqlite(std::path::Path::new(&destination))
+        app.state::<Storage>().backup_sqlite_verified(std::path::Path::new(&destination))
     })
     .await
     .map_err(|error| error.to_string())?
