@@ -23,6 +23,9 @@ pub use analytics::*;
 
 #[path = "backup.rs"]
 mod backup;
+#[path = "recovery.rs"]
+mod recovery;
+pub use recovery::RestorePreview;
 #[path = "metric_reports.rs"]
 mod metric_reports;
 pub use metric_reports::{kinds as metric_kinds, MetricKind, MetricReceipt, MetricReview, MetricSummary};
