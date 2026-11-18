@@ -95,7 +95,7 @@ class ImportControls(unittest.TestCase):
           readExcel:async()=>{throw Error('Source unavailable in test')},
           onFilesChanged:()=>()=>{}
         }}""")
-        self.page.add_script_tag(content=(ROOT/'desktop/renderer.js').read_text())
+        self.page.add_script_tag(content=(ROOT/'tauri/folder-importer.js').read_text())
         self.page.wait_for_function("document.querySelector('.desktop-file-row')?.textContent.includes('Проверьте начало первой недели')")
         row=self.page.locator('.desktop-file-row')
         self.assertIn('старые версии автоматически предлагали 19.10.2026',row.inner_text())
@@ -124,7 +124,7 @@ class ImportControls(unittest.TestCase):
             onFilesChanged:()=>()=>{}
           };
         }""",list(buffer.getvalue()))
-        self.page.add_script_tag(content=(ROOT/'desktop/renderer.js').read_text())
+        self.page.add_script_tag(content=(ROOT/'tauri/folder-importer.js').read_text())
         open_view(self.page,'upload')
         self.page.wait_for_function("document.querySelector('.desktop-file-row')&&document.querySelector('#upload').textContent.includes('Есть замечания к Excel')")
         self.assertEqual(self.page.evaluate('nativeWrites'),0)
