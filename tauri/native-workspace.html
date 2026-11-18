@@ -154,10 +154,10 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 
 <section class="panel" aria-label="Импорт обычных XLSX через Rust">
 <h2>Обычный Excel — импорт через SQLite</h2>
-<p class="intro">Нативный импорт таблицы с повторяющимися тройками «Работа / Количество / Сумма». Введите точное название листа Excel, тип периода и дату первого периода. Rust читает книгу ограниченными порциями через временную базу на диске. Полная история не загружается в WebView.</p>
+<p class="intro">Нативный импорт таблицы с повторяющимися тройками «Работа / Количество / Сумма». Выберите найденный в XLSX лист, тип периода и дату первого периода. Rust читает книгу ограниченными порциями через временную базу на диске. Полная история не загружается в WebView.</p>
 <div class="controls">
 <button id="legacyChoose" type="button">Выбрать обычный XLSX</button>
-<label for="legacySheet">Лист Excel</label><input id="legacySheet" type="text" maxlength="120" placeholder="Например, Лист1" required>
+<label for="legacySheet">Лист Excel</label><select id="legacySheet" disabled></select>
 <label for="legacyType">Тип отчётов</label>
 <select id="legacyType"><option value="week">Недели</option><option value="day">Дни</option><option value="month">Месяцы</option></select>
 <label for="legacyStart">Первый период</label><input id="legacyStart" type="date">
