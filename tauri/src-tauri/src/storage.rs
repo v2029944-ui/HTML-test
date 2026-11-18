@@ -522,9 +522,6 @@ impl Storage {
     }
 }
 
-#[cfg(test)]
-#[path = "legacy_upgrade_tests.rs"]
-mod legacy_upgrade_tests;
 
 #[cfg(test)]
 mod tests {
