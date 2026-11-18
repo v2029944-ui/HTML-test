@@ -63,6 +63,7 @@
     nativeRestoreSchedule:(source,verification)=>tracked(
       'native_restore_schedule',{source,verification},'saves'),
     nativeRestoreLaunchInfo:()=>tracked('native_restore_launch_info',{},'reads'),
+    nativeRestoreCancel:()=>tracked('native_restore_cancel',{},'saves'),
     nativeMetricKinds:()=>tracked('native_metric_kinds',{},'reads'),
     chooseMetricJson:async()=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
