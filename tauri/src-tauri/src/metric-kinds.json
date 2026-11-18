@@ -1,0 +1,22 @@
+[
+  {
+    "id": "labor",
+    "name": "Трудозатраты",
+    "dimensionLabel": "Вид работы",
+    "metrics": [
+      { "id": "hours", "name": "Трудозатраты", "unit": "ч", "operation": "sum" },
+      { "id": "units", "name": "Выполнено", "unit": "ед.", "operation": "sum" },
+      { "id": "units_per_hour", "name": "Выработка за час", "unit": "ед./ч", "operation": "ratio", "numerator": "units", "denominator": "hours" }
+    ]
+  },
+  {
+    "id": "plan_fact",
+    "name": "План и факт",
+    "dimensionLabel": "Показатель",
+    "metrics": [
+      { "id": "plan", "name": "План", "unit": "ед.", "operation": "sum" },
+      { "id": "actual", "name": "Факт", "unit": "ед.", "operation": "sum" },
+      { "id": "completion", "name": "Выполнение плана", "unit": "%", "operation": "ratio", "numerator": "actual", "denominator": "plan", "factor": 100 }
+    ]
+  }
+]

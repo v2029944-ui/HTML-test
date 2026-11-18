@@ -23,6 +23,12 @@ pub use analytics::*;
 
 #[path = "backup.rs"]
 mod backup;
+#[path = "metric_reports.rs"]
+mod metric_reports;
+pub use metric_reports::{kinds as metric_kinds, MetricKind, MetricReceipt, MetricReview, MetricSummary};
+#[path = "metric_xlsx.rs"]
+mod metric_xlsx;
+pub use metric_xlsx::{profiles as metric_xlsx_profiles, MetricXlsxProfile};
 
 #[path = "read_model.rs"]
 mod read_model;
@@ -231,6 +237,7 @@ fn new_connection(path: &Path) -> Result<Connection, String> {
          );",
     ).map_err(err)?;
     read_model::initialize(&conn)?;
+    metric_reports::initialize(&conn)?;
     analytics::initialize(&conn)?;
     management::initialize(&conn)?;
     import_apply::initialize(&conn)?;
@@ -521,7 +528,6 @@ impl Storage {
         &self.root
     }
 }
-
 
 #[cfg(test)]
 mod tests {

@@ -1,0 +1,26 @@
+[
+  {
+    "id": "labor_simple",
+    "kind": "labor",
+    "name": "Трудозатраты — строки по работам",
+    "sheet": "Data",
+    "headerRow": 1,
+    "firstDataRow": 2,
+    "organizationColumn": "A",
+    "dimensionColumn": "B",
+    "values": {"hours": "C", "units": "D"},
+    "headers": {"A": "Подразделение", "B": "Работа", "C": "Часы", "D": "Объём"}
+  },
+  {
+    "id": "plan_fact_simple",
+    "kind": "plan_fact",
+    "name": "План / факт — строки показателей",
+    "sheet": "Data",
+    "headerRow": 1,
+    "firstDataRow": 2,
+    "organizationColumn": "A",
+    "dimensionColumn": "B",
+    "values": {"plan": "C", "actual": "D"},
+    "headers": {"A": "Подразделение", "B": "Показатель", "C": "План", "D": "Факт"}
+  }
+]

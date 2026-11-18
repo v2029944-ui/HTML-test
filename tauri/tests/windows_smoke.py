@@ -6,6 +6,8 @@ from playwright.sync_api import sync_playwright, Error as PlaywrightError, Timeo
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests'))
 from test_daily_wide import wide_xlsx
+sys.path.insert(0,str(ROOT/'tauri'/'examples'))
+from make_metric_xlsx import create_example
 
 def diagnostics(error):
     output=ROOT/'tauri/test-artifacts';output.mkdir(exist_ok=True)
@@ -231,6 +233,70 @@ def run():
                 page.evaluate('window.nativeWorkspaceReady')
                 if page.evaluate("typeof window.appReady !== 'undefined'"):
                     raise RuntimeError('Native workspace unexpectedly imported legacy full-history bootstrap')
+                # Declarative report families are separate from classic reports.
+                wait_for_app_state(page,'Boolean(window.metricKindWorkspaceReady)',
+                    'Declarative metric-kind workspace startup')
+                page.evaluate('window.metricKindWorkspaceReady')
+                assert page.locator('#metricKindSelect option').count()==2
+                example=Path(__file__).resolve().parents[1]/'examples'/'labor-report.json'
+                metric_preview=page.evaluate(
+                    'async source => window.__TAURI__.core.invoke("native_metric_preview",{source})',
+                    str(example))
+                assert metric_preview['kind']=='labor'
+                assert metric_preview['rowCount']==2
+                assert metric_preview['values']['hours']==12
+                assert abs(metric_preview['values']['units_per_hour']-19/12)<1e-8
+                metric_receipt=page.evaluate(
+                    'async data => window.__TAURI__.core.invoke("native_metric_apply",data)',
+                    {'source':str(example),'reviewToken':metric_preview['reviewToken']})
+                assert metric_receipt['rowCount']==2
+                page.locator('#metricKindCalculate').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#metricKindCount")?.textContent.includes("Отчётов: 1")',
+                    'Declarative metrics in installed SQL workspace')
+                assert page.locator('#metricKindTotals .metric').count()==3
+                try:
+                    page.evaluate(
+                        'async data => window.__TAURI__.core.invoke("native_metric_apply",data)',
+                        {'source':str(example),'reviewToken':metric_preview['reviewToken']})
+                except Exception:
+                    pass
+                else:
+                    raise RuntimeError('Generic metric report duplicate was accepted')
+                report['checks'].append('Declarative report families, ratios of sums, IPC, no-overwrite')
+                assert page.locator('#metricXlsxProfile option').count()==2
+                metric_xlsx=tmp/'metric-labor-demo.xlsx'
+                create_example(metric_xlsx)
+                mapped=page.evaluate(
+                    'async args => window.__TAURI__.core.invoke("native_metric_xlsx_preview",args)',
+                    {'source':str(metric_xlsx),'profile':'labor_simple',
+                     'start':'2026-11-18','end':'2026-11-18'})
+                assert mapped['kind']=='labor'
+                assert mapped['rowCount']==2
+                assert mapped['values']['hours']==12
+                assert mapped['values']['units']==19
+                assert abs(mapped['values']['units_per_hour']-19/12)<1e-8
+                saved_xlsx=page.evaluate(
+                    'async args => window.__TAURI__.core.invoke("native_metric_xlsx_apply",args)',
+                    {'source':str(metric_xlsx),'profile':'labor_simple','start':'2026-11-18',
+                     'end':'2026-11-18','reviewToken':mapped['reviewToken']})
+                assert saved_xlsx['rowCount']==2
+                calculated=page.evaluate(
+                    'async args => window.__TAURI__.core.invoke("native_metric_summary",args)',
+                    {'kind':'labor','start':'2026-11-18','end':'2026-11-18'})
+                assert calculated['reportCount']==2
+                assert calculated['values']['hours']==24
+                assert calculated['values']['units']==38
+                try:
+                    page.evaluate(
+                        'async args => window.__TAURI__.core.invoke("native_metric_xlsx_apply",args)',
+                        {'source':str(metric_xlsx),'profile':'labor_simple','start':'2026-11-18',
+                         'end':'2026-11-18','reviewToken':mapped['reviewToken']})
+                except Exception:
+                    pass
+                else:
+                    raise RuntimeError('XLSX declarative mapping accepted repeated source')
+                report['checks'].append('Profile-driven XLSX import, ratio of sums, no double-counting')
                 assert page.locator('#metricReports').inner_text()=='366'
                 assert page.locator('#reportRows tr').count()==100
                 assert page.locator('#metricGroups').inner_text()=='0'
@@ -320,6 +386,7 @@ def run():
                 with closing(sqlite3.connect(str(snapshot))) as backed_up:
                     assert backed_up.execute('PRAGMA quick_check').fetchone()[0]=='ok'
                     assert backed_up.execute('SELECT COUNT(*) FROM reports').fetchone()[0]==366
+                    assert backed_up.execute('SELECT COUNT(*) FROM metric_report_docs').fetchone()[0]==2
                     assert backed_up.execute("SELECT json FROM kv WHERE name='settings'").fetchone() is not None
                 previous=snapshot.read_bytes()
                 try:

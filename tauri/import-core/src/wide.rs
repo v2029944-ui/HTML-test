@@ -295,7 +295,8 @@ impl Stage<'_> {
         }
         Ok(())
     }
-    fn sheet_names(&self) -> Result<Vec<(String, String)>> {
+    /// Validated display-name to worksheet component mapping from workbook relationships.
+    pub fn sheet_names(&self) -> Result<Vec<(String, String)>> {
         let mut st=self.db.prepare("SELECT n.seq,a.value,r.value FROM nodes n JOIN attributes a ON a.component=n.component AND a.seq=n.seq AND a.key='name' JOIN attributes r ON r.component=n.component AND r.seq=n.seq AND (r.key='r:id' OR (r.namespace_uri='http://schemas.openxmlformats.org/officeDocument/2006/relationships' AND substr(r.key,-3)=':id')) WHERE n.component='xl/workbook.xml' AND n.tag='sheet' ORDER BY n.seq")?;
         let mut rs = st.query([])?;
         let mut out = Vec::new();

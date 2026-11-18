@@ -49,6 +49,23 @@
       return tauri.dialog.save({title:'Сохранить резервную копию SQLite',defaultPath,filters:[{name:'База SQLite',extensions:['sqlite3']}]});
     },
     nativeBackupSqlite:destination=>tracked('native_backup_sqlite',{destination},'saves'),
+    nativeMetricKinds:()=>tracked('native_metric_kinds',{},'reads'),
+    chooseMetricJson:async()=>{
+      if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
+      return tauri.dialog.open({multiple:false,directory:false,title:'Выберите JSON для нового вида отчёта',filters:[{name:'JSON',extensions:['json']}]});
+    },
+    nativeMetricPreview:source=>tracked('native_metric_preview',{source},'reads'),
+    nativeMetricApply:(source,reviewToken)=>tracked('native_metric_apply',{source,reviewToken},'saves'),
+    nativeMetricSummary:(kind,start,end)=>tracked('native_metric_summary',{kind,start,end},'reads'),
+    nativeMetricXlsxProfiles:()=>tracked('native_metric_xlsx_profiles',{},'reads'),
+    chooseMetricXlsx:async()=>{
+      if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
+      return tauri.dialog.open({multiple:false,directory:false,title:'Выберите XLSX для нового вида отчёта',filters:[{name:'Excel XLSX',extensions:['xlsx']}]});
+    },
+    nativeMetricXlsxPreview:(source,profile,start,end)=>tracked(
+      'native_metric_xlsx_preview',{source,profile,start,end},'reads'),
+    nativeMetricXlsxApply:(source,profile,start,end,reviewToken)=>tracked(
+      'native_metric_xlsx_apply',{source,profile,start,end,reviewToken},'saves'),
     nativeReportPage:(revision,filter,after=null,limit=100)=>tracked(
       'native_report_page',{revision,filter,after,limit},'reads'),
     save:data=>tracked('save_data',{data},'saves'),
