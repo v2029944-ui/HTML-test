@@ -508,6 +508,26 @@ def run():
                 (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
                 assert restored=={'view':'upload','saved':'upload'},restored
                 report['checks'].append('SQLite and last view survive application restart')
+                # Save an Excel rule through real WebView2 + Rust IPC, after all
+                # classic autoimport assertions so the new rule cannot alter them.
+                page.locator('#openNativeWorkspace').click()
+                wait_for_app_state(page,'Boolean(window.nativeFolderReady)', 'SQL folder rule editor startup')
+                page.evaluate('window.nativeFolderReady')
+                assert page.locator('#sourceFolderRows tr').count()==1
+                page.locator('#sourceFolderRows tr button').first.click()
+                page.locator('#sourceRuleFormat').select_option('daily-wide')
+                page.locator('#sourceRuleYear').fill('2024')
+                page.evaluate('window.confirm = () => true')  # Test only; real UI requires confirmation.
+                page.locator('#sourceRuleSave').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#sourceRuleStatus")?.textContent.includes("Правило сохранено")',
+                    'SQLite rule saved with revision check')
+                listing=page.evaluate('window.desktopAPI.list()')
+                assert listing['rules']['synthetic-year.xlsx']['format']=='daily-wide'
+                assert listing['rules']['synthetic-year.xlsx']['year']==2024
+                assert page.locator('#metricReports').inner_text()=='366'
+                assert page.evaluate("typeof window.appReady === 'undefined'")
+                report['checks'].append('SQL-only Excel rule write with native revision and file validation')
             except BaseException as error:
                 diagnostics(error);raise
             finally:
