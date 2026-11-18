@@ -12,7 +12,7 @@ const nodes={
   replace:$('legacyReplace'),overlap:$('legacyOverlap'),quality:$('legacyQuality')
 };
 if(Object.values(nodes).some(x=>!x))return;
-let source=null,options=null,review=null,busy=false;
+let source=null,options=null,review=null,busy=false,sheets=[];
 const el=(tag,value)=>{
   const node=document.createElement(tag);
   if(value!==undefined)node.textContent=String(value);
@@ -23,8 +23,9 @@ function status(message,error=false){
   nodes.status.className='status '+(error?'error':'muted');
 }
 function lock(){
-  for(const key of ['choose','type','start','sheet'])nodes[key].disabled=busy;
-  nodes.preview.disabled=busy||!source;
+  for(const key of ['choose','type','start'])nodes[key].disabled=busy;
+  nodes.sheet.disabled=busy||!source||!sheets.length;
+  nodes.preview.disabled=busy||!source||!sheets.length;
   nodes.apply.disabled=busy||!review;
   for(const key of ['replace','overlap','quality'])nodes[key].disabled=busy;
 }
@@ -48,7 +49,7 @@ function getOptions(organizations){
   if(!['day','week','month'].includes(kind)||!validDate(start)||
       (kind==='month'&&!start.endsWith('-01')))
     throw Error('Укажите корректный тип и дату первого периода (месяц — с первого числа).');
-  if(!sheet||sheet.length>120)throw Error('Укажите точное название листа Excel (до 120 символов).');
+  if(!sheet||!sheets.includes(sheet))throw Error('Выберите существующий лист Excel из списка.');
   if(!Array.isArray(organizations)||organizations.length!==4||
       organizations.some(s=>typeof s!=='string'||!s.trim()))
     throw Error('В настройках должны быть четыре подразделения.');
@@ -56,7 +57,7 @@ function getOptions(organizations){
 }
 nodes.choose.addEventListener('click',async()=>{
   if(busy)return;
-  source=null;
+  source=null;sheets=[];nodes.sheet.replaceChildren();nodes.sheet.value='';
   nodes.file.textContent='Файл не выбран.';
   busy=true;reset();lock();
   try{
@@ -64,10 +65,23 @@ nodes.choose.addEventListener('click',async()=>{
     if(typeof path==='string'&&path){
       source=path;
       nodes.file.textContent='Выбран XLSX: '+path.split(/[\\/]/).pop();
-      status('Файл выбран. Укажите точное название листа и первую дату, затем проверьте Excel.');
+      if(typeof api.nativeLegacyImportSheets!=='function')throw Error('Выбор листа Excel недоступен.');
+      const found=await api.nativeLegacyImportSheets(path);
+      if(!Array.isArray(found)||found.length===0||found.length>64||
+          found.some(v=>typeof v!=='string'||!v.includes('/worksheets/')))
+        throw Error('В XLSX не найдены поддерживаемые листы с данными.');
+      sheets=found.slice();
+      nodes.sheet.replaceChildren();
+      for(const [i,component] of sheets.entries()){
+        const option=el('option','Лист '+(i+1)+' · '+component);
+        option.value=component;nodes.sheet.append(option);
+      }
+      nodes.sheet.value=sheets[0];
+      status('XLSX проверен. Выберите лист и первую дату, затем проверьте периоды.');
     }else status('Выбор файла отменён.');
   }catch(error){
-    source=null;reset();status('Не удалось выбрать XLSX: '+String(error?.message||error),true);
+    source=null;sheets=[];nodes.sheet.replaceChildren();nodes.sheet.value='';
+    reset();status('Не удалось выбрать XLSX: '+String(error?.message||error),true);
   }finally{busy=false;lock();}
 });
 for(const key of ['type','start','sheet']){
