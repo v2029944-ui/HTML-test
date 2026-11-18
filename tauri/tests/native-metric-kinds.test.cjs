@@ -24,8 +24,8 @@ class Node{
 }
 function mount(opts={}){
  const ids=['metricKindStatus','metricKindSelect','metricKindFrom','metricKindTo',
-  'metricKindCalculate','metricKindChoose','metricKindApply','metricKindPreview',
-  'metricKindTotals','metricKindCount','metricKindFile'];
+  'metricKindCalculate','metricKindChoose','metricKindChooseXlsx','metricXlsxProfile',
+  'metricKindApply','metricKindPreview','metricKindTotals','metricKindCount','metricKindFile'];
  const elements=Object.fromEntries(ids.map(id=>[id,new Node()]));
  let confirmations=0;
  const calls=[];
@@ -34,6 +34,14 @@ function mount(opts={}){
   reviewToken:'a'.repeat(64),values:{hours:8,units:12,units_per_hour:1.5}};
  const api={
   nativeMetricKinds:async()=>[labor,plan],
+  nativeMetricXlsxProfiles:async()=>[{id:'labor_simple',kind:'labor',name:'Простой Excel',
+    sheet:'Data',headerRow:1,firstDataRow:2,organizationColumn:'A',
+    dimensionColumn:'B',values:{hours:'C',units:'D'},headers:{A:'Подразделение',B:'Работа',C:'Часы',D:'Объём'}}],
+  chooseMetricXlsx:async()=>{calls.push(['choose_xlsx']);return opts.cancelXlsx?null:'C:/Data/hours.xlsx';},
+  nativeMetricXlsxPreview:async(...args)=>{calls.push(['xlsx_preview',...args]);return preview;},
+  nativeMetricXlsxApply:async(...args)=>{calls.push(['xlsx_apply',...args]);
+    if(opts.failXlsx)throw Error('source changed');
+    return {reportId:'lab1',rowCount:2};},
   nativeMetricSummary:async(...args)=>{calls.push(['summary',...args]);
     return {kind:args[0],reportCount:1,rowCount:2,
       values:args[0]==='labor'?{hours:8,units:12,units_per_hour:1.5}:
@@ -98,4 +106,49 @@ test('packaging includes registry viewer without altering standalone HTML',()=>{
   assert.ok(fs.existsSync(path.join(out,'tauri-native-metric-kinds.js')));
   assert.ok(!fs.readFileSync(path.join(__dirname,'../../index.html'),'utf8').includes('metricKindSelect'));
  }finally{fs.rmSync(out,{recursive:true,force:true});}
+});
+
+test('mapped XLSX is previewed with selected profile and explicit dates',async()=>{
+ const {elements:e,calls,window}=mount();await window.metricKindWorkspaceReady;
+ assert.equal(e.metricXlsxProfile.children.length,1);
+ assert.equal(e.metricKindChooseXlsx.disabled,false);
+ await e.metricKindChooseXlsx.events.click();
+ assert.equal(calls.some(v=>v[0]==='choose_xlsx'),false,'date required before file picker');
+ assert.equal(e.metricKindApply.disabled,true);
+ e.metricKindFrom.value='2026-11-18';e.metricKindTo.value='2026-11-18';
+ await e.metricKindChooseXlsx.events.click();
+ const review=calls.find(v=>v[0]==='xlsx_preview');
+ assert.deepEqual(review,['xlsx_preview','C:/Data/hours.xlsx','labor_simple','2026-11-18','2026-11-18']);
+ assert.equal(e.metricKindApply.disabled,false);
+ await e.metricKindApply.events.click();
+ const apply=calls.find(v=>v[0]==='xlsx_apply');
+ assert.deepEqual(apply,['xlsx_apply','C:/Data/hours.xlsx','labor_simple','2026-11-18','2026-11-18','a'.repeat(64)]);
+ assert.equal(e.metricKindApply.disabled,true);
+});
+test('changing XLSX mapping or date invalidates review and cannot apply stale token',async()=>{
+ const {elements:e,calls,window}=mount();await window.metricKindWorkspaceReady;
+ e.metricKindFrom.value='2026-11-18';e.metricKindTo.value='2026-11-18';
+ await e.metricKindChooseXlsx.events.click();
+ assert.equal(e.metricKindApply.disabled,false);
+ e.metricXlsxProfile.events.change();
+ assert.equal(e.metricKindApply.disabled,true);
+ await e.metricKindApply.events.click();
+ assert.equal(calls.some(c=>c[0]==='xlsx_apply'),false);
+ await e.metricKindChooseXlsx.events.click();
+ e.metricKindFrom.value='2026-11-19';e.metricKindFrom.events.change();
+ assert.equal(e.metricKindApply.disabled,true);
+});
+test('cancelled or rejected XLSX import never reports success',async()=>{
+ const cancelled=mount({cancelXlsx:true});await cancelled.window.metricKindWorkspaceReady;
+ cancelled.elements.metricKindFrom.value='2026-11-18';
+ cancelled.elements.metricKindTo.value='2026-11-18';
+ await cancelled.elements.metricKindChooseXlsx.events.click();
+ assert.equal(cancelled.elements.metricKindApply.disabled,true);
+ assert.equal(cancelled.calls.some(c=>c[0]==='xlsx_preview'),false);
+ const failed=mount({failXlsx:true});await failed.window.metricKindWorkspaceReady;
+ failed.elements.metricKindFrom.value='2026-11-18';failed.elements.metricKindTo.value='2026-11-18';
+ await failed.elements.metricKindChooseXlsx.events.click();
+ await failed.elements.metricKindApply.events.click();
+ assert.equal(failed.elements.metricKindApply.disabled,true);
+ assert.match(failed.elements.metricKindStatus.textContent,/Импорт отклонён/);
 });
