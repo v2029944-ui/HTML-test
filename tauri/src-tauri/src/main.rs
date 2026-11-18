@@ -239,6 +239,57 @@ async fn native_analysis_range(
     .map_err(|error| error.to_string())?
 }
 
+
+#[tauri::command]
+async fn native_analysis_organizations(
+    app: tauri::AppHandle,
+    revision: i64,
+    report_type: String,
+    from: String,
+    to: String,
+    organizations: Vec<String>,
+) -> Result<Vec<storage::OrganizationSummary>, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<storage::OrganizationSummary>, String> {
+        if !matches!(report_type.as_str(), "day" | "week" | "month") {
+            return Err("Unknown analysis report type".into());
+        }
+        if organizations.is_empty() || organizations.len() > 100 {
+            return Err("Select 1..=100 organizations for analysis".into());
+        }
+        let first = chrono::NaiveDate::parse_from_str(&from, "%Y-%m-%d")
+            .map_err(|_| "Invalid analysis start date".to_string())?;
+        let last = chrono::NaiveDate::parse_from_str(&to, "%Y-%m-%d")
+            .map_err(|_| "Invalid analysis end date".to_string())?;
+        if last < first || (last - first).num_days() > 3660 {
+            return Err("Analysis range must not exceed ten years".into());
+        }
+        let store = app.state::<Storage>();
+        let filter_id = store.analysis_filter_create(revision, "organizations")?;
+        let result = (|| {
+            store.analysis_filter_append(revision, &filter_id, &organizations)?;
+            store.analysis_filter_seal(revision, &filter_id)?;
+            let scope = AnalysisScope {
+                report_type,
+                organizations: filter_id.clone(),
+                names: None,
+            };
+            // The exact selection contains at most 100 organizations.
+            // SQL aggregation never materializes historical report JSON in JS.
+            store.analysis_organization_page(
+                revision, &scope, &RangeQuery { from, to }, None, 100,
+            )
+        })();
+        let cleanup = store.analysis_filter_delete(&filter_id);
+        match (result, cleanup) {
+            (Err(error), _) => Err(error),
+            (Ok(rows), Ok(())) => Ok(rows),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 fn get_info(store: State<'_, Storage>) -> Result<serde_json::Value, String> {
     store.info()
@@ -298,6 +349,7 @@ fn main() {
             updater_configured, load_data, save_data, native_read_revision, native_report_page,
             native_settings_bootstrap, native_group_page, native_group_rename,
             native_analysis_index_page, native_analysis_index_settings, native_analysis_range,
+            native_analysis_organizations,
             get_info, set_folder, set_rule,
             list_excel, read_excel, check_excel, open_data_folder
         ])
