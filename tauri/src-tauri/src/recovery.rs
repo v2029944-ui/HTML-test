@@ -226,6 +226,50 @@ mod tests {
         assert!(live.restore_verified_copy(&source, &preview.verification, &output).is_err());
     }
     #[test]
+    fn restore_with_open_wal_source_includes_committed_wal_data() {
+        let dir = tempdir().unwrap();
+        let live = Storage::new(dir.path().join("live")).unwrap();
+        live.save(sample()).unwrap();
+        let source = dir.path().join("wal-source.sqlite3");
+        live.backup_sqlite_verified(&source).unwrap();
+        let writer = Connection::open(&source).unwrap();
+        writer.execute_batch("PRAGMA journal_mode=WAL;").unwrap();
+        writer.execute(
+            "INSERT INTO kv(name,json) VALUES('extra-recovery','{\"from_wal\":true}')", []
+        ).unwrap();
+        let review = live.restore_preview(&source).unwrap();
+        let output = dir.path().join("wal-restored.sqlite3");
+        live.restore_verified_copy(&source, &review.verification, &output).unwrap();
+        let copy = Connection::open_with_flags(&output, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let value: String = copy.query_row(
+            "SELECT json FROM kv WHERE name='extra-recovery'", [], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(value, "{\"from_wal\":true}");
+        assert_eq!(live.load().unwrap(), sample());
+    }
+    #[test]
+    fn restore_rejects_malformed_json_and_backup_changed_after_preview() {
+        let dir = tempdir().unwrap();
+        let live = Storage::new(dir.path().join("live")).unwrap();
+        live.save(sample()).unwrap();
+        let source = dir.path().join("backup.sqlite3");
+        live.backup_sqlite_verified(&source).unwrap();
+        let preview = live.restore_preview(&source).unwrap();
+        let writer = Connection::open(&source).unwrap();
+        writer.execute(
+            "UPDATE kv SET json='{\"changed\":true}' WHERE name='settings'", []
+        ).unwrap();
+        let destination = dir.path().join("stale.sqlite3");
+        assert!(live.restore_verified_copy(
+            &source, &preview.verification, &destination
+        ).unwrap_err().contains("изменилась"));
+        assert!(!destination.exists());
+        writer.execute("UPDATE reports SET json='not-json' WHERE id='restore-a'", [])
+            .unwrap();
+        assert!(live.restore_preview(&source).unwrap_err().contains("JSON"));
+        assert_eq!(live.load().unwrap(), sample());
+    }
+    #[test]
     fn restore_rejects_invalid_sources_and_stale_review() {
         let dir = tempdir().unwrap();
         let live = Storage::new(dir.path().join("live")).unwrap();
