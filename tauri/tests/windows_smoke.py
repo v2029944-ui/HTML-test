@@ -476,6 +476,56 @@ def run():
                 (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
                 assert restored=={'view':'upload','saved':'upload'},restored
                 report['checks'].append('SQLite and last view survive application restart')
+                # P0.3: schedule recovery from a real Online Backup while the
+                # installed app is running. It must not change the active DB.
+                reviewed=page.evaluate(
+                    'async source => window.__TAURI__.core.invoke("native_restore_preview",{source})',
+                    str(snapshot))
+                assert reviewed['reportCount']==366
+                assert len(reviewed['verification'])==64
+                requested=page.evaluate(
+                    'async args => window.__TAURI__.core.invoke("native_restore_schedule",args)',
+                    {'source':str(snapshot),'verification':reviewed['verification']})
+                assert requested=={'reportCount':366,'restartRequired':True},requested
+                still_live=page.evaluate('window.desktopAPI.load()')
+                assert len(still_live['reports'])==366
+                assert all(row.get('sourceFormat')=='daily-wide' for row in still_live['reports'])
+                report['checks'].append('Restore scheduled without mutating running SQLite')
+            except BaseException as error:
+                diagnostics(error);raise
+            finally:
+                try:stop(process)
+                finally:
+                    if browser and browser.is_connected():browser.close()
+            # The next real process starts with no SQLite handles from the
+            # previous instance. The staged copy must be activated before
+            # the WebView can read reports.
+            process,_=start();browser=None
+            try:
+                browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227')
+                page=wait_for_webview_page(browser)
+                wait_for_app_state(page,'Boolean(window.appReady)','Restore startup after full close')
+                page.evaluate('window.appReady')
+                actual=page.evaluate('window.desktopAPI.load()')
+                with closing(sqlite3.connect(str(snapshot))) as expected_db:
+                    expected_reports=[
+                        json.loads(row[0]) for row in expected_db.execute(
+                            'SELECT json FROM reports ORDER BY period_start,id')
+                    ]
+                assert actual['reports']==expected_reports, 'Recovery did not restore backup reports'
+                info=page.evaluate(
+                    'window.__TAURI__.core.invoke("native_restore_launch_info")')
+                assert info and info['restored'] is True,info
+                assert 'Восстановление выполнено' in info['message']
+                page.locator('#reportsShortcut').click()
+                page.locator('#openNativeWorkspace').click()
+                wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)',
+                    'SQL workspace after recovered startup')
+                wait_for_app_state(page,
+                    "() => document.getElementById('restoreStatus')?.textContent.includes('Восстановление выполнено')",
+                    'User-facing recovery confirmation')
+                report['checks'].append(
+                    'Installed Windows app restores SQLite on startup with retained backup and UI status')
             except BaseException as error:
                 diagnostics(error);raise
             finally:
