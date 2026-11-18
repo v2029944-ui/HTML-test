@@ -223,6 +223,38 @@ def run():
                 page.locator('#calendarYearSelect').select_option('2024');page.locator('#calendarType').select_option('day')
                 page.locator('[data-month="2024-02"]').click();assert page.locator('#calendarDetails button[data-date]').count()==29
                 report['checks'].append('leap February calendar')
+                # D4b: the alternate SQL-only page must render without starting
+                # the original in-memory report model. Exercise real Tauri IPC.
+                page.locator('#reportsShortcut').click()
+                page.locator('#openNativeWorkspace').click()
+                wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)','Native SQLite workspace startup')
+                page.evaluate('window.nativeWorkspaceReady')
+                if page.evaluate("typeof window.appReady !== 'undefined'"):
+                    raise RuntimeError('Native workspace unexpectedly imported legacy full-history bootstrap')
+                assert page.locator('#metricReports').inner_text()=='366'
+                assert page.locator('#reportRows tr').count()==100
+                assert page.locator('#metricGroups').inner_text()=='0'
+                first_native=page.locator('#reportRows tr').first.locator('td').nth(4).inner_text()
+                page.locator('#reportNext').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#reportRows tr td:last-child")?.textContent !== '+json.dumps(first_native),
+                    'Native SQL next page')
+                assert page.locator('#reportRows tr').count()==100
+                page.locator('#reportBack').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#reportRows tr td:last-child")?.textContent === '+json.dumps(first_native),
+                    'Native SQL previous page')
+                page.locator('#nativeReportType').select_option('week')
+                wait_for_app_state(page,
+                    'document.querySelector("#reportStatus")?.textContent.includes("На странице: 0")',
+                    'Native SQLite filter without week reports')
+                assert page.locator('#reportRows tr').count()==0
+                report['checks'].append('SQL-only native page, bounded report navigation, settings bootstrap')
+                page.locator('#legacyWorkspaceLink').click()
+                wait_for_app_state(page,'Boolean(window.appReady)','Legacy workspace after native route')
+                page.evaluate('window.appReady')
+                assert page.evaluate('state.reports.length')==366
+                page.locator('#reportsShortcut').click()
                 page.screenshot(path=str(output/'windows-webview2.png'))
                 assert not errors,errors
                 before_restart=page.evaluate("({view:document.querySelector('.view.active').id,saved:localStorage.getItem('work-reports-view-v1')})")
