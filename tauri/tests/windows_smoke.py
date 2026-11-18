@@ -184,6 +184,35 @@ def run():
                 loaded=page.evaluate('window.desktopAPI.load()');assert len(loaded['reports'])==366
                 assert abs(sum(r['amount'] for r in loaded['reports'])-7320)<.001
                 report['checks'].append('Excel import and 366 reports persisted through native SQLite')
+                # D4a read-only SQLite browsing must operate through the actual
+                # installed Tauri IPC, not an in-memory JS model or mocked bridge.
+                native=page.locator('section[aria-label="Постраничный просмотр SQLite"]')
+                native.get_by_role('button',name='Открыть список отчётов').click()
+                inspector_css='section[aria-label="Постраничный просмотр SQLite"]'
+                wait_for_app_state(page,
+                    'document.querySelectorAll('+json.dumps(inspector_css+' tbody tr')+').length === 100',
+                    'First bounded SQLite metadata page')
+                assert native.locator('tbody tr').count()==100
+                original_id=native.locator('tbody tr').first.locator('td').nth(4).inner_text()
+                native.get_by_role('button',name='Далее').click()
+                wait_for_app_state(page,
+                    'document.querySelector('+json.dumps(inspector_css+' tbody tr td:last-child')+')?.textContent !== '+json.dumps(original_id),
+                    'Second bounded SQLite metadata page')
+                assert native.locator('tbody tr').count()==100
+                native.get_by_role('button',name='Назад').click()
+                wait_for_app_state(page,
+                    'document.querySelector('+json.dumps(inspector_css+' tbody tr td:last-child')+')?.textContent === '+json.dumps(original_id),
+                    'SQLite keyset back navigation')
+                native.get_by_label('Фильтр типа отчёта в SQLite').select_option('week')
+                wait_for_app_state(page,
+                    'document.querySelector('+json.dumps(inspector_css+' [role="status"]')+')?.textContent.includes("записей на странице: 0")',
+                    'SQLite type-filtered empty report page')
+                assert native.locator('tbody tr').count()==0
+                native.get_by_label('Фильтр типа отчёта в SQLite').select_option('day')
+                wait_for_app_state(page,
+                    'document.querySelectorAll('+json.dumps(inspector_css+' tbody tr')+').length === 100',
+                    'SQLite daily reports re-filtered page')
+                report['checks'].append('native SQLite revision-checked pagination and period filter')
                 page.locator('[data-view=dashboard]').click()
                 page.locator('#periodType').click();page.keyboard.press('End');page.keyboard.press('Enter')
                 assert page.locator('#periodType').input_value()=='day'
