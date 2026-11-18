@@ -105,6 +105,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <section class="panel" aria-label="Нативный импорт XLSX">
 <h2>Импорт Excel в SQLite</h2>
 <p class="intro">Нативный импорт ежедневной широкой таблицы XLSX. Сначала выберите файл, укажите год при необходимости и просмотрите даты, ошибки и конфликты. Исходная книга не изменяется. Сохранение возможно только после подтверждения.</p>
+<p class="intro" id="wideImportLimits"><strong>До выбора файла:</strong> поддерживается XLSX до <strong>30 МиБ</strong>; не более <strong>60 000 строк на лист</strong>, <strong>2 048 столбцов</strong> и <strong>3 000 000 ячеек</strong> в книге. Даже файл меньшего размера может не пройти проверку структуры или временного хранилища. Если лимит превышен, уменьшите файл и проверьте его повторно. Исходная книга при проверке не изменяется.</p>
 <div class="controls">
 <button id="wideChoose" type="button">Выберите файл XLSX</button>
 <label for="wideYear">Год (необязательно)</label>
@@ -147,6 +148,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <button type="button" id="metricKindChoose">Выбрать JSON-отчёт</button>
 <button type="button" id="metricKindApply" disabled>Подтвердить импорт</button>
 </div>
+<p class="intro" id="metricImportLimits"><strong>До выбора файла:</strong> для дополнительных отчётов поддерживается XLSX до <strong>30 МиБ</strong> либо JSON до <strong>8 МиБ</strong>, не более <strong>10 000 строк данных в отчёте</strong>. Для XLSX заранее выберите шаблон столбцов и обе даты. Файлы, превышающие ограничения, не сохраняются: уменьшите объём данных и повторите проверку. Предпросмотр не изменяет базу.</p>
 <p id="metricKindFile" class="intro">Для Excel выберите шаблон и укажите даты «С» и «По» выше. Названия листов, заголовки и столбцы определяются шаблоном. Перед записью показывается проверенный результат. Дополнительно поддерживается нормализованный JSON.</p>
 <div id="metricKindPreview" class="overview"></div>
 <p id="metricKindStatus" class="status muted" role="status" aria-live="polite">Загрузка каталога видов отчётов…</p>
