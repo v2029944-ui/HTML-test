@@ -358,11 +358,16 @@ def run():
                                           'acceptQuality':True,'backupDestination':str(before_native)}}
                 receipt=page.evaluate(direct_apply,approved)
                 assert before_native.is_file()
+                with closing(sqlite3.connect(str(snapshot))) as original_copy:
+                    expected_rows=original_copy.execute(
+                        'SELECT id,json FROM reports ORDER BY id').fetchall()
+                assert len(expected_rows)==366
                 with closing(sqlite3.connect(str(before_native))) as restored_copy:
                     assert restored_copy.execute('PRAGMA quick_check').fetchone()[0]=='ok'
                     assert restored_copy.execute('SELECT COUNT(*) FROM reports').fetchone()[0]==366
-                    raw=restored_copy.execute('SELECT json FROM reports LIMIT 1').fetchone()[0]
-                    assert 'sourceFormat' not in json.loads(raw)
+                    actual_rows=restored_copy.execute(
+                        'SELECT id,json FROM reports ORDER BY id').fetchall()
+                    assert actual_rows==expected_rows, 'Backup differs from pre-import SQLite'
                 report['checks'].append('Native import IPC refuses replacement without verified SQLite backup')
                 assert receipt['reports']==366
                 assert receipt['replaced']==366
