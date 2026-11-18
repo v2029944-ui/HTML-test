@@ -29,7 +29,7 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSelected','restoreStatus'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreSelected','restoreStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
@@ -51,6 +51,11 @@ function mount(){
      calls.push({kind:'restore_copy',source,verification,destination});
      return {reportCount:366,bytes:8192,verification:'a'.repeat(64)};
    },
+   nativeRestoreSchedule:async(source,verification)=>{
+     calls.push({kind:'restore_schedule',source,verification});
+     return {reportCount:366,restartRequired:true};
+   },
+   nativeRestoreLaunchInfo:async()=>null,
    chooseCsvPath:async defaultPath=>{calls.push({kind:'save_csv',defaultPath});return 'C:/Exports/new.csv';},
    nativeExportRangeCsv:async(rev,kind,from,to,organizations,organization,destination)=>{
      calls.push({kind:'export_csv',rev,reportType:kind,from,to,organizations,organization,destination});
@@ -243,4 +248,21 @@ test('recovery UI validates a chosen backup before offering a separate copy',asy
  assert.match(e.restoreStatus.textContent,/Рабочая база не изменена/);
  assert.equal(calls.some(x=>x.kind==='sqlite_backup'),false);
  assert.equal(calls.some(x=>x.kind==='rename'),false);
+});
+
+test('requesting live SQLite restore requires explicit review, confirmation and restart',async()=>{
+ const {e,calls,window}=mount();
+ await window.nativeWorkspaceReady;
+ assert.equal(e.restoreSchedule.disabled,true);
+ await e.restoreChoose.events.click();
+ assert.equal(e.restoreSchedule.disabled,false);
+ assert.equal(calls.some(c=>c.kind==='restore_schedule'),false);
+ await e.restoreSchedule.events.click();
+ const request=calls.find(c=>c.kind==='restore_schedule');
+ assert.ok(request,'a verified source can be scheduled after confirmation');
+ assert.equal(request.source,'C:/Backups/snapshot.sqlite3');
+ assert.equal(request.verification,'a'.repeat(64));
+ assert.match(e.restoreStatus.textContent,/Полностью закройте приложение/);
+ assert.equal(e.restoreSchedule.disabled,true);
+ assert.equal(calls.some(c=>c.kind==='sqlite_backup'),false,'do not overwrite or back up live SQLite in the running WebView');
 });
