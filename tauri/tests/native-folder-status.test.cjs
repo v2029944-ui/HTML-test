@@ -5,18 +5,26 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),os=r
 const {prepare}=require('../prepare.cjs');
 
 class Node {
-  constructor(tag){this.tag=tag;this.children=[];this.textContent='';this.className='';this.events={};this.disabled=false;}
+  constructor(tag){this.tag=tag;this.children=[];this.textContent='';this.className='';this.events={};this.disabled=false;this.value='';}
   replaceChildren(...nodes){this.children=[...nodes];}
   append(...nodes){this.children.push(...nodes);}
   addEventListener(name,callback){this.events[name]=callback;}
+  setAttribute(name,value){this[name]=value;}
 }
 function mount(options={}){
-  const ids=['sourceFolderChoose','sourceFolderRefresh','sourceFolderLocation','sourceFolderStatus','sourceFolderRows','sourceFolderCount'];
+  const ids=['sourceFolderChoose','sourceFolderRefresh','sourceFolderLocation','sourceFolderStatus','sourceFolderRows','sourceFolderCount','sourceRuleFile','sourceRuleFormat','sourceRuleType','sourceRuleStart','sourceRuleSheet','sourceRuleYear','sourceRuleSave','sourceRuleStatus'];
   const nodes=Object.fromEntries(ids.map(id=>[id,new Node('div')]));
-  let listing=options.listing===undefined?{folder:null,files:[],rules:{}}:options.listing;
+  let listing=options.listing===undefined?{folder:null,revision:12,files:[],rules:{}}:options.listing;
   const calls=[];let onChanged=null;let unsubscribed=false;
   const api={
     list:async()=>{calls.push('list');if(options.failList)throw Error('disk unavailable');return listing;},
+    nativeSetRuleChecked:async(name,rule,revision,folder,signature)=>{
+      calls.push({kind:'rule',name,rule,revision,folder,signature});
+      if(options.failRule)throw Error('Stale storage revision; refresh the selection.');
+      listing.rules[name]=rule;
+      listing.revision++;
+      return listing.revision;
+    },
     chooseFolder:async()=>{
       calls.push('choose');
       return options.choice===undefined?{folder:'C:/Excel'}:options.choice;
@@ -57,6 +65,7 @@ test('native Excel source overview is packaged only for Tauri SQL workspace',()=
 test('metadata-only list is capped to 100 rendered names and escapes untrusted data',async()=>{
   const files=Array.from({length:140},(_,i)=>({
     name:i===0?'<img src=x onerror=alert(1)>.xlsx':'report-'+i+'.xlsx',
+    signature:'test-sig-'+i,
     size:i===0?100:1048576,
     tooLarge:i===2
   }));
@@ -74,7 +83,7 @@ test('metadata-only list is capped to 100 rendered names and escapes untrusted d
 });
 
 test('folder change warns about losing rules and never modifies reports',async()=>{
-  const listing={folder:'C:/Existing',files:[],rules:{'old.xlsx':{}}};
+  const listing={folder:'C:/Existing',revision:12,files:[],rules:{'old.xlsx':{}}};
   const no=mount({listing,consent:false});
   await no.window.nativeFolderReady;
   await no.nodes.sourceFolderChoose.events.click();
@@ -104,7 +113,7 @@ test('file-change watcher only refreshes listings; cancellation does not import'
 });
 
 test('invalid Rust listing or unavailable folder reports an error instead of inventing data',async()=>{
-  const panel=mount({listing:{folder:'C:/Excel',files:null,rules:{}}});
+  const panel=mount({listing:{folder:'C:/Excel',revision:12,files:null,rules:{}}});
   await panel.window.nativeFolderReady;
   assert.match(panel.nodes.sourceFolderStatus.textContent,/Не удалось проверить/);
   assert.equal(panel.nodes.sourceFolderRows.children.length,0);
@@ -114,10 +123,90 @@ test('invalid Rust listing or unavailable folder reports an error instead of inv
 });
 
 test('failed SQL revision refresh after folder selection is not mistaken for a failed folder change',async()=>{
- const panel=mount({listing:{folder:'C:/Existing',files:[],rules:{}},refreshFails:true});
+ const panel=mount({listing:{folder:'C:/Existing',revision:12,files:[],rules:{}},refreshFails:true});
  await panel.window.nativeFolderReady;
  await panel.nodes.sourceFolderChoose.events.click();
  assert.equal(panel.calls.filter(x=>x==='choose').length,1);
  assert.equal(panel.calls.filter(x=>x==='sql_refresh').length,1);
  assert.match(panel.nodes.sourceFolderStatus.textContent,/Нажмите «Обновить данные»/);
+});
+
+test('save Excel rule only after explicit source selection and valid date',async()=>{
+ const file={name:'week-2026.xlsx',size:2048,signature:'2048:123:456',tooLarge:false};
+ const panel=mount({listing:{folder:'C:/Excel',revision:12,files:[file],rules:{}}});
+ await panel.window.nativeFolderReady;
+ const e=panel.nodes;
+ assert.equal(e.sourceRuleSave.disabled,true);
+ e.sourceFolderRows.children[0].children[3].children[0].events.click();
+ assert.equal(e.sourceRuleSave.disabled,false);
+ e.sourceRuleFormat.value='legacy';e.sourceRuleType.value='week';
+ e.sourceRuleStart.value='invalid';
+ await e.sourceRuleSave.events.click();
+ assert.equal(panel.calls.some(x=>x.kind==='rule'),false);
+ assert.match(e.sourceRuleStatus.textContent,/дату/);
+ e.sourceRuleStart.value='2026-11-16';e.sourceRuleSheet.value='Week';
+ await e.sourceRuleSave.events.click();
+ const saved=panel.calls.find(x=>x.kind==='rule');
+ assert.equal(saved.name,'week-2026.xlsx');
+ assert.equal(saved.revision,12);
+ assert.equal(saved.folder,'C:/Excel');
+ assert.equal(saved.signature,file.signature);
+ assert.equal(saved.rule.type,'week');
+ assert.equal(saved.rule.start,'2026-11-16');
+ assert.equal(saved.rule.sheet,'Week');
+ assert.equal(saved.rule.format,'legacy');
+ assert.equal(panel.calls.some(x=>x==='sql_refresh'),true);
+ assert.equal(e.sourceRuleSave.disabled,true);
+ assert.match(e.sourceRuleStatus.textContent,/Правило сохранено/);
+ assert.equal(panel.calls.some(x=>x==='load_data'||x==='read_excel'||x==='save_data'),false);
+});
+
+test('wide import rule accepts day only, optional year and no first period',async()=>{
+ const file={name:'year.xlsx',size:10,signature:'10:1:1',tooLarge:false};
+ const panel=mount({listing:{folder:'C:/Excel',revision:23,files:[file],rules:{}}});
+ await panel.window.nativeFolderReady;
+ const e=panel.nodes;
+ e.sourceFolderRows.children[0].children[3].children[0].events.click();
+ e.sourceRuleFormat.value='daily-wide';e.sourceRuleFormat.events.change();
+ assert.equal(e.sourceRuleType.value,'day');
+ assert.equal(e.sourceRuleType.disabled,true);
+ assert.equal(e.sourceRuleStart.disabled,true);
+ e.sourceRuleYear.value='2024';
+ await e.sourceRuleSave.events.click();
+ const saved=panel.calls.find(x=>x.kind==='rule');
+ assert.equal(saved.rule.type,'day');
+ assert.equal(saved.rule.start,'');
+ assert.equal(saved.rule.year,2024);
+ assert.equal(saved.rule.sheet,'');
+});
+
+test('advanced mapping is protected against accidental deletion',async()=>{
+ const file={name:'complex.xlsx',size:20,signature:'20:1:1',tooLarge:false};
+ const panel=mount({listing:{folder:'C:/Excel',revision:12,files:[file],
+   rules:{'complex.xlsx':{type:'day',start:'',format:'daily-wide',mappings:{Sheet1:{work_col:0}}}}}});
+ await panel.window.nativeFolderReady;
+ panel.nodes.sourceFolderRows.children[0].children[3].children[0].events.click();
+ assert.equal(panel.nodes.sourceRuleSave.disabled,true);
+ assert.match(panel.nodes.sourceRuleStatus.textContent,/расширенную настройку/);
+});
+
+test('stale revision is rejected and never marked saved',async()=>{
+ const file={name:'week.xlsx',size:10,signature:'10:1:1',tooLarge:false};
+ const panel=mount({listing:{folder:'C:/Excel',revision:12,files:[file],rules:{}},failRule:true});
+ await panel.window.nativeFolderReady;
+ const e=panel.nodes;
+ e.sourceFolderRows.children[0].children[3].children[0].events.click();
+ e.sourceRuleStart.value='2026-11-16';
+ await e.sourceRuleSave.events.click();
+ assert.equal(panel.calls.some(x=>x.kind==='rule'),true);
+ assert.equal(panel.calls.some(x=>x==='sql_refresh'),false);
+ assert.match(e.sourceRuleStatus.textContent,/Правило не сохранено/);
+ assert.equal(e.sourceRuleSave.disabled,true);
+});
+
+test('missing source revision cannot authorize a rule change',async()=>{
+ const panel=mount({listing:{folder:'C:/Excel',files:[],rules:{}}});
+ await panel.window.nativeFolderReady;
+ assert.match(panel.nodes.sourceFolderStatus.textContent,/Некорректный снимок/);
+ assert.equal(panel.nodes.sourceRuleSave.disabled,true);
 });
