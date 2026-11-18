@@ -894,11 +894,11 @@ fn validate_provenance_and_zero(
             info.mapping.amount_col,
         ]
         .iter()
-        .any(|c| !(1..=2048).contains(c))
+        .any(|c| *c == 0 || *c > stage.limits.columns)
         || info.mapping.work_col == info.mapping.count_col
         || info.mapping.work_col == info.mapping.amount_col
         || info.mapping.count_col == info.mapping.amount_col
-        || !(1..=60000).contains(&info.mapping.header_row)
+        || info.mapping.header_row == 0 || info.mapping.header_row > stage.limits.rows
     {
         return Err(fail("invalid wide report provenance"));
     }
