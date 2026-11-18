@@ -107,6 +107,7 @@ struct ExcelFile {
 #[derive(Serialize)]
 struct Listing {
     folder: Option<String>,
+    revision: i64,
     files: Vec<ExcelFile>,
     rules: HashMap<String, Rule>,
 }
@@ -528,7 +529,12 @@ impl Storage {
             }
             files.sort_by(|a,b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         }
-        serde_json::to_value(Listing { folder:config.folder, files, rules:config.rules }).map_err(err)
+        serde_json::to_value(Listing {
+            folder: config.folder,
+            revision: read_model::revision(&conn)?,
+            files,
+            rules: config.rules,
+        }).map_err(err)
     }
 
     fn source_path(&self, conn: &Connection, name: &str) -> Result<PathBuf, String> {
