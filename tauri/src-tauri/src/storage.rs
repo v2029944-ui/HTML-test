@@ -683,8 +683,11 @@ mod tests {
         };
         let rev = listing["revision"].as_i64().unwrap();
         let sig = listing["files"][0]["signature"].as_str().unwrap();
+        // On Windows, set_folder canonicalizes to a verbatim ("\\\\?\\") path;
+        // versioned rule writes must pass that exact folder from the snapshot.
+        let selected_folder = listing["folder"].as_str().unwrap().to_string();
         let saved = store.set_rule_checked("native-only.xlsx".into(),
-            rule.clone(), rev, folder.to_string_lossy().to_string(),
+            rule.clone(), rev, selected_folder.clone(),
             sig.into());
         assert!(saved.is_ok(), "40-MiB native rule was rejected: {:?}", saved.err());
         f.set_len(101 * 1024 * 1024).unwrap();
@@ -693,7 +696,7 @@ mod tests {
         assert_eq!(refreshed["files"][0]["tooLarge"], true);
         let current = refreshed["revision"].as_i64().unwrap();
         assert!(store.set_rule_checked("native-only.xlsx".into(), rule, current,
-            folder.to_string_lossy().to_string(),
+            refreshed["folder"].as_str().unwrap().to_string(),
             refreshed["files"][0]["signature"].as_str().unwrap().into()).is_err());
         assert_eq!(store.revision().unwrap(), current);
     }
