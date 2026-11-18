@@ -4,7 +4,7 @@
 use super::*;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
-use std::io::{ErrorKind, Write};
+use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const REQUEST: &str = ".analiz-restore-pending.json";
@@ -105,6 +105,28 @@ fn ensure_no_wal(path: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn finalize_safety_backup(path: &Path) -> Result<(), String> {
+    ensure_regular(path)?;
+    {
+        let conn = Connection::open_with_flags(
+            path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+        ).map_err(err)?;
+        let (busy, _, _): (i64,i64,i64) = conn.query_row(
+            "PRAGMA wal_checkpoint(TRUNCATE)", [],
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))
+        ).map_err(err)?;
+        if busy != 0 {
+            return Err("Защитная копия SQLite занята, восстановление отменено.".into());
+        }
+        let mode: String = conn.query_row("PRAGMA journal_mode=DELETE", [], |r| r.get(0))
+            .map_err(err)?;
+        if mode != "delete" {
+            return Err("Не удалось завершить защитную копию SQLite без WAL.".into());
+        }
+    }
+    ensure_no_wal(path)
 }
 
 fn ensure_regular(path: &Path) -> Result<(), String> {
@@ -251,9 +273,12 @@ pub fn apply_pending_restore(root: &Path) -> Result<Option<RestoreLaunchResult>,
     } else {
         let storage = Storage::new(root.to_path_buf())?;
         storage.backup_sqlite_verified(&safety)?;
-        if recovery::check_snapshot(&safety)?.verification != current.verification {
-            return Err("Защитная копия рабочей базы не прошла сравнение. Восстановление остановлено.".into());
-        }
+    }
+    // An offline safety backup must be self-contained; a lone .sqlite3 file
+    // has to remain recoverable even if WAL/SHM sidecars are lost.
+    finalize_safety_backup(&safety)?;
+    if recovery::check_snapshot(&safety)?.verification != current.verification {
+        return Err("Защитная копия рабочей базы не прошла сравнение. Восстановление остановлено.".into());
     }
     // Refuse to move the live file with pending WAL pages or any remaining
     // SQLite readers. A previous app version may not honor our process lock.
@@ -342,6 +367,20 @@ mod tests {
             .filter(|p|p.file_name().to_string_lossy().contains("restore-safety-")
                 && p.path().extension().and_then(|x|x.to_str()) == Some("sqlite3"))
             .count(),1);
+        let safety = fs::read_dir(&root).unwrap().filter_map(Result::ok)
+            .find(|p| p.file_name().to_string_lossy().contains("restore-safety-")
+                && p.path().extension().and_then(|x|x.to_str()) == Some("sqlite3"))
+            .unwrap().path();
+        // Rehearse recovering the safety file by itself, without WAL/SHM.
+        let independent = dir.path().join("safety-independent.sqlite3");
+        fs::copy(&safety, &independent).unwrap();
+        assert_eq!(
+            recovery::check_snapshot(&independent).unwrap().report_count, 1
+        );
+        assert_ne!(
+            recovery::check_snapshot(&independent).unwrap().verification,
+            recovery::check_snapshot(&root.join("reports.sqlite3")).unwrap().verification
+        );
     }
 
     #[test]
