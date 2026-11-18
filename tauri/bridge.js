@@ -60,6 +60,9 @@
     nativeRestorePreview:source=>tracked('native_restore_preview',{source},'reads'),
     nativeRestoreCopy:(source,verification,destination)=>tracked(
       'native_restore_copy',{source,verification,destination},'saves'),
+    nativeRestoreSchedule:(source,verification)=>tracked(
+      'native_restore_schedule',{source,verification},'saves'),
+    nativeRestoreLaunchInfo:()=>tracked('native_restore_launch_info',{},'reads'),
     nativeMetricKinds:()=>tracked('native_metric_kinds',{},'reads'),
     chooseMetricJson:async()=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
