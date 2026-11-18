@@ -64,12 +64,13 @@ for(const id of ['metricKindFrom','metricKindTo']){
 }
 $('metricKindChoose').addEventListener('click',async()=>{
  if(busy)return;
+ source=null;review=null;
+ $('metricKindPreview').replaceChildren();
  busy=true;controls();
  try{
   const selected=await api.chooseMetricJson();
-  if(!selected)return;
-  source=selected;review=null;
-  $('metricKindPreview').replaceChildren();
+  if(!selected){status('Выбор JSON отменён.');return;}
+  source=selected;
   $('metricKindFile').textContent='Проверяется: '+selected.split(/[\\/]/).pop();
   const result=await api.nativeMetricPreview(selected);
   if(!result||!findKind(result.kind)||!result.reviewToken)
@@ -95,6 +96,9 @@ $('metricKindApply').addEventListener('click',async()=>{
   source=null;review=null;
   $('metricKindPreview').replaceChildren();
   $('metricKindSelect').value=importedKind;
+  $('metricKindTotals').replaceChildren();
+  $('metricKindCount').textContent='Отчёт добавлен. Нажмите «Рассчитать» для обновления итогов.';
+  $('metricKindFile').textContent='Импортирован отчёт: '+receipt.reportId;
   status('Отчёт добавлен: '+receipt.reportId+'. Строк: '+receipt.rowCount+'.');
  }catch(err){
   source=null;review=null;
