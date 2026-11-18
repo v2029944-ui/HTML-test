@@ -135,6 +135,7 @@ pub(super) fn initialize(conn: &Connection) -> Result<(), String> {
             id TEXT PRIMARY KEY,kind TEXT NOT NULL,start TEXT NOT NULL,end TEXT NOT NULL,
             source_name TEXT NOT NULL,row_count INTEGER NOT NULL);
          CREATE INDEX IF NOT EXISTS metric_report_range ON metric_report_docs(kind,start,end);
+         CREATE INDEX IF NOT EXISTS metric_report_source ON metric_report_docs(kind,source_name,start,end);
          CREATE TABLE IF NOT EXISTS metric_report_values(
             report_id TEXT NOT NULL,row_no INTEGER NOT NULL,
             organization TEXT,dimension TEXT NOT NULL,
@@ -145,6 +146,16 @@ pub(super) fn initialize(conn: &Connection) -> Result<(), String> {
          CREATE TABLE IF NOT EXISTS metric_catalog_revision(
             singleton INTEGER PRIMARY KEY CHECK(singleton=1),revision INTEGER NOT NULL);
          INSERT OR IGNORE INTO metric_catalog_revision VALUES(1,0);"
+    ).map_err(err)
+}
+fn duplicate_source_period(conn: &Connection, document: &MetricDocument) -> Result<bool,String> {
+    // Different sources may cover the same period; repeated / overlapping
+    // uploads from the same source are rejected to avoid silent double counting.
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM metric_report_docs
+         WHERE kind=?1 AND source_name=?2 AND start<=?3 AND end>=?4)",
+        params![document.kind,document.source_name,document.end,document.start],
+        |r|r.get::<_,bool>(0)
     ).map_err(err)
 }
 fn metric_revision(conn: &Connection) -> Result<i64, String> {
@@ -237,6 +248,9 @@ impl Storage {
             "SELECT COUNT(*) FROM metric_report_docs WHERE id=?1",[&document.id],|r|r.get(0)
         ).map_err(err)?;
         if exists != 0 { return Err("Report ID already exists; no replacement allowed".into()); }
+        if duplicate_source_period(&conn,&document)? {
+            return Err("Overlapping period from the same source; no replacement allowed".into());
+        }
         let revision=metric_revision(&conn)?;
         Ok(MetricReview {
             kind:kind.id.clone(),name:kind.name.clone(),report_id:document.id.clone(),
@@ -256,6 +270,9 @@ impl Storage {
         let revision=metric_revision(&tx)?;
         if review_token(&bytes,revision,&kind)? != expected_token {
             return Err("Source or metric data changed: preview again".into());
+        }
+        if duplicate_source_period(&tx,&document)? {
+            return Err("Overlapping period from the same source; no replacement allowed".into());
         }
         // Insert-only. A collision fails and rolls back all cells.
         tx.execute(
@@ -368,6 +385,20 @@ mod tests {
         let current=store.metric_summary("labor","2026-01-01","2026-12-31").unwrap();
         assert_eq!(current.report_count,1);
         assert_eq!(current.values["units"],Some(16.0));
+    }
+    #[test]
+    fn overlapping_periods_from_the_same_source_are_rejected() {
+        let dir=tempdir().unwrap();
+        let store=Storage::new(dir.path().join("data")).unwrap();
+        let path=fixture(dir.path(),"one");
+        let reviewed=store.metric_preview(&path).unwrap();
+        store.metric_apply(&path,&reviewed.review_token).unwrap();
+        // Changing only ID cannot silently double count the same source.
+        fs::write(&path,fs::read_to_string(&path).unwrap().replace(
+            r#""id":"one""#,r#""id":"two""#)).unwrap();
+        assert!(store.metric_preview(&path).unwrap_err().contains("Overlapping period"));
+        assert_eq!(store.metric_summary("labor","2026-01-01","2026-12-31")
+            .unwrap().report_count,1);
     }
     #[test]
     fn rejects_missing_base_metrics_and_unknown_kinds() {
