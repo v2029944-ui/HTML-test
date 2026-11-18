@@ -62,3 +62,25 @@ test('native settings operations keep balanced leases and exact SQLite group IDs
  pending[2].resolve(4);await update;
  assert.equal(window.tauriOperations.saves,0);
 });
+
+test('native D2 analytics leases and bounded page parameters are forwarded without report JSON',async()=>{
+ const calls=[],pending=[],window={__TAURI__:{core:{invoke:(command,args)=>{calls.push({command,args});return new Promise((resolve,reject)=>pending.push({resolve,reject}));}},dialog:{open:async()=>null}}};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../bridge.js'),'utf8'),{window,setInterval(){},clearInterval(){}});
+ const cursor={start:'2024-02-28',id:'r2'};
+ const index=window.desktopAPI.nativeAnalysisIndexPage(6,'day',cursor,20);
+ assert.equal(calls[0].command,'native_analysis_index_page');
+ assert.equal(calls[0].args.reportType,'day');
+ assert.equal(calls[0].args.after.id,'r2');
+ assert.equal(calls[0].args.limit,20);
+ pending[0].resolve({processed:1,next:null,done:true});await index;
+ const settings=window.desktopAPI.nativeAnalysisIndexSettings(6);
+ assert.equal(calls[1].command,'native_analysis_index_settings');
+ pending[1].resolve(null);await settings;
+ const summary=window.desktopAPI.nativeAnalysisRange(6,'day','2024-02-01','2024-02-29',['СМУ16']);
+ assert.equal(calls[2].command,'native_analysis_range');
+ assert.equal(calls[2].args.organizations[0],'СМУ16');
+ assert.equal(window.tauriOperations.reads,1);
+ pending[2].resolve({complete:false,total:{amount:null}});
+ assert.equal((await summary).complete,false);
+ assert.equal(window.tauriOperations.reads,0);
+});

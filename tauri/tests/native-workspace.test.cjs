@@ -29,7 +29,7 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  const calls=[];
  const report=n=>({id:'r'+n,period_start:'2024-02-'+String(n%28+1).padStart(2,'0'),period_end:'2024-02-29',report_type:'day',source_name:'<b>untrusted</b>'});
@@ -37,7 +37,10 @@ function mount(){
    nativeSettingsBootstrap:async()=>({revision:12,reports:366,indexed_reports:366,groups:1,catalog:0,org_names:['СМУ16']}),
    nativeReportPage:async(rev,filter,after,limit)=>{calls.push({kind:'report',rev,filter,after,limit});return !after?Array.from({length:100},(_,n)=>report(n)):[report(101)];},
    nativeGroupPage:async(rev,after,limit)=>{calls.push({kind:'group',rev,after,limit});return [{handle:'922337203685477580',id:'g',name:'Old',members:4}];},
-   nativeGroupRename:async(rev,handle,name)=>{calls.push({kind:'rename',rev,handle,name});return 13;}
+   nativeGroupRename:async(rev,handle,name)=>{calls.push({kind:'rename',rev,handle,name});return 13;},
+   nativeAnalysisIndexPage:async(rev,kind,after,limit)=>{calls.push({kind:'index',rev,reportType:kind,after,limit});return {processed:2,next:null,done:true};},
+   nativeAnalysisIndexSettings:async rev=>{calls.push({kind:'settings_index',rev});},
+   nativeAnalysisRange:async(rev,kind,from,to,organizations)=>{calls.push({kind:'range',rev,reportType:kind,from,to,organizations});return {complete:false,periods:366,missing:1,total:{count:null,amount:null,average:null},invalid_reports:1,duplicate_issues:0,overlap_issues:0};}
  };
  const window={desktopAPI:api,confirm:()=>true};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-workspace.js'),'utf8'),{window,document:{getElementById:id=>e[id],createElement:tag=>new Element(tag)}});
@@ -75,4 +78,30 @@ test('renaming a group needs explicit action, uses a string handle, and refreshe
  assert.equal(action.handle,'922337203685477580');
  assert.equal(action.name,'New');
  assert.equal(e.reportRows.children.length,100);
+});
+
+test('D2 analysis indexes in bounded batches, cleans ranges, and never fabricates incomplete totals',async()=>{
+ const {e,calls,window}=mount();await window.nativeWorkspaceReady;
+ assert.equal(e.analysisRun.disabled,true);
+ e.analysisFrom.value='2024-01-01';e.analysisTo.value='2024-12-31';
+ await e.analysisPrepare.events.click();
+ assert.equal(e.analysisRun.disabled,false);
+ const batch=calls.find(c=>c.kind==='index');
+ assert.equal(batch.limit,20);
+ assert.equal(batch.rev,12);
+ assert.equal(batch.reportType,'day');
+ assert.equal(calls.filter(c=>c.kind==='settings_index').length,1);
+ await e.analysisRun.events.click();
+ const q=calls.find(c=>c.kind==='range');
+ assert.equal(q.from,'2024-01-01');
+ assert.equal(q.to,'2024-12-31');
+ assert.equal(q.organizations.length,1);
+ assert.equal(q.organizations[0],'СМУ16');
+ assert.match(e.analysisStatus.textContent,/не все периоды/);
+ const metrics=e.analysisValues.children;
+ assert.equal(metrics.length,9);
+ assert.equal(metrics[3].children[0].textContent,'—');
+ assert.equal(metrics[4].children[0].textContent,'—');
+ e.analysisType.value='week';e.analysisType.events.change();
+ assert.equal(e.analysisRun.disabled,true);
 });
