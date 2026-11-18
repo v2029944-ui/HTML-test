@@ -467,6 +467,48 @@ impl Storage {
         Ok(rule)
     }
 
+    /// Update an Excel import rule only for the exact folder, file metadata
+    /// and database revision presented to the SQL-only frontend.
+    /// This edits config metadata, NEVER imports XLSX bytes or report rows.
+    pub fn set_rule_checked(
+        &self,
+        name: String,
+        rule: Rule,
+        expected_revision: i64,
+        expected_folder: String,
+        expected_signature: String,
+    ) -> Result<i64, String> {
+        if !safe_excel_name(&name) {
+            return Err("Некорректное имя файла XLSX.".into());
+        }
+        validate_rule(&rule)?;
+        if expected_folder.is_empty() || expected_folder.len() > 32767
+            || expected_signature.is_empty() || expected_signature.len() > 256
+        {
+            return Err("Некорректные данные исходной папки или XLSX.".into());
+        }
+        let _guard = self.gate.lock().map_err(err)?;
+        let mut conn = self.connect()?;
+        let mut config = self.config(&conn)?;
+        let folder = config.folder.as_deref().ok_or("Сначала выберите папку Excel.")?;
+        if folder != expected_folder {
+            return Err("Папка Excel изменилась. Обновите список файлов.".into());
+        }
+        let path = Path::new(folder).join(&name);
+        let meta = fs::symlink_metadata(&path).map_err(err)?;
+        if !meta.file_type().is_file() || meta.len() > MAX_EXCEL_BYTES
+            || file_signature(&meta)? != expected_signature
+        {
+            return Err("Файл Excel изменился или недоступен. Обновите список файлов.".into());
+        }
+        let tx = conn.transaction().map_err(err)?;
+        read_model::check_revision(&tx, expected_revision)?;
+        config.rules.insert(name, rule);
+        insert_key(&tx, "config", &serde_json::to_string(&config).map_err(err)?)?;
+        tx.commit().map_err(err)?;
+        read_model::revision(&conn)
+    }
+
     pub fn list_excel(&self) -> Result<Value, String> {
         let _guard = self.gate.lock().map_err(err)?;
         let conn = self.connect()?;
@@ -554,6 +596,53 @@ mod tests {
                 "desktopSource":"Год-2024.xlsx","rows":rows})
         }).collect();
         json!({"reports":reports,"settings":default_settings()})
+    }
+
+    #[test]
+    fn checked_rule_saves_only_for_current_sql_revision_folder_and_file() {
+        let tmp = tempdir().unwrap();
+        let excel_dir = tmp.path().join("excel");
+        fs::create_dir(&excel_dir).unwrap();
+        let file = excel_dir.join("sample.xlsx");
+        fs::write(&file, b"test workbook metadata").unwrap();
+        let store = Storage::new(tmp.path().join("data")).unwrap();
+        store.set_folder(excel_dir.to_string_lossy().to_string()).unwrap();
+        let listing = store.list_excel().unwrap();
+        let folder = listing["folder"].as_str().unwrap().to_string();
+        let signature = listing["files"][0]["signature"].as_str().unwrap().to_string();
+        let revision = store.revision().unwrap();
+        let rule = Rule {
+            kind: "week".to_string(),
+            start: "2026-11-16".to_string(),
+            format: Some("legacy".to_string()),
+            ..Default::default()
+        };
+        assert!(store.set_rule_checked(
+            "sample.xlsx".into(), rule.clone(), revision,
+            "other-folder".into(), signature.clone()
+        ).is_err());
+        assert_eq!(store.revision().unwrap(), revision);
+        assert!(store.set_rule_checked(
+            "sample.xlsx".into(), rule.clone(), revision,
+            folder.clone(), "wrong-signature".into()
+        ).is_err());
+        assert_eq!(store.revision().unwrap(), revision);
+        let next = store.set_rule_checked(
+            "sample.xlsx".into(), rule.clone(), revision,
+            folder.clone(), signature.clone()
+        ).unwrap();
+        assert!(next > revision);
+        assert_eq!(store.list_excel().unwrap()["rules"]["sample.xlsx"]["type"], "week");
+        assert!(store.set_rule_checked(
+            "sample.xlsx".into(), rule.clone(), revision,
+            folder.clone(), signature.clone()
+        ).is_err(), "stale revision must not overwrite another edit");
+        let fresh = store.revision().unwrap();
+        fs::write(&file, b"completely different Excel contents").unwrap();
+        assert!(store.set_rule_checked(
+            "sample.xlsx".into(), rule, fresh, folder, signature
+        ).is_err(), "a changed source file must require a fresh selection");
+        assert_eq!(store.revision().unwrap(), fresh);
     }
 
     #[test]
