@@ -1,0 +1,11 @@
+{
+  "kind": "labor",
+  "id": "labor-2026-11-18-example",
+  "start": "2026-11-18",
+  "end": "2026-11-18",
+  "sourceName": "Пример трудозатрат",
+  "rows": [
+    {"organization": "СМУ16", "dimension": "Монтаж", "values": {"hours": 8, "units": 16}},
+    {"organization": "АВТО", "dimension": "Ремонт", "values": {"hours": 4, "units": 3}}
+  ]
+}
