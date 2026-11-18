@@ -7,7 +7,6 @@ on:
     paths:
       - "tauri/**"
       - "index.html"
-      - "desktop/**"
       - "tests/**"
       - ".github/workflows/tauri-windows.yml"
   workflow_dispatch:
@@ -36,15 +35,31 @@ jobs:
       - name: Install Tauri CLI
         run: npm install --prefix tauri --no-audit --no-fund
       - name: Check frontend bridge and prepare HTML
+        shell: pwsh
         run: |
-          node --test tauri/tests/*.test.cjs tests/*.cjs desktop/core.test.cjs
+          node --test tauri/tests/*.test.cjs tests/*.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Node regression tests failed' }
           npm --prefix tauri run prepare:frontend
+          if ($LASTEXITCODE -ne 0) { throw 'Frontend preparation failed' }
           npm --prefix tauri run icons
+          if ($LASTEXITCODE -ne 0) { throw 'Tauri icon generation failed' }
       - name: Test SQLite migration and safe folder access
         run: cargo test --manifest-path tauri/src-tauri/Cargo.toml
+      - name: Test streamed native XLSX import core
+        run: cargo test --locked --manifest-path tauri/import-core/Cargo.toml
+      - name: Test bounded SQLite read model
+        run: cargo test --locked --manifest-path tauri/storage-core/Cargo.toml
       - name: Build Windows installer
         if: github.ref != 'refs/heads/work/tauri-dropdown-updates-20261117'
         run: npm --prefix tauri run build:windows
+      - name: Preserve unsigned CI installer before GUI test build
+        if: github.ref != 'refs/heads/work/tauri-dropdown-updates-20261117'
+        shell: pwsh
+        run: |
+          $setups = @(Get-ChildItem "tauri/src-tauri/target/release/bundle/nsis/*.exe")
+          if ($setups.Count -ne 1) { throw "Expected exactly one unsigned CI installer." }
+          New-Item -ItemType Directory -Force "tauri/test-artifacts" | Out-Null
+          Copy-Item $setups[0].FullName "tauri/test-artifacts/setup.exe"
       - name: Build signed preview without publishing a release
         if: github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         env:
@@ -62,21 +77,28 @@ jobs:
           Copy-Item $setups[0].FullName "tauri/test-artifacts/setup.exe"
           Copy-Item ($setups[0].FullName + ".sig") "tauri/test-artifacts/setup.exe.sig"
       - name: Build non-distributable GUI test installer with WebView2 CDP
-        if: github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         shell: pwsh
         run: |
           Push-Location tauri
-          try { npx tauri build --config tests/ci-webview2.json }
+          try {
+            npx tauri build --config tests/ci-webview2.json
+            if ($LASTEXITCODE -ne 0) { throw 'WebView2 smoke build failed' }
+          }
           finally { Pop-Location }
       - uses: actions/setup-python@v5
-        if: github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         with:
           python-version: '3.12'
       - name: Run installed Windows application with real WebView2
-        if: github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
+        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
+        env:
+          ANALIZ_SMOKE_UNSIGNED_CI: ${{ github.event_name == 'pull_request' && 'true' || 'false' }}
         run: |
           python -m pip install playwright==1.62.0
+          if ($LASTEXITCODE -ne 0) { throw 'Playwright installation failed' }
           python tauri/tests/windows_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw 'WebView2 smoke test failed' }
       - name: Upload preview EXE and Windows verification
         if: always() && github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         uses: actions/upload-artifact@v4
@@ -90,6 +112,20 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Tauri-Windows-experimental
-          path: tauri/src-tauri/target/release/bundle/nsis/*.exe
+          # Preserve the original unsigned bundle; never upload the CDP-enabled GUI build.
+          path: tauri/test-artifacts/setup.exe
           if-no-files-found: error
+          retention-days: 14
+      - name: Upload isolated Windows GUI smoke diagnostics
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tauri-Windows-WebView2-smoke
+          path: |
+            tauri/test-artifacts/build-info.json
+            tauri/test-artifacts/windows-error.txt
+            tauri/test-artifacts/windows-runtime.txt
+            tauri/test-artifacts/windows-webview2.png
+            tauri/test-artifacts/windows-desktop-diagnostic.png
+          if-no-files-found: warn
           retention-days: 14

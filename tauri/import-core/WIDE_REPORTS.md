@@ -138,9 +138,14 @@ compatibility or three-million-cell end-to-end safety claim follows from this
 backend slice. The separately developed analytics branch requires a reviewed
 schema/index integration; this work does not depend on its edits.
 
-Production-blocking lifecycle risk: manual `replace_exact` can remove the first
-artifact report while other old days still refer to its `sourceDiagnosticsReport`.
-That can orphan complete source diagnostics. No preservation/reference check or
-partial-anchor replacement block is implemented here. Keep production import
-activation disabled until resolved. Whole-source/full-repeat replacement is safe
-for this representation when all old anchor references are removed atomically.
+Shared-source diagnostic lifetime is guarded in C3: every wide day has a
+transactional SQLite link to the first day's complete `sourceIssues`.
+Manual `replace_exact` removing an anchor with surviving days, direct SQL
+deletion and legacy full-history `save()` now fail closed. Whole-source
+replacement deletes dependents before their anchor inside one transaction.
+Experimental wide databases created before this index existed require explicit
+migration/review; production activation remains blocked by UI/IPC, bounded
+live diagnostics, backup/restore and old-EXE BLOB compatibility.
+
+On the refreshed C2 base, native wide cancellation/stress tools and results
+are also documented in `docs/NATIVE_IMPORT_PROGRESS.md`.

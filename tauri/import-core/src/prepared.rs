@@ -230,13 +230,15 @@ impl<'a> Stage<'a> {
             &self.db,
             rusqlite::TransactionBehavior::Immediate,
         )?;
-        let complete: bool = self.db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM manifest WHERE name='conversion_complete')",
+        // Only explicitly supported conversion markers may publish documents.
+        // Wide provenance, quality and zero proof are validated below.
+        let converted: Option<String> = self.db.query_row(
+            "SELECT value FROM manifest WHERE name='conversion_complete'",
             [],
             |r| r.get(0),
-        )?;
-        if !complete {
-            return Err(fail("Report conversion is not complete"));
+        ).optional()?;
+        if !matches!(converted.as_deref(), Some("legacy" | "daily-wide")) {
+            return Err(fail("Unsupported or incomplete report conversion"));
         }
         // Bound persisted metadata before reading values, including a damaged private stage.
         for (table, columns) in [
@@ -267,7 +269,7 @@ impl<'a> Stage<'a> {
                 return Err(fail("converted metadata exceeds 64 KiB"));
             }
         }
-        let wide:bool=self.db.query_row("SELECT EXISTS(SELECT 1 FROM manifest WHERE name='conversion_complete' AND value='daily-wide')",[],|r|r.get(0))?;
+        let wide = converted.as_deref() == Some("daily-wide");
         if wide {
             for (table, columns) in [
                 (

@@ -1,4 +1,4 @@
-// Выполняется только внутри Electron; обычный index.html работает без этого файла.
+// Модуль импорта из папки для Tauri; автономный index.html работает без этого файла.
 (async function desktopWorkspace(){
   'use strict';
   if(!window.desktopAPI)return;
@@ -210,7 +210,7 @@
           $('excelFileStatus').textContent='Из папки: '+file.name;
           $('excelFileStatus').title=file.name;
           closeManual.hidden=false;
-          await inspectImport();
+          if(await inspectImport()===false)throw Error('Проверка даты отменена. Прежние отчёты сохранены.');
           message('Предпросмотр открыт ниже. Проверьте замечания, затем нажмите «Сохранить отчёты». Автоимпорт приостановлен до сохранения или закрытия ручной проверки.');
           $('importPreview').scrollIntoView({behavior:'smooth',block:'start'});
         }catch(err){message(file.name+': '+err.message,true);}
@@ -264,6 +264,9 @@
       }
     }
     if(!selected)throw Error('Не найден подходящий лист с колонками «Работа / Количество / Сумма». Настройте обычный импорт вручную.');
+    const dateEvidence=ordinaryDateEvidence(workbook.Sheets[selected.sheetName],readTripleColumns(workbook.Sheets[selected.sheetName]),rule.type);
+    if(ordinaryDateNeedsConfirmation(dateEvidence,rule.start))
+      throw Error('Дата правила не согласуется однозначно с заголовком Excel: '+(dateEvidence.candidates.map(x=>displayDay(x.date)+' ('+selected.sheetName+'!'+x.dateCell+')').join(', ')||'проверена только часть заголовка')+'. Откройте ручную проверку и подтвердите дату. Правило и прежние отчёты не изменены.');
     if(selected.parsed.some(x=>!x.rows.length||x.warnings.length||x.issues.length||x.hasMismatch)){
       const issues=[...new Set(selected.parsed.flatMap(x=>x.warnings))].slice(0,3).join('; ');
       throw Error('Есть замечания к Excel. Предыдущие данные сохранены. '+(issues||'Проверьте пустые периоды и итоги.'));
@@ -278,7 +281,8 @@
         count:item.count,amount:item.amount,hasMismatch:item.hasMismatch,
         organizations:item.organizations,importedAt:when,
         desktopSource:file.name,desktopSignature:signature,
-        desktopRule:key,desktopHash:sha256};
+        desktopRule:key,desktopHash:sha256,
+        ...(i===0&&dateEvidence.candidates.length?{periodStartEvidence:{sheet:selected.sheetName,candidates:dateEvidence.candidates}}:{})};
     });
     return reports;
   }
@@ -292,7 +296,7 @@
       if(!listing.folder){message('Сначала выберите папку.');return;}
       const previous=state.reports;
       let next=previous.slice(),updated=0,unchanged=0,skipped=0;
-      const errors=[];
+      const errors=[],dateNotes=[];
       for(const file of listing.files){
         const rule=listing.rules[file.name];
         if(!rule){skipped++;continue;}
@@ -308,6 +312,10 @@
           const source=await api.readExcel(file.name);
           if(source.signature!==file.signature)throw Error('Файл меняется, повторим проверку.');
           const parsed=parseExcel(file,rule,new Uint8Array(source.bytes),source.signature,source.sha256);
+          if(dateNotes.length<20&&parsed[0]?.periodStartEvidence){
+            const e=parsed[0].periodStartEvidence;
+            dateNotes.push(file.name+': дата начала '+displayDay(rule.start)+' подтверждена заголовком '+e.sheet+'!'+e.candidates[0].dateCell+'.');
+          }
           for(const report of parsed)report.desktopFolder=listing.folder;
           const existing=next.filter(r=>!sameSource(r));
           const accepted=existing.slice();
@@ -332,6 +340,7 @@
         (errors.length?', ошибок '+errors.length+'.':'.'),errors.length>0);
       log.replaceChildren();
       errors.forEach(error=>log.append(node('p',error,'warn small')));
+      dateNotes.forEach(text=>log.append(node('p',text,'muted small')));
       const stored=new Set(next.map(r=>r.desktopSource).filter(Boolean));
       const present=new Set(listing.files.map(f=>f.name));
       for(const name of stored)if(!present.has(name))
@@ -345,7 +354,10 @@
   }
   function scheduleSync(){
     clearTimeout(scheduleTimer);
-    scheduleTimer=setTimeout(async()=>{await showFiles();await syncFiles();},1800);
+    scheduleTimer=setTimeout(async()=>{
+      try{await showFiles();await syncFiles();}
+      catch(err){message('Не удалось проверить изменения в папке Excel: '+err.message,true);}
+    },1800);
   }
   choose.addEventListener('click',async()=>{
     try{

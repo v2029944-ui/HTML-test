@@ -467,7 +467,7 @@ fn wide_folder_shrink_repeat_other_folder_and_failure_rollbacks_preserve_c2() {
         let p = prepared(&area, &source, "2024-03-01");
         let storage = Storage::new(root.path().join("live")).unwrap();
         let mut data = super::import_apply_tests::original(&storage);
-        data["reports"].as_array_mut().unwrap().push(json!({"id":"other-folder","type":"day","start":"2024-03-05","end":"2024-03-05","desktopSource":"wide.xlsx","desktopFolder":"/different","rows":[]}));
+        data["reports"].as_array_mut().unwrap().push(json!({"id":"other-folder","type":"day","start":"2024-03-05","end":"2024-03-05","desktopSource":"wide.xlsx","desktopFolder":root.path().join("different").to_string_lossy().to_string(),"rows":[]}));
         storage.save(data).unwrap();
         let preview = storage.preview_import(&p).unwrap();
         storage
@@ -665,7 +665,7 @@ fn wide_other_source_conflict_and_preparation_cancel_leave_live_reports_unchange
     let area = StageArea::open(root.path().join("stage")).unwrap();
     let storage = Storage::new(root.path().join("live")).unwrap();
     let mut before = super::import_apply_tests::original(&storage);
-    before["reports"].as_array_mut().unwrap().push(json!({"id":"foreign","type":"day","start":"2024-02-28","end":"2024-02-28","desktopSource":"wide.xlsx","desktopFolder":"/different","rows":[]}));
+    before["reports"].as_array_mut().unwrap().push(json!({"id":"foreign","type":"day","start":"2024-02-28","end":"2024-02-28","desktopSource":"wide.xlsx","desktopFolder":root.path().join("different").to_string_lossy().to_string(),"rows":[]}));
     storage.save(before.clone()).unwrap();
     let before = storage.load().unwrap();
     let cancel = AtomicBool::new(false);

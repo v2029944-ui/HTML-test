@@ -44,6 +44,12 @@ pub(super) fn prepared<'a>(
         .unwrap();
     stage.prepare(&cancel, |_| {}).unwrap()
 }
+fn different_folder(root: &Path) -> String {
+    // Use a real absolute path on every platform, not Unix-only "/different".
+    // The folder need not exist: the identity must simply differ from the source.
+    root.join("different").to_string_lossy().into_owned()
+}
+
 pub(super) fn original(storage: &Storage) -> Value {
     let data = json!({"reports":[{"id":"old","type":"day","start":"2025-01-01","end":"2025-01-01","rows":[{"organization":"A","work":"old","count":3,"amount":4}]}],"settings":{"custom":"keep","orgNames":["A","B","C","D"],"groups":[],"catalog":[]}});
     storage.save(data.clone()).unwrap();
@@ -590,9 +596,29 @@ fn cleanup_failure_is_separate_from_committed_receipt() {
         )
         .unwrap();
     let path = p.directory().to_path_buf();
-    fs::rename(&path, path.with_extension("orphan")).unwrap();
-    fs::write(&path, b"blocks cleanup").unwrap();
+    // Unix allows renaming with an open SQLite handle; Windows does not.
+    #[cfg(not(windows))]
+    {
+        fs::rename(&path, path.with_extension("orphan")).unwrap();
+        fs::write(&path, b"blocks cleanup").unwrap();
+    }
+    #[cfg(windows)]
+    let blocker = {
+        use std::os::windows::fs::OpenOptionsExt;
+        let file = path.join("cleanup-blocker");
+        fs::write(&file, b"locked").unwrap();
+        fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&file)
+            .unwrap()
+    };
     assert!(p.discard().is_err());
+    #[cfg(windows)]
+    {
+        drop(blocker);
+        fs::remove_dir_all(&path).unwrap();
+    }
     assert_eq!(
         storage.committed_import(&receipt.operation_id).unwrap(),
         Some(receipt)
@@ -809,7 +835,7 @@ fn folder_shrink_replaces_complete_source_only_and_receipt_counts_removals() {
     let area = StageArea::open(root.path().join("stage")).unwrap();
     let storage = Storage::new(root.path().join("live")).unwrap();
     let mut data = original(&storage);
-    data["reports"].as_array_mut().unwrap().push(json!({"id":"different-folder","type":"day","start":"2026-11-04","end":"2026-11-04","desktopSource":"data.xlsx","desktopFolder":"/different","rows":[]}));
+    data["reports"].as_array_mut().unwrap().push(json!({"id":"different-folder","type":"day","start":"2026-11-04","end":"2026-11-04","desktopSource":"data.xlsx","desktopFolder":different_folder(root.path()),"rows":[]}));
     storage.save(data).unwrap();
     let p = folder_prepared(&area, &source, 3);
     let preview = storage.preview_import(&p).unwrap();
@@ -1096,7 +1122,7 @@ fn legacy_folder_ownership_is_explicit_and_unknown_identity_blocks() {
                 old.as_object_mut().unwrap().remove("desktopFolder");
             }
             "manual-c1" => old["sourceHash"] = "c1-hash".into(),
-            "other-folder" => old["desktopFolder"] = "/different".into(),
+            "other-folder" => old["desktopFolder"] = different_folder(root.path()).into(),
             "malformed" => old["desktopFolder"] = json!(["wrong"]),
             _ => {}
         }
@@ -1171,7 +1197,7 @@ fn large_legacy_source_metadata_streams_and_cancels_without_loading_json() {
     }
     let memory = || {
         fs::read_to_string("/proc/self/status")
-            .unwrap()
+            .unwrap_or_default()
             .lines()
             .filter(|l| l.starts_with("VmRSS:") || l.starts_with("VmHWM:"))
             .collect::<Vec<_>>()
@@ -1229,7 +1255,7 @@ fn folder_mode_never_adopts_another_source_overlapping_period() {
     let p = folder_prepared(&area, &source, 2);
     let storage = Storage::new(root.path().join("live")).unwrap();
     let mut data = original(&storage);
-    data["reports"].as_array_mut().unwrap().push(json!({"id":"other","type":"day","start":"2026-11-01","end":"2026-11-01","desktopSource":"data.xlsx","desktopFolder":"/different","rows":[]}));
+    data["reports"].as_array_mut().unwrap().push(json!({"id":"other","type":"day","start":"2026-11-01","end":"2026-11-01","desktopSource":"data.xlsx","desktopFolder":different_folder(root.path()),"rows":[]}));
     storage.save(data.clone()).unwrap();
     assert!(storage
         .preview_import(&p)
@@ -1273,7 +1299,7 @@ fn source_ownership_index_is_invalidated_by_replace_writers_but_not_settings_rea
             |r| r.get(0),
         )
         .unwrap();
-    let other=json!({"id":id,"type":"day","start":"2026-11-03","end":"2026-11-03","desktopSource":"data.xlsx","desktopFolder":"/different","rows":[]}).to_string();
+    let other=json!({"id":id,"type":"day","start":"2026-11-03","end":"2026-11-03","desktopSource":"data.xlsx","desktopFolder":different_folder(root.path()),"rows":[]}).to_string();
     conn.execute(
         "INSERT OR REPLACE INTO reports VALUES(?1,'day','2026-11-03','2026-11-03','data.xlsx',?2)",
         params![id, other],
@@ -1300,7 +1326,8 @@ fn cancellation_during_large_source_set_does_not_return_a_preview() {
     let storage = Storage::new(root.path().join("live")).unwrap();
     original(&storage);
     let conn = storage.connect().unwrap();
-    conn.execute("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<50000) INSERT INTO reports(id,report_type,period_start,period_end,source_name,json) SELECT 'history-'||x,'day','2020-01-01','2020-01-01','data.xlsx','{\"desktopSource\":\"data.xlsx\",\"desktopFolder\":\"/different\",\"rows\":[]}' FROM n",[]).unwrap();
+    let other_document = json!({"desktopSource":"data.xlsx","desktopFolder":different_folder(root.path()),"rows":[]}).to_string();
+    conn.execute("WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<50000) INSERT INTO reports(id,report_type,period_start,period_end,source_name,json) SELECT 'history-'||x,'day','2020-01-01','2020-01-01','data.xlsx',?1 FROM n", [&other_document]).unwrap();
     let revision = storage.revision().unwrap();
     let cancel = AtomicBool::new(false);
     std::thread::scope(|scope| {
@@ -1333,7 +1360,8 @@ fn complete_conflict_and_source_scans_include_minimum_sqlite_rowid() {
     let p = prepared(&area, &source, "day", "2026-11-01");
     let storage = Storage::new(root.path().join("live")).unwrap();
     original(&storage);
-    storage.connect().unwrap().execute("INSERT INTO reports(rowid,id,report_type,period_start,period_end,source_name,json) VALUES(-9223372036854775808,'minimum','day','2026-11-01','2026-11-01','data.xlsx','{\"desktopSource\":\"data.xlsx\",\"desktopFolder\":\"/different\",\"rows\":[]}')",[]).unwrap();
+    let other_document = json!({"desktopSource":"data.xlsx","desktopFolder":different_folder(root.path()),"rows":[]}).to_string();
+    storage.connect().unwrap().execute("INSERT INTO reports(rowid,id,report_type,period_start,period_end,source_name,json) VALUES(-9223372036854775808,'minimum','day','2026-11-01','2026-11-01','data.xlsx',?1)", [&other_document]).unwrap();
     assert_eq!(storage.preview_import(&p).unwrap().counts().replacements, 1);
     let folder = folder_prepared(&area, &source, 2);
     assert!(storage
