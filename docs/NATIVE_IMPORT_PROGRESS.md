@@ -1,12 +1,12 @@
-# Native import: implementation status, 2026-11-17
+# Native import: implementation status, reconciled 2026-11-18
 
-This document records partial implementation. The requested end-to-end native import is **not complete**.
+This document records partial implementation. End-to-end native import is **not complete**. Status checked against `main` commit `5d4e99a` on 2026-11-18. The performance tables below retain their historical commit references. The manually built 0.1.3 EXE comes from earlier `f26e5e6` and **does not contain the merged native core**.
 
-## A — dates (existing PR #16)
+## A — dates (merged PR #16 and #24)
 
-Removed the invented 19.10.2026 suggestion in manual/folder import. Reset dates when switching an already-opened workbook; retain explicit dates before the first file and within the current workbook. Saved rules are retained, with a warning for the known legacy suggestion. General reliable inference of ordinary report start dates, including provenance and conflicting candidates, remains a separate extension. Wide daily header recognition is unchanged.
+PR #16 removed the invented 19.10.2026 date suggestion, resets dates when changing workbooks and preserves explicit user choices as appropriate. Merged PR #24 adds bounded evidence of ordinary report start dates from explicit sheet-header labels and requires confirmation for conflicts; see [date evidence](PERIOD_DATE_EVIDENCE.md). Neither change guesses dates from arbitrary filenames or guarantees recognition of every layout. Wide reports retain their separate date handling.
 
-Local evidence: 112 Node tests, 45 Linux/Chromium tests, and 14 tests of the unchanged Rust storage module passed. The Rust module was linked into a separate Linux harness without Tauri GUI. PR #16 includes current main; no merge to main was performed.
+Historical PR #16 checks passed: 112 Node, 45 Linux/Chromium and 14 Rust storage tests in a separate non-GUI harness. **PR #16 and PR #24 have since been merged into `main`.** These earlier test counts do not verify the present `main` in Windows/WebView2.
 
 ## B1 — raw streaming and temporary storage
 
@@ -18,10 +18,10 @@ The resource profile covers raw ingestion and staging, not report validation/app
 
 ## Not yet implemented
 
-- Production B/C integration: ordinary conversion is in draft [#19](https://github.com/v2029944-ui/HTML-test/pull/19); daily-wide conversion is described below. Separate additive backend drafts [#20](https://github.com/v2029944-ui/HTML-test/pull/20) and [#21](https://github.com/v2029944-ui/HTML-test/pull/21) implement prepared review/atomic application and source ownership/quality acknowledgment. Wide preparation and production command integration remain incomplete.
-- Production D: draft [#18](https://github.com/v2029944-ui/HTML-test/pull/18) supplies bounded query/index/backup foundations. Bounded startup/post-import/selection reads and complete application analytics/exports remain unfinished. Existing `load()` still loads full history and production `save()` can replace the full report set.
-- E: native worker commands, integrated import states/progress/cancellation/pages, repeated full-pipeline load tests, UI reaction measurements and end-to-end regression parity.
-- Windows/WebView2 and actual installed EXE checks. No such environment was available.
+- Production B/C integration: standalone staging and conversion from **merged PR #17, #19 and #22** are in `main`, but are **not connected to the production importer or live SQLite**. Draft [#20](https://github.com/v2029944-ui/HTML-test/pull/20) adds prepared manual application, draft [#21](https://github.com/v2029944-ui/HTML-test/pull/21) handles ownership and quality acknowledgment, and draft [#25](https://github.com/v2029944-ui/HTML-test/pull/25) extends preparation for wide reports. They remain unmerged; their integration and source-diagnostics lifecycle still need work.
+- Production D: draft [#18](https://github.com/v2029944-ui/HTML-test/pull/18) provides bounded revisioned reads/backups, and dependent drafts [#23](https://github.com/v2029944-ui/HTML-test/pull/23) and [#26](https://github.com/v2029944-ui/HTML-test/pull/26) provide SQL analytics/CSV and bounded settings/management. **None is activated in `main`.** Production `load()` still reads the entire report history and `save()` can replace the full report set.
+- E: Tauri background worker/IPC commands, integrated progress/cancellation/review/pages, complete frontend analytics and export migration, repeatable full-pipeline memory/UI profiling, and end-to-end regression parity are not implemented.
+- Windows/WebView2 validation of the **new native-import path** and installation of an EXE built from the current `main` are missing. The earlier successful beta GUI smoke does not verify this new core; the locally built 0.1.3 EXE has not been run in Windows.
 
 No safe-3-million-cell claim is made for the application. The standalone stage's resource results cannot establish complete-import memory bounds or compatibility. The autonomous HTML parser and its existing protective limits remain unchanged.
 

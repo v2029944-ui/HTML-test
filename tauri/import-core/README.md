@@ -1,6 +1,8 @@
-# Native XLSX staging core (B1)
+# Native XLSX staging and conversion core (B1 + B2)
 
-This standalone crate implements **raw ZIP/XML ingestion into a temporary SQLite database**. It is not connected to Tauri commands or the production importer. It does not yet convert cells to business reports, validate financial totals, apply reports to the live database, or replace whole-history reads. These are required subsequent stages; this crate alone does not complete native import.
+This standalone crate implements **bounded ZIP/XML ingestion (B1) and disk-backed business-report conversion (B2)**. `Stage::convert_legacy` converts ordinary day/week/month report triples; `Stage::convert_wide` handles supported daily-wide quarter/year sheets. Rows, financial controls, source provenance, and diagnostics stay in private SQLite and are available via bounded page APIs and CLI JSONL output. See [ordinary conversion](REPORT_CONVERSION.md) and [daily-wide conversion](WIDE_REPORTS.md) for the supported semantics.
+
+**Production boundary (current `main`, 2026-11-18):** the crate is **not wired to Tauri commands or the JavaScript importer**. It does not publish reports into the live `reports.sqlite3`, perform user confirmation or replace whole-history `load()`/`save()`. The 0.1.3 installer was built before this crate was merged.
 
 ## Local commands
 
@@ -8,6 +10,8 @@ This standalone crate implements **raw ZIP/XML ingestion into a temporary SQLite
 cargo test --manifest-path tauri/import-core/Cargo.toml
 cargo build --release --manifest-path tauri/import-core/Cargo.toml
 ./tauri/import-core/target/release/stage-xlsx /path/book.xlsx /private/staging/root
+# Optional ordinary day conversion: explicit date and sheet component path
+./tauri/import-core/target/release/stage-xlsx /path/book.xlsx /private/staging/root day 2026-01-01 xl/worksheets/sheet1.xml
 python tools/profile_native_xlsx.py --binary "$PWD/tauri/import-core/target/release/stage-xlsx" --output /tmp/native-profile
 python tools/test_native_recovery.py "$PWD/tauri/import-core/target/release/stage-xlsx" /tmp/native-profile/500000-values.xlsx /tmp/native-recovery
 python tools/profile_browser_reader.py /tmp/native-profile/3000000-values.xlsx
@@ -42,4 +46,6 @@ Progress is a callback at 2048-cell batch boundaries and component completion. C
 
 ## Required follow-up
 
-Business-format recognition, merged-header interpretation, Excel date/1904 conversion, report/totals validation and bounded diagnostics are **not implemented in this crate yet**. Stored styles/merges/workbook metadata are staging input for that work, not proof of format compatibility. Confirmation, database revision/conflict validation, atomic live application, complete selective analytics/export/backups, async Tauri/UI integration and Windows fault testing remain mandatory. Do not switch the production importer to this crate until those paths have parity tests.
+Already implemented in this crate: conversion of ordinary triples and supported daily-wide reports, including merged-header dates, 1904-system dates, financial controls, and bounded diagnostics. Exact warning wording and parity with every possible Excel layout are **not** guaranteed.
+
+Still required: complete prepared quality confirmation, revision/source/conflict checks, atomic live application, bounded full-application analytics/exports, asynchronous Tauri worker/IPC integration, and Windows/WebView2/fault tests. Draft PRs [#18](https://github.com/v2029944-ui/HTML-test/pull/18), [#20](https://github.com/v2029944-ui/HTML-test/pull/20), [#21](https://github.com/v2029944-ui/HTML-test/pull/21) and [#25](https://github.com/v2029944-ui/HTML-test/pull/25) cover portions of this work, but are **not merged or activated**. Do not switch the production importer based solely on standalone staging tests.
