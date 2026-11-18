@@ -384,6 +384,16 @@ mod tests {
     }
 
     #[test]
+    fn second_instance_cannot_acquire_data_directory_while_lock_is_held() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("live");
+        let lease = AppRestoreLock::acquire(&root).unwrap();
+        assert!(AppRestoreLock::acquire(&root).is_err());
+        drop(lease);
+        assert!(AppRestoreLock::acquire(&root).is_ok());
+    }
+
+    #[test]
     fn corrupted_candidate_blocks_swap_and_keeps_live_database() {
         let dir=tempdir().unwrap();let root=dir.path().join("live");
         let store=Storage::new(root.clone()).unwrap();
