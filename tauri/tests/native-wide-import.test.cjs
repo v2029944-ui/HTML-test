@@ -25,6 +25,14 @@ function setup(options={}){
    chooseWideXlsx:async()=>options.path===undefined?'C:/Excel/annual.xlsx':options.path,
    nativeSettingsBootstrap:async()=>({org_names:['СМУ16','АВТО','ТРАК','ЦЕНТР']}),
    nativeWideImportPreview:async(source,config)=>{calls.push({kind:'preview',source,config});return preview;},
+   chooseSqliteBackupPath:async defaultPath=>{
+     calls.push({kind:'backup_dialog',defaultPath});
+     return options.backupPath===undefined?'C:/Backups/before-import.sqlite3':options.backupPath;
+   },
+   nativeBackupSqlite:async destination=>{
+     calls.push({kind:'backup',destination});
+     return options.backupRevision===undefined?preview.revision:options.backupRevision;
+   },
    nativeWideImportApply:async(source,config,reviewToken,confirmation)=>{
      calls.push({kind:'apply',source,config,reviewToken,confirmation});
      return {reports:366,rows:12000,revision:8,replaced:364};
@@ -74,6 +82,10 @@ test('native wide import requires review and independent acknowledgements',async
  e.wideQuality.checked=true;
  await e.wideApply.events.click();
  assert.equal(calls.filter(c=>c.kind==='apply').length,1);
+ assert.equal(calls.find(c=>c.kind==='backup_dialog').defaultPath.endsWith('.sqlite3'),true);
+ assert.equal(calls.find(c=>c.kind==='backup').destination,'C:/Backups/before-import.sqlite3');
+ assert.ok(calls.findIndex(c=>c.kind==='backup')<calls.findIndex(c=>c.kind==='apply'),
+   'a verified backup must exist before replacing any report');
  assert.equal(calls.at(-1).reviewToken,'a'.repeat(64));
  assert.equal(calls.at(-1).confirmation.acceptQuality,true);
  assert.equal(confirmCount(),1);
@@ -92,4 +104,42 @@ test('changing the year invalidates reviewed import, and cancelling the picker d
  assert.equal(x.elements.wideApply.disabled,true);
  await x.elements.wideApply.events.click();
  assert.equal(x.calls.filter(c=>c.kind==='apply').length,0);
+});
+
+test('destructive Excel replacement is blocked if user cancels the backup',async()=>{
+ const {elements:e,calls}=setup({backupPath:null});
+ await e.wideChoose.events.click();
+ await e.widePreview.events.click();
+ e.wideReplace.checked=true;e.wideOverlap.checked=true;e.wideQuality.checked=true;
+ await e.wideApply.events.click();
+ assert.equal(calls.filter(c=>c.kind==='backup').length,0);
+ assert.equal(calls.filter(c=>c.kind==='apply').length,0);
+ assert.match(e.wideStatus.textContent,/необходимо создать резервную копию/);
+ assert.equal(e.wideApply.disabled,false,'allow an explicit retry with a new backup path');
+});
+test('a different backed-up database revision blocks replacement and invalidates the review',async()=>{
+ const {elements:e,calls}=setup({backupRevision:8});
+ await e.wideChoose.events.click();
+ await e.widePreview.events.click();
+ e.wideReplace.checked=true;e.wideOverlap.checked=true;e.wideQuality.checked=true;
+ await e.wideApply.events.click();
+ assert.equal(calls.filter(c=>c.kind==='backup').length,1);
+ assert.equal(calls.filter(c=>c.kind==='apply').length,0);
+ assert.equal(e.wideApply.disabled,true);
+ assert.match(e.wideStatus.textContent,/Ревизия базы изменилась/);
+});
+test('new daily reports without replacement do not require an unrelated backup',async()=>{
+ const {elements:e,calls}=setup({preview:{
+    reviewToken:'c'.repeat(64),sourceName:'new.xlsx',sourceHash:'d'.repeat(64),
+    revision:7,reportCount:2,rowCount:5,
+    conflicts:{new_reports:2,replacements:0,cross_type_overlaps:0},
+    quality:{issues:0,mismatch_reports:0,relevant_source_issues:0},
+    sampleReports:[],sampleReportIssues:[],sampleSourceIssues:[]
+ }});
+ await e.wideChoose.events.click();
+ await e.widePreview.events.click();
+ await e.wideApply.events.click();
+ assert.equal(calls.filter(c=>c.kind==='backup_dialog').length,0);
+ assert.equal(calls.filter(c=>c.kind==='backup').length,0);
+ assert.equal(calls.filter(c=>c.kind==='apply').length,1);
 });

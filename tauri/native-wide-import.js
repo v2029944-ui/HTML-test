@@ -108,6 +108,24 @@ $('wideApply').addEventListener('click',async()=>{
  if(!window.confirm('Повторно проверить XLSX и атомарно сохранить '+review.reportCount+' отчётов в SQLite?'))return;
  busy=true;updateControls();
  try{
+  if(counts.replacements>0){
+   // Replacing old report documents is irreversible from the UI. Require
+   // a verified, independent SQLite Online Backup before C3 publication.
+   if(typeof api.chooseSqliteBackupPath!=='function'||typeof api.nativeBackupSqlite!=='function')
+    throw Error('Резервное копирование SQLite недоступно. Замена отчётов запрещена.');
+   status('Перед заменой существующих отчётов требуется резервная копия SQLite.');
+   const backupPath=await api.chooseSqliteBackupPath(
+      'analiz-before-import-'+new Date().toISOString().slice(0,10)+'.sqlite3');
+   if(backupPath===null||backupPath===undefined||backupPath===''){
+    status('Сохранение отменено: перед заменой отчётов необходимо создать резервную копию.');
+    return;
+   }
+   if(typeof backupPath!=='string')throw Error('Некорректный путь резервной копии.');
+   const backupRevision=await api.nativeBackupSqlite(backupPath);
+   if(!Number.isSafeInteger(backupRevision)||backupRevision!==review.revision)
+    throw Error('Ревизия базы изменилась во время резервного копирования. Проверьте XLSX заново.');
+   status('Резервная копия SQLite проверена и сохранена. Повторно проверяется Excel перед записью…');
+  }
   const result=await api.nativeWideImportApply(source,options,review.reviewToken,{
    replaceExact:$('wideReplace').checked,
    acceptCrossType:$('wideOverlap').checked,
