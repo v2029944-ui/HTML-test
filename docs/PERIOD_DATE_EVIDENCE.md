@@ -47,7 +47,7 @@
 
 ```sh
 node tests/test_period_date_evidence.cjs
-node tests/test_desktop_annual.cjs
+node tests/test_folder_importer.cjs
 python -m unittest discover -s tests -p test_period_date_evidence.py -v
 python -m unittest discover -s tests -p test_import_controls.py -v
 ```
