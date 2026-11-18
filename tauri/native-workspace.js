@@ -9,7 +9,7 @@ let revision=null,reportAfter=null,reportBack=[],reportNext=null,groupAfter=null
 let reportsBusy=false,groupsBusy=false,refreshBusy=false;
 let analysisBusy=false,analysisReady=false,analysisCancelled=false,orgNames=[];
 let workBusy=false,workScope=null,workAfter=null,workBack=[],workNext=null;
-let exportBusy=false,backupBusy=false;
+let exportBusy=false,backupBusy=false,restoreBusy=false,restoreSelection=null;
 const workSize=50;
 function controlState(){
 $('reportBack').disabled=reportsBusy||refreshBusy||!reportBack.length;
@@ -17,8 +17,10 @@ $('reportNext').disabled=reportsBusy||refreshBusy||!reportNext;
 $('nativeReportType').disabled=reportsBusy||refreshBusy;
 $('groupBack').disabled=groupsBusy||refreshBusy||!groupBack.length;
 $('groupNext').disabled=groupsBusy||refreshBusy||!groupNext;
-$('workspaceRefresh').disabled=reportsBusy||groupsBusy||refreshBusy||analysisBusy||workBusy||exportBusy||backupBusy;
-$('backupSqlite').disabled=backupBusy||exportBusy||analysisBusy||workBusy||refreshBusy;
+$('workspaceRefresh').disabled=reportsBusy||groupsBusy||refreshBusy||analysisBusy||workBusy||exportBusy||backupBusy||restoreBusy;
+$('backupSqlite').disabled=backupBusy||exportBusy||analysisBusy||workBusy||refreshBusy||restoreBusy;
+$('restoreChoose').disabled=restoreBusy||backupBusy||analysisBusy||exportBusy||refreshBusy;
+$('restoreCopy').disabled=restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy;
 $('analysisPrepare').disabled=analysisBusy||refreshBusy||exportBusy||revision===null;
 $('analysisCancel').disabled=!analysisBusy;
 $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!analysisReady;
@@ -76,7 +78,7 @@ try{
 finally{groupsBusy=false;controlState();}
 }
 async function refresh(){
-if(refreshBusy||reportsBusy||groupsBusy||analysisBusy||workBusy||exportBusy||backupBusy)return;
+if(refreshBusy||reportsBusy||groupsBusy||analysisBusy||workBusy||exportBusy||backupBusy||restoreBusy)return;
 refreshBusy=true;controlState();
 try{
  const snapshot=await api.nativeSettingsBootstrap();
@@ -100,7 +102,7 @@ await reports(null,true);await groups(null,true);
 }
 
 async function backupSqlite(){
- if(backupBusy||analysisBusy||exportBusy||refreshBusy||workBusy)return;
+ if(backupBusy||analysisBusy||exportBusy||refreshBusy||workBusy||restoreBusy)return;
  backupBusy=true;controlState();
  try{
   const now=new Date().toISOString().slice(0,10);
@@ -116,6 +118,52 @@ async function backupSqlite(){
   status('backupStatus','Не удалось сохранить копию SQLite: '+String(err?.message||err)+'. Выберите новое имя и проверьте свободное место.',true);
  }finally{backupBusy=false;controlState();}
 }
+const restoreError=err=>{
+ const raw=typeof err==='string'?err:typeof err?.message==='string'?err.message:'';
+ if(typeof window.analizUserError==='function')return window.analizUserError(err);
+ return /[А-Яа-яЁё]/.test(raw) && !/SELECT|SQLITE_ERROR|traceback|stack trace/i.test(raw)
+  ?raw:'Не удалось проверить резервную копию. Проверьте файл и повторите попытку.';
+};
+async function inspectBackup(){
+ if(restoreBusy||backupBusy||analysisBusy||exportBusy||refreshBusy)return;
+ restoreSelection=null;restoreBusy=true;controlState();
+ $('restoreSelected').textContent='Резервная копия не выбрана.';
+ try{
+  const source=await api.chooseRestoreBackupPath();
+  if(!source){status('restoreStatus','Выбор резервной копии отменён.');return;}
+  if(typeof source!=='string')throw Error('Выберите один файл с расширением .sqlite3.');
+  status('restoreStatus','Проверяем целостность SQLite, отчёты и настройки…');
+  const preview=await api.nativeRestorePreview(source);
+  if(!preview||typeof preview.verification!=='string'||
+     !/^[a-f0-9]{64}$/i.test(preview.verification)||
+     !Number.isSafeInteger(preview.reportCount)||preview.reportCount<0)
+    throw Error('Не удалось подтвердить целостность резервной копии.');
+  restoreSelection={source,verification:preview.verification};
+  $('restoreSelected').textContent='Проверенный файл: '+source.split(/[\\/]/).pop();
+  status('restoreStatus','Копия проверена. Отчётов: '+preview.reportCount+
+    '. Можно создать отдельный восстановленный файл. Рабочая база не изменена.');
+ }catch(err){restoreSelection=null;status('restoreStatus',restoreError(err),true);}
+ finally{restoreBusy=false;controlState();}
+}
+async function writeRestoreCopy(){
+ if(restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy)return;
+ if(!window.confirm('Создать отдельную восстановленную копию? Рабочая база SQLite не изменится.'))return;
+ const selected=restoreSelection;
+ restoreBusy=true;controlState();
+ try{
+  const destination=await api.chooseRestoreDestination('analiz-restored-check.sqlite3');
+  if(!destination){status('restoreStatus','Создание восстановленной копии отменено.');return;}
+  if(typeof destination!=='string')throw Error('Укажите новый файл с расширением .sqlite3.');
+  status('restoreStatus','Создаём проверенную отдельную копию без замены рабочей базы…');
+  const result=await api.nativeRestoreCopy(selected.source,selected.verification,destination);
+  if(result?.verification!==selected.verification)throw Error('Результат проверки копии не совпал.');
+  status('restoreStatus','Восстановленная копия создана и проверена. Отчётов: '+
+    result.reportCount+'. Рабочая база не изменена. Не подменяйте её вручную при открытой программе.');
+ }catch(err){status('restoreStatus',restoreError(err),true);}
+ finally{restoreBusy=false;controlState();}
+}
+$('restoreChoose').addEventListener('click',inspectBackup);
+$('restoreCopy').addEventListener('click',writeRestoreCopy);
 $('workspaceRefresh').addEventListener('click',()=>{void refresh();});
 $('backupSqlite').addEventListener('click',backupSqlite);
 $('nativeReportType').addEventListener('change',()=>{reportAfter=null;reportBack=[];void reports(null,true);});
