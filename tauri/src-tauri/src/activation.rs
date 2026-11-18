@@ -154,6 +154,48 @@ impl Storage {
     }
 }
 
+impl Storage {
+    /// A cancellation never modifies the live SQLite file; the staged copy is
+    /// retained as an independent recovery artifact.
+    pub fn cancel_scheduled_restore(&self) -> Result<bool, String> {
+        let root = fs::canonicalize(&self.root).map_err(err)?;
+        let Some(req) = load_request(&root)? else { return Ok(false); };
+        let previous = leaf(&root, &req.previous, ".analiz-restore-previous-")?;
+        if previous.exists() {
+            return Err("Восстановление уже началось. Перезапустите приложение для безопасного отката.".into());
+        }
+        fs::remove_file(request_file(&root)).map_err(err)?;
+        Ok(true)
+    }
+}
+
+/// Only permit normal startup after a failed preflight if we can prove the
+/// original live database has not been moved. If a rename was started, fail
+/// closed and preserve recovery artifacts.
+pub fn apply_pending_restore_or_open_original(
+    root: &Path
+) -> Result<Option<RestoreLaunchResult>, String> {
+    match apply_pending_restore(root) {
+        Ok(outcome) => Ok(outcome),
+        Err(problem) => {
+            if let Ok(Some(req)) = load_request(root) {
+                let previous = leaf(root, &req.previous, ".analiz-restore-previous-")?;
+                let live = root.join("reports.sqlite3");
+                if !previous.exists() && ensure_regular(&live).is_ok()
+                    && recovery::check_snapshot(&live).is_ok() {
+                    return Ok(Some(RestoreLaunchResult {
+                        restored: false,
+                        message: format!(
+                            "Отложенное восстановление не выполнено: {problem}.                              Текущая база не заменена. Проверьте копию или отмените запрос."
+                        ),
+                    }));
+                }
+            }
+            Err(problem)
+        }
+    }
+}
+
 /// The process lock must already be held. Do not run when any Storage
 /// connection from this application is open.
 pub fn apply_pending_restore(root: &Path) -> Result<Option<RestoreLaunchResult>, String> {
@@ -315,6 +357,29 @@ mod tests {
         let result=apply_pending_restore(&root).unwrap().unwrap();
         assert!(!result.restored);
         assert_eq!(Storage::new(root).unwrap().load().unwrap(),data(20.0));
+    }
+
+    #[test]
+    fn failed_preflight_keeps_app_usable_and_allows_user_cancellation() {
+        let dir=tempdir().unwrap();let root=dir.path().join("live");
+        let store=Storage::new(root.clone()).unwrap();
+        store.save(data(42.0)).unwrap();
+        let backup=dir.path().join("source.sqlite3");
+        store.backup_sqlite_verified(&backup).unwrap();
+        let digest=store.restore_preview(&backup).unwrap().verification;
+        store.schedule_restore(&backup,&digest).unwrap();
+        let req=load_request(&root).unwrap().unwrap();
+        fs::write(root.join(req.stage),b"damaged").unwrap();
+        drop(store);
+        let _lock=AppRestoreLock::acquire(&root).unwrap();
+        let warning=apply_pending_restore_or_open_original(&root).unwrap().unwrap();
+        assert!(!warning.restored);
+        assert!(warning.message.contains("не выполнено"));
+        let reopened=Storage::new(root.clone()).unwrap();
+        assert_eq!(reopened.load().unwrap(),data(42.0));
+        assert!(reopened.cancel_scheduled_restore().unwrap());
+        assert!(load_request(&root).unwrap().is_none());
+        assert_eq!(reopened.load().unwrap(),data(42.0));
     }
 
     #[test]
