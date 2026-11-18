@@ -21,6 +21,7 @@ function publish(){
   const config=JSON.parse(fs.readFileSync(path.join(__dirname,'src-tauri/tauri.conf.json'),'utf8'));
   const tag='tauri-v'+config.version,repo='v2029944-ui/HTML-test';
   const stable=process.env.ANALIZ_RELEASE_CHANNEL==='stable';
+  const publishTarget=process.env.ANALIZ_RELEASE_TARGET_SHA||process.env.GITHUB_SHA||'HEAD';
   const notesFile=releaseNotesFile(config.version);
   const folder=path.join(__dirname,'release',tag);
   const manifest=JSON.parse(fs.readFileSync(path.join(folder,'tauri-latest.json'),'utf8'));
@@ -49,13 +50,13 @@ function publish(){
     }finally{fs.rmSync(tmp,{recursive:true,force:true});}
   }else{
     gh(['release','create',tag,path.join(folder,installer),path.join(folder,installer+'.sig'),
-      '--repo',repo,'--target',process.env.GITHUB_SHA||'HEAD','--title','Tauri '+config.version,
+      '--repo',repo,'--target',publishTarget,'--title','Tauri '+config.version,
       '--notes-file',notesFile,
       ...(stable?['--latest']:['--prerelease','--latest=false'])]);
   }
   // Advance the channel only after the versioned installer is available.
   if(!releases.some(r=>r.tag_name==='tauri-updates'))
-    gh(['release','create','tauri-updates','--repo',repo,'--target',process.env.GITHUB_SHA||'HEAD',
+    gh(['release','create','tauri-updates','--repo',repo,'--target',publishTarget,
       '--title','Tauri update channel','--notes','Signed update manifest for Tauri Windows builds.','--prerelease','--latest=false']);
   gh(['release','upload','tauri-updates',path.join(folder,'tauri-latest.json'),'--repo',repo,'--clobber']);
   console.log('Published '+tag+' and advanced the Tauri update channel.');
