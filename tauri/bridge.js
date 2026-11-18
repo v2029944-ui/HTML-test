@@ -76,6 +76,8 @@
     },
     list:()=>invoke('list_excel'),
     setRule:(name,rule)=>tracked('set_rule',{name,rule},'saves'),
+    nativeSetRuleChecked:(name,rule,revision,folder,signature)=>tracked(
+      'native_set_rule_checked',{name,rule,revision,folder,signature},'saves'),
     readExcel:name=>tracked('read_excel',{name},'reads'),
     checkExcel:(name,signature)=>invoke('check_excel',{name,signature}),
     openDataFolder:()=>invoke('open_data_folder'),
