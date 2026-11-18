@@ -31,6 +31,9 @@ fn validate_backup(store: &Storage, source: &Path) -> Result<PathBuf, String> {
 
 pub(super) fn check_snapshot(path: &Path) -> Result<RestorePreview, String> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(err)?;
+    // Keep integrity, schema, and every table in the same read snapshot. A
+    // backup may have WAL writers while the user inspects it.
+    conn.execute_batch("BEGIN").map_err(err)?;
     let integrity: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .map_err(err)?;
     if integrity != "ok" {
@@ -83,6 +86,65 @@ pub(super) fn check_snapshot(path: &Path) -> Result<RestorePreview, String> {
             hasher.update((bytes.len() as u64).to_le_bytes());
             hasher.update(bytes);
             if reports { report_count += 1; }
+        }
+    }
+    // Hash the remaining application tables as well. Previous versions only
+    // verified reports and kv, which would miss changes to metric reports,
+    // management caches, import receipts and other persisted analytics data.
+    let mut names = conn.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table'
+         AND name NOT LIKE 'sqlite_%' AND name NOT IN ('reports','kv')
+         ORDER BY name"
+    ).map_err(err)?;
+    let mut table_rows = names.query([]).map_err(err)?;
+    let mut table_names = Vec::new();
+    while let Some(row) = table_rows.next().map_err(err)? {
+        if table_names.len() >= 256 {
+            return Err("В копии слишком много таблиц для безопасной проверки.".into());
+        }
+        let name: String = row.get(0).map_err(err)?;
+        if name.len() > 1024 {
+            return Err("Имя таблицы SQLite слишком длинное.".into());
+        }
+        table_names.push(name);
+    }
+    drop(table_rows);
+    drop(names);
+    for table in table_names {
+        hasher.update(b"\0additional-table\0");
+        hasher.update((table.len() as u64).to_le_bytes());
+        hasher.update(table.as_bytes());
+        let quoted = table.replace('"', "\"\"");
+        let sql = format!("SELECT * FROM \"{quoted}\"");
+        let mut statement = conn.prepare(&sql).map_err(err)?;
+        let fields = statement.column_count();
+        hasher.update((fields as u64).to_le_bytes());
+        let mut rows = statement.query([]).map_err(err)?;
+        while let Some(row) = rows.next().map_err(err)? {
+            hasher.update(b"\0row\0");
+            for index in 0..fields {
+                match row.get_ref(index).map_err(err)? {
+                    ValueRef::Null => hasher.update([0]),
+                    ValueRef::Integer(value) => {
+                        hasher.update([1]);
+                        hasher.update(value.to_le_bytes());
+                    }
+                    ValueRef::Real(value) => {
+                        hasher.update([2]);
+                        hasher.update(value.to_bits().to_le_bytes());
+                    }
+                    ValueRef::Text(bytes) => {
+                        hasher.update([3]);
+                        hasher.update((bytes.len() as u64).to_le_bytes());
+                        hasher.update(bytes);
+                    }
+                    ValueRef::Blob(bytes) => {
+                        hasher.update([4]);
+                        hasher.update((bytes.len() as u64).to_le_bytes());
+                        hasher.update(bytes);
+                    }
+                }
+            }
         }
     }
     let mut fk = conn.prepare("PRAGMA foreign_key_check").map_err(err)?;
