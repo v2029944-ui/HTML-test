@@ -9,7 +9,7 @@ let revision=null,reportAfter=null,reportBack=[],reportNext=null,groupAfter=null
 let reportsBusy=false,groupsBusy=false,refreshBusy=false;
 let analysisBusy=false,analysisReady=false,analysisCancelled=false,orgNames=[];
 let workBusy=false,workScope=null,workAfter=null,workBack=[],workNext=null;
-let exportBusy=false;
+let exportBusy=false,backupBusy=false;
 const workSize=50;
 function controlState(){
 $('reportBack').disabled=reportsBusy||refreshBusy||!reportBack.length;
@@ -17,7 +17,8 @@ $('reportNext').disabled=reportsBusy||refreshBusy||!reportNext;
 $('nativeReportType').disabled=reportsBusy||refreshBusy;
 $('groupBack').disabled=groupsBusy||refreshBusy||!groupBack.length;
 $('groupNext').disabled=groupsBusy||refreshBusy||!groupNext;
-$('workspaceRefresh').disabled=reportsBusy||groupsBusy||refreshBusy||analysisBusy||workBusy||exportBusy;
+$('workspaceRefresh').disabled=reportsBusy||groupsBusy||refreshBusy||analysisBusy||workBusy||exportBusy||backupBusy;
+$('backupSqlite').disabled=backupBusy||exportBusy||analysisBusy||workBusy||refreshBusy;
 $('analysisPrepare').disabled=analysisBusy||refreshBusy||exportBusy||revision===null;
 $('analysisCancel').disabled=!analysisBusy;
 $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!analysisReady;
@@ -75,7 +76,7 @@ try{
 finally{groupsBusy=false;controlState();}
 }
 async function refresh(){
-if(refreshBusy||reportsBusy||groupsBusy||analysisBusy||workBusy||exportBusy)return;
+if(refreshBusy||reportsBusy||groupsBusy||analysisBusy||workBusy||exportBusy||backupBusy)return;
 refreshBusy=true;controlState();
 try{
  const snapshot=await api.nativeSettingsBootstrap();
@@ -97,7 +98,26 @@ try{
 }finally{refreshBusy=false;controlState();}
 await reports(null,true);await groups(null,true);
 }
+
+async function backupSqlite(){
+ if(backupBusy||analysisBusy||exportBusy||refreshBusy||workBusy)return;
+ backupBusy=true;controlState();
+ try{
+  const now=new Date().toISOString().slice(0,10);
+  const destination=await api.chooseSqliteBackupPath('analiz-backup-'+now+'.sqlite3');
+  if(destination===null||destination===undefined||destination===''){
+   status('backupStatus','Резервное копирование отменено.');return;
+  }
+  if(typeof destination!=='string')throw Error('Некорректный путь резервной копии');
+  status('backupStatus','Создаётся согласованная копия SQLite…');
+  const captured=await api.nativeBackupSqlite(destination);
+  status('backupStatus','Копия SQLite сохранена. Ревизия снимка: '+captured+'. Оригинальная база не изменена.');
+ }catch(err){
+  status('backupStatus','Не удалось сохранить копию SQLite: '+String(err?.message||err)+'. Выберите новое имя и проверьте свободное место.',true);
+ }finally{backupBusy=false;controlState();}
+}
 $('workspaceRefresh').addEventListener('click',()=>{void refresh();});
+$('backupSqlite').addEventListener('click',backupSqlite);
 $('nativeReportType').addEventListener('change',()=>{reportAfter=null;reportBack=[];void reports(null,true);});
 $('reportNext').addEventListener('click',async()=>{if(!reportNext)return;const before=reportAfter;if(await reports(reportNext))reportBack.push(before);controlState();});
 $('reportBack').addEventListener('click',async()=>{if(!reportBack.length)return;const before=reportBack.at(-1);if(await reports(before))reportBack.pop();controlState();});
