@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light">
+<title>Анализ работ — SQL-режим</title>
+<style>
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#223048;background:#f5f7fa}*{box-sizing:border-box}
+body{margin:0}header{padding:22px max(24px,5vw);background:#fff;border-bottom:1px solid #dbe1ea;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+main{margin:0 auto;max-width:1250px;padding:28px 22px 48px}h1{font-size:24px;margin:0}h2{font-size:19px;margin:0 0 14px}
+.panel{background:#fff;border:1px solid #dce2e9;border-radius:12px;margin-bottom:18px;padding:22px;box-shadow:0 2px 9px #21334a0a}
+.intro{color:#55657a;font-size:14px;line-height:1.6}a{color:#1f5588}
+button,select,input{font:inherit;border:1px solid #aab9cb;border-radius:8px;padding:8px 12px;background:#fff;max-width:100%}
+button{cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #74a8d5;outline-offset:2px}
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:14px 0}.muted{color:#53647a}.error{color:#a12228}.status{min-height:24px;font-size:14px}
+.overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px}
+.metric{background:#eff4f9;border-radius:9px;padding:14px}.metric strong{display:block;font-size:24px;font-variant-numeric:tabular-nums}.metric span{color:#53647a;font-size:13px}
+.table-scroll{overflow:auto;max-width:100%}table{width:100%;border-collapse:collapse;min-width:650px}
+th,td{text-align:left;border-bottom:1px solid #e4e9ef;padding:10px 9px;vertical-align:middle;font-size:13px;overflow-wrap:anywhere}
+th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
+@media(max-width:650px){header{padding:16px}main{padding:16px 10px}.panel{padding:15px}h1{font-size:20px}}
+</style>
+</head>
+<body>
+<header><div><h1>Анализ работ · SQL-режим</h1><div class="intro">SQLite без загрузки полной истории в JavaScript</div></div><a id="legacyWorkspaceLink" href="index.html">Вернуться к полному интерфейсу</a></header>
+<main>
+<section class="panel" aria-label="Сводка SQLite">
+<h2>Состояние данных</h2>
+<p class="intro">Экспериментальный режим: постраничный просмотр отчётов и групп, безопасное переименование группы. Импорт, полный анализ и экспорт остаются в прежнем интерфейсе.</p>
+<div class="overview">
+<div class="metric"><strong id="metricReports">—</strong><span>Отчётов в SQLite</span></div>
+<div class="metric"><strong id="metricIndexed">—</strong><span>Индексированных отчётов</span></div>
+<div class="metric"><strong id="metricGroups">—</strong><span>Групп</span></div>
+<div class="metric"><strong id="metricCatalog">—</strong><span>Позиций справочника</span></div></div>
+<p id="workspaceStatus" class="status muted" role="status" aria-live="polite">Открытие SQL-режима…</p>
+<button id="workspaceRefresh" type="button">Обновить данные</button>
+</section>
+<section class="panel" aria-label="Отчёты SQL">
+<h2>Отчёты</h2><div class="controls"><label for="nativeReportType">Периоды</label>
+<select id="nativeReportType"><option value="">Все</option><option value="day">Дни</option><option value="week">Недели</option><option value="month">Месяцы</option></select>
+<button id="reportBack" type="button" disabled>Назад</button><button id="reportNext" type="button" disabled>Далее</button></div>
+<p id="reportStatus" class="status muted" role="status" aria-live="polite"></p>
+<div class="table-scroll"><table><thead><tr><th>Начало</th><th>Конец</th><th>Тип</th><th>Источник</th><th>Идентификатор</th></tr></thead><tbody id="reportRows"></tbody></table></div>
+</section>
+<section class="panel" aria-label="Группы SQL">
+<h2>Сохранённые группы</h2>
+<p class="intro">Название можно изменить без перезаписи отчётов. Изменение сохраняется транзакционно с проверкой версии базы. Содержимое групп пока доступно в полном интерфейсе.</p>
+<div class="controls"><button id="groupBack" type="button" disabled>Назад</button><button id="groupNext" type="button" disabled>Далее</button></div>
+<p id="groupStatus" class="status muted" role="status" aria-live="polite"></p>
+<div class="table-scroll"><table><thead><tr><th>ID группы</th><th>Название</th><th>Работ</th><th>Действие</th></tr></thead><tbody id="groupRows"></tbody></table></div>
+</section></main>
+<script src="tauri-bridge.js"></script><script src="tauri-native-workspace.js"></script>
+</body></html>
