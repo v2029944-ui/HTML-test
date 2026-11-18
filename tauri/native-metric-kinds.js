@@ -1,10 +1,10 @@
-// Optional Tauri-only workspace for declarative, independent report families.
-// Existing day/week/month analytics and reports are intentionally not modified.
+// Tauri SQL workspace: declarative metric kinds and profile-driven XLSX mapping.
+// Existing day/week/month analytics and legacy reports remain separate.
 (function(){
 'use strict';
 const api=window.desktopAPI,$=id=>document.getElementById(id);
 if(!api?.nativeMetricKinds)return;
-let kinds=[],source=null,review=null,busy=false;
+let kinds=[],profiles=[],source=null,review=null,format=null,xlsxArgs=null,busy=false;
 const make=(tag,value)=>{
  const e=document.createElement(tag);
  if(value!==undefined)e.textContent=String(value);
@@ -14,12 +14,17 @@ function status(message,error=false){
  $('metricKindStatus').textContent=message;
  $('metricKindStatus').className='status '+(error?'error':'muted');
 }
+function clearReview(){
+ source=null;review=null;format=null;xlsxArgs=null;
+ $('metricKindPreview').replaceChildren();
+}
 function controls(){
- $('metricKindSelect').disabled=busy;
- $('metricKindFrom').disabled=busy;
- $('metricKindTo').disabled=busy;
+ for(const id of ['metricKindSelect','metricKindFrom','metricKindTo','metricXlsxProfile']){
+  $(id).disabled=busy;
+ }
  $('metricKindCalculate').disabled=busy||!kinds.length;
- $('metricKindChoose').disabled=busy;
+ $('metricKindChoose').disabled=busy||!kinds.length;
+ $('metricKindChooseXlsx').disabled=busy||!profiles.length;
  $('metricKindApply').disabled=busy||!review;
 }
 function render(values,kind,container){
@@ -34,6 +39,15 @@ function render(values,kind,container){
  }
 }
 function findKind(id){return kinds.find(k=>k.id===id);}
+function showPreview(result){
+ if(!result||!findKind(result.kind)||typeof result.reviewToken!=='string'||
+    result.reviewToken.length!==64)throw Error('Неверный план импорта.');
+ review=result;
+ const kind=findKind(result.kind);
+ render(result.values,kind,'metricKindPreview');
+ status('Проверено: '+kind.name+', '+result.start+' — '+result.end+
+   ', '+result.rowCount+' строк. Запись начнётся только после подтверждения.');
+}
 async function calculate(){
  if(busy||!kinds.length)return;
  const id=$('metricKindSelect').value,kind=findKind(id);
@@ -46,7 +60,7 @@ async function calculate(){
   const summary=await api.nativeMetricSummary(id,from,to);
   render(summary.values,kind,'metricKindTotals');
   $('metricKindCount').textContent='Отчётов: '+summary.reportCount+
-   '. Строк: '+summary.rowCount+'. Суммы по загруженным данным, без проверки полноты периодов.';
+    '. Строк: '+summary.rowCount+'. Суммы по загруженным данным, без проверки полноты периодов.';
   status('Показатели рассчитаны по отдельной схеме вида отчёта.');
  }catch(err){
   $('metricKindTotals').replaceChildren();
@@ -57,33 +71,50 @@ $('metricKindCalculate').addEventListener('click',calculate);
 $('metricKindSelect').addEventListener('change',()=>{
  $('metricKindTotals').replaceChildren();$('metricKindCount').textContent='Нажмите «Рассчитать».';
 });
+$('metricXlsxProfile').addEventListener('change',()=>{
+ clearReview();controls();
+ status('Шаблон изменён. Выберите XLSX заново.');
+});
 for(const id of ['metricKindFrom','metricKindTo']){
  $(id).addEventListener('change',()=>{
+  clearReview();
   $('metricKindTotals').replaceChildren();$('metricKindCount').textContent='Диапазон изменён. Повторите расчёт.';
+  controls();
  });
 }
 $('metricKindChoose').addEventListener('click',async()=>{
  if(busy)return;
- source=null;review=null;
- $('metricKindPreview').replaceChildren();
- busy=true;controls();
+ clearReview();busy=true;controls();
  try{
   const selected=await api.chooseMetricJson();
   if(!selected){status('Выбор JSON отменён.');return;}
-  source=selected;
-  $('metricKindFile').textContent='Проверяется: '+selected.split(/[\\/]/).pop();
+  $('metricKindFile').textContent='Проверяется JSON: '+selected.split(/[\\/]/).pop();
   const result=await api.nativeMetricPreview(selected);
-  if(!result||!findKind(result.kind)||!result.reviewToken)
-   throw Error('Неверный план импорта.');
-  review=result;
-  const kind=findKind(result.kind);
-  render(result.values,kind,'metricKindPreview');
-  status('Проверено: '+kind.name+', '+result.start+' — '+result.end+
-   ', '+result.rowCount+' строк. Запись начнётся только после подтверждения.');
+  showPreview(result);
+  source=selected;format='json';
  }catch(err){
-  review=null;
-  $('metricKindPreview').replaceChildren();
-  status('Импорт не подготовлен: '+String(err?.message||err),true);
+  clearReview();status('Импорт не подготовлен: '+String(err?.message||err),true);
+ }finally{busy=false;controls();}
+});
+$('metricKindChooseXlsx').addEventListener('click',async()=>{
+ if(busy)return;
+ clearReview();controls();
+ const profile=$('metricXlsxProfile').value;
+ const start=$('metricKindFrom').value,end=$('metricKindTo').value;
+ if(!profile||!start||!end||start>end){
+  status('Для импорта XLSX выберите шаблон и корректные даты начала и конца периода.',true);
+  return;
+ }
+ busy=true;controls();
+ try{
+  const selected=await api.chooseMetricXlsx();
+  if(!selected){status('Выбор XLSX отменён.');return;}
+  $('metricKindFile').textContent='Проверяется XLSX: '+selected.split(/[\\/]/).pop();
+  const result=await api.nativeMetricXlsxPreview(selected,profile,start,end);
+  showPreview(result);
+  source=selected;format='xlsx';xlsxArgs={profile,start,end};
+ }catch(err){
+  clearReview();status('Импорт XLSX не подготовлен: '+String(err?.message||err),true);
  }finally{busy=false;controls();}
 });
 $('metricKindApply').addEventListener('click',async()=>{
@@ -91,36 +122,42 @@ $('metricKindApply').addEventListener('click',async()=>{
  if(!window.confirm('Добавить отчёт «'+review.reportId+'» в SQLite без перезаписи существующих?'))return;
  busy=true;controls();
  try{
-  const receipt=await api.nativeMetricApply(source,review.reviewToken);
+  const receipt=format==='xlsx'
+   ?await api.nativeMetricXlsxApply(source,xlsxArgs.profile,xlsxArgs.start,xlsxArgs.end,review.reviewToken)
+   :await api.nativeMetricApply(source,review.reviewToken);
   const importedKind=review.kind;
-  source=null;review=null;
-  $('metricKindPreview').replaceChildren();
+  clearReview();
   $('metricKindSelect').value=importedKind;
   $('metricKindTotals').replaceChildren();
   $('metricKindCount').textContent='Отчёт добавлен. Нажмите «Рассчитать» для обновления итогов.';
   $('metricKindFile').textContent='Импортирован отчёт: '+receipt.reportId;
   status('Отчёт добавлен: '+receipt.reportId+'. Строк: '+receipt.rowCount+'.');
  }catch(err){
-  source=null;review=null;
-  $('metricKindPreview').replaceChildren();
+  clearReview();
   status('Импорт отклонён: '+String(err?.message||err)+'. Выберите файл заново.',true);
- }finally{
-  busy=false;controls();
- }
+ }finally{busy=false;controls();}
 });
 controls();
 window.metricKindWorkspaceReady=(async()=>{
  try{
-  kinds=await api.nativeMetricKinds();
-  if(!Array.isArray(kinds)||!kinds.length)throw Error('Каталог видов отчётов пуст');
+  [kinds,profiles]=await Promise.all([api.nativeMetricKinds(),api.nativeMetricXlsxProfiles()]);
+  if(!Array.isArray(kinds)||!kinds.length||!Array.isArray(profiles))
+   throw Error('Каталог видов отчётов недоступен');
   const select=$('metricKindSelect');select.replaceChildren();
   for(const kind of kinds){
    const option=make('option',kind.name);option.value=kind.id;select.append(option);
   }
   select.value=kinds[0].id;
-  status('Доступно видов отчётов: '+kinds.length+'. Можно добавить новый вид через декларативный каталог.');
+  const mapping=$('metricXlsxProfile');mapping.replaceChildren();
+  for(const profile of profiles){
+   const option=make('option',profile.name);option.value=profile.id;mapping.append(option);
+  }
+  if(profiles.length)mapping.value=profiles[0].id;
+  status('Видов отчётов: '+kinds.length+'. Шаблонов XLSX: '+profiles.length+
+   '. Добавление новых форматов — через каталог шаблонов.');
   return kinds;
  }catch(err){
+  kinds=[];profiles=[];
   status('Ошибка загрузки видов отчётов: '+String(err?.message||err),true);
   return [];
  }finally{controls();}
