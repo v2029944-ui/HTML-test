@@ -593,7 +593,7 @@ fn main() {
             // Offline recovery runs before ANY native SQLite connection opens.
             let lease = storage::AppRestoreLock::acquire(&root)
                 .map_err(std::io::Error::other)?;
-            let restored = storage::apply_pending_restore(&root)
+            let restored = storage::apply_pending_restore_or_open_original(&root)
                 .map_err(std::io::Error::other)?;
             let storage = Storage::new(root)
                 .map_err(std::io::Error::other)?;
