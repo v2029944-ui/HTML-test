@@ -1,7 +1,7 @@
 """Run the packaged Tauri app through its real WebView2 and SQLite on an isolated Windows CI runner."""
 import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib,sqlite3
 from pathlib import Path
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 from playwright.sync_api import sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests'))
@@ -317,7 +317,7 @@ def run():
                 stored_rev=page.evaluate(backup_call,str(snapshot))
                 assert isinstance(stored_rev,int)
                 assert snapshot.is_file()
-                with sqlite3.connect(str(snapshot)) as backed_up:
+                with closing(sqlite3.connect(str(snapshot))) as backed_up:
                     assert backed_up.execute('PRAGMA quick_check').fetchone()[0]=='ok'
                     assert backed_up.execute('SELECT COUNT(*) FROM reports').fetchone()[0]==366
                     assert backed_up.execute("SELECT json FROM kv WHERE name='settings'").fetchone() is not None
