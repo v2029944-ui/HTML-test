@@ -5,7 +5,7 @@ mod native_import;
 
 use native_import::{
     native_wide_import_preview, native_wide_import_apply,
-    native_legacy_import_preview, native_legacy_import_apply,
+    native_legacy_import_sheets, native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
 };
 
 use storage::{AnalysisScope, ManagementJob, RangeQuery, RangeSummary, ReadExcel, ReadFilter, ReportHeader, Rule, Storage};
