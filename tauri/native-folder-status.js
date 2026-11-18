@@ -71,15 +71,26 @@
       'При выборе другой папки правила файлов прежней папки будут сброшены. Сохранённые отчёты в SQLite останутся. Продолжить?'
     ))return;
     changing=true;lock();
+    let changed=false,reloaded=true;
     try{
       const selected=await api.chooseFolder();
-      if(selected)report('Папка выбрана. Список источников обновляется.');
-      else report('Выбор папки отменён.');
+      if(selected){
+        changed=true;
+        // set_folder changes the SQLite config revision. Refresh native
+        // read-model handles before another analytical query uses a stale one.
+        reloaded=false;
+        try{
+          if(typeof window.nativeWorkspaceRefresh==='function')
+            reloaded=await window.nativeWorkspaceRefresh()===true;
+        }catch{/* Folder choice succeeded; SQL snapshot may need manual refresh. */}
+      }else report('Выбор папки отменён.');
     }catch(error){
       report('Не удалось выбрать папку: '+String(error?.message||error),true);
     }finally{
       changing=false;lock();
       await load();
+      if(changed&&!reloaded)
+        report('Папка выбрана. Нажмите «Обновить данные» для актуальной ревизии SQLite.',true);
     }
   });
   refresh.addEventListener('click',()=>{void load();});
