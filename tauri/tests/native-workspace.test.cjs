@@ -34,7 +34,7 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(options={}){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
@@ -66,7 +66,9 @@ function mount(options={}){
    nativeExportRangeCsv:async(rev,kind,from,to,organizations,organization,destination)=>{
      calls.push({kind:'export_csv',rev,reportType:kind,from,to,organizations,organization,destination});
    },
-   nativeAnalysisRange:async(rev,kind,from,to,organizations)=>{calls.push({kind:'range',rev,reportType:kind,from,to,organizations});return {complete:false,periods:366,missing:1,total:{count:null,amount:null,average:null},invalid_reports:1,duplicate_issues:0,overlap_issues:0};},
+   nativeAnalysisRange:async(rev,kind,from,to,organizations)=>{calls.push({kind:'range',rev,reportType:kind,from,to,organizations});return options.complete
+    ?{complete:true,periods:12,missing:0,total:{count:12,amount:1800,average:150},invalid_reports:0,duplicate_issues:0,overlap_issues:0}
+    :{complete:false,periods:366,missing:1,total:{count:null,amount:null,average:null},invalid_reports:1,duplicate_issues:0,overlap_issues:0};},
    nativeAnalysisRangePage:async(rev,kind,from,to,organizations,organization,after,limit)=>{
      calls.push({kind:'work',rev,reportType:kind,from,to,organizations,organization,after,limit});
      const row=n=>({key:'work:'+String(n).padStart(4,'0'),name:n===0?'<b>Работа</b>':'Работа '+n,kind:'work',count:null,amount:null,average:null,active:true});
@@ -74,7 +76,9 @@ function mount(options={}){
    },
    nativeAnalysisOrganizations:async(rev,kind,from,to,organizations)=>{calls.push({kind:'divisions',rev,reportType:kind,from,to,organizations});return [
      {org:'СМУ16',complete:true,missing:0,total:{count:8,amount:1200,average:150}},
-     {org:'АВТО',complete:false,missing:2,total:{count:null,amount:null,average:null}}
+     options.complete
+      ?{org:'АВТО',complete:true,missing:0,total:{count:4,amount:600,average:150}}
+      :{org:'АВТО',complete:false,missing:2,total:{count:null,amount:null,average:null}}
    ];}
  };
  const window={desktopAPI:api,confirm:()=>true,analizUserError:userError};
@@ -188,6 +192,31 @@ test('D2 per-division comparison keeps partial periods unknown and plots complet
  e.analysisOrganization.value='СМУ16';
  e.analysisOrganization.events.change();
  assert.equal(e.divisionRows.children.length,0);
+});
+
+test('division shares use only complete matching SQL totals; incomplete periods show unknown shares',async()=>{
+ const complete=mount({complete:true});
+ await complete.window.nativeWorkspaceReady;
+ complete.e.analysisFrom.value='2024-01-01';
+ complete.e.analysisTo.value='2024-12-31';
+ await complete.e.analysisPrepare.events.click();
+ await complete.e.analysisRun.events.click();
+ assert.match(complete.e.divisionShareStatus.textContent,/Доли от подтверждённой суммы/);
+ assert.equal(complete.e.divisionRows.children[0].children[6].textContent,'66,7 %');
+ assert.equal(complete.e.divisionRows.children[1].children[6].textContent,'33,3 %');
+ complete.e.analysisOrganization.value='СМУ16';
+ complete.e.analysisOrganization.events.change();
+ assert.equal(complete.e.divisionRows.children.length,0);
+ assert.match(complete.e.divisionShareStatus.textContent,/сброшены/);
+ const incomplete=mount();
+ await incomplete.window.nativeWorkspaceReady;
+ incomplete.e.analysisFrom.value='2024-01-01';
+ incomplete.e.analysisTo.value='2024-12-31';
+ await incomplete.e.analysisPrepare.events.click();
+ await incomplete.e.analysisRun.events.click();
+ assert.equal(incomplete.e.divisionRows.children[0].children[6].textContent,'—');
+ assert.equal(incomplete.e.divisionRows.children[1].children[6].textContent,'—');
+ assert.match(incomplete.e.divisionShareStatus.textContent,/Доли скрыты/);
 });
 
 test('bounded work/group SQL pages preserve unknown totals, keyset cursors and selected scope',async()=>{
