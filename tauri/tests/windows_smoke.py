@@ -61,38 +61,19 @@ class NativeConfirmations:
     $nodes=$dialog.FindAll($tree,[System.Windows.Automation.Condition]::TrueCondition)
     $inventory=@()
     $body=@()
-    $buttons=@()
     foreach ($node in $nodes) {
       $info=$node.Current
       if ($info.ProcessId -ne $processId) {continue}
       $type=$info.ControlType.ProgrammaticName
       $inventory += [PSCustomObject]@{type=$type;name=$info.Name;automationId=$info.AutomationId;enabled=$info.IsEnabled}
-      if ($type -eq 'ControlType.Button') {
-        if ($env:ANALIZ_SMOKE_DIALOG_BUTTON_ID -and $info.IsEnabled -and
-            ($info.AutomationId -ceq $env:ANALIZ_SMOKE_DIALOG_BUTTON_ID -or
-             $info.Name -ceq $env:ANALIZ_SMOKE_DIALOG_BUTTON_LABEL)) {
-          $buttons += $node
-        }
-      } else {
+      if ($type -ne 'ControlType.Button' -and $info.AutomationId -notlike 'CommandButton_*') {
         $body += $info.Name
         $body += $info.HelpText
       }
     }
     $text=[regex]::Replace(($body -join ' '),'\s+',' ').Trim()
-    $result=[PSCustomObject]@{matched=$text.Contains($env:ANALIZ_SMOKE_DIALOG_TEXT); controls=$inventory; invoked=$false}
-    if ($env:ANALIZ_SMOKE_DIALOG_BUTTON_ID) {
-      if (-not $result.matched -or $buttons.Count -ne 1) {
-        throw ('Unexpected native dialog text or buttons: ' + ($result | ConvertTo-Json -Depth 4 -Compress))
-      }
-      $buttonId=$buttons[0].Current.AutomationId
-      if ($buttonId -in @('1','2') -and $buttonId -ne $env:ANALIZ_SMOKE_DIALOG_BUTTON_ID) {
-        throw 'Native confirmation button label and numeric control ID disagree'
-      }
-      $invoke=$buttons[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-      $invoke.Invoke()
-      $result.invoked=$true
-    }
-    $result | ConvertTo-Json -Depth 4 -Compress
+    [PSCustomObject]@{matched=$text.Contains($env:ANALIZ_SMOKE_DIALOG_TEXT); controls=$inventory} |
+      ConvertTo-Json -Depth 4 -Compress
     """
 
     def __init__(self, pid, database):
@@ -111,6 +92,8 @@ class NativeConfirmations:
             'GetClassNameW':(ctypes.c_int,wintypes.HWND,wintypes.LPWSTR,ctypes.c_int),
             'IsWindowVisible':(wintypes.BOOL,wintypes.HWND),
             'IsWindowEnabled':(wintypes.BOOL,wintypes.HWND),
+            'SendMessageTimeoutW':(ctypes.c_ssize_t,wintypes.HWND,wintypes.UINT,wintypes.WPARAM,
+                                    wintypes.LPARAM,wintypes.UINT,wintypes.UINT,ctypes.POINTER(ctypes.c_size_t)),
         }
         for name,(result,*arguments) in signatures.items():
             function=getattr(self.user32,name)
@@ -139,13 +122,12 @@ class NativeConfirmations:
         self.user32.GetClassNameW(hwnd,buffer,len(buffer))
         return buffer.value
 
-    def inspect(self, dialog, prompt, button_id=None):
+    def inspect(self, dialog, prompt):
         # The dialog plugin enables rfd common-controls-v6. TaskDialogIndirect
         # exposes its content and buttons through UI Automation.
         result=subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command',self.automation_script],
             env=dict(os.environ,ANALIZ_SMOKE_DIALOG_PID=str(self.pid),ANALIZ_SMOKE_DIALOG_HWND=str(dialog),
-                     ANALIZ_SMOKE_DIALOG_TEXT=prompt,ANALIZ_SMOKE_DIALOG_BUTTON_ID=str(button_id or ''),
-                     ANALIZ_SMOKE_DIALOG_BUTTON_LABEL={1:'OK',2:'Cancel'}.get(button_id,'')),
+                     ANALIZ_SMOKE_DIALOG_TEXT=prompt),
             capture_output=True,encoding='utf-8',errors='replace',timeout=15)
         if result.returncode:
             raise RuntimeError(f'Native dialog UI Automation failed ({result.returncode}): {result.stderr.strip()}')
@@ -175,16 +157,29 @@ class NativeConfirmations:
         raise AssertionError(f'Native confirmation did not appear for {expected!r}; owned windows and controls: {owned}')
 
     def answer(self, dialog, owner, prompt, button_id):
+        expected_label={1:'OK',2:'Cancel'}[button_id]
+        result=self.inspect(dialog,prompt)
+        commands=[control for control in result['controls']
+                  if control['automationId']==f'CommandButton_{button_id}']
+        assert (result['matched'] and len(commands)==1 and commands[0]['name']==expected_label
+                and commands[0]['enabled'] is True),('Unexpected native dialog command',expected_label,result)
         assert self.process(dialog)==self.pid and self.user32.GetWindow(dialog,4)==owner
         assert self.process(owner)==self.pid and not self.user32.IsWindowEnabled(owner)
-        result=self.inspect(dialog,prompt,button_id)
-        assert result['invoked'],result
+        assert (self.window_class(dialog)=='#32770' and self.user32.IsWindowVisible(dialog)
+                and self.user32.IsWindowEnabled(dialog)),result
+        # Documented Task Dialog command with a numeric button ID and no pointer data.
+        tdm_click_button=0x0400+102  # WM_USER + 102
+        message_result=self.ctypes.c_size_t()
+        if not self.user32.SendMessageTimeoutW(dialog,tdm_click_button,button_id,0,0x0002,3_000,
+                                               self.ctypes.byref(message_result)):
+            raise RuntimeError(f'Task Dialog did not accept {expected_label}: {result}') from self.ctypes.WinError(
+                self.ctypes.get_last_error())
         deadline=time.monotonic()+10
         while time.monotonic()<deadline:
             if not self.user32.IsWindowVisible(dialog) and self.user32.IsWindowEnabled(owner):
                 return
             time.sleep(.05)
-        raise RuntimeError('Native confirmation did not close and return control to the application')
+        raise RuntimeError(f'Native confirmation stayed open after {expected_label}: {result}')
 
     def revision(self):
         with closing(sqlite3.connect(self.database.as_uri()+'?mode=ro',uri=True)) as database:
