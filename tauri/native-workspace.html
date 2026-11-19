@@ -13,7 +13,7 @@ button,select,input{font:inherit;border:1px solid #aab9cb;border-radius:8px;padd
 button{cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}
 button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #74a8d5;outline-offset:2px}
 .controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:14px 0}.muted{color:#53647a}.error{color:#a12228}.status{min-height:24px;font-size:14px}
-.overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px}
+.overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,155px),1fr));gap:12px}
 .metric{background:#eff4f9;border-radius:9px;padding:10px 12px}.metric strong{display:block;font-size:22px;font-variant-numeric:tabular-nums}.metric span{color:#53647a;font-size:13px}
 .table-scroll{overflow:auto;max-width:100%}table{width:100%;border-collapse:collapse;min-width:650px}
 th,td{text-align:left;border-bottom:1px solid #e4e9ef;padding:10px 9px;vertical-align:middle;font-size:13px;overflow-wrap:anywhere}
@@ -58,7 +58,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .comparison-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
 .comparison-controls label{font-weight:600;font-size:13px}
 .comparison-controls input,.comparison-controls select{max-width:190px}
-.comparison-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:12px 0}
+.comparison-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));gap:12px;margin:12px 0}
 .comparison-metric{border:1px solid #dce2e9;border-radius:9px;padding:12px;min-width:0;background:#fbfcfe}
 .comparison-metric strong{display:block;margin-bottom:4px}
 .comparison-metric p{margin:3px 0;font-size:13px;overflow-wrap:anywhere}
@@ -107,6 +107,13 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .workspace-nav a[aria-current="page"]{color:#fff;background:#275d88}
 .workspace-nav a:focus-visible{outline:3px solid #74a8d5;outline-offset:2px}
 .nav-status{margin:0 0 6px;color:#53647a;font-size:12px}
+.panel,.overview-head,.storage-summary,.analytics-toolbar,.timeline-controls,.ranking-controls,.comparison-controls,[data-nav-panel]{min-width:0}
+.panel>section,.panel>.table-scroll,.analytics-toolbar>.controls{max-width:100%;min-width:0}
+.metric,.metric strong,.metric span,.status,.filter-scope,.action-context{min-width:0;overflow-wrap:anywhere}
+.controls>label,.analytics-toolbar .controls>details{min-width:0}
+#sqlDailyRollups .daily-rollup-controls input:is([type=date],[type=week],[type=month],[type=number]){max-width:min(185px,100%)}
+@media(max-width:600px){.startup-controls{min-width:0}.startup-controls a,.primary-action{overflow-wrap:anywhere}.daily-rollup-controls button{max-width:100%;white-space:normal}}
+
 
 .overview-head{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .overview-head h2{margin-bottom:4px}
@@ -116,7 +123,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .analytics-toolbar{padding:12px;border-radius:10px;background:#f3f6fa;border:1px solid #dde5ed;margin:8px 0 10px}
 .analytics-toolbar .controls{margin:3px 0}
 .analytics-toolbar label{font-size:13px;font-weight:600}
-.analytics-toolbar input[type=date]{width:157px;min-width:0}
+.analytics-toolbar input:is([type=date],[type=week],[type=month]){width:157px;min-width:0}
 .analytics-toolbar details{position:relative}
 .analytics-toolbar summary{cursor:pointer;list-style-position:inside;border:1px solid #aab9cb;border-radius:8px;padding:8px 12px;background:#fff}
 .analytics-toolbar details[open] summary{background:#e6eef7}
@@ -130,7 +137,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .storage-summary .status{flex:1;min-width:180px;margin:0}
 #analysisValues:empty{display:none}
 @media(min-width:1280px){.analytics-toolbar{position:sticky;top:60px;z-index:4;box-shadow:0 2px 8px #1c324a12}.analytics-toolbar:has(details[open]){position:static}}
-@media(max-width:650px){.overview-head{align-items:stretch}.primary-action{width:100%;justify-content:center}.analytics-toolbar input[type=date]{width:100%}.analytics-toolbar .controls{align-items:stretch}.analytics-toolbar .controls>label{flex-basis:100%}.analytics-toolbar details{width:100%}.analytics-toolbar details summary{width:100%}.extra-filter-fields{flex-direction:column;align-items:stretch}.extra-filter-fields select{width:100%}}
+@media(max-width:650px){.overview-head{align-items:stretch}.primary-action{width:100%;justify-content:center}.analytics-toolbar input:is([type=date],[type=week],[type=month]){width:100%}.analytics-toolbar .controls{align-items:stretch}.analytics-toolbar .controls>label{flex-basis:100%}.analytics-toolbar details{width:100%}.analytics-toolbar details summary{width:100%}.extra-filter-fields{flex-direction:column;align-items:stretch}.extra-filter-fields select{width:100%}}
 [data-nav-panel][hidden]{display:none!important}
 @media(max-width:650px){.workspace-nav{flex-wrap:nowrap;overflow-x:auto;padding:9px 10px;gap:4px}.workspace-nav a{font-size:13px;padding:10px}.nav-status{padding:0 5px}}
 </style>
