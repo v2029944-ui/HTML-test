@@ -170,7 +170,6 @@ pub struct Storage {
     folder_import_serial: AtomicU64,
     root: PathBuf,
     gate: Mutex<()>,
-    wal_anchor: Mutex<Option<Connection>>,
     analysis_filter_gate: Arc<Mutex<()>>,
 }
 
@@ -483,7 +482,6 @@ impl Storage {
         Ok(Self {
             root,
             gate: Mutex::new(()),
-            wal_anchor: Mutex::new(None),
             analysis_filter_gate,
             folder_import: Mutex::new(None),
             folder_import_serial: AtomicU64::new(0),
@@ -494,23 +492,8 @@ impl Storage {
         self.root.join("reports.sqlite3")
     }
 
-    // Keep WAL open between bounded requests. Otherwise the last short-lived
-    // connection checkpoints/removes WAL while the next request is opening it.
-    // No read transaction is retained, so writers and checkpoints remain free.
-    // Initialization stays lazy: constructing Storage must not migrate files.
-    fn open_connection(&self) -> Result<Connection, String> {
-        let mut anchor = self.wal_anchor.lock().map_err(err)?;
-        if anchor.is_none() {
-            let conn = new_connection(&self.db_path())?;
-            conn.query_row("SELECT EXISTS(SELECT 1 FROM reports LIMIT 1)", [], |r| r.get::<_,bool>(0)).map_err(err)?;
-            *anchor = Some(conn);
-        }
-        drop(anchor);
-        new_connection(&self.db_path())
-    }
-
     fn connect(&self) -> Result<Connection, String> {
-        let mut conn = self.open_connection()?;
+        let mut conn = new_connection(&self.db_path())?;
         self.migrate_legacy(&mut conn)?;
         Ok(conn)
     }
