@@ -11,13 +11,13 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: "Check keys without publishing, or publish an approved new version"
+        description: "Check keys, prepare the approved 1.6.0 draft, or publish an approved new version"
         required: true
         type: choice
         default: check-keys
-        options: [check-keys, publish]
+        options: [check-keys, publish, prepare-draft]
       version:
-        description: "For publish: new version, e.g. 0.1.6"
+        description: "For prepare-draft or publish, enter the approved version"
         type: string
         required: false
 
@@ -30,6 +30,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  prepare-draft:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'v2029944-ui/HTML-test' && github.ref == 'refs/heads/work/sql-160-draft-assets' && inputs.operation == 'prepare-draft' && inputs.version == '1.6.0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test draft asset checks
+        run: python3 -B -m unittest discover -s .github/scripts -p test_prepare_tauri_160_draft.py -v
+      - name: Attach verified Windows assets to the 1.6.0 draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/prepare_tauri_160_draft.py
+
   signing-ready:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
