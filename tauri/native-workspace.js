@@ -23,6 +23,17 @@ function invalidateOrganizationTrends(message='Динамика подразде
  organizationTrendsRequest++;
  window.nativeOrganizationTrends?.clear(message);
 }
+let comparisonBusy=false,comparisonRequest=0;
+function invalidateComparison(message='Укажите базовые даты и сравните периоды.'){
+ comparisonRequest++;
+ window.nativeComparison?.clear(message);
+}
+function updateComparisonContext(){
+ const scope=workScope;
+ $('comparisonCurrentContext').textContent=scope
+  ?'Текущий: '+scope.from+' — '+scope.to+' · '+scope.type+' · подразделения: '+scope.organizations.join(', ')
+  :'Текущий диапазон появится после расчёта аналитики.';
+}
 let rankingRequest=0;
 function invalidateRanking(message='Рейтинг появится после расчёта.'){
  rankingRequest++;
@@ -51,6 +62,8 @@ $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!anal
 $('analysisExport').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!workScope;
 $('rankingMetric').disabled=analysisBusy||refreshBusy||!workScope;
 $('rankingCategory').disabled=analysisBusy||refreshBusy||!workScope;
+$('comparisonRun').disabled=analysisBusy||refreshBusy||comparisonBusy||!workScope||revision===null||
+ !$('comparisonBeforeFrom').value||!$('comparisonBeforeTo').value;
 $('workTrendMetric').disabled=analysisBusy||refreshBusy||!workTrendSelection;
 $('workBack').disabled=workBusy||analysisBusy||refreshBusy||!workBack.length;
 $('workNext').disabled=workBusy||analysisBusy||refreshBusy||!workNext;
@@ -359,6 +372,8 @@ function showDivisionComparison(rows,rangeTotal,rangeComplete){
 }
 
 function clearWork(message='Расшифровка появится после расчёта.'){
+ invalidateComparison('Текущая выборка изменена. Рассчитайте диапазон повторно.');
+ updateComparisonContext();
  invalidateWorkTrend('Выборка изменена. Выберите работу или группу заново.');
  status('exportStatus','Экспорт доступен после расчёта. CSV сохраняется в новый файл.');
  workScope=null;workAfter=null;workBack=[];workNext=null;
@@ -474,6 +489,7 @@ async function calculateAnalysis(){
        window.nativeOrganizationTrends?.error('График подразделений не построен: '+userError(trendsError));
    }
    workScope={type:kind,from,to,organizations,organization:$('analysisOrganization').value==='*'?null:$('analysisOrganization').value};
+   updateComparisonContext();
    await reloadRanking();
    updateResultContext(kind,from,to,organizations);
    status('analysisStatus',result.complete?'Расчёт выполнен по полной последовательности периодов.':'Расчёт выполнен, но не все периоды подтверждены. Итоги скрыты до устранения пропусков.',!result.complete);
@@ -512,6 +528,32 @@ async function reloadRanking(){
  }
 }
 
+async function compareAnalysis(){
+ const scope=workScope;
+ if(comparisonBusy||analysisBusy||refreshBusy||!scope||revision===null)return;
+ const beforeFrom=$('comparisonBeforeFrom').value,beforeTo=$('comparisonBeforeTo').value;
+ if(!beforeFrom||!beforeTo||beforeFrom>beforeTo){
+   window.nativeComparison?.error('Укажите корректные даты базового диапазона.');return;
+ }
+ comparisonBusy=true;
+ const ticket=++comparisonRequest;
+ window.nativeComparison?.clear('Сравниваем два диапазона через SQLite…');
+ controlState();
+ try{
+   const result=await api.nativeAnalysisCompare(
+     revision,scope.type,beforeFrom,beforeTo,scope.from,scope.to,scope.organizations
+   );
+   if(ticket===comparisonRequest&&workScope===scope)
+     window.nativeComparison?.show(result);
+ }catch(error){
+   if(ticket===comparisonRequest&&workScope===scope)
+     window.nativeComparison?.error('Не удалось сравнить диапазоны: '+userError(error));
+ }finally{
+   comparisonBusy=false;
+   controlState();
+ }
+}
+
 async function exportAnalysisCsv(){
  if(exportBusy||analysisBusy||workBusy||refreshBusy||!workScope||revision===null)return;
  exportBusy=true;controlState();
@@ -547,6 +589,13 @@ $('analysisPrepare').addEventListener('click',prepareAnalysis);
 $('analysisCancel').addEventListener('click',()=>{analysisCancelled=true;status('analysisStatus','Остановка после текущей порции…');});
 $('analysisRun').addEventListener('click',calculateAnalysis);
 $('analysisExport').addEventListener('click',exportAnalysisCsv);
+$('comparisonRun').addEventListener('click',compareAnalysis);
+for(const id of ['comparisonBeforeFrom','comparisonBeforeTo']){
+ $(id).addEventListener('change',()=>{
+  invalidateComparison('Базовый диапазон изменился. Повторите сравнение.');
+  controlState();
+ });
+}
 for(const id of ['rankingMetric','rankingCategory'])$(id).addEventListener('change',()=>{void reloadRanking();});
 $('workNext').addEventListener('click',async()=>{
  if(!workNext)return;
