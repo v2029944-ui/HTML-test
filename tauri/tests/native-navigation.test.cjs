@@ -10,16 +10,17 @@ function fake(){
    attributes:{},setAttribute(k,v){this.attributes[k]=v;},
    removeAttribute(k){delete this.attributes[k];}
  }));
- const panels=['analysis','backup','reports','groups','analysis','excel','excel','excel','metrics'].map(name=>({
+ const panels=['analysis','backup','reports','groups','excel','excel','excel','metrics'].map(name=>({
    hidden:false,getAttribute(key){return key==='data-nav-panel'?name:null;}
  }));
- const status={textContent:''},events={};
- const window={location:{hash:''},addEventListener:(kind,handler)=>events[kind]=handler};
+ const status={textContent:''},events={},scrolls=[];
+ const window={location:{hash:''},addEventListener:(kind,handler)=>events[kind]=handler,
+   scrollTo:(x,y)=>scrolls.push([x,y])};
  vm.runInNewContext(script,{window,document:{
    querySelectorAll:selector=>selector==='[data-nav-link]'?links:selector==='[data-nav-panel]'?panels:[],
    getElementById:id=>id==='nativeViewStatus'?status:null
  }});
- return {window,links,panels,status,events};
+ return {window,links,panels,status,events,scrolls};
 }
 test('six SQL sections remain in one application without full-history bootstrap',()=>{
  const root=path.resolve(__dirname,'../..'),tmp=fs.mkdtempSync(path.join(os.tmpdir(),'native-nav-'));
@@ -45,6 +46,9 @@ test('six SQL sections remain in one application without full-history bootstrap'
   assert.ok(exportAt>workSection&&exportAt<workSection+1000,
     'CSV action belongs beside the data it exports');
   assert.ok(html.includes('class="primary-action" href="#excel"'));
+  assert.ok(html.includes('id="sqlMain" data-nav-panel="analysis"'));
+  assert.ok(html.indexOf('class="analytics-toolbar"')<html.indexOf('id="sqlOverview"'),
+    'the compact filter panel must be a sticky sibling of overview and analytics results');
   assert.ok(html.includes('tauri-native-navigation.js'));
   assert.equal(fs.readFileSync(path.join(tmp,'tauri-native-navigation.js'),'utf8'),script);
   assert.ok(!script.includes('desktopAPI.load('));
@@ -54,10 +58,11 @@ test('six SQL sections remain in one application without full-history bootstrap'
 });
 test('navigation defaults to analytics and keeps the other SQL sections in the DOM',()=>{
  const ui=fake();
- assert.equal(ui.panels.filter(p=>!p.hidden).length,2);
+ assert.equal(ui.panels.filter(p=>!p.hidden).length,1);
  assert.equal(ui.links[0].attributes['aria-current'],'page');
  assert.match(ui.status.textContent,/Аналитика|analysis/i);
  ui.window.location.hash='#excel';ui.events.hashchange();
+ assert.equal(ui.scrolls.length,1);
  assert.equal(ui.panels.filter(p=>!p.hidden).length,3);
  assert.ok(ui.panels.filter(p=>!p.hidden).every(p=>p.getAttribute('data-nav-panel')==='excel'));
  assert.equal(ui.links[3].attributes['aria-current'],'page');
@@ -69,8 +74,8 @@ test('navigation defaults to analytics and keeps the other SQL sections in the D
 test('unknown deep links fall back to analytics, no SQL controls are destroyed',()=>{
  const ui=fake();
  ui.window.location.hash='#not-a-view';ui.events.hashchange();
- assert.equal(ui.panels.filter(p=>!p.hidden).length,2);
- assert.equal(ui.panels.length,9);
+ assert.equal(ui.panels.filter(p=>!p.hidden).length,1);
+ assert.equal(ui.panels.length,8);
  assert.equal(ui.window.nativeWorkspaceNavigation.active(),'analysis');
  assert.equal(ui.window.nativeWorkspaceNavigation.select('groups'),'groups');
  assert.equal(ui.panels.filter(p=>!p.hidden)[0].getAttribute('data-nav-panel'),'groups');

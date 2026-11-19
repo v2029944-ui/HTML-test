@@ -26,7 +26,12 @@
   return target;
  }
  function sync(){select(selectedFromHash());}
- window.addEventListener('hashchange',sync);
+ window.addEventListener('hashchange',()=>{
+  sync();
+  // A newly visible section must start at the top rather than retaining
+  // a deep scroll position from an unrelated section.
+  if(typeof window.scrollTo==='function')window.scrollTo(0,0);
+ });
  sync();
  window.nativeWorkspaceNavigation=Object.freeze({select,active:()=>current});
 })();
