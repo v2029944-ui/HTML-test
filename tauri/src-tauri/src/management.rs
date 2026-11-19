@@ -422,13 +422,19 @@ impl Storage {
         job.run(&dest,||{let st=dest.unchecked_transaction().map_err(err)?;let rowid:Option<i64>=tx.query_row("SELECT rowid FROM kv WHERE name='settings'",[],|r|r.get(0)).optional().map_err(err)?;let root=if let Some(rowid)=rowid{tree::parse(&st,tx.blob_open("main","kv","json",rowid,true).map_err(err)?,job)?}else{tree::parse(&st,std::io::Cursor::new("{\"orgNames\":[\"СМУ16\",\"АВТО\",\"ТРАК\",\"ЦЕНТР\"],\"groups\":[],\"catalog\":[]}".as_bytes()),job)?};tree::derive(&st,root,job)?;st.commit().map_err(err)})?;
         drop(dest);
         stage.check_quota()?;
-        tx.execute(
+        // End the read snapshot before acquiring the publication writer lock.
+        // Unrelated sealed-filter writes can commit during staging; upgrading
+        // that old snapshot would fail with SQLITE_BUSY_SNAPSHOT in WAL mode.
+        tx.commit().map_err(err)?;
+        job.check()?;
+        src.execute(
             "ATTACH DATABASE ?1 AS management_stage",
             [stage.db().to_string_lossy().as_ref()],
         )
         .map_err(err)?;
-        tx.execute_batch("PRAGMA management_stage.cache_size=-2048;")
+        src.execute_batch("PRAGMA management_stage.cache_size=-2048;")
             .map_err(err)?;
+        let tx=src.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(err)?;
         job.run(&tx, || {
             check_revision(&tx, rev)?;
             copy_tables(&tx)

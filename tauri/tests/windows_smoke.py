@@ -70,6 +70,12 @@ def wait_for_app_state(page, expression, description, timeout_ms=30_000):
         if remaining<=0:raise RuntimeError(description+' did not complete within '+str(timeout_ms)+' ms')
         page.wait_for_timeout(min(100,remaining*1000))
 
+def reveal_table(page, selector):
+    """Read visible exact values only after opening their details disclosure."""
+    for details in page.locator('details').filter(has=page.locator(selector)).all():
+        if not details.evaluate('(el) => el.open'):
+            details.locator(':scope > summary').click()
+
 @contextmanager
 def windows_test_workspace():
     """Release only this test's WebView2 workers before deleting their temporary profile."""
@@ -549,6 +555,7 @@ def run():
                 wait_for_app_state(page,
                     'document.querySelector("#timelineStatus")?.textContent.includes("Ни одной полной точки")',
                     'SQL timeline has no fabricated zero observations')
+                reveal_table(page, '#timelineRows')
                 assert page.locator('#timelineRows tr').count()==2
                 assert page.locator('#timelineChart svg').count()==0
                 assert all(row.locator('td').nth(4).inner_text()=='—'
@@ -563,6 +570,7 @@ def run():
                 wait_for_app_state(page,
                     'document.querySelector("#organizationTrendsStatus")?.textContent.includes("Нет подтверждённых точек")',
                     'Native division trends hide missing weekly values')
+                reveal_table(page, '#organizationTrendsRows')
                 assert page.locator('#organizationTrendsRows tr').count()>0
                 assert page.locator('#organizationTrendsRows tr').count()<=992
                 assert page.locator('#organizationTrendsChart svg').count()==0
@@ -583,6 +591,7 @@ def run():
                 assert page.locator('#sqlWorkTrends').is_visible()
                 assert page.locator('#workTrendMetric').is_disabled()
                 assert page.locator('#workTrendChart svg').count()==0
+                reveal_table(page, '#workTrendRows')
                 assert page.locator('#workTrendRows tr').count()==0
                 assert page.locator('#workTrendSelected').inner_text()=='Позиция не выбрана.'
                 report['checks'].append('SQL work/group trend controls start empty without fabricated data')
