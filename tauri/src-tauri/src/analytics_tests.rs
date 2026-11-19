@@ -887,19 +887,21 @@ fn sql_ranking_is_sorted_bounded_and_complete() {
     assert_eq!(top.rows[0].kind, "group");
     assert_eq!(top.rows[0].name, "Group");
     assert_eq!(top.rows[0].amount, Some(100.));
-    assert_eq!(top.rows[1].name, "two");
+    assert_eq!(top.rows[1].name, "Ignored");
     assert_eq!(top.rows[1].amount, Some(70.));
 
     let counts = store.analysis_ranking(rev, &selected, &days, None, "count", "work").unwrap();
     assert!(counts.complete);
     assert!(counts.rows.iter().all(|r| r.kind == "work"));
-    assert_eq!(counts.rows[0].name, "two");
-    assert_eq!(counts.rows[0].count, Some(-5.));
-    assert_eq!(counts.rows[1].name, "new");
-    assert_eq!(counts.rows[1].count, Some(2.));
+    assert_eq!(counts.rows[0].name, "new");
+    assert_eq!(counts.rows[0].count, Some(2.));
+    assert_eq!(counts.rows[1].name, "gone");
+    assert_eq!(counts.rows[1].count, Some(1.));
     let only_groups = store.analysis_ranking(rev, &selected, &days, None, "amount", "group").unwrap();
-    assert_eq!(only_groups.rows.len(), 1);
+    assert_eq!(only_groups.rows.len(), 2);
     assert_eq!(only_groups.rows[0].name, "Group");
+    assert_eq!(only_groups.rows[1].name, "Ignored");
+    assert_eq!(only_groups.rows[1].count, Some(-5.));
 
     let combined = scope(&store, rev, "day", &["A", "B"], None);
     let incomplete = store.analysis_ranking(
