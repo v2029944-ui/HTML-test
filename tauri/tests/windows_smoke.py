@@ -577,6 +577,29 @@ def run():
                 assert page.locator('#timelineRows tr').count()==1
                 page.locator('#hideEmptyPeriods').uncheck()
                 report['checks'].append('Daily-source KPI and monthly SQL bucket cover all leap-February days')
+                # Exercise the real native commands for every specialized view
+                # against one captured complete daily-source calendar month.
+                page.locator('#comparisonBeforeFrom').fill('2024-01')
+                page.locator('#comparisonBeforeTo').fill('2024-01')
+                for mode in ['changes', 'usual', 'regularity', 'structure', 'contributions']:
+                    page.locator('#advancedMode').select_option(mode)
+                    wait_for_app_state(page,
+                        '!document.querySelector("#advancedRun").disabled',
+                        'Advanced SQL view is ready: '+mode)
+                    page.locator('#advancedRun').click()
+                    wait_for_app_state(page,
+                        '!document.querySelector("#advancedRun").disabled && document.querySelectorAll("#advancedRows tr").length > 0',
+                        'Advanced native SQL result: '+mode)
+                    assert 'Ошибка' not in page.locator('#advancedStatus').inner_text()
+                    assert 'дневные отчёты' in page.locator('#advancedContext').inner_text()
+                    assert '2024-02-01' in page.locator('#advancedContext').inner_text()
+                    assert 'из ' in page.locator('#advancedPage').inner_text()
+                page.emulate_media(media='print')
+                assert page.locator('#advancedPage').is_visible()
+                assert page.locator('#advancedContext').is_visible()
+                assert page.locator('#advancedRows').is_visible()
+                page.emulate_media(media='screen')
+                report['checks'].append('All five advanced SQL analyses use the daily-source scope; printed page retains row bounds and context')
                 page.locator('#analysisSource').select_option('imported')
                 # D4c: a type with no reports can be indexed without loading
                 # history, then its incomplete SQL range must have NULL totals.
