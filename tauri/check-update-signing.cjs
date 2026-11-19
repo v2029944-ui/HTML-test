@@ -4,6 +4,15 @@ const fs = require('node:fs');
 function minisignKeyId(encoded, isSignature) {
   if (typeof encoded !== 'string' || !encoded.trim()) throw Error('Signing key or signature is missing');
   let input = encoded.trim();
+  // Tauri's .sig artifact is base64 of the complete multiline Minisign file,
+  // not always plain Minisign text. The updater expects exactly that encoding.
+  // Decode its envelope before parsing the algorithm and signer key identity.
+  if (isSignature && !input.startsWith('untrusted comment:')) {
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(input) || input.length % 4 !== 0) {
+      throw Error('Invalid Base64 Tauri update signature');
+    }
+    input = Buffer.from(input, 'base64').toString('utf8').trim();
+  }
   if (!isSignature && !input.startsWith('untrusted comment:')) {
     const decoded = Buffer.from(input, 'base64');
     if (decoded.length === 42 && decoded.subarray(0, 2).toString('ascii') === 'Ed') {
