@@ -6,7 +6,7 @@
  const panels=Array.from(document.querySelectorAll('[data-nav-panel]'));
  const status=document.getElementById('nativeViewStatus');
  if(!links.length||!panels.length||!status)return;
- const labels=new Map(links.map(link=>[link.getAttribute('data-nav-link'),link.textContent.trim()]));
+ const labels=new Map(links.map(link=>[link.getAttribute('data-nav-link'),(link.querySelector?.('span')?.textContent||link.textContent).trim()]));
  const keys=new Set(labels.keys());
  let current='analysis';
  function selectedFromHash(){
@@ -17,12 +17,15 @@
  function select(name){
   const target=keys.has(name)?name:'analysis';
   current=target;
-  for(const panel of panels)panel.hidden=panel.getAttribute('data-nav-panel')!==target;
+  for(const panel of panels)panel.hidden=!panel.getAttribute('data-nav-panel').split(/\s+/).includes(target);
   for(const link of links){
    if(link.getAttribute('data-nav-link')===target)link.setAttribute('aria-current','page');
    else link.removeAttribute('aria-current');
   }
-  status.textContent='Раздел: '+labels.get(target)+'. Остальные данные доступны через меню выше.';
+  const menu=document.getElementById('managementNav'),toggle=document.getElementById('managementToggle');
+  toggle?.classList?.toggle('active',['reports','groups','backup','excel','metrics'].includes(target));
+  if(menu)menu.open=false;
+  status.textContent='Раздел: '+labels.get(target)+'. Остальные разделы доступны через меню «Управление».';
   return target;
  }
  // Update visibility synchronously on a real tab click. Hashchange is
@@ -38,6 +41,8 @@
   // a deep scroll position from an unrelated section.
   if(typeof window.scrollTo==='function')window.scrollTo(0,0);
  });
+ document.addEventListener?.('keydown',event=>{if(event.key==='Escape'){const menu=document.getElementById('managementNav');if(menu?.open){menu.open=false;document.getElementById('managementToggle')?.focus();}}});
+ document.addEventListener?.('click',event=>{const menu=document.getElementById('managementNav');if(menu?.open&&!menu.contains(event.target))menu.open=false;});
  sync();
  window.nativeWorkspaceNavigation=Object.freeze({select,active:()=>current});
 })();

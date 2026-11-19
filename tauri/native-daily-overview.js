@@ -122,7 +122,7 @@ function draw(){
  for(let i=0;i<=ticks;i++){
   const v=axisMin+(axisMax-axisMin)*i/ticks,py=y(v);
   root.append(svg('line',{x1:left,x2:width-right,y1:py,y2:py,
-   stroke:Math.abs(v)<1e-9?'#92a3b8':'#e5eaf0','stroke-width':1}));
+   stroke:Math.abs(v)<1e-9?'var(--axis)':'var(--grid)','stroke-width':1}));
   root.append(svg('text',{x:left-9,y:py+4,'text-anchor':'end'},number(v)));
  }
  const skip=Math.max(1,Math.ceil(values.length/8));
@@ -134,7 +134,7 @@ function draw(){
  let segment=[];
  const flush=()=>{
   if(segment.length>1){
-   root.append(svg('path',{fill:'none',stroke:'#24639a','stroke-width':2.7,
+   root.append(svg('path',{fill:'none',stroke:'var(--plot-0)','stroke-width':2.7,
      'stroke-linejoin':'round','stroke-linecap':'round',
      d:segment.map(([px,py],i)=>(i?'L':'M')+px.toFixed(2)+' '+py.toFixed(2)).join(' ')}));
   }
@@ -146,7 +146,7 @@ function draw(){
   const px=x(i),py=y(v);
   segment.push([px,py]);
   if(values.length<=45){
-   const circle=svg('circle',{cx:px,cy:py,r:3.5,fill:'#24639a',stroke:'#fff','stroke-width':1});
+   const circle=svg('circle',{cx:px,cy:py,r:3.5,fill:'var(--plot-0)',stroke:'var(--surface)','stroke-width':1});
    circle.append(svg('title',{},t.points[i].start+': '+number(v)));
    root.append(circle);
   }

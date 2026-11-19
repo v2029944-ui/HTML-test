@@ -2,7 +2,7 @@
 (function(){
 'use strict';
 const $=id=>document.getElementById(id),ns='http://www.w3.org/2000/svg';
-const palette=['#24639a','#ad5c36','#328165','#8a5daa','#bb7832','#617c99','#a94e7c','#65713c'];
+const palette=['var(--plot-0)','var(--plot-1)','var(--plot-2)','var(--plot-3)','var(--plot-4)','var(--plot-5)','var(--plot-6)','var(--plot-7)'];
 let snapshot=null;
 const finite=value=>typeof value==='number'&&Number.isFinite(value);
 const format=value=>finite(value)?value.toLocaleString('ru-RU',{maximumFractionDigits:3}):'—';
@@ -112,7 +112,7 @@ function draw(){
  for(let i=0;i<=Math.min(12,ticks);i++){
    const val=low+i*step,py=y(val);
    root.append(svg('line',{x1:left,y1:py,x2:width-right,y2:py,
-     stroke:val===0?'#8595a8':'#e5eaf0','stroke-width':val===0?1.5:1}));
+     stroke:val===0?'var(--axis)':'var(--grid)','stroke-width':val===0?1.5:1}));
    root.append(svg('text',{x:left-9,y:py+4,'text-anchor':'end'},format(val)));
  }
  series.forEach((serie,i)=>{
@@ -133,7 +133,7 @@ function draw(){
      const px=x(j),py=y(value);
      points.push([px,py]);
      if(count<=35){
-       const dot=svg('circle',{cx:px,cy:py,r:3.5,fill:palette[i],stroke:'#fff','stroke-width':1});
+       const dot=svg('circle',{cx:px,cy:py,r:3.5,fill:palette[i],stroke:'var(--surface)','stroke-width':1});
        dot.append(svg('title',{},serie.organization+' · '+p.start+': '+format(value)));
        root.append(dot);
      }

@@ -128,6 +128,8 @@
       'native_metric_xlsx_preview',{source,profile,start,end},'reads'),
     nativeMetricXlsxApply:(source,profile,start,end,reviewToken)=>tracked(
       'native_metric_xlsx_apply',{source,profile,start,end,reviewToken},'saves'),
+    nativeReportCalendar:(revision,year)=>tracked(
+      'native_report_calendar',{revision,year},'reads'),
     nativeReportPage:(revision,filter,after=null,limit=100)=>tracked(
       'native_report_page',{revision,filter,after,limit},'reads'),
     save:data=>tracked('save_data',{data},'saves'),
