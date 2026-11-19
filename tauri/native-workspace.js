@@ -12,6 +12,11 @@ let analysisBusy=false,analysisReady=false,analysisCancelled=false,orgNames=[];
 let workBusy=false,workScope=null,workAfter=null,workBack=[],workNext=null;
 let exportBusy=false,backupBusy=false,restoreBusy=false,restoreSelection=null;
 const workSize=50;
+let organizationTrendsRequest=0;
+function invalidateOrganizationTrends(message='Динамика подразделений появится после расчёта.'){
+ organizationTrendsRequest++;
+ window.nativeOrganizationTrends?.clear(message);
+}
 let rankingRequest=0;
 function invalidateRanking(message='Рейтинг появится после расчёта.'){
  rankingRequest++;
@@ -102,6 +107,7 @@ try{
  analysisReady=false;
  invalidateTimeline('Данные обновлены. Повторите расчёт графика.');
  invalidateRanking('Данные обновлены. Повторите расчёт рейтинга.');
+ invalidateOrganizationTrends('Данные обновлены. Повторите расчёт динамики подразделений.');
  $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
  orgNames=snapshot.org_names.slice();
@@ -240,7 +246,7 @@ function updateFilterContext(){
   ?'все из настроек ('+total+')'
   :orgNames.includes(choice)?choice+' (1 из '+total+')':'нет доступных';
  $('analysisFilterScope').textContent='Подразделения: '+orgText+
-  '. Итоги, сравнение, детализация и CSV используют этот отбор. Работы и группы: все внутри выбранных подразделений (отдельного фильтра пока нет).';
+  '. Итоги, графики, сравнение, детализация и CSV используют этот отбор. Работы и группы: все внутри выбранных подразделений (отдельного фильтра пока нет).';
 }
 function updateResultContext(type,from,to,scope){
  const selected=$('analysisOrganization').value;
@@ -256,6 +262,7 @@ async function prepareAnalysis(){
  analysisBusy=true;analysisReady=false;analysisCancelled=false;
 invalidateTimeline('Индексация данных. Рассчитайте график после подготовки.');
 invalidateRanking('Индексация данных. Повторите расчёт рейтинга после подготовки.');
+invalidateOrganizationTrends('Динамика подразделений станет доступна после индексации.');
 $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
 controlState();
@@ -390,7 +397,7 @@ async function calculateAnalysis(){
  if(!from||!to||from>to||organizations.some(x=>!x)||!organizations.length){
    status('analysisStatus','Укажите корректный диапазон дат и хотя бы одно подразделение.',true);return;
  }
- analysisBusy=true;invalidateRanking('Подготавливаем рейтинг SQLite…');invalidateTimeline('Строим график из агрегатов SQLite…');const expectedTimeline=timelineRequest;clearWork();controlState();
+ analysisBusy=true;invalidateOrganizationTrends('Считываем ряды подразделений из SQLite…');const expectedTrends=organizationTrendsRequest;invalidateRanking('Подготавливаем рейтинг SQLite…');invalidateTimeline('Строим график из агрегатов SQLite…');const expectedTimeline=timelineRequest;clearWork();controlState();
  try{
    const result=await api.nativeAnalysisRange(revision,kind,from,to,organizations);
    const divisions=await api.nativeAnalysisOrganizations(revision,kind,from,to,organizations);
@@ -413,6 +420,14 @@ async function calculateAnalysis(){
      if(expectedTimeline===timelineRequest)
        window.nativeTimeline?.error('График не построен: '+userError(timelineError));
    }
+   try{
+     const trends=await api.nativeOrganizationTrends(revision,kind,from,to,organizations);
+     if(expectedTrends===organizationTrendsRequest)
+       window.nativeOrganizationTrends?.show(trends);
+   }catch(trendsError){
+     if(expectedTrends===organizationTrendsRequest)
+       window.nativeOrganizationTrends?.error('График подразделений не построен: '+userError(trendsError));
+   }
    workScope={type:kind,from,to,organizations,organization:$('analysisOrganization').value==='*'?null:$('analysisOrganization').value};
    await reloadRanking();
    updateResultContext(kind,from,to,organizations);
@@ -421,6 +436,7 @@ async function calculateAnalysis(){
    $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
    invalidateTimeline('График недоступен: расчёт не завершён.');
    invalidateRanking('Рейтинг недоступен: расчёт не завершён.');
+   invalidateOrganizationTrends('Динамика подразделений недоступна: расчёт не завершён.');
    status('divisionStatus','Сравнение не выполнено из-за ошибки.',true);
    status('divisionShareStatus','Доли недоступны: расчёт завершился ошибкой.',true);
    status('analysisStatus','Ошибка расчёта: '+userError(err),true);
@@ -475,7 +491,7 @@ const year=String(new Date().getFullYear());
 $('analysisFrom').value=year+'-01-01';
 $('analysisTo').value=year+'-12-31';
 $('analysisType').addEventListener('change',()=>{
- analysisReady=false;invalidateRanking('Тип периода изменён. Повторите расчёт рейтинга.');invalidateTimeline('Тип периода изменён. Подготовьте индексы и повторите расчёт.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
+ analysisReady=false;invalidateRanking('Тип периода изменён. Повторите расчёт рейтинга.');invalidateOrganizationTrends('Тип периода изменён. Повторите расчёт динамики подразделений.');invalidateTimeline('Тип периода изменён. Подготовьте индексы и повторите расчёт.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
  status('analysisStatus','Выбран другой тип периода. Подготовьте соответствующие индексы.');
  $('analysisResultScope').textContent='Тип периода изменён. Подготовьте индексы и повторите расчёт.';
@@ -501,7 +517,7 @@ $('workBack').addEventListener('click',async()=>{
 });
 for(const id of ['analysisFrom','analysisTo','analysisOrganization']){
  $(id).addEventListener('change',()=>{
-  invalidateRanking('Фильтры изменены. Повторите расчёт рейтинга.');invalidateTimeline('Фильтры изменены. Повторите расчёт графика.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork('Параметры изменены. Повторите расчёт.');
+  invalidateRanking('Фильтры изменены. Повторите расчёт рейтинга.');invalidateOrganizationTrends('Фильтры изменены. Повторите расчёт динамики подразделений.');invalidateTimeline('Фильтры изменены. Повторите расчёт графика.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork('Параметры изменены. Повторите расчёт.');
   status('divisionShareStatus','Доли сброшены: фильтры изменены.');
   status('divisionStatus','Параметры изменены. Нажмите «Рассчитать» ещё раз.');
   $('analysisResultScope').textContent='Фильтры изменены. Повторите расчёт, чтобы увидеть актуальную выборку.';
