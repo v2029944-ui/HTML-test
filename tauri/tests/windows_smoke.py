@@ -468,8 +468,21 @@ def run():
                     'document.querySelector("#dailySourceStatus")?.textContent.includes("календарные месяцы") && document.querySelectorAll("#dailySourceKpis .comparison-metric").length === 5',
                     'Day-source KPI and graph recomputed for the chosen work')
                 filtered_amount=page.locator('#dailySourceKpis .comparison-metric').nth(1).locator('strong').inner_text()
-                if filtered_amount in ('—',baseline_amount):
-                    raise RuntimeError('Exact work filter did not change the daily-source amount: '+filtered_amount)
+                if filtered_amount == '—':
+                    raise RuntimeError('Exact work filter lost the valid daily-source amount')
+                # This workbook can contain only one raw work name. The true
+                # coverage distinction is a selected *absent* work, which must
+                # produce verified zero instead of a fabricated missing day.
+                absent_work=page.evaluate('''async () => {
+                  const metadata=await window.desktopAPI.nativeSettingsBootstrap();
+                  return window.desktopAPI.nativeAnalysisRange(
+                    metadata.revision,'day','2024-01-01','2024-12-31',
+                    metadata.org_names,'__sql_smoke_absent_work__');
+                }''')
+                assert absent_work['complete'] is True
+                assert absent_work['missing']==0
+                assert absent_work['total']['amount']==0
+                assert absent_work['total']['count']==0
                 assert page.locator('#dailySourceRows tr').count()==12
                 assert page.locator('#dailySourceChart svg').count()==1
                 page.locator('[data-nav-link="analysis"]').click()
