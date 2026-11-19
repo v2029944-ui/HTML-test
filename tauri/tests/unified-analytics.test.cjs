@@ -64,3 +64,16 @@ test('printed complete summaries include both captured driver tables',async()=>{
  const full={complete:true,periods:1,missing:0,total:{count:2,amount:20,average:10},available_reports:1,available_total:{count:2,amount:20,average:10},invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:1};
  const f=fixture({nativeAnalysisCompare:async()=>({summary:{before:full,after:full},top_count:[{name:'Count driver',kind:'work',count:{base:1,current:2,delta:1}}],top_amount:[{name:'Amount driver',kind:'group',amount:{base:10,current:20,delta:10}}]})});await f.bootstrap();f.nodes.get('printSummary').dispatch('click');const text=f.nodes.get('printReport').textContent;assert.match(text,/Count driver/);assert.match(text,/Amount driver/);assert.match(text,/исходных отчётах есть замечания/);
 });
+test('quantity and average labels never claim fractional volume is a count of jobs',async()=>{
+ const f=fixture();await f.bootstrap();
+ const kpis=f.nodes.get('overviewKpis').textContent;
+ assert.match(kpis,/Количество \/ объём/);
+ assert.match(kpis,/Сумма \/ количество \(объём\)/);
+ assert.doesNotMatch(kpis,/Количество выполненных работ|Средняя сумма на работу/);
+ assert.match(f.nodes.get('overviewInsights').textContent,/Дробное количество может означать объём/);
+ f.nodes.get('printSummary').dispatch('click');
+ const printed=f.nodes.get('printReport').textContent;
+ assert.match(printed,/Количество \/ объём/);
+ assert.match(printed,/сверять с исходными Excel/);
+ assert.doesNotMatch(printed,/Средняя сумма на работу/);
+});

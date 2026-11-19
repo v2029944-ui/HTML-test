@@ -2,7 +2,7 @@
 (function(){
 'use strict';
 const UI=window.unifiedUI,$=UI.$,api=UI.api;
-const titles={count:'Количество',amount:'Сумма',average:'Средняя сумма на работу'};
+const titles={count:'Количество / объём',amount:'Сумма',average:'Сумма / количество (объём)'};
 const usualLabels={normal:'Обычный уровень',high:'Необычно выше',low:'Необычно ниже',insufficient:'Недостаточно данных'};
 const regularLabels={frequent:'Часто',rare:'Редко',rarer:'Заметно реже',disappeared:'Перестала встречаться',new:'Впервые в загруженной истории',dormant:'Долго без выполнений',occasional:'Встречается',absent:'Нет выполнений',uncertain:'Есть пропуски',unknown:'Нет сопоставимых отчётов'};
 const channels=new Map();
@@ -212,7 +212,7 @@ function resetScope(next){if(!next){scope=null;clearExtended();return;}scope=cop
 function bind(ids,event,handler){for(const id of ids)$(id)?.addEventListener(event,handler);}
 function init(){if(initialized)return;initialized=true;
  const dateIds=['changesFrom','changesTo','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','structureBase','structureCurrent','usualPeriod'];for(const id of dateIds)$(id)?.addEventListener('input',()=>{$(id).dataset.unifiedTouched='true';});
- checkboxList('changesMetrics',[['count','Количество'],['amount','Сумма']],changeMetrics,()=>changes());checkboxList('usualMetrics',Object.entries(titles),usualMetrics,()=>patterns('usual'));
+ checkboxList('changesMetrics',[['count','Количество / объём'],['amount','Сумма']],changeMetrics,()=>changes());checkboxList('usualMetrics',Object.entries(titles),usualMetrics,()=>patterns('usual'));
  bind(['changesMethod','changesFrom','changesTo','changesMode','changesDirection','changesSort'],'change',()=>{invalidate('changes');changes();});
  bind(['changesPercent','changesCountMin','changesAmountMin','changesSearch'],'input',()=>schedule('changes',changes));
  $('changesType').addEventListener('change',()=>{changesKind=value('changesType');for(const id of ['changesFrom','changesTo'])setDate(id,changesKind,scope?.to||new Date().toISOString().slice(0,10),true);invalidate('changes');changes();});
