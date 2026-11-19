@@ -419,13 +419,13 @@ def run():
                 assert page.locator('#sqlReports').is_visible()
                 page.locator('#reportNext').click()
                 wait_for_app_state(page,
-                    'document.querySelector("#reportRows tr td:last-child")?.textContent !== '+json.dumps(first_native),
+                    'document.querySelector("#reportRows tr td:nth-child(5)")?.textContent !== '+json.dumps(first_native),
                     'Native SQL next page')
                 assert page.locator('#reportRows tr').count()==100
                 assert page.locator('#reportPageInfo').inner_text()=='Страница 2'
                 page.locator('#reportBack').click()
                 wait_for_app_state(page,
-                    'document.querySelector("#reportRows tr td:last-child")?.textContent === '+json.dumps(first_native),
+                    'document.querySelector("#reportRows tr td:nth-child(5)")?.textContent === '+json.dumps(first_native),
                     'Native SQL previous page')
                 assert page.locator('#reportPageInfo').inner_text()=='Страница 1'
                 assert page.locator('#sqlDailyRollups').is_visible()
