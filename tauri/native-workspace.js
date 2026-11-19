@@ -12,6 +12,12 @@ let analysisBusy=false,analysisReady=false,analysisCancelled=false,orgNames=[];
 let workBusy=false,workScope=null,workAfter=null,workBack=[],workNext=null;
 let exportBusy=false,backupBusy=false,restoreBusy=false,restoreSelection=null;
 const workSize=50;
+let workTrendSelection=null,workTrendRequest=0;
+function invalidateWorkTrend(message='Выберите работу или группу из таблицы выше.'){
+ workTrendRequest++;
+ workTrendSelection=null;
+ window.nativeWorkTrends?.clear(message);
+}
 let organizationTrendsRequest=0;
 function invalidateOrganizationTrends(message='Динамика подразделений появится после расчёта.'){
  organizationTrendsRequest++;
@@ -45,6 +51,7 @@ $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!anal
 $('analysisExport').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!workScope;
 $('rankingMetric').disabled=analysisBusy||refreshBusy||!workScope;
 $('rankingCategory').disabled=analysisBusy||refreshBusy||!workScope;
+$('workTrendMetric').disabled=analysisBusy||refreshBusy||!workTrendSelection;
 $('workBack').disabled=workBusy||analysisBusy||refreshBusy||!workBack.length;
 $('workNext').disabled=workBusy||analysisBusy||refreshBusy||!workNext;
 $('analysisType').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
@@ -352,12 +359,43 @@ function showDivisionComparison(rows,rangeTotal,rangeComplete){
 }
 
 function clearWork(message='Расшифровка появится после расчёта.'){
+ invalidateWorkTrend('Выборка изменена. Выберите работу или группу заново.');
  status('exportStatus','Экспорт доступен после расчёта. CSV сохраняется в новый файл.');
  workScope=null;workAfter=null;workBack=[];workNext=null;
  $('workRows').replaceChildren();
  status('workStatus',message);
  controlState();
 }
+async function selectWorkTrend(item){
+ if(analysisBusy||refreshBusy||workBusy||!workScope||revision===null)return;
+ if(typeof item.key!=='string'||typeof item.name!=='string'||
+    !['work','group'].includes(item.kind))return;
+ const scope=workScope;
+ const chosen={scope,key:item.key,kind:item.kind};
+ workTrendSelection=chosen;
+ const ticket=++workTrendRequest;
+ window.nativeWorkTrends?.clear('Расчёт выбранной позиции в SQLite…');
+ controlState();
+ try{
+   const data=await api.nativeWorkTimeline(
+     revision,scope.type,scope.from,scope.to,scope.organizations,
+     scope.organization,item.key
+   );
+   if(ticket!==workTrendRequest||workTrendSelection!==chosen||workScope!==scope)return;
+   if(!data||data.key!==item.key||data.kind!==item.kind)
+     throw Error('Некорректная идентичность выбранной позиции');
+   window.nativeWorkTrends?.show(data);
+   const panel=$('sqlWorkTrends');
+   if(typeof panel.scrollIntoView==='function')
+     panel.scrollIntoView({block:'nearest',behavior:'smooth'});
+ }catch(error){
+   if(ticket===workTrendRequest&&workTrendSelection===chosen&&workScope===scope){
+     workTrendSelection=null;
+     window.nativeWorkTrends?.error('Динамика выбранной позиции недоступна: '+userError(error));
+   }
+ }finally{controlState();}
+}
+
 async function workPage(cursor,reset=false){
  if(workBusy||analysisBusy||refreshBusy||!workScope||revision===null)return false;
  workBusy=true;controlState();
@@ -379,12 +417,19 @@ async function workPage(cursor,reset=false){
      item.name??'',item.kind==='group'?'Группа':item.kind==='work'?'Работа':item.kind??'',
      number(item.count),number(item.amount),number(item.average),item.active?'Да':'Нет'
    ])tr.append(make('td',value));
+   const cell=make('td');
+   const graph=make('button','График');graph.type='button';
+   graph.disabled=typeof item.key!=='string'||!['work','group'].includes(item.kind);
+   graph.setAttribute('aria-label','Показать динамику: '+String(item.name??''));
+   graph.addEventListener('click',()=>{void selectWorkTrend(item);});
+   cell.append(graph);tr.append(cell);
    tbody.append(tr);
   }
   status('workStatus','На странице: '+rows.length+' позиций. Сортировка по ключу SQLite.');
   return true;
  }catch(err){
   workNext=null;workBack=[];workScope=null;
+  invalidateWorkTrend('Расшифровка недоступна. Повторите расчёт и выбор позиции.');
   $('workRows').replaceChildren();
   status('workStatus','Ошибка SQL-чтения: '+userError(err)+'. Повторите расчёт.',true);
   return false;
