@@ -600,6 +600,23 @@ def run():
                 assert page.locator('#advancedRows').is_visible()
                 page.emulate_media(media='screen')
                 report['checks'].append('All five advanced SQL analyses use the daily-source scope; printed page retains row bounds and context')
+                if not page.locator('#analysisMoreFilters').evaluate('(el) => el.open'):
+                    page.locator('#analysisMoreFilters summary').click()
+                organization_choices=page.locator('#analysisOrganizationChoices label')
+                assert organization_choices.count()==4
+                chosen_orgs=[organization_choices.nth(i).locator('span').text_content() for i in (0,2)]
+                for i in (1,3):
+                    organization_choices.nth(i).locator('input').uncheck()
+                assert page.locator('#analysisOrganization').input_value()=='__custom__'
+                assert ', '.join(chosen_orgs) in page.locator('#analysisFilterScope').inner_text()
+                page.locator('#analysisRun').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#analysisResultScope")?.textContent.includes("(2 из 4)") && document.querySelectorAll("#divisionRows tr").length === 2',
+                    'SQLite analysis and division totals are scoped to two of four organizations')
+                assert set(page.locator('#divisionRows tr td:first-child').all_text_contents())==set(chosen_orgs)
+                page.locator('#analysisOrganization').select_option('*')
+                assert 'все из настроек (4)' in page.locator('#analysisFilterScope').inner_text()
+                report['checks'].append('SQL organization subset narrows division results and resets to all')
                 page.locator('#analysisSource').select_option('imported')
                 # D4c: a type with no reports can be indexed without loading
                 # history, then its incomplete SQL range must have NULL totals.

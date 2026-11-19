@@ -151,7 +151,9 @@ $('workBack').disabled=workBusy||analysisBusy||refreshBusy||!workBack.length;
 $('workNext').disabled=workBusy||analysisBusy||refreshBusy||!workNext;
 $('analysisType').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
 $('analysisSource').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
-$('analysisOrganization').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
+const organizationLocked=revision===null||analysisBusy||refreshBusy||workBusy||exportBusy||comparisonBusy||backupBusy||restoreBusy;
+if(window.nativeOrganizationFilter)window.nativeOrganizationFilter.setLocked(organizationLocked);
+else $('analysisOrganization').disabled=organizationLocked;
 $('analysisFrom').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
 $('analysisTo').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
 window.nativeNameFilter?.setLocked(analysisBusy||refreshBusy||workBusy||exportBusy||comparisonBusy);
@@ -254,11 +256,14 @@ try{
  $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearAnalysisCoverage();clearWork();
  status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
  orgNames=snapshot.org_names.slice();
- const orgSelect=$('analysisOrganization'),previousOrganization=orgSelect.value;
- orgSelect.replaceChildren();
- const all=make('option','Все из настроек');all.value='*';orgSelect.append(all);
- for(const name of orgNames){const opt=make('option',name);opt.value=name;orgSelect.append(opt);}
- orgSelect.value=orgNames.includes(previousOrganization)?previousOrganization:'*';
+ if(window.nativeOrganizationFilter)window.nativeOrganizationFilter.setOrganizations(orgNames);
+ else{
+  const orgSelect=$('analysisOrganization'),previousOrganization=orgSelect.value;
+  orgSelect.replaceChildren();
+  const all=make('option','Все из настроек');all.value='*';orgSelect.append(all);
+  for(const name of orgNames){const opt=make('option',name);opt.value=name;orgSelect.append(opt);}
+  orgSelect.value=orgNames.includes(previousOrganization)?previousOrganization:'*';
+ }
  updateFilterContext();
  window.nativeDailyCalendar?.setContext(revision,analysisOrganizations(),selectedNames());
  $('analysisResultScope').textContent='Данные обновлены. Подготовьте индексы и повторите расчёт для выбранных фильтров.';
@@ -382,28 +387,24 @@ $('groupNext').addEventListener('click',async()=>{if(!groupNext)return;const bef
 $('groupBack').addEventListener('click',async()=>{if(!groupBack.length)return;const before=groupBack.at(-1);if(await groups(before))groupBack.pop();controlState();});
 
 function analysisOrganizations(){
+ if(window.nativeOrganizationFilter)return window.nativeOrganizationFilter.selected();
  const chosen=$('analysisOrganization').value;
- return chosen==='*'?orgNames.slice():[chosen];
+ return chosen==='*'?orgNames.slice():orgNames.includes(chosen)?[chosen]:[];
+}
+function describeOrganizations(names){
+ if(!names.length)return 'ничего не выбрано';
+ if(names.length===orgNames.length)return 'все из настроек ('+names.length+')';
+ return names.join(', ')+' ('+names.length+' из '+orgNames.length+')';
 }
 function updateFilterContext(){
- const choice=$('analysisOrganization').value;
- const total=orgNames.length;
- const selected=choice==='*'?total:Number(orgNames.includes(choice));
- const orgText=choice==='*'
-  ?'все из настроек ('+total+')'
-  :orgNames.includes(choice)?choice+' (1 из '+total+')':'нет доступных';
- $('analysisFilterScope').textContent='Подразделения: '+orgText+
+ $('analysisFilterScope').textContent='Подразделения: '+describeOrganizations(analysisOrganizations())+
   '. Работы и группы: '+describeNames(selectedNames())+
   '. Итоги, графики, подразделения, рейтинг, сравнение, детализация и CSV используют этот отбор. Календарь — тоже.';
 }
-function updateResultContext(type,from,to,scope){
- const selected=$('analysisOrganization').value;
- const label=selected==='*'
-  ?'все подразделения из настроек ('+scope.length+')'
-  :selected+' (1 из '+orgNames.length+')';
+function updateResultContext(type,from,to,organizations,names,source){
  $('analysisResultScope').textContent='Выборка: '+type+', '+from+' — '+to+
-   '; источник: '+($('analysisSource').value==='daily'?'только дневные отчёты':'отчёты выбранного типа')+'; подразделения: '+label+
-   '. Работы и группы: '+describeNames(selectedNames())+
+   '; источник: '+(source==='daily'?'только дневные отчёты':'отчёты выбранного типа')+'; подразделения: '+describeOrganizations(organizations)+
+   '. Работы и группы: '+describeNames(names)+
    '. CSV охватывает весь выбранный набор, а не только показанные 50 строк.';
 }
 async function prepareAnalysis(){
@@ -614,11 +615,11 @@ async function calculateAnalysis(){
        window.nativeOrganizationTrends?.error('График подразделений не построен: '+userError(trendsError));
    }
    if(rev!==revision||expectedTimeline!==timelineRequest)return;
-   workScope={type:kind,displayType:selection.displayType,source:selection.source,from,to,organizations,selectedNames:names,organization:$('analysisOrganization').value==='*'?null:$('analysisOrganization').value};
+   workScope={type:kind,displayType:selection.displayType,source:selection.source,from,to,organizations,selectedNames:names,organization:organizations.length===1?organizations[0]:null};
    window.nativeAdvancedAnalysis?.setContext(revision,workScope);
    updateComparisonContext();
    await reloadRanking();
-   updateResultContext(kind,from,to,organizations);
+   updateResultContext(kind,from,to,organizations,names,selection.source);
    // Full and partial status is set by displayAnalysisCoverage().
  }catch(err){
    if(rev!==revision||expectedTimeline!==timelineRequest)return;
@@ -769,8 +770,10 @@ function analysisFiltersChanged(){
   updateFilterContext();
  controlState();
 }
-for(const id of ['analysisFrom','analysisTo','analysisOrganization'])
+for(const id of ['analysisFrom','analysisTo'])
  $(id).addEventListener('change',analysisFiltersChanged);
+if(!window.nativeOrganizationFilter)
+ $('analysisOrganization').addEventListener('change',analysisFiltersChanged);
 window.nativeWorkspaceFilterChanged=analysisFiltersChanged;
 
 controlState();

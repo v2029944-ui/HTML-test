@@ -46,7 +46,7 @@ function mount(options={}){
  const divisionAmounts=Array.isArray(options.divisionAmounts)?options.divisionAmounts:[1200,600];
  const report=n=>({id:'r'+n,period_start:'2024-02-'+String(n%28+1).padStart(2,'0'),period_end:'2024-02-29',report_type:'day',source_name:'<b>untrusted</b>'});
  const api={
-   nativeSettingsBootstrap:async()=>({revision:12,reports:366,indexed_reports:366,groups:1,catalog:0,org_names:['СМУ16','АВТО']}),
+   nativeSettingsBootstrap:async()=>({revision:12,reports:366,indexed_reports:366,groups:1,catalog:0,org_names:options.organizations||['СМУ16','АВТО']}),
    nativeReportPage:async(rev,filter,after,limit)=>{calls.push({kind:'report',rev,filter,after,limit});if(options.failReports)throw Error('No active organization');return !after?Array.from({length:100},(_,n)=>report(n)):[report(101)];},
    nativeGroupPage:async(rev,after,limit)=>{calls.push({kind:'group',rev,after,limit});return [{handle:'922337203685477580',id:'g',name:'Old',members:4}];},
    nativeGroupRename:async(rev,handle,name)=>{calls.push({kind:'rename',rev,handle,name});return 13;},
@@ -170,6 +170,10 @@ function mount(options={}){
  const document={getElementById:id=>e[id],createElement:tag=>new Element(tag)};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-period-selection.js'),'utf8'),{window,document});
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-name-filter.js'),'utf8'),{window,document,TextEncoder});
+ if(options.organizations){
+  window.nativeDailyCalendar={setContext:(rev,organizations)=>calls.push({kind:'calendar_context',rev,organizations})};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-organization-filter.js'),'utf8'),{window,document});
+ }
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-workspace.js'),'utf8'),{window,document});
  return {e,calls,window,chartCalls,rankingCalls,orgTrendsCalls,workTrendCalls,comparisonCalls};
 }
@@ -847,4 +851,36 @@ test('completed comparison context includes the baseline dates for print output'
  e.comparisonBeforeFrom.value='2024-02-26';e.comparisonBeforeTo.value='2024-02-27';
  await e.comparisonRun.events.click();
  assert.match(e.comparisonCurrentContext.textContent,/2024-02-26.*2024-02-27/);
+});
+
+
+test('custom organization subsets reach each analytics block, comparison, export and the calendar',async()=>{
+ const names=['СМУ16','АВТО','ТРАК','ЦЕНТР'];
+ const {e,calls,window}=mount({complete:true,organizations:names});
+ await window.nativeWorkspaceReady;
+ const controls=e.analysisOrganizationChoices.children.slice(1).map(label=>label.children[0]);
+ function uncheck(index){controls[index].checked=false;controls[index].events.change();}
+ uncheck(1);uncheck(3);
+ assert.equal(e.analysisOrganization.value,'__custom__');
+ assert.match(e.analysisFilterScope.textContent,/СМУ16, ТРАК \(2 из 4\)/);
+ e.analysisFrom.value='2024-02-28';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ assert.match(e.analysisResultScope.textContent,/СМУ16, ТРАК \(2 из 4\)/);
+ e.comparisonBeforeFrom.value='2024-02-26';e.comparisonBeforeTo.value='2024-02-27';
+ await e.comparisonRun.events.click();
+ await e.analysisExport.events.click();
+ e.workRows.children[0].children[6].children[0].events.click();
+ await new Promise(resolve=>setImmediate(resolve));
+ for(const kind of ['range','timeline','org_trends','divisions','ranking','work','work_timeline','comparison','export_csv','calendar_context']){
+  const call=calls.filter(x=>x.kind===kind).at(-1);
+  assert.deepEqual(Array.from(call.organizations),['СМУ16','ТРАК'],kind);
+  if('organization' in call)assert.equal(call.organization,null,kind);
+ }
+ uncheck(0);uncheck(2);
+ assert.match(e.analysisFilterScope.textContent,/ничего не выбрано/);
+ const before=calls.filter(x=>x.kind==='range').length;
+ await e.analysisRun.events.click();
+ assert.equal(calls.filter(x=>x.kind==='range').length,before);
+ assert.match(e.analysisStatus.textContent,/хотя бы одно подразделение/);
+ assert.deepEqual(Array.from(calls.filter(x=>x.kind==='calendar_context').at(-1).organizations),[]);
 });

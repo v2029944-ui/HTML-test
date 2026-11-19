@@ -146,6 +146,8 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .analytics-toolbar details{position:relative}
 .analytics-toolbar summary{cursor:pointer;list-style-position:inside;border:1px solid #aab9cb;border-radius:8px;padding:8px 12px;background:#fff}
 .analytics-toolbar details[open] summary{background:#e6eef7}
+#analysisOrganizationChoices{display:flex;flex-wrap:wrap;gap:6px 14px;border:0;padding:4px 2px;margin:0;min-width:0}
+#analysisOrganizationChoices label{display:inline-flex;align-items:center;gap:5px;overflow-wrap:anywhere}
 .extra-filter-fields{display:flex;align-items:center;gap:10px;padding:10px 2px 3px}
 .work-filter-search{flex-wrap:wrap;max-width:min(100%,940px)}
 .work-filter-search input{flex:1 1 210px;min-width:0}
@@ -218,6 +220,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <summary>Ещё фильтры</summary>
 <div class="extra-filter-fields"><label for="analysisOrganization">Подразделение</label>
 <select id="analysisOrganization"><option value="*">Все из настроек</option></select></div>
+<fieldset id="analysisOrganizationChoices" disabled><legend>Выбрать несколько подразделений</legend></fieldset>
 <div class="extra-filter-fields work-filter-search">
 <label for="analysisNameSearch">Найти работу / группу</label>
 <input id="analysisNameSearch" type="search" maxlength="128" placeholder="Часть точного названия" autocomplete="off">
@@ -707,6 +710,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <script src="tauri-native-comparison.js"></script><script src="tauri-native-daily-overview.js"></script>
 <script src="tauri-native-daily-calendar.js"></script>
 <script src="tauri-native-name-filter.js"></script>
+<script src="tauri-native-organization-filter.js"></script>
 <script src="tauri-native-management.js"></script>
 <script src="tauri-native-report-quality.js"></script>
 <script src="tauri-native-workspace.js"></script>
