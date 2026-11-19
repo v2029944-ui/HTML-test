@@ -393,6 +393,25 @@ def run():
                     'document.querySelector("#reportRows tr td:last-child")?.textContent === '+json.dumps(first_native),
                     'Native SQL previous page')
                 assert page.locator('#reportPageInfo').inner_text()=='Страница 1'
+                assert page.locator('#sqlDailyRollups').is_visible()
+                page.locator('#dailyRollupGranularity').select_option('year')
+                assert page.locator('#dailyRollupFrom').get_attribute('type')=='number'
+                page.locator('#dailyRollupFrom').fill('2024')
+                page.locator('#dailyRollupTo').fill('2024')
+                page.locator('#dailyRollupPrepare').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#dailyRollupRun")?.disabled === false',
+                    'Daily report index preparation for calendar rollup')
+                page.locator('#dailyRollupRun').click()
+                wait_for_app_state(page,
+                    'document.querySelectorAll("#dailyRollupRows tr").length === 1',
+                    '2024 calendar rollup from indexed day sources')
+                assert page.locator('#dailyRollupRows tr').first.locator('td').first.inner_text()=='2024'
+                assert page.locator('#dailyRollupRows tr').first.locator('td').nth(1).inner_text()=='366'
+                assert page.locator('#dailyRollupRows tr').count()<=60
+                assert 'дневные' in page.locator('#dailyRollupScope').inner_text().lower()
+                assert page.evaluate("typeof window.appReady === 'undefined'")
+                report['checks'].append('SQL 2024 annual calendar is computed from daily reports only')
                 page.locator('#nativeReportType').select_option('week')
                 wait_for_app_state(page,
                     'document.querySelector("#reportStatus")?.textContent.includes("На странице: 0")',
