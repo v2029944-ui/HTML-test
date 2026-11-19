@@ -3,7 +3,7 @@
 'use strict';
 const $=id=>document.getElementById(id),api=window.desktopAPI;
 const make=(tag,text)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);return el;};
-let revision=null,selected=null,request=0,busy=false,locked=false;
+let revision=undefined,selected=null,request=0,busy=false,locked=false;
 const validName=name=>typeof name==='string'&&name.length>0&&
  new TextEncoder().encode(name).length<=512;
 const notify=()=>window.nativeWorkspaceFilterChanged?.();
@@ -86,7 +86,7 @@ function selectionChanged(){
  if(locked||busy)return;
  const option=$('analysisName').value;
  const name=option==='*'?null:option;
- if(name!==null&&!validName(name)){
+ if(name!==null&&(!validName(name)||!Array.from($('analysisName').children).some(opt=>opt.value===name))){
   status('Недопустимое название: выберите существующий пункт.',true);
   $('analysisName').value=selected??'*';
   return;
