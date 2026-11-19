@@ -94,3 +94,12 @@ test('generated drawChart uses pointNotice at missing points as safe text and re
  O.drawChart(periods,new Set(['А']),'count',root,{categories:['work:one'],data:[null,null],pointNotice:()=>({unsafe:'object'})});
  assert.equal(all(root).filter(n=>n.tagName==='text'&&n.textContent==='Нет отчёта').length,2);
 });
+test('generated original presentation uses quantity/volume terminology, standalone HTML remains unchanged',()=>{
+ const {html,script}=require('../unified-build.cjs').buildUnified(original);
+ const context={window:{}};vm.runInNewContext(script,context);
+ assert.equal(context.window.unifiedOriginal.metricTitle('count'),'Количество / объём');
+ assert.equal(context.window.unifiedOriginal.metricTitle('average'),'Сумма / количество (объём)');
+ assert.doesNotMatch(html,/Средняя сумма на работу|10, 20, 10 и 20 работ/);
+ assert.match(html,/Сумма \/ количество \(объём\)/);
+ assert.match(original,/Средняя сумма на работу/);
+});

@@ -7,6 +7,11 @@ function buildUnified(source){
  const presentation=inline.find(item=>item[1].includes('const state =')&&item[1].includes('window.appReady=main();'));
  if(!presentation)throw Error('Original interface presentation markers changed');
  let script=presentation[1].replace('window.appReady=main();','');
+ // The standalone browser UI stays unchanged; only the installed SQL presentation
+ // must not describe a fractional quantity/volume as a count of completed jobs.
+ const metricMarker="function metricTitle(metric){return {count:'Количество',amount:'Сумма',average:'Средняя сумма на одну работу'}[metric]||metric;}";
+ if(!script.includes(metricMarker))throw Error('Original quantity labels changed');
+ script=script.replace(metricMarker,"function metricTitle(metric){return {count:'Количество / объём',amount:'Сумма',average:'Сумма / количество (объём)'}[metric]||metric;}");
  // The original renderer predates calendar-year rollups. Adapt only generated
  // presentation helpers; the independent browser source remains unchanged.
  script+=`
@@ -32,6 +37,10 @@ function buildUnified(source){
  script+='\nmain=wire=loadData=saveSettings=storeReports=storeAllData=saveImport=saveGroup=moveWork=saveOrganizations=importGroupFile=importBackupFile=()=>{throw Error("Полная загрузка истории и старые обработчики отключены.");};\n';
  script+='window.unifiedOriginal=Object.freeze({state,$,el:elem,notice,fmt:formatMetric,fmtNumber,drawChart,drawDepartments:drawDepartmentMultiChart,makeTable,tableCsvButton,initTheme,initChartTooltip,redrawCharts,renderMultiFilter,periodEnd,shiftPeriod,displayDay,displayPeriod,metricTitle,chartRenders});\n';
  let html=source.replace(/<script>[\s\S]*?<\/script>/g,'');
+ html=html.replaceAll('Средняя сумма на работу','Сумма / количество (объём)')
+  .replace('10, 20, 10 и 20 работ','10, 20, 10 и 20 единиц количества / объёма')
+  .replace('всё количество работ в этих периодах','суммарное количество / объём в этих периодах')
+  .replace('средняя сумма рассчитана отдельно','отношение суммы к количеству / объёму рассчитано отдельно');
  for(const id of dateIds){
   const expression=new RegExp('<select\\b([^>]*\\bid="'+id+'"[^>]*)>[\\s\\S]*?<\\/select>');
   if(!expression.test(html))throw Error('Missing canonical period control '+id);
