@@ -1039,7 +1039,7 @@ impl Storage {
             return Err("Unknown analysis filter kind".into());
         }
         let mut c = self.connect()?;
-        let tx = c.transaction().map_err(err)?;
+        let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(err)?;
         check_revision(&tx, expected)?;
         let id: String = tx
             .query_row("SELECT lower(hex(randomblob(16)))", [], |r| r.get(0))
@@ -1064,7 +1064,7 @@ impl Storage {
             bounded(s)?;
         }
         let mut c = self.connect()?;
-        let tx = c.transaction().map_err(err)?;
+        let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(err)?;
         check_revision(&tx, expected)?;
         let open:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM analysis_filters WHERE id=?1 AND revision=?2 AND sealed=0)",params![id,expected],|r|r.get(0)).map_err(err)?;
         if !open {
@@ -1090,7 +1090,7 @@ impl Storage {
     pub fn analysis_filter_seal(&self, expected: i64, id: &str) -> Result<(), String> {
         bounded(id)?;
         let mut c = self.connect()?;
-        let tx = c.transaction().map_err(err)?;
+        let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(err)?;
         check_revision(&tx, expected)?;
         if tx
             .execute(
