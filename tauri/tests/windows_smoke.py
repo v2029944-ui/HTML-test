@@ -450,9 +450,13 @@ def run():
                 page.locator('#dailyRollupFrom').fill('2024')
                 page.locator('#dailyRollupTo').fill('2024')
                 page.locator('#dailyRollupPrepare').click()
+                # This fixture durably indexes 366 reports in batches of 20.
+                # A Windows runner reached 340 at the generic 30-second limit;
+                # allow this bulk preparation longer while retaining the exact
+                # completion and subsequent 366-source rollup assertions.
                 wait_for_app_state(page,
                     'document.querySelector("#dailyRollupRun")?.disabled === false',
-                    'Daily report index preparation for calendar rollup')
+                    'Daily report index preparation for calendar rollup', timeout_ms=90_000)
                 page.locator('#dailyRollupRun').click()
                 wait_for_app_state(page,
                     'document.querySelectorAll("#dailyRollupRows tr").length === 1',

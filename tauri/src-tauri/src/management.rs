@@ -427,6 +427,9 @@ impl Storage {
         // that old snapshot would fail with SQLITE_BUSY_SNAPSHOT in WAL mode.
         tx.commit().map_err(err)?;
         job.check()?;
+        // Join live filter writers only after the private stage is complete.
+        let writer = self.analysis_filter_gate.lock().map_err(err)?;
+        job.check()?;
         src.execute(
             "ATTACH DATABASE ?1 AS management_stage",
             [stage.db().to_string_lossy().as_ref()],
@@ -434,13 +437,15 @@ impl Storage {
         .map_err(err)?;
         src.execute_batch("PRAGMA management_stage.cache_size=-2048;")
             .map_err(err)?;
-        let tx=src.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(err)?;
+        let tx = src.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|error| format!("Begin settings index publication: {error}"))?;
         job.run(&tx, || {
             check_revision(&tx, rev)?;
             copy_tables(&tx)
         })?;
         job.finish(tx)?;
         drop(src);
+        drop(writer);
         let cleanup_error = stage.cleanup().err();
         Ok(ManagementReceipt {
             revision: rev,

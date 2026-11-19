@@ -173,7 +173,7 @@ pub struct Storage {
     analysis_filter_gate: Arc<Mutex<()>>,
 }
 
-// Each live database has one queue for short analytical filter mutations. Weak
+// Each live database has one queue for filter writes and settings index publication. Weak
 // entries avoid retaining paths for databases which are no longer in use.
 fn analysis_filter_gate(root: &Path) -> Result<Arc<Mutex<()>>, String> {
     static GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
