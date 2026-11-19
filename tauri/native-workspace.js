@@ -90,16 +90,22 @@ try{
  analysisReady=false;
  $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  orgNames=snapshot.org_names.slice();
- const orgSelect=$('analysisOrganization');orgSelect.replaceChildren();
+ const orgSelect=$('analysisOrganization'),previousOrganization=orgSelect.value;
+ orgSelect.replaceChildren();
  const all=make('option','Все из настроек');all.value='*';orgSelect.append(all);
  for(const name of orgNames){const opt=make('option',name);opt.value=name;orgSelect.append(opt);}
+ orgSelect.value=orgNames.includes(previousOrganization)?previousOrganization:'*';
+ updateFilterContext();
+ $('analysisResultScope').textContent='Данные обновлены. Подготовьте индексы и повторите расчёт для выбранных фильтров.';
  for(const [id,value] of [['metricReports',snapshot.reports],['metricIndexed',snapshot.indexed_reports],['metricGroups',snapshot.groups],['metricCatalog',snapshot.catalog]])$(id).textContent=value;
  status('workspaceStatus','Ревизия SQLite: '+revision+' · подразделения: '+snapshot.org_names.join(', ')+'.');
  reportAfter=null;reportNext=null;reportBack=[];groupAfter=null;groupNext=null;groupBack=[];
 }catch(err){
  revision=null;$('reportRows').replaceChildren();$('groupRows').replaceChildren();
  reportNext=null;groupNext=null;reportBack=[];groupBack=[];
- status('workspaceStatus','Невозможно открыть SQL-режим: '+userError(err),true);return false;
+ status('workspaceStatus','Невозможно открыть SQLite: '+userError(err),true);
+ $('analysisResultScope').textContent='Результаты недоступны до восстановления соединения с базой.';
+ return false;
 }finally{refreshBusy=false;controlState();}
 const reportsLoaded=await reports(null,true);
 const groupsLoaded=await groups(null,true);
@@ -210,6 +216,25 @@ $('groupBack').addEventListener('click',async()=>{if(!groupBack.length)return;co
 function analysisOrganizations(){
  const chosen=$('analysisOrganization').value;
  return chosen==='*'?orgNames.slice():[chosen];
+}
+function updateFilterContext(){
+ const choice=$('analysisOrganization').value;
+ const total=orgNames.length;
+ const selected=choice==='*'?total:Number(orgNames.includes(choice));
+ const orgText=choice==='*'
+  ?'все из настроек ('+total+')'
+  :orgNames.includes(choice)?choice+' (1 из '+total+')':'нет доступных';
+ $('analysisFilterScope').textContent='Подразделения: '+orgText+
+  '. Итоги, сравнение, детализация и CSV используют этот отбор. Работы и группы: все внутри выбранных подразделений (отдельного фильтра пока нет).';
+}
+function updateResultContext(type,from,to,scope){
+ const selected=$('analysisOrganization').value;
+ const label=selected==='*'
+  ?'все подразделения из настроек ('+scope.length+')'
+  :selected+' (1 из '+orgNames.length+')';
+ $('analysisResultScope').textContent='Выборка: '+type+', '+from+' — '+to+
+   '; подразделения: '+label+
+   '. Детализация: все работы и группы в этой выборке. CSV: весь диапазон, а не только показанные 50 строк.';
 }
 async function prepareAnalysis(){
  if(analysisBusy||refreshBusy||revision===null)return;
@@ -338,11 +363,13 @@ async function calculateAnalysis(){
    for(const [label,value] of metrics){const item=make('div');item.className='metric';item.append(make('strong',value),make('span',label));box.append(item);}
    showDivisionComparison(divisions);
    workScope={type:kind,from,to,organizations,organization:$('analysisOrganization').value==='*'?null:$('analysisOrganization').value};
+   updateResultContext(kind,from,to,organizations);
    status('analysisStatus',result.complete?'Расчёт выполнен по полной последовательности периодов.':'Расчёт выполнен, но не все периоды подтверждены. Итоги скрыты до устранения пропусков.',!result.complete);
  }catch(err){
    $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
    status('divisionStatus','Сравнение не выполнено из-за ошибки.',true);
    status('analysisStatus','Ошибка расчёта: '+userError(err),true);
+   $('analysisResultScope').textContent='Расчёт не выполнен. Предыдущие результаты удалены, чтобы не показывать устаревшую выборку.';
  }finally{analysisBusy=false;controlState();}
  if(workScope)await workPage(null,true);
 }
@@ -373,6 +400,8 @@ $('analysisTo').value=year+'-12-31';
 $('analysisType').addEventListener('change',()=>{
  analysisReady=false;$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  status('analysisStatus','Выбран другой тип периода. Подготовьте соответствующие индексы.');
+ $('analysisResultScope').textContent='Тип периода изменён. Подготовьте индексы и повторите расчёт.';
+ updateFilterContext();
  controlState();
 });
 $('analysisPrepare').addEventListener('click',prepareAnalysis);
@@ -395,6 +424,8 @@ for(const id of ['analysisFrom','analysisTo','analysisOrganization']){
  $(id).addEventListener('change',()=>{
   $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork('Параметры изменены. Повторите расчёт.');
   status('divisionStatus','Параметры изменены. Нажмите «Рассчитать» ещё раз.');
+  $('analysisResultScope').textContent='Фильтры изменены. Повторите расчёт, чтобы увидеть актуальную выборку.';
+  updateFilterContext();
  });
 }
 
