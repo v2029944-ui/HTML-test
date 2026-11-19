@@ -3,6 +3,7 @@
 'use strict';
 const api=window.desktopAPI,$=id=>document.getElementById(id);
 const userError=window.analizUserError||(()=>'Операция не выполнена. Перезапустите программу и повторите действие.');
+const periodPicker=window.nativePeriodSelection;
 const make=(tag,text)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);return el;};
 function status(id,text,error=false){$(id).textContent=String(text);$(id).className='status '+(error?'error':'muted');}
 const reportSize=100,groupSize=50;
@@ -524,7 +525,9 @@ async function workPage(cursor,reset=false){
 }
 async function calculateAnalysis(){
  if(!analysisReady||analysisBusy||revision===null)return;
- const kind=$('analysisType').value,from=$('analysisFrom').value,to=$('analysisTo').value;
+ const kind=$('analysisType').value,
+   from=periodPicker.normalize(kind,$('analysisFrom').value),
+   to=periodPicker.normalize(kind,$('analysisTo').value);
  const organizations=analysisOrganizations();
  if(!from||!to||from>to||organizations.some(x=>!x)||!organizations.length){
    status('analysisStatus','Укажите корректный диапазон дат и хотя бы одно подразделение.',true);return;
@@ -594,7 +597,8 @@ async function reloadRanking(){
 async function compareAnalysis(){
  const scope=workScope;
  if(comparisonBusy||analysisBusy||refreshBusy||!scope||revision===null)return;
- const beforeFrom=$('comparisonBeforeFrom').value,beforeTo=$('comparisonBeforeTo').value;
+ const beforeFrom=periodPicker.normalize(scope.type,$('comparisonBeforeFrom').value),
+   beforeTo=periodPicker.normalize(scope.type,$('comparisonBeforeTo').value);
  if(!beforeFrom||!beforeTo||beforeFrom>beforeTo){
    window.nativeComparison?.error('Укажите корректные даты базового диапазона.');return;
  }
@@ -640,7 +644,9 @@ async function exportAnalysisCsv(){
 const year=String(new Date().getFullYear());
 $('analysisFrom').value=year+'-01-01';
 $('analysisTo').value=year+'-12-31';
+periodPicker.apply($('analysisType').value);
 $('analysisType').addEventListener('change',()=>{
+ periodPicker.apply($('analysisType').value);
  analysisReady=false;clearAnalysisCoverage();invalidateRanking('Тип периода изменён. Повторите расчёт рейтинга.');invalidateOrganizationTrends('Тип периода изменён. Повторите расчёт динамики подразделений.');invalidateTimeline('Тип периода изменён. Подготовьте индексы и повторите расчёт.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
  status('analysisStatus','Выбран другой тип периода. Подготовьте соответствующие индексы.');
