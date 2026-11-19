@@ -960,9 +960,10 @@ fn organization_trends_are_bounded_and_independently_complete() {
 fn organization_trends_explicitly_limits_organization_series() {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();
-    let mut data = fixture();
-    data["settings"]["orgNames"] = json!(["A","B","C","D","E","F","G","H","I"]);
-    let rev = prepare(&store, &data);
+    // The imported legacy settings schema requires exactly four organization names.
+    // Create a synthetic nine-item read-only filter to verify the transport cap,
+    // without changing or weakening legacy settings validation.
+    let rev = prepare(&store, &fixture());
     let selected = scope(
         &store, rev, "day", &["A","B","C","D","E","F","G","H","I"], None,
     );
