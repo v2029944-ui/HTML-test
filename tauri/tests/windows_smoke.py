@@ -437,6 +437,26 @@ def run():
                 assert 'дневные' in page.locator('#dailyRollupScope').inner_text().lower()
                 assert page.evaluate("typeof window.appReady === 'undefined'")
                 report['checks'].append('SQL 2024 annual calendar is computed from daily reports only')
+                page.locator('#dailyRollupRows tr').first.locator('button').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#dailyRollupDetailPanel")?.hidden === false && document.querySelectorAll("#dailyRollupDetailRows tr").length === 60',
+                    'SQL annual calendar shows first 60 real daily periods')
+                assert page.locator('#dailyRollupDetailRows tr').first.locator('td').first.inner_text()=='2024-01-01'
+                assert page.locator('#dailyRollupDetailNext').is_enabled()
+                page.locator('#dailyRollupDetailNext').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#dailyRollupDetailPage")?.textContent === "Страница 2"',
+                    'SQL daily calendar details next keyset page')
+                assert page.locator('#dailyRollupDetailRows tr').first.locator('td').first.inner_text()=='2024-03-01'
+                page.locator('#dailyRollupDetailBack').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#dailyRollupDetailPage")?.textContent === "Страница 1"',
+                    'SQL daily calendar details previous keyset page')
+                assert page.locator('#dailyRollupDetailRows tr').first.locator('td').first.inner_text()=='2024-01-01'
+                page.locator('#dailyRollupDetailClose').click()
+                assert page.locator('#dailyRollupDetailPanel').is_hidden()
+                assert page.locator('#dailyRollupRows tr').count()==1
+                report['checks'].append('SQL annual-to-day detail pages bound to exact SQLite dates with explicit close')
                 page.locator('#nativeReportType').select_option('week')
                 wait_for_app_state(page,
                     'document.querySelector("#reportStatus")?.textContent.includes("На странице: 0")',
