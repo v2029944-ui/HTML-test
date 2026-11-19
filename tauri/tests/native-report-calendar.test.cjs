@@ -64,3 +64,8 @@ test('stale success and failed refresh leave no outdated months or clickable det
  assert.equal(ui.calendarNext.disabled,true);
  assert.match(ui.calendarStatus.textContent,/Не удалось/);
 });
+test('invalidating a failed workspace read clears old dates and preserves the selected year for recovery',async()=>{
+ const ui=mount((rev,year)=>data(year,2001,2002));await ui.calendar.setContext(1,'2001-01-01');await ui.calendarNext.click();
+ await ui.calendar.setContext(null);assert.equal(ui.reportCalendar.children.length,0);
+ await ui.calendar.setContext(2,'2001-01-01');assert.equal(ui.calls.at(-1)[1],2002);
+});

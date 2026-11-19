@@ -107,7 +107,7 @@ async function load(requested,preferFirst=false){
 }
 function setContext(value,initialDate){
  if(!Number.isSafeInteger(value)||value<0){
-  ticket++;revision=null;year=null;pending=null;clear();status.textContent='';return;
+  ticket++;revision=null;pending=null;clear();status.textContent='';return;
  }
  if(revision===value&&(pending||snapshot))return pending;
  revision=value;

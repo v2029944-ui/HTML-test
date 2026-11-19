@@ -143,6 +143,7 @@ $('analysisPrepare').disabled=analysisBusy||refreshBusy||exportBusy||revision===
 $('analysisCancel').disabled=!analysisBusy;
 $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!analysisReady;
 $('analysisPrint').disabled=revision===null||analysisBusy||refreshBusy||workBusy||comparisonBusy||rankingBusy||workTrendBusy||exportBusy||!!queuedRefresh||window.nativeAdvancedAnalysis?.isBusy()||!workScope;
+$('changesPrint').disabled=$('analysisPrint').disabled;
 $('analysisExport').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!workScope;
 $('rankingMetric').disabled=analysisBusy||refreshBusy||!workScope;
 $('rankingCategory').disabled=analysisBusy||refreshBusy||!workScope;
@@ -205,7 +206,7 @@ try{
  $('reportClearSelection').hidden=!reportRange;
  void window.nativeReportCalendar?.setContext(expected,pageRows[0]?.period_start);
  return true;
-}catch(err){reportNext=null;reportBack=[];status('reportStatus','Ошибка SQLite: '+userError(err)+'. Нажмите «Обновить данные».',true);return false;}
+}catch(err){window.nativeReportCalendar?.setContext(null);$('reportRows').replaceChildren();reportNext=null;reportBack=[];status('reportStatus','Ошибка SQLite: '+userError(err)+'. Нажмите «Обновить данные».',true);return false;}
 finally{reportsBusy=false;controlState();}
 }
 async function groups(cursor,reset=false){
@@ -287,7 +288,7 @@ try{
  const groupsLoaded=await groups(null,true);
  return reportsLoaded&&groupsLoaded;
 }catch(err){
- revision=null;window.nativeReportQuality?.setRevision(null);void window.nativeManagement?.setContext(null);window.nativeNameFilter?.setRevision(null);$('reportRows').replaceChildren();$('groupRows').replaceChildren();
+ revision=null;window.nativeReportCalendar?.setContext(null);window.nativeReportQuality?.setRevision(null);void window.nativeManagement?.setContext(null);window.nativeNameFilter?.setRevision(null);$('reportRows').replaceChildren();$('groupRows').replaceChildren();
  analysisReady=false;$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearAnalysisCoverage();clearWork('Результаты недоступны. Обновите соединение с базой.');
  invalidateTimeline('Результаты недоступны до обновления базы.');invalidateRanking('Результаты недоступны до обновления базы.');invalidateOrganizationTrends('Результаты недоступны до обновления базы.');
  reportNext=null;groupNext=null;reportBack=[];groupBack=[];
@@ -713,7 +714,7 @@ async function compareAnalysis(){
 
 function printAnalysis(){
  if(revision===null||analysisBusy||refreshBusy||workBusy||comparisonBusy||rankingBusy||workTrendBusy||exportBusy||queuedRefresh||window.nativeAdvancedAnalysis?.isBusy()||!workScope)return;
- const details=Array.from(document.querySelectorAll?.('#sqlAnalysis details')||[]);
+ const details=Array.from(document.querySelectorAll?.('#sqlAnalysis details, #sqlChanges details')||[]);
  const previous=details.map(node=>node.open);
  try{
   details.forEach(node=>{node.open=true;});
@@ -766,6 +767,7 @@ $('analysisRun').addEventListener('click',calculateAnalysis);
 $('analysisAcknowledge').addEventListener('click',acknowledgeCoverage);
 $('analysisExport').addEventListener('click',exportAnalysisCsv);
 $('analysisPrint').addEventListener('click',printAnalysis);
+$('changesPrint').addEventListener('click',printAnalysis);
 $('comparisonRun').addEventListener('click',compareAnalysis);
 for(const id of ['comparisonBeforeFrom','comparisonBeforeTo']){
  $(id).addEventListener('change',()=>{

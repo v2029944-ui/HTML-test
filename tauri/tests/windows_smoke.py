@@ -203,12 +203,12 @@ def run():
                     'Installed version comes from Tauri runtime')
                 wait_for_app_state(page,'!window.tauriOperations.reads && !window.tauriOperations.saves','Initial tracked SQLite operations finish')
                 page.evaluate("""() => {
-                    const invoke=window.__TAURI__.core.invoke;
+                    const core=window.__TAURI__.core;
                     const gate=new Promise(resolve=>window.__releaseSmokeRead=resolve);
-                    window.__TAURI__.core.invoke=(command,args)=>command==='native_settings_bootstrap'
-                        ?gate.then(()=>invoke(command,args)):invoke(command,args);
+                    window.__TAURI__.core={...core,invoke:(command,args)=>command==='native_settings_bootstrap'
+                        ?gate.then(()=>core.invoke(command,args)):core.invoke(command,args)};
                     window.__smokeActivityRefresh=window.nativeWorkspaceRefresh().finally(()=>{
-                        window.__TAURI__.core.invoke=invoke;
+                        window.__TAURI__.core=core;
                     });
                 }""")
                 assert page.locator('#appActivity').is_visible()
@@ -223,6 +223,13 @@ def run():
                 page.locator('#appearanceDesign').select_option('compact')
                 page.locator('#appearanceSize').select_option('large')
                 assert page.evaluate('({...document.documentElement.dataset})') == dict(theme='dark',palette='paper',design='compact',uiSize='large')
+                page.emulate_media(media='print')
+                assert page.locator('#nativeContent').is_visible()
+                print_ink=page.evaluate('({bg:getComputedStyle(document.body).backgroundColor,text:getComputedStyle(document.body).color,panel:getComputedStyle(document.querySelector("#sqlBackup")).backgroundColor})')
+                assert print_ink==dict(bg='rgb(255, 255, 255)',text='rgb(17, 17, 17)',panel='rgb(255, 255, 255)'),print_ink
+                page.emulate_media(media='screen')
+                assert page.evaluate("""document.fonts.ready.then(()=>document.fonts.check('16px "Inter"'))""")
+
                 page.locator('#appearanceTheme').select_option('system')
                 page.locator('#appearancePreset').select_option('minimal')
                 page.locator('#appearanceSize').select_option('standard')

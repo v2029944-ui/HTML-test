@@ -33,3 +33,7 @@
 
 - Appearance regression RED/GREEN; three tests pass. Calendar/list-range and navigation tests RED/GREEN. Node44 files green; Rust164 pass/1ignored.
 - Chromium mock-IPC verification: real DOM/menu, 29-day February, cross-boundary weekly report start-date selection, focus, shared filters, loading, print; 320/390/1280/1366 widths with xlarge without page overflow. This is not installed WebView2 evidence.
+
+- Whole-branch review found: stale calendar after failed workspace reads; missing Changes print action; embeddedfonts blocked by CSP; frozen Tauri core namespace made smoke instrumentation ineffective. Fixed all four with targeted regressions and FontFaceSet browser proof. Calendar keeps the selected year through error recovery.
+- Print palette: explicit light output and disabled print transitions; computed white/ink regression RED/GREEN. Reviewer verified Chromium economy already darkens default PDF text; unreadability was not proven.
+- Node44files green after fixes, Rust calendar remains164pass/1ignored, browser actual CSP embedded Inter RED/GREEN. No deferred blocking findings.
