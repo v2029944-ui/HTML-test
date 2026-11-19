@@ -35,10 +35,10 @@ test('Tauri .sig artifact wraps the full Minisign signature in Base64', () => {
 
 test('reject corrupted or unrelated Base64-wrapped Tauri signatures', () => {
   assert.throws(() => minisignKeyId('not-base64!!!', true), /Invalid/);
-  assert.throws(() => minisignKeyId(Buffer.from('untrusted comment: invalid\\nnot-signature').toString('base64'), true), /Invalid/);
-  const altered = sig.split('\\n');
+  assert.throws(() => minisignKeyId(Buffer.from('untrusted comment: invalid\nnot-signature').toString('base64'), true), /Invalid/);
+  const altered = sig.split('\n');
   const bytes = Buffer.from(altered[1], 'base64');
   bytes[4] ^= 1;
   altered[1] = bytes.toString('base64');
-  assert.equal(matchesPublicKey(pub, Buffer.from(altered.join('\\n')).toString('base64')), false);
+  assert.equal(matchesPublicKey(pub, Buffer.from(altered.join('\n')).toString('base64')), false);
 });
