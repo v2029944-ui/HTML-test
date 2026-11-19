@@ -35,6 +35,16 @@ test('six SQL sections remain in one application without full-history bootstrap'
                     'sqlUpdateCheck','legacyWorkspaceLink']){
    assert.match(html,new RegExp('id="'+id+'"'));
   }
+  assert.match(html,/<details id="analysisMoreFilters">/);
+  assert.match(html,/id="analysisFilterScope"/);
+  assert.match(html,/id="analysisResultScope"/);
+  assert.match(html,/id="divisionShareStatus"/);
+  assert.ok(html.indexOf('id="analysisType"')<html.indexOf('id="metricReports"'),
+    'primary filters must appear before overview KPI');
+  const exportAt=html.indexOf('id="analysisExport"'),workSection=html.indexOf('>Группы и отдельные работы</h3>');
+  assert.ok(exportAt>workSection&&exportAt<workSection+1000,
+    'CSV action belongs beside the data it exports');
+  assert.ok(html.includes('class="primary-action" href="#excel"'));
   assert.ok(html.includes('tauri-native-navigation.js'));
   assert.equal(fs.readFileSync(path.join(tmp,'tauri-native-navigation.js'),'utf8'),script);
   assert.ok(!script.includes('desktopAPI.load('));

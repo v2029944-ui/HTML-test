@@ -67,7 +67,7 @@ function mount(options={}){
      calls.push({kind:'export_csv',rev,reportType:kind,from,to,organizations,organization,destination});
    },
    nativeAnalysisRange:async(rev,kind,from,to,organizations)=>{calls.push({kind:'range',rev,reportType:kind,from,to,organizations});return options.complete
-    ?{complete:true,periods:12,missing:0,total:{count:12,amount:1800,average:150},invalid_reports:0,duplicate_issues:0,overlap_issues:0}
+    ?{complete:true,periods:12,missing:0,total:{count:12,amount:options.mismatchedTotal?1900:1800,average:150},invalid_reports:0,duplicate_issues:0,overlap_issues:0}
     :{complete:false,periods:366,missing:1,total:{count:null,amount:null,average:null},invalid_reports:1,duplicate_issues:0,overlap_issues:0};},
    nativeAnalysisRangePage:async(rev,kind,from,to,organizations,organization,after,limit)=>{
      calls.push({kind:'work',rev,reportType:kind,from,to,organizations,organization,after,limit});
@@ -217,6 +217,15 @@ test('division shares use only complete matching SQL totals; incomplete periods 
  assert.equal(incomplete.e.divisionRows.children[0].children[6].textContent,'—');
  assert.equal(incomplete.e.divisionRows.children[1].children[6].textContent,'—');
  assert.match(incomplete.e.divisionShareStatus.textContent,/Доли скрыты/);
+ const mismatch=mount({complete:true,mismatchedTotal:true});
+ await mismatch.window.nativeWorkspaceReady;
+ mismatch.e.analysisFrom.value='2024-01-01';
+ mismatch.e.analysisTo.value='2024-12-31';
+ await mismatch.e.analysisPrepare.events.click();
+ await mismatch.e.analysisRun.events.click();
+ assert.equal(mismatch.e.divisionRows.children[0].children[6].textContent,'—');
+ assert.equal(mismatch.e.divisionRows.children[1].children[6].textContent,'—');
+ assert.match(mismatch.e.divisionShareStatus.textContent,/не совпадают/);
 });
 
 test('bounded work/group SQL pages preserve unknown totals, keyset cursors and selected scope',async()=>{
