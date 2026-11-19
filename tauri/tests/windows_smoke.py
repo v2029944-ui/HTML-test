@@ -301,7 +301,9 @@ def check_analytics(page, temporary, output):
 
     page.locator('#advancedAnalytics > summary').click()
     page.locator('#chartBreakdown').select_option('organizations')
-    wait_for_app_state(page,'document.querySelector("#chartsContainer svg")!==null','SQLite department chart')
+    wait_for_text(page,'#chartsContainer','Для динамики подразделений выберите несколько периодов.')
+    page.locator('[data-chart="bar"]').click()
+    wait_for_app_state(page,'document.querySelector("#chartsContainer svg")!==null','SQLite single-period department bar chart')
     organization=page.locator('#orgFilter input')
     assert organization.count()==4
     if not organization.first.is_visible():
@@ -405,21 +407,28 @@ def check_extended(page):
 
 def check_groups(page):
     navigate(page,'groups')
-    page.locator('#createGroup').click()
-    page.locator('#groupName').fill('Группа CI')
-    work=page.locator('#groupEditor label.work-row').filter(has_text='Альфа')
-    work.wait_for()
-    assert work.count()==1
-    work.locator('input').check()
-    page.locator('#saveGroup').click()
-    group=page.locator('#groupList details').filter(has_text='Группа CI')
-    group.locator('summary').click(timeout=90_000)
-    assert api(page,'nativeSettingsBootstrap')['memberships']==1
+    def create():
+        page.locator('#createGroup').click()
+        page.locator('#groupName').fill('Группа CI')
+        work=page.locator('#groupEditor label.work-row').filter(has_text='Альфа')
+        work.wait_for()
+        assert work.count()==1
+        work.locator('input').check()
+        page.locator('#saveGroup').click()
+        group=page.locator('#groupList details').filter(has_text='Группа CI')
+        group.locator('summary').click(timeout=90_000)
+        assert api(page,'nativeSettingsBootstrap')['memberships']==1
+        return group
+    group=create()
     member=group.locator('.group-member').filter(has_text='Альфа')
     member.locator('select').select_option('',timeout=90_000)
     wait_for_text(page,'#flash','Работа перенесена.',90_000)
-    assert api(page,'nativeSettingsBootstrap')['memberships']==0
-    group.locator('summary').click(timeout=90_000)
+    snapshot=api(page,'nativeSettingsBootstrap')
+    assert snapshot['memberships']==0 and snapshot['groups']==0,snapshot
+    assert group.count()==0
+    # Removing the final member intentionally removes its source group.
+    # Recreate it to verify the separate explicit-delete confirmation path.
+    group=create()
     page.once('dialog',lambda dialog:dialog.accept())
     group.get_by_role('button',name='Удалить группу',exact=True).click(timeout=90_000)
     wait_for_text(page,'#flash','Группа удалена.',90_000)
