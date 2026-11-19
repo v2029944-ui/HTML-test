@@ -65,6 +65,18 @@ pub struct RangeSummary {
     pub import_warning_reports: i64,
 }
 #[derive(Debug, Serialize)]
+pub struct TimelinePoint {
+    pub start: String,
+    pub periods: i64,
+    pub missing: i64,
+    pub total: AnalysisTotals,
+}
+#[derive(Debug, Serialize)]
+pub struct TimelineSummary {
+    pub granularity: String,
+    pub points: Vec<TimelinePoint>,
+}
+#[derive(Debug, Serialize)]
 pub struct RangeValue {
     pub key: String,
     pub name: String,
@@ -1177,6 +1189,72 @@ fn range_rows(
     Ok(out)
 }
 impl Storage {
+    /// Bounded data for the graphical timeline, with missing periods as nulls.
+    /// Up to 120 source periods remain individual; longer selections are
+    /// grouped by calendar month (at most 121 months in a 10-year UI range).
+    pub fn analysis_timeline(
+        &self,
+        expected: i64,
+        s: &AnalysisScope,
+        q: &RangeQuery,
+    ) -> Result<TimelineSummary, String> {
+        let mut c = self.connect()?;
+        let tx = c.transaction().map_err(err)?;
+        workspace(&tx, expected, s)?;
+        fill_range(&tx, s, q, 1)?;
+        let period_count: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM temp.an_periods WHERE slot=1",
+            [], |r| r.get(0),
+        ).map_err(err)?;
+        let monthly = period_count > 120;
+        // Aggregate data and missing evidence in independent subqueries:
+        // joining both to detail rows would multiply amounts.
+        let sql = r#"
+            WITH buckets AS (
+                SELECT CASE WHEN ?1=1 THEN substr(start,1,7) ELSE start END AS label,
+                       COUNT(*) AS periods
+                FROM temp.an_periods WHERE slot=1 GROUP BY label
+            ), missing AS (
+                SELECT CASE WHEN ?1=1 THEN substr(start,1,7) ELSE start END AS label,
+                       COUNT(*) AS missing
+                FROM temp.an_missing WHERE slot=1 GROUP BY label
+            ), values_by_bucket AS (
+                SELECT CASE WHEN ?1=1 THEN substr(p.start,1,7) ELSE p.start END AS label,
+                       SUM(x.count) AS count, SUM(x.amount) AS amount
+                FROM temp.an_periods p
+                JOIN temp.an_valid v ON v.start=p.start
+                JOIN analysis_filter_items f ON f.id=?2 AND f.item=v.org
+                JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
+                WHERE p.slot=1
+                GROUP BY label
+            )
+            SELECT b.label,b.periods,COALESCE(m.missing,0),
+                   COALESCE(v.count,0),COALESCE(v.amount,0)
+            FROM buckets b
+            LEFT JOIN missing m ON m.label=b.label
+            LEFT JOIN values_by_bucket v ON v.label=b.label
+            ORDER BY b.label
+        "#;
+        let mut stmt = tx.prepare(sql).map_err(err)?;
+        let mut rows = stmt.query(params![i64::from(monthly), &s.organizations]).map_err(err)?;
+        let mut points = Vec::new();
+        while let Some(row) = rows.next().map_err(err)? {
+            if points.len() >= 124 {
+                return Err("Analysis timeline exceeds 124 points".into());
+            }
+            let missing: i64 = row.get(2).map_err(err)?;
+            points.push(TimelinePoint {
+                start: row.get(0).map_err(err)?,
+                periods: row.get(1).map_err(err)?,
+                missing,
+                total: totals(row.get(3).map_err(err)?, row.get(4).map_err(err)?, missing == 0)?,
+            });
+        }
+        Ok(TimelineSummary {
+            granularity: if monthly { "month" } else { "period" }.into(),
+            points,
+        })
+    }
     pub fn analysis_range_summary(
         &self,
         expected: i64,
