@@ -21,6 +21,17 @@ use storage::{AnalysisScope, ManagementJob, RangeQuery, RangeSummary, ReadExcel,
 use std::sync::Arc;
 use tauri::{Manager, State};
 
+#[tauri::command]
+async fn native_report_calendar(
+    app: tauri::AppHandle,
+    revision: i64,
+    year: i32,
+) -> Result<storage::ReportCalendar, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Storage>().report_calendar(revision, year)
+    }).await.map_err(|error| error.to_string())?
+}
+
 // Report kind (family) is independent of day/week/month periodicity.
 // Commands only exchange bounded metadata and measured totals with WebView.
 #[tauri::command]
@@ -1052,7 +1063,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             updater_configured, load_data, save_data, native_read_revision, native_report_page,
-            native_report_quality_page, native_settings_bootstrap, native_group_page, native_group_rename,
+            native_report_calendar, native_report_quality_page, native_settings_bootstrap, native_group_page, native_group_rename,
             native_catalog_page, native_delete_report, native_member_page, native_settings_edit,
             native_analysis_index_page, native_analysis_index_settings, native_analysis_name_options, native_analysis_range,
             native_analysis_timeline, native_analysis_ranking, native_analysis_organization_trends, native_analysis_work_timeline, native_analysis_compare, native_daily_rollup, native_changes_page, native_changes_csv, native_pattern_page, native_composition_page,
