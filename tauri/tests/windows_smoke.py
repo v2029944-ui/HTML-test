@@ -458,6 +458,12 @@ def run():
                     'Native SQL group/work breakdown for absent weekly reports')
                 assert page.locator('#workRows tr').count()==0
                 assert page.locator('#workNext').is_disabled()
+                assert page.locator('#sqlWorkTrends').is_visible()
+                assert page.locator('#workTrendMetric').is_disabled()
+                assert page.locator('#workTrendChart svg').count()==0
+                assert page.locator('#workTrendRows tr').count()==0
+                assert page.locator('#workTrendSelected').inner_text()=='Позиция не выбрана.'
+                report['checks'].append('SQL work/group trend controls start empty without fabricated data')
                 report['checks'].append('Native work/group keyset breakdown is empty for missing weekly data')
                 # D4f: export uses an on-disk CSV from SQLite, not report JSON,
                 # and must reject an existing output path without replacement.
