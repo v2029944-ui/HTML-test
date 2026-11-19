@@ -34,7 +34,7 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(options={}){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisCoverageNotice','analysisCoverageText','analysisAcknowledge','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','rankingMetric','rankingCategory','workTrendMetric','sqlWorkTrends','comparisonBeforeFrom','comparisonBeforeTo','comparisonRun','comparisonCurrentContext','comparisonRankMetric','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisPeriodHelp','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisCoverageNotice','analysisCoverageText','analysisAcknowledge','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','rankingMetric','rankingCategory','workTrendMetric','sqlWorkTrends','comparisonBeforeFrom','comparisonBeforeTo','comparisonRun','comparisonCurrentContext','comparisonRankMetric','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
@@ -158,7 +158,9 @@ function mount(options={}){
      error:message=>comparisonCalls.push({action:'error',message})
    }};
 
- vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-workspace.js'),'utf8'),{window,document:{getElementById:id=>e[id],createElement:tag=>new Element(tag)}});
+ const document={getElementById:id=>e[id],createElement:tag=>new Element(tag)};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-period-selection.js'),'utf8'),{window,document});
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-workspace.js'),'utf8'),{window,document});
  return {e,calls,window,chartCalls,rankingCalls,orgTrendsCalls,workTrendCalls,comparisonCalls};
 }
 test('native workspace displays only one keyset page and no HTML from source names',async()=>{
@@ -656,4 +658,32 @@ test('missing all reports does not turn SQL unknown into observed zero',async()=
  assert.equal(e.analysisValues.children[3].children[0].textContent,'—');
  assert.equal(e.analysisValues.children[4].children[0].textContent,'—');
  assert.equal(e.analysisCoverageNotice.hidden,false);
+});
+
+test('SQL calendar selector normalizes weekly and monthly values before calling SQLite',async()=>{
+ const {window,e,calls}=mount({complete:true});
+ await window.nativeWorkspaceReady;
+ e.analysisType.value='week';e.analysisType.events.change();
+ assert.equal(e.analysisFrom.type,'week');
+ e.analysisFrom.value='2024-W09';e.analysisTo.value='2024-W10';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ const week=calls.filter(x=>x.kind==='range').at(-1);
+ assert.equal(week.reportType,'week');
+ assert.equal(week.from,'2024-02-26');
+ assert.equal(week.to,'2024-03-04');
+ e.comparisonBeforeFrom.value='2024-W07';e.comparisonBeforeFrom.events.change();
+ e.comparisonBeforeTo.value='2024-W08';e.comparisonBeforeTo.events.change();
+ await e.comparisonRun.events.click();
+ const baseline=calls.filter(x=>x.kind==='comparison').at(-1);
+ assert.equal(baseline.beforeFrom,'2024-02-12');
+ assert.equal(baseline.beforeTo,'2024-02-19');
+ e.analysisType.value='month';e.analysisType.events.change();
+ assert.equal(e.analysisFrom.type,'month');
+ assert.equal(e.comparisonBeforeFrom.type,'month');
+ e.analysisFrom.value='2024-02';e.analysisTo.value='2024-03';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ const month=calls.filter(x=>x.kind==='range').at(-1);
+ assert.equal(month.reportType,'month');
+ assert.equal(month.from,'2024-02-01');
+ assert.equal(month.to,'2024-03-01');
 });
