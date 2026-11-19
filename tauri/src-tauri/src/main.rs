@@ -254,6 +254,37 @@ async fn native_analysis_index_settings(
     .map_err(|error| error.to_string())?
 }
 
+// The existing SQL analysis API already supports exact group/work display
+// name filters. Native callers create a short-lived sealed SQLite selection,
+// never a WebView-side scan of historic report JSON. Cleanup also runs after
+// an error, so stale names cannot leak into subsequent queries.
+fn with_selected_work_name<T>(
+    store: &Storage,
+    revision: i64,
+    name: Option<String>,
+    mut scope: AnalysisScope,
+    action: impl FnOnce(&AnalysisScope) -> Result<T, String>,
+) -> Result<T, String> {
+    let Some(name) = name else { return action(&scope); };
+    if name.is_empty() || name.len()>512 {
+        return Err("Selected group/work name must contain 1..=512 bytes".into());
+    }
+    let id=store.analysis_filter_create(revision,"names")?;
+    let result=(|| {
+        store.analysis_filter_append(revision,&id,&[name])?;
+        store.analysis_filter_seal(revision,&id)?;
+        scope.names=Some(id.clone());
+        action(&scope)
+    })();
+    let cleanup=store.analysis_filter_delete(&id);
+    match (result,cleanup) {
+        (Err(error),_)=>Err(error),
+        (Ok(value),Ok(()))=>Ok(value),
+        (Ok(_),Err(error))=>Err(error),
+    }
+}
+
+
 #[tauri::command]
 async fn native_analysis_range(
     app: tauri::AppHandle,
