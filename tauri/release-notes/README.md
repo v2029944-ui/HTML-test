@@ -1,5 +1,7 @@
 # Release notes per application version
 
+**Current published signed Windows release:** [Tauri 1.5.1](1.5.1.md), [GitHub Release](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.5.1). Subsequent features merged into `main` require a **new version greater than 1.5.1**; never rewrite the released installer or its historical notes.
+
 For **every new signed Tauri version**, create `tauri/release-notes/<version>.md` before running the signed release workflow. The publisher rejects missing notes and placeholders; it supplies the file directly to GitHub Releases via `gh release create --notes-file`.
 
 A release note must have a heading and concrete list of changes (new features, fixes, storage/migration/backup changes and known limitations as applicable). Describe what actually shipped, not everything merged or planned. Confirm the exact source commit and Windows/WebView2 tests. The published version must include the installer and signature. Keep existing version assets immutable.
