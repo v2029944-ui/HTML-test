@@ -292,6 +292,9 @@ def run():
                     'Native workspace navigation startup')
                 assert page.locator('[data-nav-link="analysis"]').get_attribute('aria-current') == 'page'
                 page.locator('[data-nav-link="excel"]').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#sqlSources")?.offsetParent !== null && document.querySelector("#sqlAnalysis")?.offsetParent === null',
+                    'SQL source section after tab navigation')
                 assert page.locator('#sqlSources').is_visible()
                 assert not page.locator('#sqlAnalysis').is_visible()
                 assert page.evaluate("typeof window.appReady === 'undefined'")
