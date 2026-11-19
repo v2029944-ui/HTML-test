@@ -161,7 +161,7 @@ test('SQL filter context shows scope, preserves selection and clears stale resul
  await window.nativeWorkspaceRefresh();
  assert.equal(e.analysisOrganization.value,'СМУ16','refresh must preserve a valid selected organization');
  assert.match(e.analysisFilterScope.textContent,/СМУ16/);
- assert.match(e.analysisResultScope.textContent,/Повторите расчёт/);
+ assert.match(e.analysisResultScope.textContent,/повторите расчёт/i);
  e.analysisType.value='week';e.analysisType.events.change();
  assert.equal(e.analysisOrganization.value,'СМУ16','period type change keeps organization selection');
  assert.match(e.analysisResultScope.textContent,/Тип периода изменён/);
