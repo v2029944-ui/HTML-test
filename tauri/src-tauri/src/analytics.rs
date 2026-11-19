@@ -1447,6 +1447,7 @@ impl Storage {
             "month" => "substr(start,1,7)||'-01'",
             _ => "substr(start,1,4)||'-01-01'",
         };
+        let bucket_valid = bucket.replace("start", "v.start");
         let mut c = self.connect()?;
         let tx = c.transaction().map_err(err)?;
         workspace(&tx, expected, s)?;
@@ -1459,11 +1460,11 @@ impl Storage {
                 SELECT {bucket} AS label, COUNT(*) AS absent
                 FROM temp.an_missing WHERE slot=1 GROUP BY label
             ), observed AS (
-                SELECT {bucket} AS label, COUNT(*) AS reports
+                SELECT {bucket_valid} AS label, COUNT(*) AS reports
                 FROM temp.an_valid v JOIN temp.an_periods p ON p.slot=1 AND p.start=v.start
                 GROUP BY label
             ), sums AS (
-                SELECT {bucket} AS label,
+                SELECT {bucket_valid} AS label,
                        COALESCE(SUM(x.count),0) AS total_count,
                        COALESCE(SUM(x.amount),0) AS total_amount
                 FROM temp.an_valid v
