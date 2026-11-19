@@ -17,7 +17,16 @@ const svg=(tag,props={},label)=>{
 function status(text,bad=false){
  const x=$('dailySourceStatus');x.textContent=text;x.className='status '+(bad?'error':'muted');
 }
+function clearOrganizations(message='Сравнение подразделений появится после расчёта календаря.'){
+ $('dailySourceDivisionRows').replaceChildren();
+ const x=$('dailySourceDivisionStatus');x.textContent=message;x.className='status muted';
+}
+function organizationsError(message){
+ clearOrganizations(message);
+ $('dailySourceDivisionStatus').className='status error';
+}
 function clear(message='Показатели появятся после расчёта календаря.'){
+ clearOrganizations();
  snapshot=null;
  $('dailySourceKpis').replaceChildren();
  $('dailySourceRows').replaceChildren();
@@ -152,6 +161,41 @@ function draw(){
   (partial?' Итоги охватывают только имеющиеся отчёты, не весь диапазон.':''),
   incomplete>0||!s.complete);
 }
+function showOrganizations(items,expected){
+ const rows=$('dailySourceDivisionRows');
+ rows.replaceChildren();
+ try{
+  if(!Array.isArray(items)||items.length>100||
+     !Array.isArray(expected)||expected.length===0||expected.length>100||
+     new Set(expected).size!==expected.length||items.length!==expected.length)
+    throw Error('Некорректный список подразделений');
+  const allowed=new Set(expected),seen=new Set();
+  for(const item of items){
+   if(!item||typeof item.org!=='string'||!allowed.has(item.org)||seen.has(item.org)||
+      !Number.isSafeInteger(item.missing)||item.missing<0||
+      typeof item.complete!=='boolean'||item.complete!==(item.missing===0)||
+      !item.total||!['count','amount'].every(field=>
+       item.complete?finite(item.total[field]):item.total[field]===null))
+    throw Error('Неподтверждённые данные подразделения');
+   seen.add(item.org);
+  }
+  const ordered=items.slice().sort((a,b)=>a.org.localeCompare(b.org,'ru'));
+  const complete=ordered.filter(x=>x.complete).length;
+  for(const item of ordered){
+   const row=el('tr');
+   for(const value of [
+    item.org,item.missing,
+    number(item.total.count),number(item.total.amount),
+    item.complete?'Полный':'Неполный · полные итоги неизвестны'
+   ])row.append(el('td',value));
+   rows.append(row);
+  }
+  const x=$('dailySourceDivisionStatus');
+  x.textContent='Подразделений: '+items.length+'. С полным дневным охватом: '+complete+
+   '. Для неполных подразделений сумма и количество не подтверждены.';
+  x.className='status '+(complete!==items.length?'error':'muted');
+ }catch(error){organizationsError('Сравнение дневных подразделений недоступно: '+error.message);}
+}
 function show(summary,timeline){
  snapshot={summary,timeline};
  try{draw();}catch(e){clear('Дневной источник: '+e.message);status('Дневной источник: '+e.message,true);}
@@ -161,5 +205,5 @@ $('dailySourceMetric').addEventListener('change',()=>{
  if(!snapshot)return;
  try{draw();}catch(e){error('График: '+e.message);}
 });
-window.nativeDailyOverview=Object.freeze({show,clear,error});
+window.nativeDailyOverview=Object.freeze({show,showOrganizations,organizationsError,clear,error});
 })();
