@@ -232,6 +232,38 @@ def run():
                 page.locator('#openNativeWorkspace').click()
                 wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)','Native SQLite workspace startup')
                 page.evaluate('window.nativeWorkspaceReady')
+                # P1.6: measure the first screen, including real SQL KPI
+                # and filter layout, at desktop and phone CSS viewport sizes.
+                # This is an isolated test WebView, not the released installer.
+                previous_viewport=page.evaluate('({width:innerWidth,height:innerHeight})')
+                try:
+                    for width,height in ((1280,720),(1366,768),(390,844),(320,568)):
+                        page.set_viewport_size({'width':width,'height':height})
+                        geometry=page.evaluate('''() => {
+                          const rect = id => {
+                            const box = document.getElementById(id).getBoundingClientRect();
+                            return {top:box.top,bottom:box.bottom,width:box.width};
+                          };
+                          return {
+                            viewport:innerWidth,
+                            scrollWidth:document.documentElement.scrollWidth,
+                            filters:rect('analysisType'),
+                            kpi:rect('metricReports'),
+                            nextBlock:rect('sqlAnalysis'),
+                            active:document.querySelector('[data-nav-link="analysis"]')?.getAttribute('aria-current')
+                          };
+                        }''')
+                        if width>=1280:
+                            if not (geometry['filters']['bottom']<height and
+                                    geometry['kpi']['bottom']<height and
+                                    geometry['nextBlock']['top']<height):
+                                raise RuntimeError(f'SQL first viewport {width}x{height} hides filters, KPI or the next result panel: {geometry}')
+                        elif geometry['scrollWidth']>width+1:
+                            raise RuntimeError(f'SQL phone viewport has page-level horizontal scrolling at {width}x{height}: {geometry}')
+                        page.screenshot(path=str(output/f'windows-sql-{width}x{height}.png'),full_page=False)
+                    report['checks'].append('Measured SQL first screen at 1280x720, 1366x768, 390x844, 320x568')
+                finally:
+                    page.set_viewport_size(previous_viewport)
                 # The native SQL workspace is now one application with sections.
                 # Switching sections must not initialize the full-history UI.
                 wait_for_app_state(page,'Boolean(window.nativeWorkspaceNavigation)',
