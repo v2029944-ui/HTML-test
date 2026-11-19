@@ -12,6 +12,7 @@ const number=n=>finite(n)?n.toLocaleString('ru-RU',{maximumFractionDigits:3}):'�
 let revision=null,organizations=[],ready=false,busy=false;
 let generation=0,previousKind='day',cursor=null,back=[],next=null;
 let selection=null;
+let detailScope=null,detailCursor=null,detailNext=null,detailBack=[],detailRequest=0,detailBusy=false;
 const pageSize=60;
 function status(message,bad=false){
  const e=$('dailyRollupStatus');e.textContent=message;
@@ -29,6 +30,7 @@ function controls(){
    $(id).disabled=busy||!valid;
 }
 function clear(message='Выберите даты и подготовьте дневные индексы.'){
+ closeDetails();
  ++generation;
  cursor=null;next=null;back=[];selection=null;
  $('dailyRollupRows').replaceChildren();
@@ -116,6 +118,95 @@ function validate(page,kind){
  if(page.next_cursor!==null&&page.next_cursor!==last)
    throw Error('Некорректный курсор следующей страницы');
 }
+function detailControls(){
+ $('dailyRollupDetailBack').disabled=detailBusy||!detailBack.length;
+ $('dailyRollupDetailNext').disabled=detailBusy||!detailNext;
+ $('dailyRollupDetailPage').textContent='Страница '+(detailBack.length+1);
+}
+function closeDetails(){
+ ++detailRequest;
+ detailScope=null;detailCursor=null;detailNext=null;detailBack=[];
+ $('dailyRollupDetailPanel').hidden=true;
+ $('dailyRollupDetailRows').replaceChildren();
+ $('dailyRollupDetailStatus').textContent='';
+ detailControls();
+}
+function detailEnd(start,kind){
+ const d=adapter.normalize('day',start);
+ if(!d)return null;
+ if(kind==='year')return d.slice(0,4)+'-12-31';
+ const day=new Date(d+'T00:00:00Z');
+ if(kind==='week')day.setUTCDate(day.getUTCDate()+6);
+ else if(kind==='month'){day.setUTCMonth(day.getUTCMonth()+1);day.setUTCDate(0);}
+ else return null;
+ const out=String(day.getUTCFullYear()).padStart(4,'0')+'-'+
+  String(day.getUTCMonth()+1).padStart(2,'0')+'-'+
+  String(day.getUTCDate()).padStart(2,'0');
+ return adapter.normalize('day',out);
+}
+function detailStatus(message,bad=false){
+ const el=$('dailyRollupDetailStatus');el.textContent=message;
+ el.className='status '+(bad?'error':'muted');
+}
+async function detailPage(after,reset=false){
+ const scope=detailScope;
+ if(detailBusy||!scope||selection!==scope.parent)return false;
+ detailBusy=true;detailControls();
+ const ticket=++detailRequest;
+ try{
+  const result=await api.nativeDailyRollup(scope.rev,scope.from,scope.to,
+   'day',scope.orgs,after,pageSize);
+  if(ticket!==detailRequest||detailScope!==scope||selection!==scope.parent)return false;
+  validate(result,'day');
+  for(const point of result.points){
+   if(point.days!==1||point.start<scope.from||point.start>scope.to)
+     throw Error('Детализация содержит чужие дни');
+  }
+  const tbody=$('dailyRollupDetailRows');tbody.replaceChildren();
+  let incomplete=0;
+  for(const point of result.points){
+   const partial=!point.complete&&point.available_reports>0;
+   if(!point.complete)incomplete++;
+   const values=point.complete?point.total:point.available_total;
+   const row=make('tr');
+   for(const value of [
+    point.start,point.available_reports,point.missing,
+    number(values.count),number(values.amount),
+    point.complete?'Полный':partial?'По имеющимся данным':'Отчётов нет'
+   ])row.append(make('td',value));
+   tbody.append(row);
+  }
+  detailCursor=after;detailNext=result.next_cursor;
+  if(reset)detailBack=[];
+  detailStatus('Дней на странице: '+result.points.length+
+   '. Неполных: '+incomplete+'. Пропуски не считаются нулевыми отчётами.',incomplete>0);
+  return true;
+ }catch(error){
+  if(ticket===detailRequest){
+   detailNext=null;detailStatus('Не удалось получить дни: '+issue(error),true);
+  }
+  return false;
+ }finally{detailBusy=false;detailControls();}
+}
+async function openDetails(point,kind){
+ const parent=selection;
+ if(busy||!parent||kind==='day')return;
+ const from=adapter.normalize('day',point.start),to=detailEnd(point.start,kind);
+ if(!from||!to||from<parent.from||to>parent.to){
+  status('Ошибка границ дневной детализации: период выходит за пределы выбранного диапазона.',true);
+  return;
+ }
+ closeDetails();
+ detailScope={
+  from,to,rev:parent.rev,orgs:parent.orgs.slice(),parent
+ };
+ $('dailyRollupDetailTitle').textContent='Дни периода '+(
+  kind==='year'?from.slice(0,4):kind==='month'?from.slice(0,7):from+' — '+to);
+ $('dailyRollupDetailPanel').hidden=false;
+ detailStatus('Загружаем дни из SQLite…');
+ await detailPage(null,true);
+}
+
 function display(page){
  validate(page,$('dailyRollupGranularity').value);
  const tbody=$('dailyRollupRows');tbody.replaceChildren();
@@ -132,6 +223,15 @@ function display(page){
      number(values.count),number(values.amount),
      p.complete?'Полный':partial?'Неполный · по имеющимся данным':'Нет подтверждённых отчётов'])
       tr.append(make('td',value));
+   const cell=make('td');
+   if(page.granularity!=='day'){
+    const button=make('button','Показать дни');
+    button.type='button';
+    button.setAttribute('aria-label','Открыть дни периода '+name);
+    button.addEventListener('click',()=>{void openDetails(p,page.granularity);});
+    cell.append(button);
+   }else cell.textContent='—';
+   tr.append(cell);
    tbody.append(tr);
  }
  status('Показано '+page.points.length+' периодов. Неполных: '+incomplete+
@@ -150,6 +250,7 @@ async function page(after,reset=false){
  if(busy||!ready||revision===null)return false;
  const scope=selection;
  if(!scope)return false;
+ closeDetails();
  busy=true;controls();
  const ticket=++generation;
  try{
@@ -197,6 +298,19 @@ async function prepare(){
  }catch(err){ready=false;status('Не удалось подготовить дневные индексы: '+issue(err),true);}
  finally{busy=false;controls();}
 }
+$('dailyRollupDetailClose').addEventListener('click',closeDetails);
+$('dailyRollupDetailNext').addEventListener('click',async()=>{
+ if(!detailNext)return;
+ const prior=detailCursor;
+ if(await detailPage(detailNext))detailBack.push(prior);
+ detailControls();
+});
+$('dailyRollupDetailBack').addEventListener('click',async()=>{
+ if(!detailBack.length)return;
+ const prior=detailBack.at(-1);
+ if(await detailPage(prior))detailBack.pop();
+ detailControls();
+});
 $('dailyRollupPrepare').addEventListener('click',()=>{void prepare();});
 $('dailyRollupRun').addEventListener('click',()=>{void run();});
 $('dailyRollupGranularity').addEventListener('change',changeKind);
