@@ -757,3 +757,31 @@ fn c3_source_diagnostic_links_block_management_delete_even_without_json_sidecars
         1,
     );
 }
+
+#[test]
+fn management_settings_index_allows_concurrent_analysis_filter_writes() {
+    let dir=tempdir().unwrap();
+    let root=dir.path().to_path_buf();
+    let storage=Storage::new(root.clone()).unwrap();
+    let mut data=management_data();
+    data["settings"]["catalog"]=Value::Array((0..15000).map(|i| json!({"work":format!("Work {i}")})).collect());
+    storage.save(data).unwrap();
+    let revision=storage.revision().unwrap();
+    let running=std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let writer_running=running.clone();
+    let writer=std::thread::spawn(move || {
+        let concurrent=Storage::new(root).unwrap();
+        let mut writes=0;
+        while writer_running.load(std::sync::atomic::Ordering::SeqCst) {
+            let id=concurrent.analysis_filter_create(revision,"organizations").unwrap();
+            concurrent.analysis_filter_delete(&id).unwrap();writes+=1;
+        }
+        writes
+    });
+    let result=storage.management_index_settings(revision,&ManagementJob::new());
+    running.store(false,std::sync::atomic::Ordering::SeqCst);
+    let writes=writer.join().unwrap();
+    assert!(writes>0,"concurrent writes must overlap staging");
+    assert!(result.is_ok(),"index publication failed during unrelated filter writes: {result:?}");
+    assert_eq!(storage.management_bootstrap(revision).unwrap().catalog,15000);
+}
