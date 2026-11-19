@@ -76,6 +76,13 @@ function mount(options={}){
      return {granularity:'period',points:[{start:from,periods:1,missing:options.complete?0:1,
        total:options.complete?{count:2,amount:100,average:50}:{count:null,amount:null,average:null}}]};
    },
+   nativeOrganizationTrends:async(rev,kind,from,to,organizations)=>{
+     calls.push({kind:'org_trends',rev,reportType:kind,from,to,organizations});
+     return {granularity:'period',selected_organizations:organizations.length,series:[
+       {organization:organizations[0],points:[{start:from,periods:1,missing:options.complete?0:1,
+         total:options.complete?{count:2,amount:100,average:50}:{count:null,amount:null,average:null}}]}
+     ]};
+   },
    nativeAnalysisRanking:async(rev,kind,from,to,organizations,organization,metric,category)=>{
      calls.push({kind:'ranking',rev,reportType:kind,from,to,organizations,organization,metric,category});
      return options.complete
@@ -94,7 +101,7 @@ function mount(options={}){
       :{org:'АВТО',complete:false,missing:2,total:{count:null,amount:null,average:null}}
    ];}
  };
- const chartCalls=[],rankingCalls=[];
+ const chartCalls=[],rankingCalls=[],orgTrendsCalls=[];
  const window={desktopAPI:api,confirm:()=>true,analizUserError:userError,
    nativeTimeline:{
      show:data=>chartCalls.push({action:'show',data}),
@@ -105,10 +112,15 @@ function mount(options={}){
      show:data=>rankingCalls.push({action:'show',data}),
      clear:message=>rankingCalls.push({action:'clear',message}),
      error:message=>rankingCalls.push({action:'error',message})
+   },
+   nativeOrganizationTrends:{
+     show:data=>orgTrendsCalls.push({action:'show',data}),
+     clear:message=>orgTrendsCalls.push({action:'clear',message}),
+     error:message=>orgTrendsCalls.push({action:'error',message})
    }};
 
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-workspace.js'),'utf8'),{window,document:{getElementById:id=>e[id],createElement:tag=>new Element(tag)}});
- return {e,calls,window,chartCalls,rankingCalls};
+ return {e,calls,window,chartCalls,rankingCalls,orgTrendsCalls};
 }
 test('native workspace displays only one keyset page and no HTML from source names',async()=>{
  const {e,calls,window}=mount();
@@ -453,4 +465,34 @@ test('SQL ranking refuses incomplete aggregates without hiding still-valid KPI s
  assert.equal(last.data.complete,false);
  assert.equal(last.data.rows.length,0);
  assert.match(e.analysisStatus.textContent,/не все периоды/);
+});
+
+test('organization trends use the exact KPI scope and invalidate on every filter change',async()=>{
+ const {e,calls,window,orgTrendsCalls}=mount({complete:true});
+ await window.nativeWorkspaceReady;
+ e.analysisOrganization.value='АВТО';e.analysisOrganization.events.change();
+ e.analysisFrom.value='2024-02-01';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ const kpi=calls.find(x=>x.kind==='range');
+ const trends=calls.find(x=>x.kind==='org_trends');
+ assert.equal(trends.rev,kpi.rev);
+ assert.equal(trends.reportType,kpi.reportType);
+ assert.equal(trends.from,kpi.from);
+ assert.equal(trends.to,kpi.to);
+ assert.equal(trends.organizations.join(','),kpi.organizations.join(','));
+ assert.equal(trends.organizations.length,1);
+ assert.ok(orgTrendsCalls.some(x=>x.action==='show'));
+ e.analysisTo.value='2024-03-31';e.analysisTo.events.change();
+ assert.equal(orgTrendsCalls.at(-1).action,'clear');
+ assert.match(orgTrendsCalls.at(-1).message,/Фильтры изменены/);
+});
+test('a missing organization trend stays unknown without hiding verified KPI rows',async()=>{
+ const {e,window,orgTrendsCalls}=mount();
+ await window.nativeWorkspaceReady;
+ e.analysisFrom.value='2024-02-01';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ assert.match(e.analysisStatus.textContent,/не все периоды/);
+ const plotted=orgTrendsCalls.find(x=>x.action==='show');
+ assert.equal(plotted.data.series[0].points[0].missing,1);
+ assert.equal(plotted.data.series[0].points[0].total.amount,null);
 });
