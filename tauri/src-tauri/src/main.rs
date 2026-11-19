@@ -286,6 +286,21 @@ fn with_selected_work_name<T>(
 
 
 #[tauri::command]
+async fn native_analysis_name_options(
+    app: tauri::AppHandle,
+    revision: i64,
+    search: String,
+    limit: usize,
+) -> Result<storage::AnalysisNameOptions, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Storage>().analysis_name_options(revision,&search,limit)
+    })
+    .await
+    .map_err(|error|error.to_string())?
+}
+
+
+#[tauri::command]
 async fn native_analysis_range(
     app: tauri::AppHandle,
     revision: i64,
@@ -1007,7 +1022,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             updater_configured, load_data, save_data, native_read_revision, native_report_page,
             native_settings_bootstrap, native_group_page, native_group_rename,
-            native_analysis_index_page, native_analysis_index_settings, native_analysis_range,
+            native_analysis_index_page, native_analysis_index_settings, native_analysis_name_options, native_analysis_range,
             native_analysis_timeline, native_analysis_ranking, native_analysis_organization_trends, native_analysis_work_timeline, native_analysis_compare, native_daily_rollup,
             native_analysis_organizations, native_analysis_range_page,
             native_export_range_csv, native_backup_sqlite, native_restore_preview, native_restore_copy,
