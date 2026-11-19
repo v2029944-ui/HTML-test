@@ -204,6 +204,13 @@ test('division shares use only complete matching SQL totals; incomplete periods 
  assert.match(complete.e.divisionShareStatus.textContent,/Доли от подтверждённой суммы/);
  assert.equal(complete.e.divisionRows.children[0].children[6].textContent,'66,7 %');
  assert.equal(complete.e.divisionRows.children[1].children[6].textContent,'33,3 %');
+ const a=complete.e.divisionRows.children[0].children[6],b=complete.e.divisionRows.children[1].children[6];
+ assert.equal(a.className,'division-share');
+ assert.equal(a.children[0].className,'division-share-track');
+ assert.equal(a.children[0].children[0].className,'division-share-fill');
+ assert.equal(a.children[0]['aria-hidden'],'true');
+ assert.ok(Math.abs(parseFloat(a.children[0].children[0].style.width)-66.6666666667)<0.01);
+ assert.ok(Math.abs(parseFloat(b.children[0].children[0].style.width)-33.3333333333)<0.01);
  complete.e.analysisOrganization.value='СМУ16';
  complete.e.analysisOrganization.events.change();
  assert.equal(complete.e.divisionRows.children.length,0);
@@ -217,6 +224,8 @@ test('division shares use only complete matching SQL totals; incomplete periods 
  assert.equal(incomplete.e.divisionRows.children[0].children[6].textContent,'—');
  assert.equal(incomplete.e.divisionRows.children[1].children[6].textContent,'—');
  assert.match(incomplete.e.divisionShareStatus.textContent,/Доли скрыты/);
+ assert.equal(incomplete.e.divisionRows.children[0].children[6].children.length,0);
+ assert.equal(incomplete.e.divisionRows.children[1].children[6].children.length,0);
  const mismatch=mount({complete:true,mismatchedTotal:true});
  await mismatch.window.nativeWorkspaceReady;
  mismatch.e.analysisFrom.value='2024-01-01';
@@ -226,6 +235,7 @@ test('division shares use only complete matching SQL totals; incomplete periods 
  assert.equal(mismatch.e.divisionRows.children[0].children[6].textContent,'—');
  assert.equal(mismatch.e.divisionRows.children[1].children[6].textContent,'—');
  assert.match(mismatch.e.divisionShareStatus.textContent,/не совпадают/);
+ assert.equal(mismatch.e.divisionRows.children[0].children[6].children.length,0);
 });
 
 test('bounded work/group SQL pages preserve unknown totals, keyset cursors and selected scope',async()=>{

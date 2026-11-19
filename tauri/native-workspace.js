@@ -314,7 +314,16 @@ function showDivisionComparison(rows,rangeTotal,rangeComplete){
    const share=shareEnabled&&sum!==null
      ?(sum/rangeTotal*100).toLocaleString('ru-RU',{maximumFractionDigits:1})+' %'
      :'—';
-   tr.append(make('td',share));tbody.append(tr);
+   const shareCell=make('td',share);
+   shareCell.className='division-share';
+   if(shareEnabled&&sum!==null){
+     const shareTrack=make('div');shareTrack.className='division-share-track';
+     shareTrack.setAttribute('aria-hidden','true');
+     const fill=make('div');fill.className='division-share-fill';
+     fill.style.width=Math.min(100,Math.max(0,sum/rangeTotal*100))+'%';
+     shareTrack.append(fill);shareCell.append(shareTrack);
+   }
+   tr.append(shareCell);tbody.append(tr);
  }
  status('divisionStatus','Подразделений в сравнении: '+rows.length+'. Порядок: по подтверждённой сумме.');
 }
