@@ -160,6 +160,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <select id="analysisType"><option value="day">Дни</option><option value="week">Недели</option><option value="month">Месяцы</option></select>
 <label for="analysisFrom">С</label><input type="date" id="analysisFrom">
 <label for="analysisTo">По</label><input type="date" id="analysisTo">
+<span id="analysisPeriodHelp" class="intro">Выбирайте даты в календаре.</span>
 <details id="analysisMoreFilters">
 <summary>Ещё фильтры</summary>
 <div class="extra-filter-fields"><label for="analysisOrganization">Подразделение</label>
@@ -465,7 +466,8 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p id="metricKindStatus" class="status muted" role="status" aria-live="polite">Загрузка каталога видов отчётов…</p>
 </section>
 </main>
-<script src="tauri-bridge.js"></script><script src="tauri-native-updates.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-timeline.js"></script><script src="tauri-native-ranking.js"></script><script src="tauri-native-organization-trends.js"></script><script src="tauri-native-work-trends.js"></script><script src="tauri-native-comparison.js"></script><script src="tauri-native-workspace.js"></script>
+<script src="tauri-bridge.js"></script><script src="tauri-native-updates.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-timeline.js"></script><script src="tauri-native-ranking.js"></script><script src="tauri-native-organization-trends.js"></script><script src="tauri-native-period-selection.js"></script>
+<script src="tauri-native-work-trends.js"></script><script src="tauri-native-comparison.js"></script><script src="tauri-native-workspace.js"></script>
 <script src="tauri-native-legacy-import.js"></script>
 <script src="tauri-native-navigation.js"></script>
 <script src="tauri-native-wide-import.js"></script>
