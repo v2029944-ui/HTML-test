@@ -619,6 +619,7 @@ def run():
                 wait_for_app_state(page,
                     'document.querySelector("#timelineStatus")?.textContent.includes("Ни одной полной точки")',
                     'SQL timeline has no fabricated zero observations')
+                reveal_table(page, '#timelineRows')
                 assert page.locator('#timelineRows tr').count()==2
                 assert page.locator('#timelineChart svg').count()==0
                 assert all(row.locator('td').nth(4).inner_text()=='—'
