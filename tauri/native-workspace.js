@@ -425,7 +425,7 @@ function describeOrganizations(names){
 function updateFilterContext(){
  $('analysisFilterScope').textContent='Подразделения: '+describeOrganizations(analysisOrganizations())+
   '. Работы и группы: '+describeNames(selectedNames())+
-  '. Итоги, графики, подразделения, рейтинг, сравнение, детализация и CSV используют этот отбор. Календарь — тоже.';
+  '. Один отбор: итоги, графики, сравнение, детализация и CSV.';
 }
 function updateResultContext(type,from,to,organizations,names,source){
  $('analysisResultScope').textContent='Выборка: '+type+', '+from+' — '+to+
@@ -635,7 +635,7 @@ async function calculateAnalysis(){
    try{
      const trends=await api.nativeOrganizationTrends(rev,kind,from,to,organizations,...nameArgs(names,selection.source==='daily'?selection.displayType:null));
      if(expectedTrends===organizationTrendsRequest)
-       window.nativeOrganizationTrends?.show(trends);
+       window.nativeOrganizationTrends?.show(trends,orgNames);
    }catch(trendsError){
      if(expectedTrends===organizationTrendsRequest)
        window.nativeOrganizationTrends?.error('График подразделений не построен: '+userError(trendsError));

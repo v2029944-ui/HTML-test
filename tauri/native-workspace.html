@@ -191,7 +191,7 @@ th{background:var(--subtle);font-weight:650}td input{width:100%;min-width:150px}
   <button type="button" id="sqlUpdateClose">Закрыть</button>
 </dialog>
 <main class="container" id="nativeContent">
-<section class="pagehead"><div><p class="eyebrow">ОТЧЁТНОСТЬ</p><h1>Анализ выполненных работ</h1><p class="muted">Количество и сумма по дням, неделям и месяцам, подразделениям и группам работ.</p></div><a class="button secondary" href="#excel">Выбрать Excel</a></section>
+<section class="pagehead"><div><p class="eyebrow">ОТЧЁТНОСТЬ</p><h1>Анализ выполненных работ</h1><p class="muted">Количество и сумма по дням, неделям и месяцам, подразделениям и группам работ.</p></div><a class="primary-action" href="#excel">Выбрать Excel</a></section>
 <nav class="tabs workspace-nav" aria-label="Разделы программы">
 <a class="tab" href="#analysis" data-nav-link="analysis">Аналитика</a>
 <a class="tab" href="#changes" data-nav-link="changes">Анализ изменений</a>
@@ -239,11 +239,10 @@ th{background:var(--subtle);font-weight:650}td input{width:100%;min-width:150px}
 
 <section class="panel" id="sqlOverview" aria-label="Сводка SQLite">
 <div class="overview-head">
-<div><h2>Аналитика</h2><p class="intro">Итоги, графики и сравнения за выбранный период.</p></div>
-<a class="primary-action" href="#excel">Выбрать Excel</a>
+<div><h2>Обзор данных</h2></div><p id="analysisStatus" class="status muted" role="status" aria-live="polite">Подготовка не выполнена.</p>
 </div>
 
-<p id="analysisStatus" class="status muted" role="status" aria-live="polite">Подготовка не выполнена.</p>
+
 <div id="analysisCoverageNotice" class="coverage-notice" hidden aria-label="Неполные данные или замечания к отчётам">
 <p id="analysisCoverageText" role="status"></p>
 <button type="button" id="analysisAcknowledge">Подтвердить, предупреждение мне известно</button>

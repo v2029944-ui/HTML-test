@@ -52,3 +52,9 @@ svg text{fill:var(--plot-label)!important;font-family:var(--font-body)!important
 
 @media print{html:root[data-theme][data-palette]{--bg:#fff;--surface:#fff;--surface-glass:#fff;--subtle:#f1f1f1;--text:#111;--muted:#333;--accent:#173e6d;--border:#999;--field-border:#888;--selected:#fff;--selected-border:#777;--positive:#111;--negative:#111;--warning:#111;--positive-bg:#fff;--negative-bg:#fff;--warning-bg:#fff;--plot-label:#111;--grid:#ccc;--axis:#666;--plot-0:#173e6d;--plot-1:#754226;--plot-2:#17624b;--plot-3:#684187;--plot-4:#813c55;--plot-5:#695717;--plot-6:#26637a;--plot-7:#476026}body{background:var(--bg)!important;color:var(--text)!important}.panel,.metric{background:var(--surface)!important;color:var(--text)!important}}
 @media print{*,*::before,*::after{transition:none!important;animation:none!important}html{color-scheme:light}}
+
+/* Keep the familiar heading without pushing primary work below the first screen. */
+.nav-status{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}
+@media(min-width:1000px){#nativeContent.container{padding-top:18px}.pagehead{margin-bottom:14px}.pagehead h1{font-size:30px}.workspace-nav.tabs{margin-bottom:16px}.analytics-toolbar{padding:14px 18px;margin-bottom:14px}.analytics-toolbar .controls{margin:3px 0 8px}.analytics-toolbar .filter-scope{line-height:1.4}.panel{padding:18px 20px;margin-bottom:16px}.overview-head{min-height:0}.storage-summary{padding-top:9px}.storage-overview{margin:4px 0}.overview-head h2{margin-bottom:2px}}
+
+.overview-head .status{margin:0;min-height:0;font-size:13px;max-width:100%}

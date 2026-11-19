@@ -37,3 +37,7 @@
 - Whole-branch review found: stale calendar after failed workspace reads; missing Changes print action; embeddedfonts blocked by CSP; frozen Tauri core namespace made smoke instrumentation ineffective. Fixed all four with targeted regressions and FontFaceSet browser proof. Calendar keeps the selected year through error recovery.
 - Print palette: explicit light output and disabled print transitions; computed white/ink regression RED/GREEN. Reviewer verified Chromium economy already darkens default PDF text; unreadability was not proven.
 - Node44files green after fixes, Rust calendar remains164pass/1ignored, browser actual CSP embedded Inter RED/GREEN. No deferred blocking findings.
+
+- Final reference correction: classic division colors stay assigned by full settings order when a subset is selected. SQL now passes that order into the renderer; regression RED/GREEN includes filtering and metric switch.
+
+- Installed WebView2 caught first-screen regression at1280x720: next analysis panel began828px down. Kept the original assertion, removed duplicate import/intro and compacted shared header/filters/overview. Browser exact geometry RED/GREEN includes1270px to account for Windows scrollbar.

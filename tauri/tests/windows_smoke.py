@@ -686,6 +686,8 @@ def run():
                 navigate(page, 'analysis')
                 organization_choices=page.locator('#analysisOrganizationChoices label')
                 assert organization_choices.count()==4
+                wait_for_app_state(page,'document.querySelectorAll("#organizationTrendsLegend>span").length===4','All division colors before subset filtering')
+                division_colors=page.locator('#organizationTrendsLegend').evaluate("el=>Object.fromEntries([...el.children].map(row=>[row.children[1].textContent,getComputedStyle(row.children[0]).backgroundColor]))")
                 chosen_orgs=[organization_choices.nth(i).locator('span').text_content() for i in (0,2)]
                 for i in (1,3):
                     organization_choices.nth(i).locator('input').uncheck()
@@ -696,6 +698,10 @@ def run():
                     'document.querySelector("#analysisResultScope")?.textContent.includes("(2 из 4)") && document.querySelectorAll("#divisionRows tr").length === 2',
                     'SQLite analysis and division totals are scoped to two of four organizations')
                 assert set(page.locator('#divisionRows tr td:first-child').all_text_contents())==set(chosen_orgs)
+                wait_for_app_state(page,'document.querySelectorAll("#organizationTrendsLegend>span").length===2','Selected division colors remain stable')
+                subset_colors=page.locator('#organizationTrendsLegend').evaluate("el=>Object.fromEntries([...el.children].map(row=>[row.children[1].textContent,getComputedStyle(row.children[0]).backgroundColor]))")
+                assert subset_colors=={name:division_colors[name] for name in chosen_orgs}
+
                 page.locator('#analysisOrganization').select_option('*')
                 assert 'все из настроек (4)' in page.locator('#analysisFilterScope').inner_text()
                 report['checks'].append('SQL organization subset narrows division results and resets to all')
