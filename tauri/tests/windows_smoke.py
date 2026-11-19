@@ -432,6 +432,13 @@ def run():
                 assert all(row.locator('td').nth(4).inner_text()=='—'
                     for row in page.locator('#timelineRows tr').all())
                 report['checks'].append('Native timeline preserves missing weekly periods')
+                wait_for_app_state(page,
+                    'document.querySelector("#rankingStatus")?.textContent.includes("Рейтинг скрыт")',
+                    'Native ranking excludes incomplete week ranges')
+                assert page.locator('#rankingBars li').count()==0
+                assert page.locator('#rankingMetric').is_enabled()
+                report['checks'].append('SQL ranking excludes incomplete weekly ranges')
+
                 report['checks'].append('D2 incomplete SQL range keeps missing totals null')
                 report['checks'].append('Native division comparison preserves unknown incomplete amounts')
                 # D4e: the group/work keyset API must also run on the real
