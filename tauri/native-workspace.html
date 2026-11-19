@@ -140,6 +140,11 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .analytics-toolbar summary{cursor:pointer;list-style-position:inside;border:1px solid #aab9cb;border-radius:8px;padding:8px 12px;background:#fff}
 .analytics-toolbar details[open] summary{background:#e6eef7}
 .extra-filter-fields{display:flex;align-items:center;gap:10px;padding:10px 2px 3px}
+.work-filter-search{flex-wrap:wrap;max-width:min(100%,940px)}
+.work-filter-search input{flex:1 1 210px;min-width:0}
+.work-filter-search select{flex:1 1 220px;min-width:0}
+#analysisNameStatus{max-width:850px;overflow-wrap:anywhere}
+
 .filter-scope{margin:4px 0 0;font-size:12px;line-height:1.5;color:#455d78}
 .action-context{margin:6px 0;font-size:13px;color:#455d78}
 .storage-overview .metric{background:#f6f8fb}
@@ -195,6 +200,15 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <summary>Ещё фильтры</summary>
 <div class="extra-filter-fields"><label for="analysisOrganization">Подразделение</label>
 <select id="analysisOrganization"><option value="*">Все из настроек</option></select></div>
+<div class="extra-filter-fields work-filter-search">
+<label for="analysisNameSearch">Найти работу / группу</label>
+<input id="analysisNameSearch" type="search" maxlength="128" placeholder="Часть точного названия" autocomplete="off">
+<button type="button" id="analysisNameSearchRun">Найти</button>
+<label for="analysisName">Фильтр работ и групп</label>
+<select id="analysisName"><option value="*">Все работы и группы</option></select>
+<button type="button" id="analysisNameReset">Сбросить</button>
+</div>
+<p id="analysisNameStatus" class="filter-scope" role="status" aria-live="polite">Найдите нужную работу или группу. До выбора применяются все позиции.</p>
 </details>
 <button id="analysisPrepare" type="button">Подготовить индексы</button>
 <button id="analysisCancel" type="button" disabled>Остановить</button>
