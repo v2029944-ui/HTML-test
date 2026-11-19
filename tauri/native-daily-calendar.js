@@ -282,6 +282,19 @@ async function sourceOverview(scope){
   );
   if(ticket!==sourceOverviewTicket||selection!==scope)return;
   window.nativeDailyOverview?.show(summary,timeline);
+  // Division totals use the very same day-source revision and exact range.
+  // A failed division query must not discard verified KPI/timeline results.
+  try{
+   const divisions=await api.nativeAnalysisOrganizations(
+    scope.rev,'day',scope.from,scope.to,scope.orgs
+   );
+   if(ticket===sourceOverviewTicket&&selection===scope)
+    window.nativeDailyOverview?.showOrganizations(divisions,scope.orgs);
+  }catch(divisionsError){
+   if(ticket===sourceOverviewTicket&&selection===scope)
+    window.nativeDailyOverview?.organizationsError(
+     'Подразделения дневного источника недоступны: '+issue(divisionsError));
+  }
  }catch(error){
   if(ticket===sourceOverviewTicket&&selection===scope)
    window.nativeDailyOverview?.error('Не удалось рассчитать показатели дневного источника: '+issue(error));
