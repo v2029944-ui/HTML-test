@@ -11,7 +11,8 @@ class E{
  addEventListener(name,fn){this.events[name]=fn;}
 }
 function setup(){
- const ids=['dailySourceKpis','dailySourceRows','dailySourceChart','dailySourceStatus','dailySourceMetric'];
+ const ids=['dailySourceKpis','dailySourceRows','dailySourceChart','dailySourceStatus','dailySourceMetric',
+ 'dailySourceDivisionRows','dailySourceDivisionStatus'];
  const elements=Object.fromEntries(ids.map(id=>[id,new E(id)]));
  elements.dailySourceMetric.value='amount';
  const window={},document={getElementById:id=>elements[id],createElement:tag=>new E(tag),
@@ -99,4 +100,37 @@ test('malformed completeness and oversized trends erase old values',()=>{
  assert.equal(e.dailySourceChart.children.length,0);
  api.clear('Выборка изменена');
  assert.equal(e.dailySourceStatus.textContent,'Выборка изменена');
+});
+
+test('daily divisions use the exact selected members and hide incomplete values',()=>{
+ const {e,api}=setup();
+ api.show(summary(),timeline([point('2024-02-28',0,0)]));
+ api.showOrganizations([
+  {org:'B',complete:false,missing:1,total:{count:null,amount:null,average:null}},
+  {org:'A',complete:true,missing:0,total:{count:0,amount:0,average:null}}
+ ],['A','B']);
+ assert.equal(e.dailySourceDivisionRows.children.length,2);
+ assert.equal(e.dailySourceDivisionRows.children[0].children[0].textContent,'A');
+ assert.equal(e.dailySourceDivisionRows.children[0].children[3].textContent,'0');
+ assert.equal(e.dailySourceDivisionRows.children[1].children[3].textContent,'—');
+ assert.match(e.dailySourceDivisionStatus.textContent,/С полным дневным охватом: 1/);
+ assert.equal(e.dailySourceChart.children.length,1,'divisions must not overwrite existing chart');
+});
+test('daily divisions reject duplicates, invented organizations, and forged incomplete totals',()=>{
+ const {e,api}=setup();
+ api.show(summary(),timeline([point('2024-02-28',0,0)]));
+ api.showOrganizations([{org:'A',complete:false,missing:2,total:{count:0,amount:1,average:null}}],['A']);
+ assert.equal(e.dailySourceDivisionRows.children.length,0);
+ assert.match(e.dailySourceDivisionStatus.textContent,/недоступно/);
+ api.showOrganizations([{org:'B',complete:true,missing:0,total:{count:1,amount:2}}],['A']);
+ assert.equal(e.dailySourceDivisionRows.children.length,0);
+ assert.match(e.dailySourceDivisionStatus.textContent,/недоступно/);
+ api.showOrganizations([
+  {org:'A',complete:true,missing:0,total:{count:1,amount:2}},
+  {org:'A',complete:true,missing:0,total:{count:1,amount:2}}
+ ],['A','B']);
+ assert.equal(e.dailySourceDivisionRows.children.length,0);
+ api.clear('Новая выборка');
+ assert.equal(e.dailySourceDivisionRows.children.length,0);
+ assert.match(e.dailySourceDivisionStatus.textContent,/после расчёта/);
 });
