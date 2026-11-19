@@ -43,7 +43,8 @@ function init(){
     if(UI.revision!==rev)throw Error('Данные изменились. Обновите список отчётов.');
     const destination=await api.chooseSqliteBackupPath('analiz-before-delete-'+new Date().toISOString().slice(0,10)+'.sqlite3');if(!destination){UI.notice?.('Удаление отменено: резервная копия не выбрана.');return;}
     if(UI.revision!==rev)throw Error('Данные изменились. Обновите список отчётов.');
-    await api.nativeDeleteReport(rev,r.id,destination);await UI.refresh();
+    await api.nativeDeleteReport(rev,r.id,destination);
+     try{await UI.refresh();}catch(error){UI.notice?.('Отчёт удалён из SQLite, но не удалось обновить отображение: '+String(error.message||error)+'. Обновите данные.',true);}
    }catch(error){UI.notice?.('Не удалось удалить отчёт: '+String(error.message||error),true);}finally{deleting=false;action.disabled=false;}
   });card.append(action);}
 
@@ -222,7 +223,11 @@ function init(){
    if(!current())throw Error('Данные, файл или параметры изменились. Проверьте Excel заново.');
    let backupDestination=null;if(c.replacements>0){backupDestination=await api.chooseSqliteBackupPath('analiz-before-import-'+new Date().toISOString().slice(0,10)+'.sqlite3');if(!backupDestination){status('unifiedImportStatus','Сохранение отменено: для замены требуется резервная копия SQLite.');return;}}
    if(!current())throw Error('Данные, файл или параметры изменились. Проверьте Excel заново.');
-   const flags={replaceExact:replace,acceptCrossType:overlap,acceptQuality:quality,backupDestination};const result=await (checked.wide?api.nativeWideImportApply(checked.source,checked.options,checked.review.reviewToken,flags):api.nativeLegacyImportApply(checked.source,checked.options,checked.review.reviewToken,flags));resetReview();$('importPreview').replaceChildren();await UI.refresh();status('unifiedImportStatus','Сохранено: '+result.reports+' отчётов · '+result.rows+' строк · ревизия '+result.revision+'.');
+   const flags={replaceExact:replace,acceptCrossType:overlap,acceptQuality:quality,backupDestination};const result=await (checked.wide?api.nativeWideImportApply(checked.source,checked.options,checked.review.reviewToken,flags):api.nativeLegacyImportApply(checked.source,checked.options,checked.review.reviewToken,flags));
+    resetReview();$('importPreview').replaceChildren();
+    const saved='Сохранено: '+result.reports+' отчётов · '+result.rows+' строк · ревизия '+result.revision+'.';
+    try{await UI.refresh();status('unifiedImportStatus',saved);}
+    catch(error){status('unifiedImportStatus',saved+' Не удалось обновить отображение: '+String(error.message||error)+'. Нажмите «Обновить данные».');}
   }catch(error){resetReview();status('unifiedImportStatus','Не сохранено: '+String(error.message||error)+'. Проверьте Excel заново.');}
   finally{importBusy=false;importLock();}
  });
@@ -231,7 +236,9 @@ function init(){
   try{const listing=await api.list(),normalize=p=>p.replace(/\\/g,'/').replace(/\/$/,'');const name=sourcePath.split(/[\\/]/).pop(),file=listing.files?.find(f=>f.name===name);if(!listing.folder||normalize(sourcePath)!==normalize(listing.folder)+'/'+name||!file?.nativeSignature)throw Error('Выбранный файл должен находиться в подключённой папке Excel.');
    const rule={type:'day',format:'daily-wide',start:'',sheet:'',...(options.year?{year:options.year}:{}),...(options.sheets?.length?{sheets:options.sheets}:{} )};
    if(Object.keys(options.mappings||{}).length){rule.mappings=Object.create(null);for(const [name,m]of Object.entries(options.mappings)){rule.mappings[name]={workCol:m.work_col-1,headerRow:m.header_row-1,firstDayCol:m.first_day_col-1,...(m.total_count_col!==null?{totalCountCol:m.total_count_col-1}:{}),...(m.total_amount_col!==null?{totalAmountCol:m.total_amount_col-1}:{})};}}
-   await api.nativeSetRuleChecked(name,rule,listing.revision,listing.folder,file.nativeSignature);await UI.refresh();status('unifiedImportStatus','Правило файла сохранено. Автоимпорт включается отдельно на текущий сеанс.');
+   await api.nativeSetRuleChecked(name,rule,listing.revision,listing.folder,file.nativeSignature);
+    try{await UI.refresh();status('unifiedImportStatus','Правило файла сохранено. Автоимпорт включается отдельно на текущий сеанс.');}
+    catch(error){status('unifiedImportStatus','Правило файла сохранено в SQLite, но не удалось обновить отображение: '+String(error.message||error)+'. Нажмите «Обновить данные».');}
   }catch(error){status('unifiedImportStatus','Правило не сохранено: '+String(error.message||error));}finally{importBusy=false;importLock();}
  });
  function folderControls(){

@@ -104,3 +104,41 @@ test('confirmed import rejects parameter edits and revision changes during backu
  {const {ui,calls,answer}=await reviewedReplacement(),backup=deferred();ui.UI.api.chooseSqliteBackupPath=()=>{calls.pickers++;return backup.promise;};const pending=ui.nodes.saveImport.click();answer.resolve(true);await flush();assert.equal(calls.pickers,1);assert.equal(calls.applies,0);ui.UI.revision=2;backup.resolve('/tmp/backup.sqlite3');await pending;assert.equal(calls.applies,0);}
 });
 test('delete rechecks revision after its asynchronous backup chooser',async()=>{const {ui,calls,answer,action}=await deletableReport(),backup=deferred();ui.UI.api.chooseSqliteBackupPath=()=>{calls.pickers++;return backup.promise;};const pending=action.click();answer.resolve(true);await flush();assert.equal(calls.pickers,1);assert.equal(calls.deletes,0);ui.UI.revision=2;backup.resolve('/tmp/backup.sqlite3');await pending;assert.equal(calls.deletes,0);});
+test('successful XLSX commit remains successful when view refresh fails',async()=>{
+ let applies=0;
+ const ui=mount({chooseWideXlsx:async()=>'/tmp/book.xlsx',nativeLegacyImportApply:async()=>{applies++;return {reports:1,rows:2,revision:2};}});
+ await ui.nodes.excelFile.click();await ui.nodes.inspectFile.click();
+ ui.UI.refresh=async()=>{throw Error('refresh unavailable');};
+ await ui.nodes.saveImport.click();
+ assert.equal(applies,1);
+ assert.match(ui.nodes.unifiedImportStatus.textContent,/Сохранено: 1 отчётов/);
+ assert.match(ui.nodes.unifiedImportStatus.textContent,/Не удалось обновить отображение/);
+ assert.doesNotMatch(ui.nodes.unifiedImportStatus.textContent,/Не сохранено/);
+ await ui.nodes.saveImport.click();assert.equal(applies,1,'review must be invalidated after commit');
+});
+test('successful report deletion is not called a failure when view refresh fails',async()=>{
+ const {ui,calls,answer,notices,action}=await deletableReport();
+ ui.UI.refresh=async()=>{throw Error('refresh unavailable');};
+ const pending=action.click();answer.resolve(true);await pending;
+ assert.equal(calls.deletes,1);
+ assert.match(notices.at(-1),/Отчёт удалён из SQLite/);
+ assert.match(notices.at(-1),/не удалось обновить отображение/i);
+ assert.doesNotMatch(notices.at(-1),/Не удалось удалить отчёт/);
+});
+test('saved daily-folder rule stays saved when view refresh fails',async()=>{
+ let writes=0;
+ const ui=mount({
+  chooseWideXlsx:async()=>'/tmp/book.xlsx',
+  nativeWideImportPreview:async()=>({reviewToken:'a'.repeat(64),reportCount:1,rowCount:1,conflicts:{},quality:{},sampleReports:[]}),
+  list:async()=>({folder:'/tmp',files:[{name:'book.xlsx',nativeSignature:'sig'}],rules:{},revision:5}),
+  nativeSetRuleChecked:async()=>{writes++;return {revision:6};}
+ });
+ await ui.nodes.excelFile.click();
+ ui.nodes.importFormat.value='daily-wide';await ui.nodes.importFormat.fire('change');
+ ui.nodes.dailyYear.value='2024';await ui.nodes.inspectFile.click();
+ ui.UI.refresh=async()=>{throw Error('refresh unavailable');};
+ await ui.nodes.saveDailyFolderRule.click();
+ assert.equal(writes,1);
+ assert.match(ui.nodes.unifiedImportStatus.textContent,/Правило файла сохранено в SQLite/);
+ assert.doesNotMatch(ui.nodes.unifiedImportStatus.textContent,/Правило не сохранено/);
+});
