@@ -280,7 +280,7 @@ async function sourceOverview(scope){
   );
   if(ticket!==sourceOverviewTicket||selection!==scope)return;
   const timeline=await api.nativeAnalysisTimeline(
-    scope.rev,'day',scope.from,scope.to,scope.orgs
+    scope.rev,'day',scope.from,scope.to,scope.orgs,scope.selectedName
   );
   if(ticket!==sourceOverviewTicket||selection!==scope)return;
   window.nativeDailyOverview?.show(summary,timeline);
