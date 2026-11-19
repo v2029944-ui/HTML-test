@@ -77,6 +77,14 @@ pub struct TimelineSummary {
     pub points: Vec<TimelinePoint>,
 }
 #[derive(Debug, Serialize)]
+pub struct WorkTrendSummary {
+    pub key: String,
+    pub name: String,
+    pub kind: String,
+    pub granularity: String,
+    pub points: Vec<TimelinePoint>,
+}
+#[derive(Debug, Serialize)]
 pub struct OrganizationTrendPoint {
     pub start: String,
     pub periods: i64,
@@ -1363,6 +1371,91 @@ impl Storage {
             granularity: if monthly {"month"} else {"period"}.into(),
             selected_organizations,
             series,
+        })
+    }
+    /// One selected work/group from the SQL detail view. An absent work in
+    /// an otherwise complete period is an actual zero; a missing report
+    /// invalidates its entire bucket. No full report history leaves SQLite.
+    pub fn analysis_work_timeline(
+        &self,
+        expected: i64,
+        s: &AnalysisScope,
+        q: &RangeQuery,
+        organization: Option<&str>,
+        key: &str,
+    ) -> Result<WorkTrendSummary, String> {
+        key_bound(key)?;
+        let mut c = self.connect()?;
+        let tx = c.transaction().map_err(err)?;
+        workspace(&tx, expected, s)?;
+        org_check(&tx, s, organization)?;
+        fill_range(&tx, s, q, 1)?;
+        // Resolve the identity against the same selected range as the detail
+        // table. A caller cannot retrieve arbitrary labels from other scopes.
+        let (name, kind): (String, String) = if let Some(org) = organization {
+            tx.query_row(
+                "SELECT name,kind FROM temp.an_values WHERE slot=1 AND org=?1 AND key=?2",
+                params![org, key],
+                |row| Ok((row.get(0)?,row.get(1)?)),
+            ).optional().map_err(err)?
+        } else {
+            tx.query_row(
+                "SELECT name,kind FROM temp.an_combined WHERE slot=1 AND key=?1",
+                [key],
+                |row| Ok((row.get(0)?,row.get(1)?)),
+            ).optional().map_err(err)?
+        }.ok_or("Selected work/group not found in analysis scope")?;
+        let count: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM temp.an_periods WHERE slot=1",
+            [], |row| row.get(0),
+        ).map_err(err)?;
+        let monthly = count > 120;
+        let sql = r#"
+            WITH buckets AS (
+                SELECT CASE WHEN ?1=1 THEN substr(start,1,7) ELSE start END AS label,
+                       COUNT(*) AS periods
+                FROM temp.an_periods WHERE slot=1 GROUP BY label
+            ), missing AS (
+                SELECT CASE WHEN ?1=1 THEN substr(start,1,7) ELSE start END AS label,
+                       COUNT(*) AS missing
+                FROM temp.an_missing
+                WHERE slot=1 AND (?2 IS NULL OR org=?2) GROUP BY label
+            ), aggregates AS (
+                SELECT CASE WHEN ?1=1 THEN substr(p.start,1,7) ELSE p.start END AS label,
+                       SUM(x.count) AS count,SUM(x.amount) AS amount
+                FROM temp.an_periods p
+                JOIN temp.an_valid v ON v.start=p.start
+                JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
+                LEFT JOIN analysis_groups g ON g.work=x.work
+                WHERE p.slot=1 AND (?2 IS NULL OR v.org=?2)
+                  AND COALESCE(g.key,'work:'||x.work)=?3
+                GROUP BY label
+            )
+            SELECT b.label,b.periods,COALESCE(m.missing,0),
+                   COALESCE(a.count,0),COALESCE(a.amount,0)
+            FROM buckets b
+            LEFT JOIN missing m ON m.label=b.label
+            LEFT JOIN aggregates a ON a.label=b.label
+            ORDER BY b.label
+        "#;
+        let mut stmt = tx.prepare(sql).map_err(err)?;
+        let mut rows = stmt.query(params![i64::from(monthly),organization,key]).map_err(err)?;
+        let mut points=Vec::new();
+        while let Some(row)=rows.next().map_err(err)? {
+            if points.len()>=124 {return Err("Work timeline exceeds 124 points".into());}
+            let missing:i64=row.get(2).map_err(err)?;
+            points.push(TimelinePoint{
+                start:row.get(0).map_err(err)?,
+                periods:row.get(1).map_err(err)?,
+                missing,
+                total:totals(row.get(3).map_err(err)?,row.get(4).map_err(err)?,missing==0)?,
+            });
+        }
+        Ok(WorkTrendSummary {
+            key:key.to_string(),
+            name,kind,
+            granularity:if monthly {"month"} else {"period"}.into(),
+            points,
         })
     }
     /// A small, sorted ranking of groups and works computed wholly in SQLite.
