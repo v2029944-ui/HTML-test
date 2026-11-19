@@ -1156,3 +1156,83 @@ fn available_range_totals_do_not_falsify_completeness() {
     assert_eq!(none.available_total.count,None);
     assert_eq!(none.total.amount,None);
 }
+
+
+#[test]
+fn daily_report_rollups_are_calendar_aligned_and_never_double_count_source_types() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let all=scope(&store,rev,"day",&["A","B"],None);
+    let day=store.analysis_daily_rollup(
+        rev,&all,&query("2024-02-28","2024-03-01"),"day",None,2,
+    ).unwrap();
+    assert_eq!(day.points.len(),2);
+    assert_eq!(day.next_cursor,Some("2024-02-29".into()));
+    assert_eq!(day.points[0].start,"2024-02-28");
+    assert_eq!(day.points[0].days,1);
+    assert_eq!(day.points[0].available_reports,2);
+    assert_eq!(day.points[0].total.amount,Some(69.));
+    assert_eq!(day.points[1].total.amount,Some(170.));
+    let last=store.analysis_daily_rollup(
+        rev,&all,&query("2024-02-28","2024-03-01"),
+        "day",day.next_cursor.as_deref(),2,
+    ).unwrap();
+    assert_eq!(last.points.len(),1);
+    assert_eq!(last.next_cursor,None);
+    assert_eq!(last.points[0].start,"2024-03-01");
+    assert_eq!(last.points[0].available_reports,1);
+    assert_eq!(last.points[0].missing,1);
+    assert!(!last.points[0].complete);
+    assert_eq!(last.points[0].total.amount,None);
+    assert_eq!(last.points[0].available_total.amount,Some(10.));
+
+    let week=store.analysis_daily_rollup(
+        rev,&all,&query("2024-02-26","2024-03-03"),"week",None,60,
+    ).unwrap();
+    assert_eq!(week.points.len(),1);
+    assert_eq!(week.points[0].start,"2024-02-26");
+    assert_eq!(week.points[0].days,7);
+    assert_eq!(week.points[0].available_reports,5);
+    assert_eq!(week.points[0].missing,9);
+    assert_eq!(week.points[0].total.amount,None);
+    assert_eq!(week.points[0].available_total.amount,Some(249.));
+
+    let months=store.analysis_daily_rollup(
+        rev,&all,&query("2024-02-01","2024-03-31"),"month",None,60,
+    ).unwrap();
+    assert_eq!(months.points.len(),2);
+    assert_eq!(months.points[0].start,"2024-02-01");
+    assert_eq!(months.points[0].days,29);
+    assert_eq!(months.points[0].available_total.amount,Some(239.));
+    assert_eq!(months.points[1].start,"2024-03-01");
+    assert_eq!(months.points[1].days,31);
+    assert_eq!(months.points[1].available_total.amount,Some(10.));
+
+    let year=store.analysis_daily_rollup(
+        rev,&all,&query("2024-01-01","2024-12-31"),"year",None,60,
+    ).unwrap();
+    assert_eq!(year.points.len(),1);
+    assert_eq!(year.points[0].days,366);
+    assert_eq!(year.points[0].available_total.amount,Some(249.));
+    assert_eq!(year.points[0].total.amount,None);
+    let only_a=scope(&store,rev,"day",&["A"],None);
+    let a=store.analysis_daily_rollup(
+        rev,&only_a,&query("2024-02-28","2024-03-01"),"day",None,60,
+    ).unwrap();
+    assert!(a.points.iter().all(|p|p.complete));
+    assert_eq!(a.points.iter().map(|p|p.total.amount.unwrap()).sum::<f64>(),249.);
+
+    assert!(store.analysis_daily_rollup(
+        rev,&all,&query("2024-02-28","2024-03-01"),"week",None,60,
+    ).is_err());
+    assert!(store.analysis_daily_rollup(
+        rev,&all,&query("2024-02-02","2024-02-29"),"month",None,60,
+    ).is_err());
+    assert!(store.analysis_daily_rollup(
+        rev,&all,&query("2024-01-01","2024-12-30"),"year",None,60,
+    ).is_err());
+    assert!(store.analysis_daily_rollup(
+        rev,&all,&query("2024-01-01","2024-12-31"),"year",None,61,
+    ).is_err());
+}
