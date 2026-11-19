@@ -831,3 +831,43 @@ fn export_uses_its_revision_snapshot_and_numeric_overflow_never_publishes() {
         .is_err());
     assert!(!path.exists());
 }
+
+
+#[test]
+fn sql_timeline_preserves_missing_and_zero_amounts_without_loading_history() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let rev = prepare(&store, &fixture());
+    let selected = scope(&store, rev, "day", &["A", "B"], None);
+    let daily = store.analysis_timeline(
+        rev, &selected, &query("2024-02-28", "2024-03-01"),
+    ).unwrap();
+    assert_eq!(daily.granularity, "period");
+    assert_eq!(daily.points.len(), 3);
+    assert_eq!(daily.points[0].start, "2024-02-28");
+    assert_eq!(daily.points[0].total.count, Some(0.));
+    assert_eq!(daily.points[0].total.amount, Some(69.));
+    assert_eq!(daily.points[1].total.amount, Some(170.));
+    assert_eq!(daily.points[2].start, "2024-03-01");
+    assert_eq!(daily.points[2].missing, 1); // B is absent; do not render A's 10 as the full total.
+    assert_eq!(daily.points[2].total.amount, None);
+    assert_eq!(daily.points[2].total.count, None);
+
+    let only_a = scope(&store, rev, "day", &["A"], None);
+    let march = store.analysis_timeline(
+        rev, &only_a, &query("2024-03-01", "2024-03-01"),
+    ).unwrap();
+    assert_eq!(march.points.len(), 1);
+    assert_eq!(march.points[0].missing, 0);
+    assert_eq!(march.points[0].total.amount, Some(10.));
+
+    let year = store.analysis_timeline(
+        rev, &selected, &query("2024-01-01", "2024-12-31"),
+    ).unwrap();
+    assert_eq!(year.granularity, "month");
+    assert_eq!(year.points.len(), 12);
+    assert_eq!(year.points[0].start, "2024-01");
+    assert_eq!(year.points[1].start, "2024-02");
+    assert!(year.points.iter().all(|point| point.total.amount.is_none()));
+    assert!(year.points.iter().all(|point| point.missing>0));
+}
