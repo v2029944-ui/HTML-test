@@ -387,10 +387,12 @@ def run():
                     'document.querySelector("#reportRows tr td:last-child")?.textContent !== '+json.dumps(first_native),
                     'Native SQL next page')
                 assert page.locator('#reportRows tr').count()==100
+                assert page.locator('#reportPageInfo').inner_text()=='Страница 2'
                 page.locator('#reportBack').click()
                 wait_for_app_state(page,
                     'document.querySelector("#reportRows tr td:last-child")?.textContent === '+json.dumps(first_native),
                     'Native SQL previous page')
+                assert page.locator('#reportPageInfo').inner_text()=='Страница 1'
                 page.locator('#nativeReportType').select_option('week')
                 wait_for_app_state(page,
                     'document.querySelector("#reportStatus")?.textContent.includes("На странице: 0")',
@@ -401,8 +403,10 @@ def run():
                 page.locator('[data-nav-link="analysis"]').click()
                 assert page.locator('#sqlAnalysis').is_visible()
                 page.locator('#analysisType').select_option('week')
-                page.locator('#analysisFrom').fill('2026-11-02')
-                page.locator('#analysisTo').fill('2026-11-09')
+                assert page.locator('#analysisFrom').get_attribute('type')=='week'
+                assert page.locator('#analysisTo').get_attribute('type')=='week'
+                page.locator('#analysisFrom').fill('2026-W45')
+                page.locator('#analysisTo').fill('2026-W46')
                 page.locator('#analysisPrepare').click()
                 wait_for_app_state(page,
                     'document.querySelector("#analysisRun")?.disabled === false',
@@ -414,6 +418,14 @@ def run():
                 assert page.locator('#analysisValues .metric').count()==9
                 assert page.locator('#analysisValues .metric').nth(3).locator('strong').inner_text()=='—'
                 assert page.locator('#analysisValues .metric').nth(4).locator('strong').inner_text()=='—'
+                assert page.locator('#analysisCoverageNotice').is_visible()
+                assert 'Подтверждение скрывает' in page.locator('#analysisCoverageText').inner_text()
+                page.locator('#analysisAcknowledge').click()
+                assert page.locator('#analysisCoverageNotice').is_hidden()
+                assert 'Замечание подтверждено' in page.locator('#analysisStatus').inner_text()
+                # Acknowledging the warning must not materialize missing values.
+                assert page.locator('#analysisValues .metric').nth(4).locator('strong').inner_text()=='—'
+                report['checks'].append('SQL acknowledgement suppresses only the known warning, not absent totals')
                 # D4d comparison derives complete/incomplete per-division rows
                 # through bounded D2 SQL, not through JS history data.
                 wait_for_app_state(page,
@@ -464,8 +476,8 @@ def run():
                 assert page.locator('#workTrendRows tr').count()==0
                 assert page.locator('#workTrendSelected').inner_text()=='Позиция не выбрана.'
                 report['checks'].append('SQL work/group trend controls start empty without fabricated data')
-                page.locator('#comparisonBeforeFrom').fill('2026-11-02')
-                page.locator('#comparisonBeforeTo').fill('2026-11-09')
+                page.locator('#comparisonBeforeFrom').fill('2026-W45')
+                page.locator('#comparisonBeforeTo').fill('2026-W46')
                 wait_for_app_state(page,
                     'document.querySelector("#comparisonRun")?.disabled === false',
                     'Native comparison becomes available after choosing baseline dates')
