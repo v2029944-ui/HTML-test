@@ -464,6 +464,23 @@ def run():
                 assert page.locator('#workTrendRows tr').count()==0
                 assert page.locator('#workTrendSelected').inner_text()=='Позиция не выбрана.'
                 report['checks'].append('SQL work/group trend controls start empty without fabricated data')
+                page.locator('#comparisonBeforeFrom').fill('2026-11-02')
+                page.locator('#comparisonBeforeTo').fill('2026-11-09')
+                wait_for_app_state(page,
+                    'document.querySelector("#comparisonRun")?.disabled === false',
+                    'Native comparison becomes available after choosing baseline dates')
+                page.locator('#comparisonRun').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#comparisonStatus")?.textContent.includes("есть пропуски")',
+                    'Both incomplete SQL ranges keep comparison changes unknown')
+                assert page.locator('#comparisonMetrics .comparison-metric').count()==2
+                assert page.locator('#comparisonDivisionRows tr').count()==4
+                assert all(row.locator('td').nth(3).inner_text()=='—'
+                    for row in page.locator('#comparisonDivisionRows tr').all())
+                assert page.locator('#comparisonRankRows li').count()==0
+                assert 'скрыта' in page.locator('#comparisonRankStatus').inner_text()
+                report['checks'].append('SQL comparison refuses fabricated deltas for incomplete baseline')
+
                 report['checks'].append('Native work/group keyset breakdown is empty for missing weekly data')
                 # D4f: export uses an on-disk CSV from SQLite, not report JSON,
                 # and must reject an existing output path without replacement.
