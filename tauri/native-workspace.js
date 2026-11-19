@@ -12,6 +12,11 @@ let analysisBusy=false,analysisReady=false,analysisCancelled=false,orgNames=[];
 let workBusy=false,workScope=null,workAfter=null,workBack=[],workNext=null;
 let exportBusy=false,backupBusy=false,restoreBusy=false,restoreSelection=null;
 const workSize=50;
+let rankingRequest=0;
+function invalidateRanking(message='Рейтинг появится после расчёта.'){
+ rankingRequest++;
+ window.nativeRanking?.clear(message);
+}
 let timelineRequest=0;
 function invalidateTimeline(message){
  timelineRequest++;
@@ -33,6 +38,8 @@ $('analysisPrepare').disabled=analysisBusy||refreshBusy||exportBusy||revision===
 $('analysisCancel').disabled=!analysisBusy;
 $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!analysisReady;
 $('analysisExport').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!workScope;
+$('rankingMetric').disabled=analysisBusy||refreshBusy||!workScope;
+$('rankingCategory').disabled=analysisBusy||refreshBusy||!workScope;
 $('workBack').disabled=workBusy||analysisBusy||refreshBusy||!workBack.length;
 $('workNext').disabled=workBusy||analysisBusy||refreshBusy||!workNext;
 $('analysisType').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
@@ -94,6 +101,7 @@ try{
  revision=snapshot.revision;
  analysisReady=false;
  invalidateTimeline('Данные обновлены. Повторите расчёт графика.');
+ invalidateRanking('Данные обновлены. Повторите расчёт рейтинга.');
  $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
  orgNames=snapshot.org_names.slice();
@@ -247,6 +255,7 @@ async function prepareAnalysis(){
  if(analysisBusy||refreshBusy||revision===null)return;
  analysisBusy=true;analysisReady=false;analysisCancelled=false;
 invalidateTimeline('Индексация данных. Рассчитайте график после подготовки.');
+invalidateRanking('Индексация данных. Повторите расчёт рейтинга после подготовки.');
 $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
 controlState();
@@ -381,7 +390,7 @@ async function calculateAnalysis(){
  if(!from||!to||from>to||organizations.some(x=>!x)||!organizations.length){
    status('analysisStatus','Укажите корректный диапазон дат и хотя бы одно подразделение.',true);return;
  }
- analysisBusy=true;invalidateTimeline('Строим график из агрегатов SQLite…');const expectedTimeline=timelineRequest;clearWork();controlState();
+ analysisBusy=true;invalidateRanking('Подготавливаем рейтинг SQLite…');invalidateTimeline('Строим график из агрегатов SQLite…');const expectedTimeline=timelineRequest;clearWork();controlState();
  try{
    const result=await api.nativeAnalysisRange(revision,kind,from,to,organizations);
    const divisions=await api.nativeAnalysisOrganizations(revision,kind,from,to,organizations);
@@ -405,17 +414,41 @@ async function calculateAnalysis(){
        window.nativeTimeline?.error('График не построен: '+userError(timelineError));
    }
    workScope={type:kind,from,to,organizations,organization:$('analysisOrganization').value==='*'?null:$('analysisOrganization').value};
+   await reloadRanking();
    updateResultContext(kind,from,to,organizations);
    status('analysisStatus',result.complete?'Расчёт выполнен по полной последовательности периодов.':'Расчёт выполнен, но не все периоды подтверждены. Итоги скрыты до устранения пропусков.',!result.complete);
  }catch(err){
    $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
    invalidateTimeline('График недоступен: расчёт не завершён.');
+   invalidateRanking('Рейтинг недоступен: расчёт не завершён.');
    status('divisionStatus','Сравнение не выполнено из-за ошибки.',true);
    status('divisionShareStatus','Доли недоступны: расчёт завершился ошибкой.',true);
    status('analysisStatus','Ошибка расчёта: '+userError(err),true);
    $('analysisResultScope').textContent='Расчёт не выполнен. Предыдущие результаты удалены, чтобы не показывать устаревшую выборку.';
  }finally{analysisBusy=false;controlState();}
  if(workScope)await workPage(null,true);
+}
+
+async function reloadRanking(){
+ const scope=workScope;
+ if(!scope||revision===null){
+   invalidateRanking('Для рейтинга сначала рассчитайте выбранный диапазон.');
+   return;
+ }
+ const ticket=++rankingRequest;
+ const metric=$('rankingMetric').value,category=$('rankingCategory').value;
+ window.nativeRanking?.clear('Рассчитываем 12 крупнейших позиций в SQLite…');
+ try{
+   const ranking=await api.nativeAnalysisRanking(
+     revision,scope.type,scope.from,scope.to,scope.organizations,
+     scope.organization,metric,category
+   );
+   if(ticket===rankingRequest&&workScope===scope)
+     window.nativeRanking?.show(ranking);
+ }catch(error){
+   if(ticket===rankingRequest&&workScope===scope)
+     window.nativeRanking?.error('Рейтинг недоступен: '+userError(error));
+ }
 }
 
 async function exportAnalysisCsv(){
@@ -442,7 +475,7 @@ const year=String(new Date().getFullYear());
 $('analysisFrom').value=year+'-01-01';
 $('analysisTo').value=year+'-12-31';
 $('analysisType').addEventListener('change',()=>{
- analysisReady=false;invalidateTimeline('Тип периода изменён. Подготовьте индексы и повторите расчёт.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
+ analysisReady=false;invalidateRanking('Тип периода изменён. Повторите расчёт рейтинга.');invalidateTimeline('Тип периода изменён. Подготовьте индексы и повторите расчёт.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
  status('analysisStatus','Выбран другой тип периода. Подготовьте соответствующие индексы.');
  $('analysisResultScope').textContent='Тип периода изменён. Подготовьте индексы и повторите расчёт.';
@@ -453,6 +486,7 @@ $('analysisPrepare').addEventListener('click',prepareAnalysis);
 $('analysisCancel').addEventListener('click',()=>{analysisCancelled=true;status('analysisStatus','Остановка после текущей порции…');});
 $('analysisRun').addEventListener('click',calculateAnalysis);
 $('analysisExport').addEventListener('click',exportAnalysisCsv);
+for(const id of ['rankingMetric','rankingCategory'])$(id).addEventListener('change',()=>{void reloadRanking();});
 $('workNext').addEventListener('click',async()=>{
  if(!workNext)return;
  const previous=workAfter;
@@ -467,7 +501,7 @@ $('workBack').addEventListener('click',async()=>{
 });
 for(const id of ['analysisFrom','analysisTo','analysisOrganization']){
  $(id).addEventListener('change',()=>{
-  invalidateTimeline('Фильтры изменены. Повторите расчёт графика.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork('Параметры изменены. Повторите расчёт.');
+  invalidateRanking('Фильтры изменены. Повторите расчёт рейтинга.');invalidateTimeline('Фильтры изменены. Повторите расчёт графика.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork('Параметры изменены. Повторите расчёт.');
   status('divisionShareStatus','Доли сброшены: фильтры изменены.');
   status('divisionStatus','Параметры изменены. Нажмите «Рассчитать» ещё раз.');
   $('analysisResultScope').textContent='Фильтры изменены. Повторите расчёт, чтобы увидеть актуальную выборку.';
