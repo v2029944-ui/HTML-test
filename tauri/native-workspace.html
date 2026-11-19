@@ -43,6 +43,13 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .ranking-fill{height:100%;background:#347db2;border-radius:8px}
 .ranking-fill.negative{background:#926da1}
 @media(max-width:650px){.ranking-controls{align-items:stretch}.ranking-controls label{flex-basis:100%}.ranking-controls select{width:100%}}
+.organization-trends-legend{display:flex;flex-wrap:wrap;gap:8px 16px;margin:9px 0;font-size:13px}
+.organization-trends-legend span{display:inline-flex;align-items:center;gap:6px;overflow-wrap:anywhere}
+.organization-trends-swatch{width:12px;height:12px;border-radius:3px;flex:none}
+#organizationTrendsChart{margin:12px 0}
+#organizationTrendsChart svg{display:block;width:100%;height:auto;max-height:340px;border:1px solid #dce2e9;border-radius:10px;background:#fbfcfe}
+#organizationTrendsChart svg text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:12px;fill:#435872}
+.organization-trends-details summary{cursor:pointer;color:#275d88;padding:9px 0}
 .division-title{font-size:17px;margin:22px 0 10px}
 .division-track{width:100%;min-width:110px;height:12px;border-radius:6px;background:#e7edf5;overflow:hidden}
 .division-fill{height:100%;background:#346d9d;border-radius:6px}
@@ -177,6 +184,23 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <div class="table-scroll"><table>
 <thead><tr><th>Период</th><th>Исходных периодов</th><th>Пропусков</th><th>Количество / объём</th><th>Сумма</th></tr></thead>
 <tbody id="timelineRows"></tbody>
+</table></div>
+</details>
+</section>
+<section id="sqlOrganizationTrends" aria-label="Динамика подразделений">
+<h3 class="division-title">Динамика по подразделениям</h3>
+<p class="intro">До восьми подразделений на одном графике, в порядке настроек. Полнота проверяется для каждого подразделения и периода отдельно; пропуски разрывают соответствующую линию. Если подразделений больше восьми, ограничение показывается явно.</p>
+<div class="timeline-controls">
+<label for="organizationTrendsMetric">Показатель</label>
+<select id="organizationTrendsMetric"><option value="amount">Сумма</option><option value="count">Количество / объём</option></select>
+</div>
+<p id="organizationTrendsStatus" class="status muted" role="status" aria-live="polite">Динамика появится после расчёта.</p>
+<div id="organizationTrendsLegend" class="organization-trends-legend" aria-label="Условные обозначения подразделений"></div>
+<div id="organizationTrendsChart"></div>
+<details class="organization-trends-details"><summary>Точные значения по подразделениям и периодам</summary>
+<div class="table-scroll"><table>
+<thead><tr><th>Подразделение</th><th>Период</th><th>Исходных периодов</th><th>Пропусков</th><th>Количество / объём</th><th>Сумма</th></tr></thead>
+<tbody id="organizationTrendsRows"></tbody>
 </table></div>
 </details>
 </section>
@@ -368,7 +392,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p id="metricKindStatus" class="status muted" role="status" aria-live="polite">Загрузка каталога видов отчётов…</p>
 </section>
 </main>
-<script src="tauri-bridge.js"></script><script src="tauri-native-updates.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-timeline.js"></script><script src="tauri-native-ranking.js"></script><script src="tauri-native-workspace.js"></script>
+<script src="tauri-bridge.js"></script><script src="tauri-native-updates.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-timeline.js"></script><script src="tauri-native-ranking.js"></script><script src="tauri-native-organization-trends.js"></script><script src="tauri-native-workspace.js"></script>
 <script src="tauri-native-legacy-import.js"></script>
 <script src="tauri-native-navigation.js"></script>
 <script src="tauri-native-wide-import.js"></script>
