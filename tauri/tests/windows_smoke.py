@@ -313,6 +313,12 @@ def run():
                     'SQL source folder metadata')
                 assert page.locator('#sourceFolderRows tr').count()==1
                 assert '1' in page.locator('#sourceFolderCount').inner_text()
+                # The source table is rendered before its async load releases
+                # the folder mutex/UI guard. Wait for the *finished* load,
+                # including native tracked operations, before reindexing SQLite.
+                wait_for_app_state(page,
+                    'document.querySelector("#sourceFolderRefresh")?.disabled === false && window.tauriOperations?.reads === 0 && window.tauriOperations?.saves === 0',
+                    'SQL source folder scan finished before SQLite metadata refresh')
                 # set_folder changed the SQLite config revision; reload the bounded
                 # read model so subsequent range queries do not use a stale revision.
                 # The initial SQL workspace startup also pages report/group metadata.
@@ -330,7 +336,15 @@ def run():
                         groups:document.querySelector('#groupStatus')?.textContent,
                         refreshDisabled:document.querySelector('#workspaceRefresh')?.disabled
                     })''')
-                    raise RuntimeError(f'Post-folder SQL metadata refresh failed: {snapshot}')
+                    diagnostic=page.evaluate('''async () => {
+                      try {
+                        const data=await window.desktopAPI.nativeSettingsBootstrap();
+                        return {nativeOk:true,revision:data?.revision,orgs:data?.org_names?.length};
+                      } catch(error) {
+                        return {nativeOk:false,reason:String(error)};
+                      }
+                    }''')
+                    raise RuntimeError(f'Post-folder SQL metadata refresh failed: {snapshot}; direct_native={diagnostic}')
                 assert page.evaluate("typeof window.appReady === 'undefined'")
                 report['checks'].append('SQL-only folder metadata, no full-history bootstrap or implicit import')
                 # Read-only end-to-end native ordinary Excel preview; tests real Rust parser
