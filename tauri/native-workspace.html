@@ -90,6 +90,8 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 #dailySourceOverview h4{font-size:15px;margin:12px 0 6px}
 #dailySourceOverview .timeline-chart svg{display:block;width:100%;height:auto;max-height:340px;border:1px solid #dce2e9;border-radius:8px;background:#fbfcfe}
 #dailySourceOverview .metric{min-width:0}
+#dailySourceDivisions{min-width:0;margin:15px 0}
+#dailySourceDivisions .table-scroll{max-width:100%}
 .daily-rollup-controls{min-width:0}
 .daily-rollup-controls input{min-width:0;max-width:185px}
 #sqlDailyRollups{padding-top:8px;min-width:0}
@@ -391,6 +393,15 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </div>
 <p id="dailySourceStatus" class="status muted" role="status" aria-live="polite">Показатели появятся после расчёта календаря.</p>
 <div id="dailySourceChart" class="timeline-chart"></div>
+<section id="dailySourceDivisions" aria-label="Подразделения из дневных отчётов">
+<h4>Подразделения по дневному источнику</h4>
+<p class="intro">Сумма и количество каждого подразделения показываются только при полном наличии его дневных отчётов. Неполный период не превращается в ноль.</p>
+<p id="dailySourceDivisionStatus" class="status muted" role="status" aria-live="polite">Сравнение подразделений появится после расчёта календаря.</p>
+<div class="table-scroll"><table>
+<thead><tr><th>Подразделение</th><th>Пропущенных дней</th><th>Количество / объём</th><th>Сумма</th><th>Полнота</th></tr></thead>
+<tbody id="dailySourceDivisionRows"></tbody>
+</table></div>
+</section>
 <details><summary>Точные значения динамики из дневного источника</summary>
 <div class="table-scroll"><table>
 <thead><tr><th>Период</th><th>Календарных дней</th><th>Пропусков по подразделениям</th><th>Количество / объём</th><th>Сумма</th></tr></thead>
