@@ -3,8 +3,10 @@
 mod storage;
 mod native_import;
 mod native_management;
+mod native_report_quality;
 mod native_name_selection;
 
+use native_report_quality::native_report_quality_page;
 use native_management::{native_catalog_page, native_delete_report, native_member_page, native_settings_edit};
 
 use native_import::{
@@ -1048,7 +1050,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             updater_configured, load_data, save_data, native_read_revision, native_report_page,
-            native_settings_bootstrap, native_group_page, native_group_rename,
+            native_report_quality_page, native_settings_bootstrap, native_group_page, native_group_rename,
             native_catalog_page, native_delete_report, native_member_page, native_settings_edit,
             native_analysis_index_page, native_analysis_index_settings, native_analysis_name_options, native_analysis_range,
             native_analysis_timeline, native_analysis_ranking, native_analysis_organization_trends, native_analysis_work_timeline, native_analysis_compare, native_daily_rollup,

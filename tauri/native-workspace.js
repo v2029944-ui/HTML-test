@@ -182,6 +182,7 @@ try{
   for(const value of [item.period_start,item.period_end,item.report_type,item.source_name||'—',item.id])
    tr.append(make('td',value??''));
   const action=make('td');
+  window.nativeReportQuality?.addReportAction(action,item,expected);
   window.nativeManagement?.addReportAction(action,item,expected);
   tr.append(action);tbody.append(tr);
  }
@@ -241,6 +242,7 @@ try{
  const snapshot=await api.nativeSettingsBootstrap();
  if(!Number.isSafeInteger(snapshot.revision)||snapshot.revision<0)throw Error('Ревизия SQLite слишком велика для JavaScript');
  revision=snapshot.revision;
+ window.nativeReportQuality?.setRevision(revision);
  void window.nativeManagement?.setContext(snapshot);
  window.nativeNameFilter?.setRevision(revision);
  analysisReady=false;
@@ -265,7 +267,7 @@ try{
  const groupsLoaded=await groups(null,true);
  return reportsLoaded&&groupsLoaded;
 }catch(err){
- revision=null;void window.nativeManagement?.setContext(null);window.nativeNameFilter?.setRevision(null);$('reportRows').replaceChildren();$('groupRows').replaceChildren();
+ revision=null;window.nativeReportQuality?.setRevision(null);void window.nativeManagement?.setContext(null);window.nativeNameFilter?.setRevision(null);$('reportRows').replaceChildren();$('groupRows').replaceChildren();
  reportNext=null;groupNext=null;reportBack=[];groupBack=[];
  window.nativeDailyCalendar?.setContext(null,[],null);
  status('workspaceStatus','Невозможно открыть SQLite: '+userError(err),true);

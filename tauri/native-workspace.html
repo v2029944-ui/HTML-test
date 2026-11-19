@@ -8,6 +8,13 @@
 body{margin:0}header{padding:12px max(20px,4vw);background:#fff;border-bottom:1px solid #dbe1ea;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
 main{margin:0 auto;max-width:1250px;padding:16px 22px 48px}h1{font-size:24px;margin:0}h2{font-size:19px;margin:0 0 14px}
 .panel{background:#fff;border:1px solid #dce2e9;border-radius:12px;margin-bottom:14px;padding:18px 22px;box-shadow:0 2px 9px #21334a0a}
+#reportQualityDialog{width:min(1080px,calc(100% - 24px));max-height:calc(100% - 24px);border:1px solid #aab9cb;border-radius:12px;padding:clamp(12px,3vw,24px);color:inherit}
+#reportQualityDialog [hidden]{display:none}
+#reportQualityDialog::backdrop{background:#17294066}
+#reportQualityContext,#reportQualityAnchor{overflow-wrap:anywhere}
+#reportQualityDialog button[aria-pressed="true"]{background:#e5edf6;border-color:#476685;font-weight:650}
+#reportQualityDialog button[aria-disabled="true"]{opacity:.55;cursor:not-allowed}
+.report-quality-action{margin:0 5px 5px 0}
 .intro{color:#55657a;font-size:14px;line-height:1.6}a{color:#1f5588}
 button,select,input{font:inherit;border:1px solid #aab9cb;border-radius:8px;padding:8px 12px;background:#fff;max-width:100%}
 button{cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}
@@ -395,6 +402,25 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p id="reportStatus" class="status muted" role="status" aria-live="polite"></p>
 <p id="managementReportStatus" class="status muted" role="status" aria-live="polite"></p>
 <div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table><thead><tr><th>Начало</th><th>Конец</th><th>Тип</th><th>Источник</th><th>Идентификатор</th><th>Действия</th></tr></thead><tbody id="reportRows"></tbody></table></div>
+<dialog id="reportQualityDialog" aria-labelledby="reportQualityTitle">
+<h2 id="reportQualityTitle">Сохранённые замечания</h2>
+<p id="reportQualityContext" class="intro"></p>
+<div class="controls">
+<button id="reportQualityClose" type="button" autofocus>Закрыть</button>
+<button id="reportQualityLocal" type="button" aria-pressed="true" hidden>Отчёт</button>
+<button id="reportQualitySource" type="button" aria-pressed="false" hidden>Общие замечания источника</button>
+</div>
+<p id="reportQualityAnchor" class="intro" hidden></p>
+<p id="reportQualityStatus" class="status muted" role="status" aria-live="polite"></p>
+<div id="reportQualityTable" class="table-scroll" tabindex="0" role="region" aria-label="Сохранённые замечания с ячейками Excel" hidden>
+<table><thead><tr><th scope="col">Тип</th><th scope="col">Причина</th><th scope="col">Лист</th><th scope="col">Подразделение</th><th scope="col">Строка</th><th scope="col">Дата</th><th scope="col">Ячейки Excel</th></tr></thead><tbody id="reportQualityRows"></tbody></table>
+</div>
+<div id="reportQualityPager" class="controls" hidden>
+<button id="reportQualityBack" type="button" aria-label="Предыдущая страница замечаний">Назад</button>
+<output id="reportQualityPage" aria-live="polite"></output>
+<button id="reportQualityNext" type="button" aria-label="Следующая страница замечаний">Далее</button>
+</div>
+</dialog>
 <section id="sqlDailyRollups" aria-label="Календарные сводки из дневных отчётов">
 <h3 class="division-title">Календарные сводки из дневных отчётов</h3>
 <p class="intro">Дни, недели, месяцы и годы рассчитываются из исходных дневных отчётов SQLite. Отдельно загруженные недельные и месячные источники сюда не прибавляются. Пропущенные дни показываются отдельно; суммы неполных периодов относятся только к имеющимся данным.</p>
@@ -654,6 +680,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <script src="tauri-native-daily-calendar.js"></script>
 <script src="tauri-native-name-filter.js"></script>
 <script src="tauri-native-management.js"></script>
+<script src="tauri-native-report-quality.js"></script>
 <script src="tauri-native-workspace.js"></script>
 <script src="tauri-native-import-mappings.js"></script><script src="tauri-native-legacy-import.js"></script>
 <script src="tauri-native-navigation.js"></script>

@@ -419,13 +419,13 @@ def run():
                 assert page.locator('#sqlReports').is_visible()
                 page.locator('#reportNext').click()
                 wait_for_app_state(page,
-                    'document.querySelector("#reportRows tr td:last-child")?.textContent !== '+json.dumps(first_native),
+                    'document.querySelector("#reportRows tr td:nth-child(5)")?.textContent !== '+json.dumps(first_native),
                     'Native SQL next page')
                 assert page.locator('#reportRows tr').count()==100
                 assert page.locator('#reportPageInfo').inner_text()=='Страница 2'
                 page.locator('#reportBack').click()
                 wait_for_app_state(page,
-                    'document.querySelector("#reportRows tr td:last-child")?.textContent === '+json.dumps(first_native),
+                    'document.querySelector("#reportRows tr td:nth-child(5)")?.textContent === '+json.dumps(first_native),
                     'Native SQL previous page')
                 assert page.locator('#reportPageInfo').inner_text()=='Страница 1'
                 assert page.locator('#sqlDailyRollups').is_visible()
@@ -775,6 +775,27 @@ def run():
                 assert len(updated['reports'])==366
                 assert all(r.get('sourceFormat')=='daily-wide' for r in updated['reports'])
                 report['checks'].append('reviewed native wide XLSX preview and atomic 366-report replacement')
+                assert page.evaluate('window.nativeWorkspaceRefresh()')
+                page.locator('[data-nav-link="reports"]').click()
+                source_anchor=next(row for row in updated['reports'] if 'sourceIssues' in row)
+                row=page.locator('#reportRows tr').filter(has_not_text=source_anchor['id']).first
+                quality=row.get_by_role('button',name='Замечания к отчёту',exact=False)
+                quality.click()
+                wait_for_app_state(page,
+                    '!document.querySelector("#reportQualitySource")?.hidden',
+                    'Saved report issues load the native source link')
+                assert page.locator('#reportQualityDialog').is_visible()
+                page.locator('#reportQualitySource').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#reportQualityStatus")?.textContent.startsWith("На странице:") || '
+                    'document.querySelector("#reportQualityStatus")?.textContent.startsWith("Сохранённых замечаний нет")',
+                    'Saved shared source issues through Tauri IPC')
+                assert source_anchor['id'] in page.locator('#reportQualityAnchor').inner_text()
+                assert page.locator('#reportQualityRows tr').count()==min(50,len(source_anchor['sourceIssues']))
+                page.keyboard.press('Escape')
+                assert not page.locator('#reportQualityDialog').is_visible()
+                assert quality.evaluate('(button) => document.activeElement === button')
+                report['checks'].append('Saved report quality, shared SQLite anchor, bounded rows and keyboard focus')
                 report['checks'].append('SQL-only native page, bounded report navigation, settings bootstrap')
                 page.locator('#legacyWorkspaceLink').click()
                 wait_for_app_state(page,'Boolean(window.appReady)','Legacy workspace after native route')

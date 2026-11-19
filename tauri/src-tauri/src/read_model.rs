@@ -232,9 +232,14 @@ pub(super) struct TokenBounded<R> {
     string: bool,
     escape: bool,
     token: usize,
+    depth: Option<usize>,
 }
 impl<R> TokenBounded<R> {
-    pub(super) fn new(inner: R) -> Self { Self { inner, string: false, escape: false, token: 0 } }
+    pub(super) fn new(inner: R) -> Self { Self { inner, string: false, escape: false, token: 0, depth: None } }
+    pub(super) fn limit_depth(mut self) -> Self {
+        self.depth = Some(0);
+        self
+    }
 }
 impl<R: Read> Read for TokenBounded<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -260,6 +265,18 @@ impl<R: Read> Read for TokenBounded<R> {
                 self.token = 0;
             } else {
                 self.token += 1;
+            }
+            if !self.string {
+                if let Some(depth) = &mut self.depth {
+                    match b {
+                        b'[' | b'{' => *depth += 1,
+                        b']' | b'}' => *depth = depth.saturating_sub(1),
+                        _ => {}
+                    }
+                    if *depth > 128 {
+                        return Err(io::Error::new(io::ErrorKind::InvalidData, "JSON nesting exceeds 128 levels"));
+                    }
+                }
             }
             if self.token > MAX_TOKEN_BYTES {
                 return Err(io::Error::new(
@@ -458,12 +475,7 @@ impl Storage {
             let blob = tx
                 .blob_open("main", "reports", "json", rowid, true)
                 .map_err(err)?;
-            let bounded = TokenBounded {
-                inner: blob,
-                string: false,
-                escape: false,
-                token: 0,
-            };
+            let bounded = TokenBounded::new(blob);
             let mut de =
                 serde_json::Deserializer::from_reader(BufReader::with_capacity(8192, bounded));
             let count = ReportSeed {

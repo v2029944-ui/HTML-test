@@ -23,6 +23,8 @@
       'native_member_page',{revision,group,afterHandle,limit},'reads'),
     nativeCatalogPage:(revision,afterHandle=null,limit=50)=>tracked(
       'native_catalog_page',{revision,afterHandle,limit},'reads'),
+    nativeReportQualityPage:(revision,id,scope,offset=0,limit=50)=>tracked(
+      'native_report_quality_page',{revision,id,scope,offset,limit},'reads'),
     nativeDeleteReport:(revision,id,backupDestination)=>tracked(
       'native_delete_report',{revision,id,backupDestination},'saves'),
     nativeSettingsEdit:(revision,action)=>tracked(
