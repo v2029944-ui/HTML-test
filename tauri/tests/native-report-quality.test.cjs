@@ -93,3 +93,11 @@ test('empty saved quality never claims complete data',async()=>{
  assert.equal(e.Table.hidden,true);
  assert.equal(e.Pager.hidden,true);
 });
+
+test('malformed entries are disclosed alongside readable saved issues',async()=>{
+ const {e,action}=mount(async()=>({...result([{reason:'usable'}]),invalid_entries:2}));
+ action.fire();
+ await tick();
+ assert.equal(e.Rows.children.length,1);
+ assert.match(e.Status.textContent,/Записей неподдерживаемого формата: 2/);
+});

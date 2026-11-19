@@ -25,7 +25,7 @@ fn pages_native_issues_and_preserves_excel_provenance() {
         "count_cell":format!("F{row}"),"amount_cell":format!("AA{row}"),"date":"2025-02-02",
         "cells":[format!("A{row}"),format!("F{row}"),format!("AA{row}")]
     })).collect();
-    insert(&conn, "day", &json!({"sourceSheet":"СМУ-16","issues":issues,"warnings":["same reason"]}).to_string());
+    insert(&conn, "day", &json!({"sourceSheet":"СМУ-16","issues":issues,"warnings":["Строка 1"]}).to_string());
     let rev = store.revision().unwrap();
     let first = store.report_quality_page(rev, "day", QualityScope::Report, 0, 50).unwrap();
     let next = first.next_offset.unwrap();
@@ -107,4 +107,27 @@ fn streams_large_row_payloads_and_bounds_issue_fields() {
     assert_eq!(page.issues.len(), 1);
     assert!(page.issues[0].reason.len() <= 4096);
     assert!(page.issues[0].reason.ends_with('…'));
+}
+
+#[test]
+fn keeps_distinct_warnings_after_structured_issues_across_pages() {
+    let (_dir, store, conn) = setup();
+    insert(&conn, "mixed", r#"{"warnings":["shared","by itself","by itself"],"issues":[{"reason":"shared"}]}"#);
+    let rev = store.revision().unwrap();
+    let first = store.report_quality_page(rev, "mixed", QualityScope::Report, 0, 1).unwrap();
+    assert_eq!(first.issues[0].reason, "shared");
+    let second = store.report_quality_page(rev, "mixed", QualityScope::Report, first.next_offset.unwrap(), 1).unwrap();
+    assert_eq!(second.issues[0].reason, "by itself");
+    assert_eq!(second.next_offset, None);
+}
+
+#[test]
+fn malformed_diagnostics_do_not_hide_valid_siblings() {
+    let (_dir, store, conn) = setup();
+    insert(&conn, "mixed", r#"{"warnings":[null,"still useful",{"text":"bad"}],"issues":[null,{"kind":"missing-reason"},{"reason":"valid issue","organization":false,"cells":["A1",null,"C1"]},{"reason":"other valid issue"}]}"#);
+    let rev = store.revision().unwrap();
+    let page = store.report_quality_page(rev, "mixed", QualityScope::Report, 0, 50).unwrap();
+    assert_eq!(page.issues.iter().map(|issue| issue.reason.as_str()).collect::<Vec<_>>(), ["valid issue","other valid issue","still useful"]);
+    assert_eq!(page.issues[0].cells, ["A1","C1"]);
+    assert!(serde_json::to_value(&page).unwrap()["invalid_entries"].as_u64().unwrap() >= 4);
 }

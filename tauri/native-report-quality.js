@@ -68,11 +68,14 @@
    nextOffset=result.next_offset;
    render(result.issues);
    $('Pager').hidden=offset===0&&nextOffset===null;
+   const malformed=result.invalid_entries>0
+    ? ' Записей неподдерживаемого формата: '+result.invalid_entries+'.' : '';
    if(!result.issues.length){
-    setStatus('Сохранённых замечаний нет. Полнота данных этим не подтверждается.');
+    setStatus((malformed?'Нет читаемых замечаний. Полнота данных этим не подтверждается.'
+     :'Сохранённых замечаний нет. Полнота данных этим не подтверждается.')+malformed);
    }else{
     const detail=result.warning_fallback?' Сохранены предупреждения без подробной расшифровки.':'';
-    setStatus('На странице: '+result.issues.length+'.'+detail);
+    setStatus('На странице: '+result.issues.length+'.'+detail+malformed);
    }
   }catch(error){
    if(ticket!==request||!dialog.open||selection!==expected)return;
