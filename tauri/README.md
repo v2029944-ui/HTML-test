@@ -1,16 +1,16 @@
-# Анализ работ — Tauri 1.6.1 (предварительная версия, Windows + SQLite)
+# Анализ работ — Tauri 1.7.0 (предварительная версия, Windows + SQLite)
 
 Основная платформа — Windows x64, Tauri 2 и системный WebView2. Данные сохраняются локально в SQLite в папке «Документы/Анализ работ». Автономный [`index.html`](../index.html) остаётся самостоятельной браузерной версией.
 
-## Предварительный выпуск 1.6.1
+## Предварительный выпуск 1.7.0
 
-[**Скачать установщик 1.6.1 (Windows x64)**](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.6.1/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.6.1/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [GitHub Release](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.6.1) · [проверенный Windows/WebView2 CI](https://github.com/v2029944-ui/HTML-test/actions/runs/44518430541).
+[**Скачать установщик 1.7.0 (Windows x64)**](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.7.0/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.7.0/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [GitHub Release](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.7.0) · [проверенный Windows/WebView2 CI](https://github.com/v2029944-ui/HTML-test/actions/runs/44534276975).
 
-SQLite и раздел «Аналитика» открываются по умолчанию, в том числе при ранее сохранённой вкладке Excel. Классический интерфейс доступен по ссылке и сохраняется стартовым только при явном выборе. [Изменения 1.6.1](release-notes/1.6.1.md).
+Привычные отчёты и оформление Excel-версии поверх основной SQLite: меню «Управление» справа, календарь из 12 месяцев, темы, палитры, дизайн и размер интерфейса. В шапке видна установленная версия, реальные загрузки сопровождаются индикатором. [Изменения 1.7.0](release-notes/1.7.0.md).
 
-Подписанные установки 1.5.1 и 1.6.0 могут обновиться до предварительной 1.6.1 через приложение. Перед установкой сохраните резервную копию SQLite и исходных Excel. Неподписанные сборки без ключа требуют ручной установки подписанного EXE. Исправление запуска не меняет схему SQLite и не включает автоимпорт.
+Подписанные установки 1.5.1, 1.6.0 и 1.6.1 могут обновиться до предварительной 1.7.0 через приложение. Перед установкой сохраните резервную копию SQLite и исходных Excel. Неподписанные сборки без ключа требуют ручной установки подписанного EXE. SQLite остаётся основным режимом, схема базы не меняется; автоимпорт без разрешения не включается.
 
-Онлайн-канал [tauri-latest.json](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-updates/tauri-latest.json) проверен: версия 1.6.1, подпись совпадает с опубликованным установщиком, публичный HTTP 200. [Подписанный выпуск и Windows/WebView2](https://github.com/v2029944-ui/HTML-test/actions/runs/44518430541). GitHub Release сохраняет отметку предварительного.
+Онлайн-канал [tauri-latest.json](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-updates/tauri-latest.json) проверен: версия 1.7.0, подпись совпадает с опубликованным установщиком, публичный HTTP 200. [Подписанный выпуск и Windows/WebView2](https://github.com/v2029944-ui/HTML-test/actions/runs/44534276975). GitHub Release сохраняет отметку предварительного.
 ## Опубликованная 1.5.1
 
 [**Скачать подписанный установщик 1.5.1 (Windows x64)**](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.5.1/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.5.1/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [полный GitHub Release](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.5.1) · [заметки к выпуску](release-notes/1.5.1.md).

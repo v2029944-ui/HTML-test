@@ -25,8 +25,8 @@
 - [x] Shared appearance: failing actual-script preference tests; extract classic style/settings logic in prepare; familiar shell/menu/settings; green suite.
 - [x] Reports: bounded SQL calendar, metadata-only tests + native JS races, friendly paged report list, open details from date.
 - [x] Analytics composition: common filters, distinct changes view, classic cards/controls, preserved charts/paging/printing.
-- [ ] Browser visual/interaction verification, installed WebView2 assertions for new UI, versioned notes, review, PR CI.
-- [ ] Integration and exact-main signed release through existing pipeline, public manifest verification, README/status.
+- [x] Browser visual/interaction verification, installed WebView2 assertions for new UI, versioned notes, review, PR CI.
+- [x] Integration and exact-main signed release through existing pipeline, public manifest verification, README/status.
 
 ## Ledger
 - Base27f3d26; isolated /workspace/sql-classic-ui. User provided concrete existing UI reference; implement matching reference without speculative redesign.
@@ -41,3 +41,7 @@
 - Final reference correction: classic division colors stay assigned by full settings order when a subset is selected. SQL now passes that order into the renderer; regression RED/GREEN includes filtering and metric switch.
 
 - Installed WebView2 caught first-screen regression at1280x720: next analysis panel began828px down. Kept the original assertion, removed duplicate import/intro and compacted shared header/filters/overview. Browser exact geometry RED/GREEN includes1270px to account for Windows scrollbar.
+
+- PR75 full Windows NSIS/WebView2 passed on1024c5d (run44528823535), including preserved first-screen assertion, calendar, fonts, version, activity, colors, import/recovery. Merged source754b290; exact-main CI44531479350 passed. Signed release44534276975 passed.
+
+- Published signed prerelease1.7.0 and advanced the online channel. Public EXE/sig sizes and serverSHA256 matched downloaded files; manifest version1.7.0 and signature matched Release. Previous1.6.1 assets unchanged. Source754b290, release451405534.
