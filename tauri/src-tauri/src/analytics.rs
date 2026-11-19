@@ -1285,7 +1285,10 @@ impl Storage {
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN analysis_filter_items f ON f.id=?2 AND f.item=v.org
                 JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
-                WHERE p.slot=1
+                LEFT JOIN analysis_groups g ON g.work=x.work
+                WHERE p.slot=1 AND (?3 IS NULL OR EXISTS(
+                    SELECT 1 FROM analysis_filter_items names
+                    WHERE names.id=?3 AND names.item=COALESCE(g.name,x.work)))
                 GROUP BY label
             )
             SELECT b.label,b.periods,COALESCE(m.missing,0),
@@ -1296,7 +1299,7 @@ impl Storage {
             ORDER BY b.label
         "#;
         let mut stmt = tx.prepare(sql).map_err(err)?;
-        let mut rows = stmt.query(params![i64::from(monthly), &s.organizations]).map_err(err)?;
+        let mut rows = stmt.query(params![i64::from(monthly), &s.organizations, &s.names]).map_err(err)?;
         let mut points = Vec::new();
         while let Some(row) = rows.next().map_err(err)? {
             if points.len() >= 124 {
@@ -1362,7 +1365,10 @@ impl Storage {
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN selected s ON s.org=v.org
                 JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
-                WHERE p.slot=1
+                LEFT JOIN analysis_groups g ON g.work=x.work
+                WHERE p.slot=1 AND (?3 IS NULL OR EXISTS(
+                    SELECT 1 FROM analysis_filter_items names
+                    WHERE names.id=?3 AND names.item=COALESCE(g.name,x.work)))
                 GROUP BY v.org,label
             )
             SELECT s.org,b.label,b.periods,COALESCE(m.missing,0),
@@ -1373,7 +1379,7 @@ impl Storage {
             ORDER BY s.ordinal,b.label
         "#;
         let mut stmt = tx.prepare(sql).map_err(err)?;
-        let mut rows = stmt.query(params![i64::from(monthly),&s.organizations]).map_err(err)?;
+        let mut rows = stmt.query(params![i64::from(monthly),&s.organizations,&s.names]).map_err(err)?;
         let mut series: Vec<OrganizationTrendSeries> = Vec::new();
         let mut count = 0_usize;
         while let Some(row) = rows.next().map_err(err)? {
@@ -1470,6 +1476,10 @@ impl Storage {
                 FROM temp.an_valid v
                 JOIN temp.an_periods p ON p.slot=1 AND p.start=v.start
                 LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
+                AND (?3 IS NULL OR EXISTS(
+                    SELECT 1 FROM analysis_filter_items names
+                    LEFT JOIN analysis_groups g ON g.work=x.work
+                    WHERE names.id=?3 AND names.item=COALESCE(g.name,x.work)))
                 GROUP BY label
             )
             SELECT b.label,b.days,COALESCE(m.absent,0),COALESCE(o.reports,0),
@@ -1482,7 +1492,7 @@ impl Storage {
             ORDER BY b.label LIMIT ?2"
         );
         let mut stmt=tx.prepare(&sql).map_err(err)?;
-        let mut rows=stmt.query(params![after,(page_size+1) as i64]).map_err(err)?;
+        let mut rows=stmt.query(params![after,(page_size+1) as i64,&s.names]).map_err(err)?;
         let mut points=Vec::new();
         while let Some(row)=rows.next().map_err(err)? {
             if points.len()>page_size {return Err("Daily rollup result exceeds page limit".into());}
