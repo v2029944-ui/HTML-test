@@ -12,6 +12,11 @@ let analysisBusy=false,analysisReady=false,analysisCancelled=false,orgNames=[];
 let workBusy=false,workScope=null,workAfter=null,workBack=[],workNext=null;
 let exportBusy=false,backupBusy=false,restoreBusy=false,restoreSelection=null;
 const workSize=50;
+let timelineRequest=0;
+function invalidateTimeline(message){
+ timelineRequest++;
+ window.nativeTimeline?.clear(message);
+}
 function controlState(){
 $('reportBack').disabled=reportsBusy||refreshBusy||!reportBack.length;
 $('reportNext').disabled=reportsBusy||refreshBusy||!reportNext;
@@ -88,6 +93,7 @@ try{
  if(!Number.isSafeInteger(snapshot.revision)||snapshot.revision<0)throw Error('Ревизия SQLite слишком велика для JavaScript');
  revision=snapshot.revision;
  analysisReady=false;
+ invalidateTimeline('Данные обновлены. Повторите расчёт графика.');
  $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
  orgNames=snapshot.org_names.slice();
@@ -240,6 +246,7 @@ function updateResultContext(type,from,to,scope){
 async function prepareAnalysis(){
  if(analysisBusy||refreshBusy||revision===null)return;
  analysisBusy=true;analysisReady=false;analysisCancelled=false;
+invalidateTimeline('Индексация данных. Рассчитайте график после подготовки.');
 $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
 controlState();
@@ -374,7 +381,7 @@ async function calculateAnalysis(){
  if(!from||!to||from>to||organizations.some(x=>!x)||!organizations.length){
    status('analysisStatus','Укажите корректный диапазон дат и хотя бы одно подразделение.',true);return;
  }
- analysisBusy=true;clearWork();controlState();
+ analysisBusy=true;invalidateTimeline('Строим график из агрегатов SQLite…');const expectedTimeline=timelineRequest;clearWork();controlState();
  try{
    const result=await api.nativeAnalysisRange(revision,kind,from,to,organizations);
    const divisions=await api.nativeAnalysisOrganizations(revision,kind,from,to,organizations);
@@ -389,11 +396,20 @@ async function calculateAnalysis(){
    const box=$('analysisValues');box.replaceChildren();
    for(const [label,value] of metrics){const item=make('div');item.className='metric';item.append(make('strong',value),make('span',label));box.append(item);}
    showDivisionComparison(divisions,total.amount,result.complete);
+   // A failed chart must not discard already verified KPIs or division results.
+   try{
+     const timeline=await api.nativeAnalysisTimeline(revision,kind,from,to,organizations);
+     if(expectedTimeline===timelineRequest)window.nativeTimeline?.show(timeline);
+   }catch(timelineError){
+     if(expectedTimeline===timelineRequest)
+       window.nativeTimeline?.error('График не построен: '+userError(timelineError));
+   }
    workScope={type:kind,from,to,organizations,organization:$('analysisOrganization').value==='*'?null:$('analysisOrganization').value};
    updateResultContext(kind,from,to,organizations);
    status('analysisStatus',result.complete?'Расчёт выполнен по полной последовательности периодов.':'Расчёт выполнен, но не все периоды подтверждены. Итоги скрыты до устранения пропусков.',!result.complete);
  }catch(err){
    $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
+   invalidateTimeline('График недоступен: расчёт не завершён.');
    status('divisionStatus','Сравнение не выполнено из-за ошибки.',true);
    status('divisionShareStatus','Доли недоступны: расчёт завершился ошибкой.',true);
    status('analysisStatus','Ошибка расчёта: '+userError(err),true);
@@ -426,7 +442,7 @@ const year=String(new Date().getFullYear());
 $('analysisFrom').value=year+'-01-01';
 $('analysisTo').value=year+'-12-31';
 $('analysisType').addEventListener('change',()=>{
- analysisReady=false;$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
+ analysisReady=false;invalidateTimeline('Тип периода изменён. Подготовьте индексы и повторите расчёт.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
  status('analysisStatus','Выбран другой тип периода. Подготовьте соответствующие индексы.');
  $('analysisResultScope').textContent='Тип периода изменён. Подготовьте индексы и повторите расчёт.';
@@ -451,7 +467,7 @@ $('workBack').addEventListener('click',async()=>{
 });
 for(const id of ['analysisFrom','analysisTo','analysisOrganization']){
  $(id).addEventListener('change',()=>{
-  $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork('Параметры изменены. Повторите расчёт.');
+  invalidateTimeline('Фильтры изменены. Повторите расчёт графика.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork('Параметры изменены. Повторите расчёт.');
   status('divisionShareStatus','Доли сброшены: фильтры изменены.');
   status('divisionStatus','Параметры изменены. Нажмите «Рассчитать» ещё раз.');
   $('analysisResultScope').textContent='Фильтры изменены. Повторите расчёт, чтобы увидеть актуальную выборку.';
