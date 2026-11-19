@@ -1118,3 +1118,41 @@ fn comparison_dashboard_ranking_has_fixed_size_and_zero_base_no_percent() {
     assert_eq!(new.amount.as_ref().unwrap().base,0.);
     assert_eq!(new.amount.as_ref().unwrap().current,30.);
 }
+
+
+#[test]
+fn available_range_totals_do_not_falsify_completeness() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let selected=scope(&store,rev,"day",&["A","B"],None);
+    let partial=store.analysis_range_summary(
+        rev,&selected,&query("2024-02-28","2024-03-01")
+    ).unwrap();
+    assert!(!partial.complete);
+    assert_eq!(partial.periods,3);
+    assert_eq!(partial.organizations,2);
+    assert_eq!(partial.missing,1);
+    assert_eq!(partial.available_reports,5);
+    assert_eq!(partial.total.amount,None);
+    assert_eq!(partial.total.count,None);
+    assert_eq!(partial.available_total.amount,Some(249.));
+    assert_eq!(partial.available_total.count,Some(5.));
+    assert_eq!(partial.available_total.average,Some(249./5.));
+    let a_only=scope(&store,rev,"day",&["A"],None);
+    let full=store.analysis_range_summary(
+        rev,&a_only,&query("2024-02-28","2024-03-01")
+    ).unwrap();
+    assert!(full.complete);
+    assert_eq!(full.available_reports,3);
+    assert_eq!(full.available_total.amount,full.total.amount);
+    assert_eq!(full.available_total.count,full.total.count);
+    let none=store.analysis_range_summary(
+        rev,&a_only,&query("2024-04-01","2024-04-01")
+    ).unwrap();
+    assert!(!none.complete);
+    assert_eq!(none.available_reports,0);
+    assert_eq!(none.available_total.amount,None);
+    assert_eq!(none.available_total.count,None);
+    assert_eq!(none.total.amount,None);
+}
