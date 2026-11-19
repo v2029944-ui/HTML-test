@@ -23,6 +23,7 @@ function prepare(options={}){
   fs.writeFileSync(path.join(output,'index.html'),prepareHtml(source));
   fs.copyFileSync(path.join(__dirname,'bridge.js'),path.join(output,'tauri-bridge.js'));
   fs.copyFileSync(path.join(__dirname,'updates.js'),path.join(output,'tauri-updates.js'));
+  fs.copyFileSync(path.join(__dirname,'native-updates.js'),path.join(output,'tauri-native-updates.js'));
   fs.copyFileSync(path.join(__dirname,'native-reader.js'),path.join(output,'tauri-native-reader.js'));
   fs.copyFileSync(path.join(__dirname,'native-errors.js'),path.join(output,'tauri-native-errors.js'));
   fs.copyFileSync(path.join(__dirname,'native-workspace.js'),path.join(output,'tauri-native-workspace.js'))
