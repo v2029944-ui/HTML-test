@@ -423,6 +423,15 @@ def run():
                     for row in page.locator('#divisionRows tr').all())
                 assert all(row.locator('td').nth(2).inner_text()!='0'
                     for row in page.locator('#divisionRows tr').all())
+                # The graphical SQL layer must use the same missing-period evidence.
+                wait_for_app_state(page,
+                    'document.querySelector("#timelineStatus")?.textContent.includes("Ни одной полной точки")',
+                    'SQL timeline has no fabricated zero observations')
+                assert page.locator('#timelineRows tr').count()==2
+                assert page.locator('#timelineChart svg').count()==0
+                assert all(row.locator('td').nth(4).inner_text()=='—'
+                    for row in page.locator('#timelineRows tr').all())
+                report['checks'].append('Native timeline preserves missing weekly periods')
                 report['checks'].append('D2 incomplete SQL range keeps missing totals null')
                 report['checks'].append('Native division comparison preserves unknown incomplete amounts')
                 # D4e: the group/work keyset API must also run on the real
