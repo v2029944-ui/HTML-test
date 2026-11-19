@@ -434,7 +434,15 @@ def run():
                 assert page.locator('#dailyRollupRows tr').first.locator('td').first.inner_text()=='2024'
                 assert page.locator('#dailyRollupRows tr').first.locator('td').nth(1).inner_text()=='366'
                 assert page.locator('#dailyRollupRows tr').count()<=60
+                wait_for_app_state(page,
+                    'document.querySelectorAll("#dailySourceKpis .comparison-metric").length === 5 && document.querySelector("#dailySourceChart svg") !== null',
+                    'KPI and monthly chart derived only from 366 daily reports')
+                assert page.locator('#dailySourceRows tr').count()==12
+                assert page.locator('#dailySourceRows tr').first.locator('td').first.inner_text()=='2024-01'
+                assert page.locator('#dailySourceKpis .comparison-metric').first.locator('strong').inner_text()!='—'
+                assert 'календарные месяцы' in page.locator('#dailySourceStatus').inner_text()
                 assert 'дневные' in page.locator('#dailyRollupScope').inner_text().lower()
+                report['checks'].append('SQL day-source KPIs and chart match the calendar scope, without weekly or monthly imports')
                 assert page.evaluate("typeof window.appReady === 'undefined'")
                 report['checks'].append('SQL 2024 annual calendar is computed from daily reports only')
                 page.locator('#dailyRollupRows tr').first.locator('button').click()
