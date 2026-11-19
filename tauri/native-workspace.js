@@ -89,6 +89,7 @@ try{
  revision=snapshot.revision;
  analysisReady=false;
  $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
+ status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
  orgNames=snapshot.org_names.slice();
  const orgSelect=$('analysisOrganization'),previousOrganization=orgSelect.value;
  orgSelect.replaceChildren();
@@ -240,6 +241,7 @@ async function prepareAnalysis(){
  if(analysisBusy||refreshBusy||revision===null)return;
  analysisBusy=true;analysisReady=false;analysisCancelled=false;
 $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
+ status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
 controlState();
  const kind=$('analysisType').value;
  let processed=0,cursor=null;
@@ -264,7 +266,7 @@ controlState();
  }finally{analysisBusy=false;controlState();}
 }
 
-function showDivisionComparison(rows){
+function showDivisionComparison(rows,rangeTotal,rangeComplete){
  const tbody=$('divisionRows');tbody.replaceChildren();
  if(!Array.isArray(rows)||rows.length>100)throw Error('Некорректный размер SQL-сравнения');
  const finite=x=>typeof x==='number'&&Number.isFinite(x);
@@ -278,6 +280,18 @@ function showDivisionComparison(rows){
  });
  const maximum=Math.max(0,...sorted.map(item=>
      item.complete&&finite(item.total?.amount)?Math.abs(item.total.amount):0));
+ // Share is meaningful only when the complete selected SQL range agrees
+ // with the sum of complete non-negative organization totals.
+ const completeAmounts=sorted.every(item=>item.complete===true&&
+   finite(item.total?.amount)&&item.total.amount>=0);
+ const divisionsSum=sorted.reduce((total,item)=>total+
+   (finite(item.total?.amount)?item.total.amount:0),0);
+ const shareEnabled=rangeComplete===true&&completeAmounts&&
+   finite(rangeTotal)&&rangeTotal>0&&
+   Math.abs(divisionsSum-rangeTotal)<=Math.max(.000001,Math.abs(rangeTotal)*1e-8);
+ status('divisionShareStatus',shareEnabled
+   ?'Доли от подтверждённой суммы выбранных подразделений; состав выборки указан выше.'
+   :'Доли скрыты: ряд неполный, сумма не положительна или итоги подразделений не совпадают с итогом выбранного диапазона.');
  for(const item of sorted){
    const tr=make('tr');
    const complete=item.complete===true;
@@ -296,7 +310,11 @@ function showDivisionComparison(rows){
      fill.style.width=(maximum?Math.min(100,Math.abs(sum)/maximum*100):0)+'%';
      track.append(fill);graph.append(track);
    }
-   tr.append(graph);tbody.append(tr);
+   tr.append(graph);
+   const share=shareEnabled&&sum!==null
+     ?(sum/rangeTotal*100).toLocaleString('ru-RU',{maximumFractionDigits:1})+' %'
+     :'—';
+   tr.append(make('td',share));tbody.append(tr);
  }
  status('divisionStatus','Подразделений в сравнении: '+rows.length+'. Порядок: по подтверждённой сумме.');
 }
@@ -361,13 +379,14 @@ async function calculateAnalysis(){
    ];
    const box=$('analysisValues');box.replaceChildren();
    for(const [label,value] of metrics){const item=make('div');item.className='metric';item.append(make('strong',value),make('span',label));box.append(item);}
-   showDivisionComparison(divisions);
+   showDivisionComparison(divisions,total.amount,result.complete);
    workScope={type:kind,from,to,organizations,organization:$('analysisOrganization').value==='*'?null:$('analysisOrganization').value};
    updateResultContext(kind,from,to,organizations);
    status('analysisStatus',result.complete?'Расчёт выполнен по полной последовательности периодов.':'Расчёт выполнен, но не все периоды подтверждены. Итоги скрыты до устранения пропусков.',!result.complete);
  }catch(err){
    $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
    status('divisionStatus','Сравнение не выполнено из-за ошибки.',true);
+   status('divisionShareStatus','Доли недоступны: расчёт завершился ошибкой.',true);
    status('analysisStatus','Ошибка расчёта: '+userError(err),true);
    $('analysisResultScope').textContent='Расчёт не выполнен. Предыдущие результаты удалены, чтобы не показывать устаревшую выборку.';
  }finally{analysisBusy=false;controlState();}
@@ -399,6 +418,7 @@ $('analysisFrom').value=year+'-01-01';
 $('analysisTo').value=year+'-12-31';
 $('analysisType').addEventListener('change',()=>{
  analysisReady=false;$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
+ status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
  status('analysisStatus','Выбран другой тип периода. Подготовьте соответствующие индексы.');
  $('analysisResultScope').textContent='Тип периода изменён. Подготовьте индексы и повторите расчёт.';
  updateFilterContext();
@@ -423,6 +443,7 @@ $('workBack').addEventListener('click',async()=>{
 for(const id of ['analysisFrom','analysisTo','analysisOrganization']){
  $(id).addEventListener('change',()=>{
   $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork('Параметры изменены. Повторите расчёт.');
+  status('divisionShareStatus','Доли сброшены: фильтры изменены.');
   status('divisionStatus','Параметры изменены. Нажмите «Рассчитать» ещё раз.');
   $('analysisResultScope').textContent='Фильтры изменены. Повторите расчёт, чтобы увидеть актуальную выборку.';
   updateFilterContext();
