@@ -315,7 +315,22 @@ def run():
                 assert '1' in page.locator('#sourceFolderCount').inner_text()
                 # set_folder changed the SQLite config revision; reload the bounded
                 # read model so subsequent range queries do not use a stale revision.
-                assert page.evaluate('window.nativeWorkspaceRefresh()') is True
+                # The initial SQL workspace startup also pages report/group metadata.
+                # A concurrent refresh intentionally returns false until that read
+                # completes. Wait for the real refresh button, not a fixed delay.
+                page.evaluate('window.nativeWorkspaceReady')
+                wait_for_app_state(page,
+                    'document.querySelector("#workspaceRefresh")?.disabled === false',
+                    'SQL metadata pages have completed before post-folder refresh')
+                refreshed=page.evaluate('window.nativeWorkspaceRefresh()')
+                if refreshed is not True:
+                    snapshot=page.evaluate('''() => ({
+                        workspace:document.querySelector('#workspaceStatus')?.textContent,
+                        reports:document.querySelector('#reportStatus')?.textContent,
+                        groups:document.querySelector('#groupStatus')?.textContent,
+                        refreshDisabled:document.querySelector('#workspaceRefresh')?.disabled
+                    })''')
+                    raise RuntimeError(f'Post-folder SQL metadata refresh failed: {snapshot}')
                 assert page.evaluate("typeof window.appReady === 'undefined'")
                 report['checks'].append('SQL-only folder metadata, no full-history bootstrap or implicit import')
                 # Read-only end-to-end native ordinary Excel preview; tests real Rust parser
