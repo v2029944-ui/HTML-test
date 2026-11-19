@@ -976,3 +976,63 @@ fn organization_trends_explicitly_limits_organization_series() {
     assert_eq!(trends.series[7].organization, "H");
     assert!(trends.series.iter().all(|series| series.points.len()==2));
 }
+
+
+#[test]
+fn work_timeline_distinguishes_confirmed_absence_from_missing_reports() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let days=query("2024-02-28","2024-03-01");
+    let only_a=scope(&store,rev,"day",&["A"],None);
+    let zero=store.analysis_work_timeline(
+        rev,&only_a,&days,None,"work:zero",
+    ).unwrap();
+    assert_eq!(zero.kind,"work");
+    assert_eq!(zero.name,"zero");
+    assert_eq!(zero.granularity,"period");
+    assert_eq!(zero.points.len(),3);
+    assert_eq!(zero.points[0].total.count,Some(0.));
+    assert_eq!(zero.points[0].total.amount,Some(9.));
+    assert_eq!(zero.points[1].total.amount,Some(0.));
+    // The A report exists on March 1, but contains no row for work 'zero'.
+    assert_eq!(zero.points[2].missing,0);
+    assert_eq!(zero.points[2].total.amount,Some(0.));
+
+    let group=store.analysis_work_timeline(
+        rev,&only_a,&days,None,"group:g",
+    ).unwrap();
+    assert_eq!(group.kind,"group");
+    assert_eq!(group.name,"Group");
+    assert_eq!(group.points[0].total.amount,Some(20.));
+    assert_eq!(group.points[1].total.amount,Some(80.));
+    assert_eq!(group.points[2].total.amount,Some(10.));
+
+    let all=scope(&store,rev,"day",&["A","B"],None);
+    let incomplete=store.analysis_work_timeline(
+        rev,&all,&days,None,"group:g",
+    ).unwrap();
+    assert_eq!(incomplete.points[0].missing,0);
+    assert_eq!(incomplete.points[0].total.amount,Some(20.));
+    assert_eq!(incomplete.points[2].missing,1);
+    assert_eq!(incomplete.points[2].total.amount,None);
+    assert_eq!(incomplete.points[2].total.count,None);
+
+    let a_only_from_two=store.analysis_work_timeline(
+        rev,&all,&days,Some("A"),"group:g",
+    ).unwrap();
+    assert_eq!(a_only_from_two.points[2].total.amount,Some(10.));
+    assert!(store.analysis_work_timeline(
+        rev,&only_a,&days,Some("B"),"group:g",
+    ).is_err());
+    assert!(store.analysis_work_timeline(
+        rev,&only_a,&days,None,"work:absent",
+    ).is_err());
+
+    let annual=store.analysis_work_timeline(
+        rev,&all,&query("2024-01-01","2024-12-31"),None,"group:g",
+    ).unwrap();
+    assert_eq!(annual.granularity,"month");
+    assert_eq!(annual.points.len(),12);
+    assert!(annual.points.iter().all(|p| p.missing>0&&p.total.amount.is_none()));
+}
