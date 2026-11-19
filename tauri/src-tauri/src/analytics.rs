@@ -58,7 +58,12 @@ pub struct RangeSummary {
     pub organizations: i64,
     pub missing: i64,
     pub values: i64,
+    /// Complete totals: always null when any required report is missing.
     pub total: AnalysisTotals,
+    /// Reports actually observed inside the requested range and scope.
+    pub available_reports: i64,
+    /// Observed-only totals, never an estimate for missing reports; null if no reports.
+    pub available_total: AnalysisTotals,
     pub invalid_reports: i64,
     pub duplicate_issues: i64,
     pub overlap_issues: i64,
@@ -1145,6 +1150,12 @@ fn range_summary(c: &Connection, s: &AnalysisScope, slot: i64) -> Result<RangeSu
         .map_err(err)?;
     let (values,count,amount):(i64,f64,f64)=c.query_row("SELECT COUNT(*),COALESCE(SUM(count),0),COALESCE(SUM(amount),0) FROM temp.an_combined WHERE slot=?1",[slot],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
     let complete = periods > 0 && organizations > 0 && missing == 0;
+    let available_reports: i64 = c.query_row(
+        "SELECT COUNT(*) FROM temp.an_valid v
+         JOIN temp.an_periods p ON p.slot=?1 AND p.start=v.start",
+        [slot],
+        |r| r.get(0),
+    ).map_err(err)?;
     Ok(RangeSummary {
         complete,
         periods,
@@ -1152,6 +1163,8 @@ fn range_summary(c: &Connection, s: &AnalysisScope, slot: i64) -> Result<RangeSu
         missing,
         values,
         total: totals(count, amount, complete)?,
+        available_reports,
+        available_total: totals(count, amount, available_reports > 0)?,
         invalid_reports: count_sql(
             c,
             "SELECT COUNT(*) FROM temp.an_issues WHERE kind='invalid'",
