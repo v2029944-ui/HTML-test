@@ -190,7 +190,7 @@ async function detailPage(after,reset=false){
 }
 async function openDetails(point,kind){
  const parent=selection;
- if(busy||!parent||kind==='day')return;
+ if(busy||detailBusy||!parent||kind==='day')return;
  const from=adapter.normalize('day',point.start),to=detailEnd(point.start,kind);
  if(!from||!to||from<parent.from||to>parent.to){
   status('Ошибка границ дневной детализации: период выходит за пределы выбранного диапазона.',true);
