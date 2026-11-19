@@ -37,7 +37,16 @@ function init(){
   const card=el('section',undefined,'calendar-source');
   card.append(el('strong',(kinds[r.report_type]||r.report_type)+' · '+r.start+' — '+r.end),el('p','Excel: '+(r.source_name||'источник не сохранён')),el('p','Строк: '+show(r.rows)+' · Сумма: '+UI.fmt(r.amount,'amount')+' · Замечаний: '+show(r.warnings)));
   const orgs=el('details'),list=el('p');orgs.append(el('summary','Подразделения ('+r.organizations+')'),list);let loaded=false;orgs.addEventListener('toggle',()=>{if(orgs.open&&!loaded){loaded=true;void reportOrgs(r.id,list,rev);}});card.append(orgs,qualityAction(r));
-  if(api.nativeDeleteReport)card.append(button('Удалить отчёт',async()=>{if(UI.revision!==rev)return;if(!window.confirm('Удалить отчёт '+r.start+' — '+r.end+' после создания резервной копии SQLite?'))return;try{const destination=await api.chooseSqliteBackupPath('analiz-before-delete-'+new Date().toISOString().slice(0,10)+'.sqlite3');if(!destination){UI.notice?.('Удаление отменено: резервная копия не выбрана.');return;}await api.nativeDeleteReport(rev,r.id,destination);await UI.refresh();}catch(error){UI.notice?.('Не удалось удалить отчёт: '+String(error.message||error),true);}}));
+  if(api.nativeDeleteReport){let deleting=false;const action=button('Удалить отчёт',async()=>{
+   if(deleting||UI.revision!==rev)return;deleting=true;action.disabled=true;
+   try{if(await window.confirm('Удалить отчёт '+r.start+' — '+r.end+' после создания резервной копии SQLite?')!==true)return;
+    if(UI.revision!==rev)throw Error('Данные изменились. Обновите список отчётов.');
+    const destination=await api.chooseSqliteBackupPath('analiz-before-delete-'+new Date().toISOString().slice(0,10)+'.sqlite3');if(!destination){UI.notice?.('Удаление отменено: резервная копия не выбрана.');return;}
+    if(UI.revision!==rev)throw Error('Данные изменились. Обновите список отчётов.');
+    await api.nativeDeleteReport(rev,r.id,destination);await UI.refresh();
+   }catch(error){UI.notice?.('Не удалось удалить отчёт: '+String(error.message||error),true);}finally{deleting=false;action.disabled=false;}
+  });card.append(action);}
+
   if(r.shared_source_artifact)card.append(el('p','Сохранены общие замечания исходного файла; ссылка на отчёт хранения показана в таблице качества.','muted small'));
   return card;
  }
@@ -206,10 +215,14 @@ function init(){
   if(importBusy||!review||!sourcePath||!options)return;
   const c=review.conflicts||{},q=review.quality||{},replace=$('replaceExisting').checked,overlap=$('unifiedAcceptOverlap').checked,quality=$('unifiedAcceptQuality').checked;
   if((c.replacements>0&&!replace)||(c.cross_type_overlaps>0&&!overlap)||((q.issues>0||q.mismatch_reports>0||q.relevant_source_issues>0)&&!quality)){status('unifiedImportStatus','Подтвердите найденные замены, пересечения и замечания.');return;}
-  if(!window.confirm('Повторно проверить Excel и атомарно сохранить '+review.reportCount+' отчётов'+(review.catalogEntries>0?' и новые названия из справочника Excel':'')+'?'))return;
+  const checked={revision:UI.revision,generation,sourceTicket,parameterTicket,source:sourcePath,options,review,wide:$('importFormat').value==='daily-wide'};
+  const current=()=>Number.isSafeInteger(checked.revision)&&UI.revision===checked.revision&&generation===checked.generation&&sourceTicket===checked.sourceTicket&&parameterTicket===checked.parameterTicket&&sourcePath===checked.source&&options===checked.options&&review===checked.review;
   importBusy=true;importLock();
-  try{let backupDestination=null;if(c.replacements>0){backupDestination=await api.chooseSqliteBackupPath('analiz-before-import-'+new Date().toISOString().slice(0,10)+'.sqlite3');if(!backupDestination){status('unifiedImportStatus','Сохранение отменено: для замены требуется резервная копия SQLite.');return;}}
-   const wide=$('importFormat').value==='daily-wide',flags={replaceExact:replace,acceptCrossType:overlap,acceptQuality:quality,backupDestination};const result=await (wide?api.nativeWideImportApply(sourcePath,options,review.reviewToken,flags):api.nativeLegacyImportApply(sourcePath,options,review.reviewToken,flags));resetReview();$('importPreview').replaceChildren();await UI.refresh();status('unifiedImportStatus','Сохранено: '+result.reports+' отчётов · '+result.rows+' строк · ревизия '+result.revision+'.');
+  try{if(await window.confirm('Повторно проверить Excel и атомарно сохранить '+checked.review.reportCount+' отчётов'+(checked.review.catalogEntries>0?' и новые названия из справочника Excel':'')+'?')!==true){status('unifiedImportStatus','Сохранение отменено.');return;}
+   if(!current())throw Error('Данные, файл или параметры изменились. Проверьте Excel заново.');
+   let backupDestination=null;if(c.replacements>0){backupDestination=await api.chooseSqliteBackupPath('analiz-before-import-'+new Date().toISOString().slice(0,10)+'.sqlite3');if(!backupDestination){status('unifiedImportStatus','Сохранение отменено: для замены требуется резервная копия SQLite.');return;}}
+   if(!current())throw Error('Данные, файл или параметры изменились. Проверьте Excel заново.');
+   const flags={replaceExact:replace,acceptCrossType:overlap,acceptQuality:quality,backupDestination};const result=await (checked.wide?api.nativeWideImportApply(checked.source,checked.options,checked.review.reviewToken,flags):api.nativeLegacyImportApply(checked.source,checked.options,checked.review.reviewToken,flags));resetReview();$('importPreview').replaceChildren();await UI.refresh();status('unifiedImportStatus','Сохранено: '+result.reports+' отчётов · '+result.rows+' строк · ревизия '+result.revision+'.');
   }catch(error){resetReview();status('unifiedImportStatus','Не сохранено: '+String(error.message||error)+'. Проверьте Excel заново.');}
   finally{importBusy=false;importLock();}
  });

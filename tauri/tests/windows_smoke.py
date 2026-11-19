@@ -45,6 +45,122 @@ def record_secondary_failure(error, description, action):
         error.add_note(f'{description}: {type(followup).__name__}: {followup}')
 
 
+class NativeConfirmations:
+    """Drive only the installed test process's real, parented Win32 dialogs."""
+
+    def __init__(self, pid, database):
+        import ctypes
+        from ctypes import wintypes
+
+        self.pid=pid
+        self.database=database
+        self.ctypes=ctypes
+        self.user32=ctypes.WinDLL('user32',use_last_error=True)
+        self.enum_callback=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
+        signatures={
+            'EnumWindows':(wintypes.BOOL,self.enum_callback,wintypes.LPARAM),
+            'EnumChildWindows':(wintypes.BOOL,wintypes.HWND,self.enum_callback,wintypes.LPARAM),
+            'GetWindow':(wintypes.HWND,wintypes.HWND,wintypes.UINT),
+            'GetWindowThreadProcessId':(wintypes.DWORD,wintypes.HWND,ctypes.POINTER(wintypes.DWORD)),
+            'GetClassNameW':(ctypes.c_int,wintypes.HWND,wintypes.LPWSTR,ctypes.c_int),
+            'GetDlgItem':(wintypes.HWND,wintypes.HWND,ctypes.c_int),
+            'IsWindowVisible':(wintypes.BOOL,wintypes.HWND),
+            'IsWindowEnabled':(wintypes.BOOL,wintypes.HWND),
+            'SendMessageTimeoutW':(ctypes.c_ssize_t,wintypes.HWND,wintypes.UINT,wintypes.WPARAM,
+                                    wintypes.LPARAM,wintypes.UINT,wintypes.UINT,ctypes.POINTER(ctypes.c_size_t)),
+        }
+        for name,(result,*arguments) in signatures.items():
+            function=getattr(self.user32,name)
+            function.restype=result
+            function.argtypes=arguments
+        self.pid_type=wintypes.DWORD
+
+    def windows(self, parent=None):
+        windows=[]
+        @self.enum_callback
+        def collect(hwnd, _):
+            windows.append(hwnd)
+            return True
+        if parent is None:
+            if not self.user32.EnumWindows(collect,0):
+                raise self.ctypes.WinError(self.ctypes.get_last_error())
+        else:
+            self.user32.EnumChildWindows(parent,collect,0)
+        return windows
+
+    def process(self, hwnd):
+        pid=self.pid_type()
+        self.user32.GetWindowThreadProcessId(hwnd,self.ctypes.byref(pid))
+        return pid.value
+
+    def window_class(self, hwnd):
+        buffer=self.ctypes.create_unicode_buffer(256)
+        self.user32.GetClassNameW(hwnd,buffer,len(buffer))
+        return buffer.value
+
+    def control_text(self, hwnd):
+        # GetWindowTextW cannot read another process's child controls. Windows
+        # marshals WM_GETTEXT across processes, and the call has a time limit.
+        buffer=self.ctypes.create_unicode_buffer(4096)
+        result=self.ctypes.c_size_t()
+        sent=self.user32.SendMessageTimeoutW(hwnd,0x000D,len(buffer),self.ctypes.addressof(buffer),
+                                            0x0002,500,self.ctypes.byref(result))
+        return buffer.value if sent else ''
+
+    def find_dialog(self, expected):
+        deadline=time.monotonic()+15
+        while time.monotonic()<deadline:
+            dialogs=[]
+            for hwnd in self.windows():
+                if (self.process(hwnd)!=self.pid or self.window_class(hwnd)!='#32770'
+                        or not self.user32.IsWindowVisible(hwnd)):
+                    continue
+                owner=self.user32.GetWindow(hwnd,4)  # GW_OWNER
+                if not owner or self.process(owner)!=self.pid:
+                    continue
+                text=' '.join(self.control_text(child) for child in self.windows(hwnd)
+                              if self.window_class(child)=='Static')
+                if expected in ' '.join(text.split()):
+                    dialogs.append((hwnd,owner))
+            if dialogs:
+                assert len(dialogs)==1,('Multiple owned dialogs match',expected,dialogs)
+                return dialogs[0]
+            time.sleep(.05)
+        owned=[(hwnd,self.window_class(hwnd),bool(self.user32.IsWindowEnabled(hwnd)))
+               for hwnd in self.windows() if self.process(hwnd)==self.pid]
+        raise AssertionError(f'Native confirmation did not appear for {expected!r}; owned windows: {owned}')
+
+    def answer(self, dialog, owner, button_id):
+        assert self.process(dialog)==self.pid and self.user32.GetWindow(dialog,4)==owner
+        assert self.process(owner)==self.pid and not self.user32.IsWindowEnabled(owner)
+        button=self.user32.GetDlgItem(dialog,button_id)
+        assert button and self.process(button)==self.pid and self.window_class(button)=='Button'
+        assert self.user32.IsWindowVisible(button) and self.user32.IsWindowEnabled(button)
+        result=self.ctypes.c_size_t()
+        if not self.user32.SendMessageTimeoutW(button,0x00F5,0,0,0x0002,3_000,self.ctypes.byref(result)):
+            raise self.ctypes.WinError(self.ctypes.get_last_error())  # BM_CLICK
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            if not self.user32.IsWindowVisible(dialog) and self.user32.IsWindowEnabled(owner):
+                return
+            time.sleep(.05)
+        raise RuntimeError('Native confirmation did not close and return control to the application')
+
+    def revision(self):
+        with closing(sqlite3.connect(self.database.as_uri()+'?mode=ro',uri=True)) as database:
+            return database.execute('SELECT revision FROM storage_revision WHERE singleton=1').fetchone()[0]
+
+    def cancel_then_accept(self, trigger, prompt):
+        revision=self.revision()
+        for button_id in (2,1):  # IDCANCEL then IDOK
+            trigger.click()
+            dialog,owner=self.find_dialog(prompt)
+            assert self.revision()==revision,('Storage changed before native confirmation',prompt)
+            self.answer(dialog,owner,button_id)
+            if button_id==2:
+                assert self.revision()==revision,('Cancelled native confirmation changed storage',prompt)
+
+
 def wait_for_webview_page(browser, timeout_ms=60_000):
     """Wait for the installed WebView2 app page, not just the DevTools endpoint.
 
@@ -177,7 +293,7 @@ def set_folder(page, folder, filenames):
     return listing
 
 
-def import_year(page, workbook):
+def import_year(page, workbook, confirmations):
     page.get_by_role('button',name='Показать файлы папки',exact=True).click()
     page.locator('#sourceManualFile').select_option(label=workbook.name)
     page.get_by_role('button',name='Открыть для проверки',exact=True).click()
@@ -190,8 +306,8 @@ def import_year(page, workbook):
     assert page.locator('#importPreview tbody tr').count()<=50
     assert api(page,'nativeSettingsBootstrap')['reports']==0
     page.locator('#unifiedAcceptQuality').check()
-    page.once('dialog',lambda dialog:dialog.accept())
-    page.locator('#saveImport').click()
+    confirmations.cancel_then_accept(page.locator('#saveImport'),
+        'Повторно проверить Excel и атомарно сохранить 366 отчётов')
     wait_for_text(page,'#unifiedImportStatus','Сохранено: 366 отчётов',120_000)
     wait_for_text(page,'#unifiedIndexStatus','Отчётов: 366',90_000)
     assert api(page,'nativeSettingsBootstrap')['reports']==366
@@ -405,7 +521,7 @@ def check_extended(page):
     assert page.locator('#changesResults tbody tr').count()<=100
 
 
-def check_groups(page):
+def check_groups(page, confirmations):
     navigate(page,'groups')
     def create():
         page.locator('#createGroup').click()
@@ -429,8 +545,8 @@ def check_groups(page):
     # Removing the final member intentionally removes its source group.
     # Recreate it to verify the separate explicit-delete confirmation path.
     group=create()
-    page.once('dialog',lambda dialog:dialog.accept())
-    group.get_by_role('button',name='Удалить группу',exact=True).click(timeout=90_000)
+    confirmations.cancel_then_accept(group.get_by_role('button',name='Удалить группу',exact=True),
+        'Удалить группу «Группа CI»? Исходные работы останутся.')
     wait_for_text(page,'#flash','Группа удалена.',90_000)
     assert api(page,'nativeSettingsBootstrap')['groups']==0
 
@@ -478,7 +594,7 @@ def check_backup_and_replace(page, temporary, snapshot):
     return original
 
 
-def check_folder_rule_and_revocation(page, workbook):
+def check_folder_rule_and_revocation(page, workbook, confirmations):
     navigate(page,'upload')
     wait_for_app_state(page,'typeof window.nativeFolderReady!=="undefined"','Native folder controller startup')
     page.evaluate('window.nativeFolderReady')
@@ -489,8 +605,8 @@ def check_folder_rule_and_revocation(page, workbook):
     row.get_by_role('button',name='Настроить правило для '+workbook.name,exact=True).click()
     page.locator('#sourceRuleFormat').select_option('daily-wide')
     page.locator('#sourceRuleYear').fill('2024')
-    page.once('dialog',lambda dialog:dialog.accept())
-    page.locator('#sourceRuleSave').click()
+    confirmations.cancel_then_accept(page.locator('#sourceRuleSave'),
+        f'Сохранить правило для «{workbook.name}»?')
     wait_for_text(page,'#sourceRuleStatus','Правило сохранено',90_000)
     rule=api(page,'list')['rules'][workbook.name]
     assert rule['format']=='daily-wide' and rule['year']==2024
@@ -648,7 +764,7 @@ def run():
                     browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227')
                     page=wait_for_webview_page(browser)
                     errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
-                    yield page,engine
+                    yield page,engine,process.pid
                     assert not errors,errors
                     stop(process)
                     if browser.is_connected():browser.close()
@@ -670,8 +786,9 @@ def run():
             other_folder=tmp/'other-source';other_folder.mkdir()
             legacy_source=other_folder/'ordinary.xlsx';legacy_source.write_bytes(daily_workbook_bytes())
             snapshot=tmp/'online-backup.sqlite3'
-            with installed_page() as (page,engine):
+            with installed_page() as (page,engine,pid):
                 ready(page,0)
+                confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 entry_url=page.url
                 check_runtime(page)
                 report['webview2']=engine.get('Browser')
@@ -693,16 +810,16 @@ def run():
                 assert not page.locator('#sourceAutoImport').is_checked()
                 assert page.evaluate('window.unifiedUI.refresh()')['reports']==0
                 report['checks'].append('Changing the connected folder replaces metadata without importing; ordinary XLSX preview streams through Rust')
-                import_year(page,workbook)
+                import_year(page,workbook,confirmations)
                 assert workbook.read_bytes()==original_xlsx
                 check_report_views(page)
-                report['checks'].append('Real Excel selection and import yield 366 SQLite reports, 50-card pagination, and a 29-day calendar with focus restoration')
+                report['checks'].append('Native Excel confirmation blocks writes, Cancel preserves SQLite, and OK imports 366 reports with 50-card pagination and a 29-day calendar')
                 check_analytics(page,tmp,output)
                 report['checks'].append('Daily-source annual and February totals, exact work and organization filters, missing-week analytics, 200% zoom and responsive widths, and protected UTF-8 CSV')
                 check_extended(page)
                 report['checks'].append('Canonical changes, usual level, regularity, structure and contribution views use the current SQLite selection; print uses the dedicated layout')
-                check_groups(page)
-                report['checks'].append('Group creation, member assignment and removal, and confirmed deletion through unified settings')
+                check_groups(page,confirmations)
+                report['checks'].append('Group creation, member assignment and removal, and native Cancel/OK for explicit deletion')
                 check_metrics(page,tmp)
                 report['checks'].append('Installed native metric imports and ratio-of-sums queries refuse repeated JSON and XLSX sources')
                 original=check_backup_and_replace(page,tmp,snapshot)
@@ -718,12 +835,13 @@ def run():
                 report['navigation_before_restart']=page.locator('.view.active').get_attribute('id')
                 (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
 
-            with installed_page() as (page,_):
+            with installed_page() as (page,_,pid):
                 ready(page,366)
+                confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 report['navigation_after_restart']=page.locator('.view.active').get_attribute('id')
                 assert report['navigation_before_restart']=='upload' and report['navigation_after_restart']=='dashboard'
                 assert api(page,'list')['folder']
-                check_folder_rule_and_revocation(page,workbook)
+                check_folder_rule_and_revocation(page,workbook,confirmations)
                 report['checks'].append('Normal restart preserves native SQLite and opens the canonical dashboard despite obsolete preferences; folder rule and revoked session are verified')
                 data_file=Path(api(page,'info')['dataFile'])
                 safety_before=set(data_file.parent.glob('.analiz-restore-safety-*.sqlite3'))
@@ -738,7 +856,7 @@ def run():
                 assert api(page,'list')['rules'][workbook.name]['year']==2024
                 report['checks'].append('Pending restore leaves the changed live SQLite and its Excel rules in place until restart')
 
-            with installed_page() as (page,_):
+            with installed_page() as (page,_,_):
                 ready(page,366)
                 restored=tmp/'after-restore.sqlite3'
                 api(page,'nativeBackupSqlite',str(restored))

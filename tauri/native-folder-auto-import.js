@@ -132,11 +132,13 @@ control.addEventListener('change',async()=>{
   }
   return;
  }
- if(!window.confirm('Разрешить в этом сеансе автоматически добавлять новые отчёты из настроенной папки? Файлы с заменами, пересечениями и замечаниями останутся для ручной проверки.')){
-  control.checked=false;return;
- }
  const version=++toggleVersion;
  try{
+  if(!await window.confirm('Разрешить в этом сеансе автоматически добавлять новые отчёты из настроенной папки? Файлы с заменами, пересечениями и замечаниями останутся для ручной проверки.')){
+   if(version===toggleVersion)control.checked=false;
+   return;
+  }
+  if(version!==toggleVersion||!control.checked)return;
   transition=transition.catch(()=>{}).then(()=>api.nativeFolderImportSession(true));
   const lease=await transition;
   if(version!==toggleVersion)return;
@@ -156,5 +158,5 @@ control.addEventListener('change',async()=>{
  }
 });
 window.addEventListener?.('pagehide',()=>{if(control.checked||session)void stop().catch(()=>{});},{once:true});
-window.nativeFolderAutoImport=Object.freeze({updateSnapshot,isEnabled:()=>control.checked});
+window.nativeFolderAutoImport=Object.freeze({updateSnapshot,isEnabled:()=>session!==null});
 })();

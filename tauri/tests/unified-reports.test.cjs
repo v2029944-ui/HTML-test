@@ -70,3 +70,37 @@ test('connected-file picker preserves Windows verbatim separators and Unix paths
   await picker.children.find(x=>x.textContent==='Открыть для проверки').click();await flush();assert.equal(selected,expected);
  }
 });
+
+const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
+async function reviewedReplacement(){
+ const calls={prompts:0,pickers:0,applies:0},answer=deferred();
+ const ui=mount({chooseWideXlsx:async()=>'/tmp/book.xlsx',nativeLegacyImportPreview:async()=>({reviewToken:'a'.repeat(64),reportCount:1,rowCount:1,conflicts:{replacements:1},quality:{},sampleReports:[]}),chooseSqliteBackupPath:async()=>{calls.pickers++;return '/tmp/backup.sqlite3';},nativeLegacyImportApply:async()=>{calls.applies++;return {reports:1,rows:1,revision:2};}});
+ await ui.nodes.excelFile.click();await ui.nodes.inspectFile.click();ui.nodes.replaceExisting.checked=true;ui.window.confirm=()=>{calls.prompts++;return answer.promise;};return {ui,calls,answer};
+}
+test('native Promise import confirmation denies without picker/write and blocks duplicate prompts',async()=>{
+ const {ui,calls,answer}=await reviewedReplacement();const pending=ui.nodes.saveImport.click();await flush();await ui.nodes.saveImport.click();assert.equal(calls.prompts,1);assert.equal(calls.pickers,0);assert.equal(calls.applies,0);assert.equal(ui.nodes.unifiedWideMapping.disabled,true);answer.resolve(false);await pending;assert.equal(calls.pickers,0);assert.equal(calls.applies,0);assert.equal(ui.nodes.saveImport.disabled,false);assert.match(ui.nodes.unifiedImportStatus.textContent,/отменено/);
+});
+test('native Promise import confirmation accepts exactly once after answering',async()=>{
+ const {ui,calls,answer}=await reviewedReplacement();const pending=ui.nodes.saveImport.click();await flush();assert.equal(calls.pickers,0);assert.equal(calls.applies,0);answer.resolve(true);await pending;assert.equal(calls.prompts,1);assert.equal(calls.pickers,1);assert.equal(calls.applies,1);
+});
+test('rejected native import confirmation is caught without picker or write',async()=>{
+ const {ui,calls,answer}=await reviewedReplacement();const pending=ui.nodes.saveImport.click();await flush();answer.reject(Error('dialog unavailable'));await pending;assert.equal(calls.pickers,0);assert.equal(calls.applies,0);assert.match(ui.nodes.unifiedImportStatus.textContent,/dialog unavailable/);assert.equal(ui.nodes.excelFile.disabled,false);
+});
+test('confirmed import is invalidated by changed revision or background snapshot while dialog waits',async()=>{
+ for(const invalidate of [ui=>{ui.UI.revision=2;},ui=>ui.snapshot(null)]){const {ui,calls,answer}=await reviewedReplacement();const pending=ui.nodes.saveImport.click();await flush();invalidate(ui);answer.resolve(true);await pending;assert.equal(calls.pickers,0);assert.equal(calls.applies,0);assert.match(ui.nodes.unifiedImportStatus.textContent,/изменились/);}
+});
+async function deletableReport(){
+ const calls={prompts:0,pickers:0,deletes:0},answer=deferred(),notices=[];
+ const ui=mount({managementReportPage:async()=>[{id:'r',start:'2024-01-01',end:'2024-01-01',report_type:'day',rows:1,amount:2,warnings:0,organizations:1}],managementReportSummary:async()=>({reports:1,rows:1,amount:2,latest:'2024-01-01'}),chooseSqliteBackupPath:async()=>{calls.pickers++;return '/tmp/backup.sqlite3';},nativeDeleteReport:async()=>{calls.deletes++;}});ui.UI.notice=(message)=>notices.push(message);ui.window.confirm=()=>{calls.prompts++;return answer.promise;};await ui.refresh();const action=ui.nodes.reports.querySelectorAll('button').find(b=>b.textContent==='Удалить отчёт');return {ui,calls,answer,notices,action};
+}
+test('native delete confirmation awaits deny/accept and prevents duplicate prompts',async()=>{
+ for(const accepted of [false,true]){const {calls,answer,action}=await deletableReport();const pending=action.click();await flush();await action.click();assert.equal(calls.prompts,1);assert.equal(calls.pickers,0);assert.equal(calls.deletes,0);answer.resolve(accepted);await pending;assert.equal(calls.pickers,accepted?1:0);assert.equal(calls.deletes,accepted?1:0);}
+});
+test('native delete confirmation rejects safely and rechecks revision before backup selection',async()=>{
+ for(const stale of [false,true]){const {ui,calls,answer,notices,action}=await deletableReport();const pending=action.click();await flush();if(stale){ui.UI.revision=2;answer.resolve(true);}else answer.reject(Error('dialog unavailable'));await pending;assert.equal(calls.pickers,0);assert.equal(calls.deletes,0);assert.equal(action.disabled,false);assert.match(notices.at(-1),stale?/изменились/:/dialog unavailable/);}
+});
+test('confirmed import rejects parameter edits and revision changes during backup selection',async()=>{
+ {const {ui,calls,answer}=await reviewedReplacement();const pending=ui.nodes.saveImport.click();await flush();ui.nodes.unifiedWideMapping.value='Data; 2; A; B';await ui.nodes.unifiedWideMapping.fire('input');answer.resolve(true);await pending;assert.equal(calls.pickers,0);assert.equal(calls.applies,0);}
+ {const {ui,calls,answer}=await reviewedReplacement(),backup=deferred();ui.UI.api.chooseSqliteBackupPath=()=>{calls.pickers++;return backup.promise;};const pending=ui.nodes.saveImport.click();answer.resolve(true);await flush();assert.equal(calls.pickers,1);assert.equal(calls.applies,0);ui.UI.revision=2;backup.resolve('/tmp/backup.sqlite3');await pending;assert.equal(calls.applies,0);}
+});
+test('delete rechecks revision after its asynchronous backup chooser',async()=>{const {ui,calls,answer,action}=await deletableReport(),backup=deferred();ui.UI.api.chooseSqliteBackupPath=()=>{calls.pickers++;return backup.promise;};const pending=action.click();answer.resolve(true);await flush();assert.equal(calls.pickers,1);assert.equal(calls.deletes,0);ui.UI.revision=2;backup.resolve('/tmp/backup.sqlite3');await pending;assert.equal(calls.deletes,0);});
