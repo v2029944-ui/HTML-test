@@ -29,6 +29,18 @@ function mount(options={}){
  const api={
   nativeAnalysisIndexPage:async(rev,kind,cursor,limit)=>{calls.push({op:'index',rev,kind,cursor,limit});return {processed:3,done:true,next:null};},
   nativeAnalysisIndexSettings:async rev=>{calls.push({op:'settings',rev});},
+  nativeAnalysisRange:async(rev,kind,from,to,orgs)=>{
+   calls.push({op:'range',rev,kind,from,to,orgs});
+   const result={complete:false,periods:7,organizations:orgs.length,missing:1,
+    available_reports:6,available_total:{count:2,amount:11,average:5.5},
+    total:{count:null,amount:null,average:null}};
+   if(options.delayedOverview)return new Promise(resolve=>{options.resolveOverview=()=>resolve(result);});
+   return result;
+  },
+  nativeAnalysisTimeline:async(rev,kind,from,to,orgs)=>{
+   calls.push({op:'timeline',rev,kind,from,to,orgs});
+   return {granularity:'period',points:[]};
+  },
   nativeDailyRollup:async(rev,from,to,kind,orgs,after,limit)=>{
    calls.push({op:'page',rev,from,to,kind,orgs,after,limit});
    if(options.fail)throw Error('Synthetic index failure');
@@ -39,11 +51,17 @@ function mount(options={}){
    ],next_cursor:null};
   }
  };
- const window={desktopAPI:api,analizUserError:e=>String(e.message||e)};
+ const overview=[];
+ const window={desktopAPI:api,analizUserError:e=>String(e.message||e),
+ nativeDailyOverview:{
+  show:(summary,timeline)=>overview.push({op:'show',summary,timeline}),
+  clear:message=>overview.push({op:'clear',message}),
+  error:message=>overview.push({op:'error',message})
+ }};
  const document={getElementById:id=>nodes[id],createElement:tag=>new Element(tag)};
  vm.runInNewContext(selection,{window,document});
  vm.runInNewContext(calendar,{window,document});
- return {nodes,window,calls};
+ return {nodes,window,calls,overview};
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 test('native daily calendar module is bundled before SQL workspace and not classic HTML',()=>{
@@ -223,4 +241,46 @@ test('stale day detail cannot reappear after calendar filter changes',async()=>{
  await settle();
  assert.equal(nodes.dailyRollupDetailPanel.hidden,true);
  assert.equal(nodes.dailyRollupDetailRows.children.length,0);
+});
+
+
+test('daily source KPIs and graph use exactly the same source, dates and organizations as calendar',async()=>{
+ const {nodes,window,calls,overview}=mount({page:({kind,from})=>({
+  granularity:kind,points:[point(from,7,2,5,0,0)],next_cursor:null
+ })});
+ window.nativeDailyCalendar.setContext(8,['A','B']);
+ nodes.dailyRollupPrepare.events.click();await settle();
+ nodes.dailyRollupGranularity.value='week';nodes.dailyRollupGranularity.events.change();
+ nodes.dailyRollupFrom.value='2024-W09';nodes.dailyRollupTo.value='2024-W09';
+ nodes.dailyRollupRun.events.click();await settle();await settle();
+ const pageCall=calls.find(c=>c.op==='page');
+ const summary=calls.find(c=>c.op==='range');
+ const timeline=calls.find(c=>c.op==='timeline');
+ assert.equal(summary.kind,'day');
+ assert.equal(timeline.kind,'day');
+ assert.equal(summary.rev,pageCall.rev);
+ assert.equal(summary.from,pageCall.from);
+ assert.equal(timeline.to,pageCall.to);
+ assert.equal(summary.orgs.join(','),'A,B');
+ assert.equal(timeline.orgs.join(','),'A,B');
+ assert.equal(overview.at(-1).op,'show');
+ assert.equal(overview.at(-1).summary.available_total.amount,11);
+ assert.equal(nodes.dailyRollupRows.children.length,1);
+});
+test('late day-source KPI response cannot restore results after changing organizations',async()=>{
+ const opts={delayedOverview:true,page:({kind,from})=>({
+  granularity:kind,points:[point(from,1,1,0,0,0)],next_cursor:null
+ })};
+ const {nodes,window,calls,overview}=mount(opts);
+ window.nativeDailyCalendar.setContext(19,['A']);
+ nodes.dailyRollupPrepare.events.click();await settle();
+ nodes.dailyRollupFrom.value='2024-02-28';
+ nodes.dailyRollupTo.value='2024-02-28';
+ nodes.dailyRollupRun.events.click();await settle();
+ assert.equal(typeof opts.resolveOverview,'function');
+ window.nativeDailyCalendar.setContext(19,['B']);
+ opts.resolveOverview();await settle();
+ assert.ok(!overview.some(x=>x.op==='show'));
+ assert.equal(overview.at(-1).op,'clear');
+ assert.equal(calls.filter(x=>x.op==='timeline').length,0);
 });
