@@ -34,11 +34,11 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(options={}){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','rankingMetric','rankingCategory','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','rankingMetric','rankingCategory','workTrendMetric','sqlWorkTrends','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
- e.rankingMetric.value='amount';e.rankingCategory.value='all';
+ e.rankingMetric.value='amount';e.rankingCategory.value='all';e.workTrendMetric.value='amount';
  const calls=[];
  const divisionAmounts=Array.isArray(options.divisionAmounts)?options.divisionAmounts:[1200,600];
  const report=n=>({id:'r'+n,period_start:'2024-02-'+String(n%28+1).padStart(2,'0'),period_end:'2024-02-29',report_type:'day',source_name:'<b>untrusted</b>'});
@@ -89,6 +89,14 @@ function mount(options={}){
        ?{complete:true,rows:[{key:'work:x',name:'Работа',kind:'work',count:-2,amount:300,active:true}]}
        :{complete:false,rows:[]};
    },
+   nativeWorkTimeline:async(rev,kind,from,to,organizations,organization,key)=>{
+     calls.push({kind:'work_timeline',rev,reportType:kind,from,to,organizations,organization,key});
+     const data={key,name:'Работа '+key,kind:key.startsWith('group:')?'group':'work',
+       granularity:'period',points:[{start:from,periods:1,missing:options.complete?0:1,
+         total:options.complete?{count:-2,amount:20}:{count:null,amount:null}}]};
+     if(options.delayedWorkTrend)return new Promise(resolve=>{options.resolveWorkTrend=()=>resolve(data);});
+     return data;
+   },
    nativeAnalysisRangePage:async(rev,kind,from,to,organizations,organization,after,limit)=>{
      calls.push({kind:'work',rev,reportType:kind,from,to,organizations,organization,after,limit});
      const row=n=>({key:'work:'+String(n).padStart(4,'0'),name:n===0?'<b>Работа</b>':'Работа '+n,kind:'work',count:null,amount:null,average:null,active:true});
@@ -101,7 +109,7 @@ function mount(options={}){
       :{org:'АВТО',complete:false,missing:2,total:{count:null,amount:null,average:null}}
    ];}
  };
- const chartCalls=[],rankingCalls=[],orgTrendsCalls=[];
+ const chartCalls=[],rankingCalls=[],orgTrendsCalls=[],workTrendCalls=[];
  const window={desktopAPI:api,confirm:()=>true,analizUserError:userError,
    nativeTimeline:{
      show:data=>chartCalls.push({action:'show',data}),
@@ -117,10 +125,15 @@ function mount(options={}){
      show:data=>orgTrendsCalls.push({action:'show',data}),
      clear:message=>orgTrendsCalls.push({action:'clear',message}),
      error:message=>orgTrendsCalls.push({action:'error',message})
+   },
+   nativeWorkTrends:{
+     show:data=>workTrendCalls.push({action:'show',data}),
+     clear:message=>workTrendCalls.push({action:'clear',message}),
+     error:message=>workTrendCalls.push({action:'error',message})
    }};
 
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-workspace.js'),'utf8'),{window,document:{getElementById:id=>e[id],createElement:tag=>new Element(tag)}});
- return {e,calls,window,chartCalls,rankingCalls,orgTrendsCalls};
+ return {e,calls,window,chartCalls,rankingCalls,orgTrendsCalls,workTrendCalls};
 }
 test('native workspace displays only one keyset page and no HTML from source names',async()=>{
  const {e,calls,window}=mount();
@@ -495,4 +508,46 @@ test('a missing organization trend stays unknown without hiding verified KPI row
  const plotted=orgTrendsCalls.find(x=>x.action==='show');
  assert.equal(plotted.data.series[0].points[0].missing,1);
  assert.equal(plotted.data.series[0].points[0].total.amount,null);
+});
+
+test('work detail chart requests the exact selected key and report scope',async()=>{
+ const {e,calls,window,workTrendCalls}=mount({complete:true});
+ await window.nativeWorkspaceReady;
+ e.analysisOrganization.value='СМУ16';e.analysisOrganization.events.change();
+ e.analysisFrom.value='2024-02-01';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ assert.equal(e.workRows.children.length,50);
+ const button=e.workRows.children[0].children[6].children[0];
+ assert.equal(button.textContent,'График');
+ button.events.click();
+ await new Promise(resolve=>setImmediate(resolve));
+ const summary=calls.find(x=>x.kind==='range');
+ const selected=calls.find(x=>x.kind==='work_timeline');
+ assert.equal(selected.rev,summary.rev);
+ assert.equal(selected.reportType,summary.reportType);
+ assert.equal(selected.from,summary.from);
+ assert.equal(selected.to,summary.to);
+ assert.equal(selected.organizations.join(','),summary.organizations.join(','));
+ assert.equal(selected.organization,'СМУ16');
+ assert.equal(selected.key,'work:0000');
+ assert.equal(workTrendCalls.at(-1).action,'show');
+ assert.equal(workTrendCalls.at(-1).data.key,'work:0000');
+ assert.equal(e.workTrendMetric.disabled,false);
+ e.analysisTo.value='2024-03-31';e.analysisTo.events.change();
+ assert.equal(workTrendCalls.at(-1).action,'clear');
+ assert.equal(e.workTrendMetric.disabled,true);
+});
+test('late SQLite trend response cannot resurrect a graph after filters change',async()=>{
+ const opts={complete:true,delayedWorkTrend:true};
+ const {e,window,workTrendCalls}=mount(opts);
+ await window.nativeWorkspaceReady;
+ e.analysisFrom.value='2024-02-01';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ e.workRows.children[0].children[6].children[0].events.click();
+ assert.equal(typeof opts.resolveWorkTrend,'function');
+ e.analysisFrom.value='2024-03-01';e.analysisFrom.events.change();
+ opts.resolveWorkTrend();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.ok(!workTrendCalls.some(x=>x.action==='show'));
+ assert.equal(workTrendCalls.at(-1).action,'clear');
 });
