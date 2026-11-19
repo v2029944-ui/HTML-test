@@ -70,6 +70,16 @@ pub struct RangeSummary {
     pub import_warning_reports: i64,
 }
 #[derive(Debug, Serialize)]
+pub struct AnalysisNameOption {
+    pub name: String,
+    pub kind: String,
+}
+#[derive(Debug, Serialize)]
+pub struct AnalysisNameOptions {
+    pub rows: Vec<AnalysisNameOption>,
+    pub has_more: bool,
+}
+#[derive(Debug, Serialize)]
 pub struct DailyRollupPoint {
     pub start: String,
     pub days: i64,
@@ -953,6 +963,62 @@ impl Storage {
         tx.execute("DELETE FROM analysis_groups", []).map_err(err)?;
         tx.execute_batch("INSERT OR IGNORE INTO analysis_groups SELECT m.work,'group:'||d.id,d.name FROM temp.an_members m JOIN temp.an_descriptors d ON d.n=m.n ORDER BY m.n;INSERT OR REPLACE INTO analysis_settings VALUES(1);").map_err(err)?;
         tx.commit().map_err(err)
+    }
+    /// Discover bounded exact display names. Colliding labels are hidden
+    /// because the legacy analysis names-filter cannot tell them apart.
+    /// The work scan uses the existing work index, never historical JSON.
+    pub fn analysis_name_options(
+        &self,
+        expected: i64,
+        search: &str,
+        limit: usize,
+    ) -> Result<AnalysisNameOptions, String> {
+        if search.len()>128 {
+            return Err("Work/group search must be at most 128 bytes".into());
+        }
+        if !(1..=80).contains(&limit) {
+            return Err("Work/group options must contain 1..=80 names".into());
+        }
+        let c=self.connect()?;
+        check_revision(&c,expected)?;
+        check_metadata_bounds(&c)?;
+        let indexed:bool=c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM analysis_settings)",[],|r|r.get(0)
+        ).map_err(err)?;
+        if !indexed { return Err("Analysis groups are not indexed".into()); }
+        // A grouped work is represented only by its group display name.
+        // One group may have many works: collapse by stable group key first.
+        // Ambiguous equal labels spanning different identities are omitted.
+        let mut stmt=c.prepare(
+            "WITH candidates AS (
+               SELECT g.name AS name,'group' AS kind
+               FROM analysis_groups g GROUP BY g.key,g.name
+               UNION ALL
+               SELECT x.work AS name,'work' AS kind
+               FROM report_rows x
+               WHERE NOT EXISTS(
+                  SELECT 1 FROM analysis_groups g WHERE g.work=x.work
+               ) GROUP BY x.work
+            )
+            SELECT name,MIN(kind) FROM candidates
+            WHERE name<>'' AND length(name)<=512
+              AND (?1='' OR instr(name,?1)>0)
+            GROUP BY name HAVING COUNT(*)=1
+            ORDER BY name COLLATE BINARY
+            LIMIT ?2"
+        ).map_err(err)?;
+        let mut rows=stmt.query(params![search,(limit+1) as i64]).map_err(err)?;
+        let mut out=Vec::with_capacity(limit+1);
+        while let Some(row)=rows.next().map_err(err)? {
+            if out.len()>limit {return Err("Work/group options exceed result bound".into());}
+            out.push(AnalysisNameOption {
+                name:row.get(0).map_err(err)?,
+                kind:row.get(1).map_err(err)?,
+            });
+        }
+        let has_more=out.len()>limit;
+        if has_more {out.pop();}
+        Ok(AnalysisNameOptions{rows:out,has_more})
     }
     pub fn analysis_filter_create(&self, expected: i64, kind: &str) -> Result<String, String> {
         if !matches!(kind, "organizations" | "names") {
