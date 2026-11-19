@@ -25,6 +25,12 @@
   status.textContent='Раздел: '+labels.get(target)+'. Остальные данные доступны через меню выше.';
   return target;
  }
+ // Update visibility synchronously on a real tab click. Hashchange is
+ // asynchronous in WebView2, so consumers must not briefly see the old tab.
+ for(const link of links)link.addEventListener('click',()=>{
+  const name=link.getAttribute('data-nav-link');
+  if(keys.has(name))select(name);
+ });
  function sync(){select(selectedFromHash());}
  window.addEventListener('hashchange',()=>{
   sync();
