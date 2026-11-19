@@ -10,17 +10,7 @@ function mount(){
  vm.runInNewContext(source,{window,document});
  return {picker:window.nativePeriodSelection,nodes};
 }
-test('native calendar selector is packaged and used only by the Tauri SQL workspace',()=>{
- const base=path.resolve(__dirname,'../..'),output=fs.mkdtempSync(path.join(os.tmpdir(),'sql-calendar-picker-'));
- try{
-  prepare({base,output});
-  const html=fs.readFileSync(path.join(output,'native-workspace.html'),'utf8');
-  assert.equal(fs.readFileSync(path.join(output,'tauri-native-period-selection.js'),'utf8'),source);
-  assert.ok(html.indexOf('tauri-native-period-selection.js')<html.indexOf('tauri-native-workspace.js'));
-  assert.match(html,/id="analysisPeriodHelp"/);
-  assert.ok(!fs.readFileSync(path.join(base,'index.html'),'utf8').includes('tauri-native-period-selection.js'));
- }finally{fs.rmSync(output,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 test('calendar months and ISO calendar weeks resolve to actual period starts',()=>{
  const {picker}=mount();
  assert.equal(picker.normalize('month','2024-02'),'2024-02-01');

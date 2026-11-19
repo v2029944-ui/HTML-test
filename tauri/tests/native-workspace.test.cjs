@@ -4,28 +4,7 @@ const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),os=r
 const {prepare}=require('../prepare.cjs');
 const {userError}=require('../native-errors.js');
 
-test('SQL workspace is independently built without legacy app or full-history load',()=>{
- const root=path.resolve(__dirname,'../..'),out=fs.mkdtempSync(path.join(os.tmpdir(),'sql-workspace-'));
- try{
-   prepare({base:root,output:out});
-   const html=fs.readFileSync(path.join(out,'native-workspace.html'),'utf8');
-   const js=fs.readFileSync(path.join(out,'tauri-native-workspace.js'),'utf8');
-   assert.match(html,/id="legacyWorkspaceLink" href="index.html"/);
-   assert.match(html,/tauri-native-workspace.js/);
-   assert.match(html,/tauri-native-updates.js/);
-   assert.match(html,/id="sqlUpdateCheck"/);
-   assert.match(html,/id="sqlUpdateInstall"/);
-   assert.match(html,/tauri-native-legacy-import.js/);
-   assert.ok(!html.includes('tauri-folder-importer.js'));
-   assert.ok(!html.includes('window.appReady=main()'));
-   assert.ok(!js.includes('desktopAPI.load('));
-   assert.ok(!js.includes('desktopAPI.save('));
-   assert.ok(!js.includes("load_data"));
-   assert.match(js,/nativeSettingsBootstrap/);
-   assert.match(js,/nativeGroupRename/);
-   assert.match(js,/nativeReportPage/);
- }finally{fs.rmSync(out,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 class Element{
  constructor(tag){this.tag=tag;this.children=[];this.events={};this.disabled=false;this.value='';this.textContent='';this.style={};}
  append(...els){this.children.push(...els);}

@@ -60,13 +60,16 @@ CREATE TRIGGER IF NOT EXISTS management_report_delete AFTER DELETE ON reports BE
 #[derive(Default)]
 pub struct ManagementJob {
     state: Mutex<u8>,
-    cancelled: AtomicBool,
+    cancelled: Arc<AtomicBool>,
     records: AtomicU64,
     interrupt: Mutex<Option<rusqlite::InterruptHandle>>,
 }
 impl ManagementJob {
     pub fn new() -> Self {
         Self::default()
+    }
+    pub(super) fn with_cancellation(cancelled:Arc<AtomicBool>)->Self {
+        Self {cancelled,..Self::default()}
     }
     pub fn records_processed(&self) -> u64 {
         self.records.load(Ordering::Relaxed)
@@ -112,6 +115,7 @@ impl ManagementJob {
         f()
     }
     fn finish(&self, tx: Transaction<'_>) -> Result<(), String> {
+        self.check()?;
         let mut state = self.state.lock().map_err(err)?;
         if *state != 0 {
             return Err("Management cancelled or already committed".into());
@@ -164,6 +168,128 @@ pub struct ManagementWorkSummary {
     pub total: i64,
     pub grouped: i64,
     pub ungrouped: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UnifiedManagementRow {
+    pub handle: Option<String>,
+    pub id: Option<String>,
+    pub name: String,
+    pub organization: Option<String>,
+    pub members: Option<i64>,
+    pub group: Option<String>,
+}
+#[derive(Debug, Serialize)]
+pub struct UnifiedManagementPage {
+    pub rows: Vec<UnifiedManagementRow>,
+    pub total: i64,
+    pub grouped: i64,
+    pub ungrouped: i64,
+}
+
+fn unified_normalized(input: &str) -> String {
+    input.to_lowercase().trim_end_matches(['.', ',', ';', ':']).split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+impl Storage {
+    /// Only the requested metadata page crosses IPC. Search and ordering stay in SQLite.
+    pub fn unified_management_page(&self, revision: i64, kind: &str, query: &str, group: Option<i64>, offset: u32, limit: usize) -> Result<UnifiedManagementPage, String> {
+        if !(1..=50).contains(&limit) { return Err("Размер страницы должен быть от 1 до 50.".into()); }
+        search(query)?;
+        let mut c = self.management_connect()?;
+        c.create_scalar_function("unified_normalized", 1, rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC | rusqlite::functions::FunctionFlags::SQLITE_UTF8, |ctx| {
+            Ok(unified_normalized(&ctx.get::<String>(0)?))
+        }).map_err(err)?;
+        let locale: icu_provider::DataLocale = "ru".parse().map_err(err)?;
+        let collator = icu_collator::Collator::try_new(&locale, Default::default()).map_err(err)?;
+        c.create_collation("unified_ru", move |a,b| collator.compare(a,b)).map_err(err)?;
+        let tx = c.transaction().map_err(err)?;
+        checked(&tx, revision)?;
+        let table = match kind {
+            "groups" => "SELECT CAST(handle AS TEXT) handle,id,name,NULL organization,members,NULL group_handle FROM management_groups".to_string(),
+            "members" => {
+                let handle = group.filter(|h| *h > 0).ok_or("Выберите группу.")?;
+                if !tx.query_row("SELECT EXISTS(SELECT 1 FROM management_groups WHERE handle=?1)", [handle], |r| r.get::<_, bool>(0)).map_err(err)? { return Err("Группа не найдена.".into()); }
+                format!("SELECT CAST(handle AS TEXT) handle,NULL id,work name,NULL organization,NULL members,CAST(group_handle AS TEXT) group_handle FROM management_members WHERE group_handle={handle}")
+            },
+            "catalog" => "SELECT CAST(handle AS TEXT) handle,NULL id,work name,organization,NULL members,NULL group_handle FROM management_catalog".to_string(),
+            "works" => {
+                ensure_rows(&tx)?;
+                "SELECT NULL handle,NULL id,work name,NULL organization,NULL members,(SELECT CAST(MIN(group_handle) AS TEXT) FROM management_members m WHERE m.work=w.work) group_handle FROM (SELECT work FROM report_rows UNION SELECT work FROM management_catalog UNION SELECT work FROM management_members) w".to_string()
+            },
+            _ => return Err("Неизвестная страница настроек.".into()),
+        };
+        let term = unified_normalized(query);
+        let total:i64 = tx.query_row(&format!("SELECT COUNT(*) FROM ({table}) WHERE instr(unified_normalized(name),?1)>0"), [&term], |r| r.get(0)).map_err(err)?;
+        let grouped:i64 = if kind == "works" { tx.query_row(&format!("SELECT COUNT(*) FROM ({table}) WHERE instr(unified_normalized(name),?1)>0 AND group_handle IS NOT NULL"), [&term], |r| r.get(0)).map_err(err)? } else { 0 };
+        let mut stmt = tx.prepare(&format!("SELECT handle,id,name,organization,members,group_handle FROM ({table}) WHERE instr(unified_normalized(name),?1)>0 ORDER BY CASE WHEN substr(unified_normalized(name),1,length(?1))=?1 THEN 0 ELSE 1 END,name COLLATE unified_ru,name,handle LIMIT ?2 OFFSET ?3")).map_err(err)?;
+        let rows = stmt.query_map(params![term,limit as i64,offset], |r| Ok(UnifiedManagementRow { handle:r.get(0)?, id:r.get(1)?, name:r.get(2)?, organization:r.get(3)?, members:r.get(4)?, group:r.get(5)? })).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+        Ok(UnifiedManagementPage { rows,total,grouped,ungrouped:total-grouped })
+    }
+
+    pub fn unified_save_group(&self, revision:i64, handle:Option<i64>, id:&str, name:&str, works:&[String]) -> Result<ManagementReceipt,String> {
+        if name.trim().is_empty() || name.len()>1024 || id.len()>128 || works.is_empty() || works.len()>5000 { return Err("Введите название и выберите от 1 до 5000 работ.".into()); }
+        for work in works { if work.trim().is_empty() || work.len()>4096 { return Err("Некорректное название работы.".into()); } }
+        let mut editor = self.management_begin_settings(revision,256*1024*1024,Arc::new(ManagementJob::new()))?;
+        editor.unified_save_group(handle,id,name,works)?;
+        self.management_commit_settings(editor)
+    }
+
+    pub fn unified_assign_work(&self, revision:i64, work:&str, group:Option<i64>) -> Result<ManagementReceipt,String> {
+        if work.trim().is_empty() || work.len()>4096 { return Err("Некорректное название работы.".into()); }
+        let mut editor = self.management_begin_settings(revision,256*1024*1024,Arc::new(ManagementJob::new()))?;
+        editor.mutate(|c| {
+            let target=group.map(|g| works_node(c,g)).transpose()?;
+            unified_remove_work(c,work)?;
+            if let Some(parent)=target { add(c,parent,None,"string",Some(work))?; }
+            unified_remove_empty_groups(c,group)?;
+            Ok(())
+        })?;
+        self.management_commit_settings(editor)
+    }
+}
+
+fn unified_remove_work(c:&Connection, work:&str) -> Result<(),String> {
+    // Record only source groups actually losing this work. Pre-existing empty
+    // groups may carry user metadata and are unrelated to this edit.
+    c.execute_batch("CREATE TEMP TABLE IF NOT EXISTS unified_touched_groups(handle INTEGER PRIMARY KEY);").map_err(err)?;
+    c.execute("INSERT OR IGNORE INTO unified_touched_groups SELECT g.handle FROM management_nodes g JOIN management_nodes w ON w.parent=g.handle AND w.field='works' AND w.kind='array' JOIN management_nodes n ON n.parent=w.handle AND n.kind='string' AND n.value=?1 WHERE g.parent=?2",params![work,settings(c)?.1]).map_err(err)?;
+    c.execute("DELETE FROM management_nodes WHERE kind='string' AND value=?1 AND parent IN (SELECT w.handle FROM management_nodes w JOIN management_nodes g ON w.parent=g.handle WHERE w.field='works' AND w.kind='array' AND g.parent=?2)", params![work,settings(c)?.1]).map_err(err)?;
+    Ok(())
+}
+fn unified_remove_empty_groups(c:&Connection, except:Option<i64>) -> Result<(),String> {
+    loop {
+        let id:Option<i64>=c.query_row("SELECT g.handle FROM management_nodes g JOIN unified_touched_groups touched ON touched.handle=g.handle JOIN management_nodes w ON w.parent=g.handle AND w.field='works' WHERE g.parent=?1 AND (?2 IS NULL OR g.handle<>?2) AND NOT EXISTS(SELECT 1 FROM management_nodes n WHERE n.parent=w.handle) LIMIT 1",params![settings(c)?.1,except],|r|r.get(0)).optional().map_err(err)?;
+        match id { Some(id)=>remove_node(c,id)?, None=>return Ok(()) }
+    }
+}
+impl SettingsEditor {
+    fn unified_save_group(&mut self, handle:Option<i64>, id:&str, name:&str, works:&[String]) -> Result<(),String> {
+        self.mutate(|c| {
+            let parent=settings(c)?.1;
+            let normalized=unified_normalized(name);
+            let mut stmt=c.prepare("SELECT g.handle,n.value FROM management_nodes g JOIN management_nodes n ON n.parent=g.handle AND n.field='name' WHERE g.parent=?1").map_err(err)?;
+            let mut names=stmt.query([parent]).map_err(err)?;
+            while let Some(row)=names.next().map_err(err)? {
+                let h:i64=row.get(0).map_err(err)?;
+                if Some(h)!=handle && unified_normalized(&row.get::<_,String>(1).map_err(err)?)==normalized { return Err("Группа с таким названием уже существует.".into()); }
+            }
+            drop(names);drop(stmt);
+            let target=if let Some(h)=handle { belongs(c,h,parent,"object")?;scalar(c,h,"name",ManagementScalar::String(name.into()))?;h } else {
+                if id.trim().is_empty() { return Err("Недопустимый идентификатор группы.".into()); }
+                let h=add(c,parent,None,"object",None)?;
+                scalar(c,h,"id",ManagementScalar::String(id.into()))?;
+                scalar(c,h,"name",ManagementScalar::String(name.into()))?;
+                add(c,h,Some("works"),"array",None)?; h
+            };
+            let target_works=works_node(c,target)?;
+            c.execute("DELETE FROM management_nodes WHERE parent=?1",[target_works]).map_err(err)?;
+            let mut seen=std::collections::HashSet::new();
+            for work in works { if seen.insert(work) { unified_remove_work(c,work)?;add(c,target_works,None,"string",Some(work))?; } }
+            unified_remove_empty_groups(c,Some(target))?;
+            Ok(())
+        })
+    }
 }
 #[derive(Debug, Serialize)]
 pub struct ManagementNode {
@@ -1108,6 +1234,12 @@ impl Storage {
 }
 #[path = "management_reports.rs"]
 mod reports;
+#[path = "unified_settings_io.rs"]
+mod unified_settings_io;
+pub use unified_settings_io::{UnifiedSettingsReview,UnifiedCatalogReceipt};
+pub(super) use unified_settings_io::PreparedCatalogSettings;
+#[path = "unified_data_admin.rs"]
+mod unified_data_admin;
 pub use reports::{
     ManagementPeriod, ManagementReport, ManagementReportCursor, ManagementReportFilter,
     ManagementReportSummary,

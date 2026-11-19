@@ -5,15 +5,15 @@ use tauri::{AppHandle, Manager};
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AdvancedRequest {
-    revision: i64,
+    pub(crate) revision: i64,
     source: String,
     display_type: String,
-    organizations: Vec<String>,
+    pub(crate) organizations: Vec<String>,
     selected_names: Vec<String>,
-    query: ChangeQuery,
+    pub(crate) query: ChangeQuery,
 }
 impl AdvancedRequest {
-    fn with_scope<T>(
+    pub(crate) fn with_scope<T>(
         &self,
         store: &Storage,
         action: impl FnOnce(&AnalysisScope, Option<&str>) -> Result<T, String>,
@@ -127,11 +127,12 @@ pub async fn native_composition_page(
     mode: String,
     metric: String,
     after: Option<ContributionCursor>,
+    structure_limit: Option<usize>,
 ) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let store = app.state::<Storage>();
         request.with_scope(&store, |s, g| {
-            store.advanced_composition(
+            store.advanced_composition_limit(
                 request.revision,
                 s,
                 &request.query,
@@ -140,6 +141,7 @@ pub async fn native_composition_page(
                 &mode,
                 &metric,
                 after.as_ref(),
+                structure_limit.unwrap_or(12),
             )
         })
     })

@@ -5,20 +5,7 @@ const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path'),os=r
 const {prepareHtml,prepare}=require('../prepare.cjs');
 const file=path.join(__dirname,'../native-reader.js');
 
-test('Tauri-only SQLite viewer is prepared without changing root HTML',()=>{
-  const root=path.resolve(__dirname,'../..');
-  const source=fs.readFileSync(path.join(root,'index.html'),'utf8');
-  const built=prepareHtml(source);
-  assert.ok(!source.includes('tauri-native-reader.js'));
-  assert.ok(built.includes('<script src="tauri-native-reader.js"></script>'));
-  assert.ok(built.indexOf('tauri-native-reader.js')>built.indexOf('window.appReady=main();'));
-  assert.throws(()=>prepareHtml(built),/уже присутствуют/);
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'tauri-paged-'));
-  try{
-    prepare({base:root,output:directory});
-    assert.equal(fs.readFileSync(path.join(directory,'tauri-native-reader.js'),'utf8'),fs.readFileSync(file,'utf8'));
-  }finally{fs.rmSync(directory,{force:true,recursive:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 class Element{
   constructor(tag){this.tag=tag;this.children=[];this.events={};this.value='';this.hidden=false;this.disabled=false;}
   append(...children){this.children.push(...children);}

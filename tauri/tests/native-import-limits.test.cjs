@@ -46,13 +46,4 @@ test('native limit failures give concrete Russian actions without reducing exist
  assert.match(json,/if document\.rows\.len\(\)\s*>\s*MAX_ROWS/);
 });
 
-test('Tauri prepared workspace retains visible limits and original HTML remains untouched',()=>{
- const output=fs.mkdtempSync(path.join(os.tmpdir(),'native-limit-ui-'));
- try{
-  prepare({base:root,output});
-  const packaged=fs.readFileSync(path.join(output,'native-workspace.html'),'utf8');
-  assert.match(packaged,/id="wideImportLimits"/);
-  assert.match(packaged,/id="metricImportLimits"/);
-  assert.ok(!read('index.html').includes('wideImportLimits'));
- }finally{fs.rmSync(output,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).

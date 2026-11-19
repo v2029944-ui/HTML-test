@@ -695,6 +695,11 @@ impl PreparedImport<'_> {
     pub fn source_hash(&self) -> &str {
         &self.stage.bound_hash
     }
+    /// Catalog extraction only creates temporary SQLite tables; it does not
+    /// mutate the sealed prepared artifact or its source/database identity.
+    pub fn visit_catalog(&self, organizations:&[String], cancel:&AtomicBool, accept:impl FnMut(&str,&str)->Result<()>) -> Result<u64> {
+        self.stage.visit_catalog(organizations,cancel,accept)
+    }
     pub fn directory(&self) -> &Path {
         self.stage.dir.path()
     }

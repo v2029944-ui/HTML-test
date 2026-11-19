@@ -23,6 +23,41 @@
   }
   window.desktopAPI=Object.freeze({
     load:()=>invoke('load_data'),
+    unifiedPeriodOptions:(revision,reportType,grouping=null,after=null,limit=100)=>tracked('unified_period_options',{revision,reportType,grouping,after,limit},'reads'),
+    unifiedNameOptions:(revision,search='',after=null,limit=50)=>tracked('unified_name_options',{revision,search,after,limit},'reads'),
+    unifiedChangesPage:(request,options,after=null)=>tracked('unified_changes_page',{request,options,after},'reads'),
+    unifiedChangesCsv:(request,options,destination)=>tracked('unified_changes_csv',{request,options,destination},'saves'),
+    unifiedPatternPage:(request,mode,windowSize,options,after=null)=>tracked('unified_pattern_page',{request,mode,windowSize,options,after},'reads'),
+    unifiedComparisonPage:(request,before,organization=null,after=null,limit=50)=>tracked('unified_comparison_page',{request,before,organization,after,limit},'reads'),
+    unifiedGroupAuditPage:(request,mode,search='',offset=0,limit=50)=>tracked('unified_group_audit_page',{request,mode,search,offset,limit},'reads'),
+    unifiedManagementPage:(revision,kind,query='',group=null,offset=0,limit=50)=>tracked('unified_management_page',{revision,kind,query,group,offset,limit},'reads'),
+    unifiedGroupSave:(revision,handle,id,name,works)=>tracked('unified_group_save',{revision,handle,id,name,works},'saves'),
+    unifiedWorkAssign:(revision,work,group)=>tracked('unified_work_assign',{revision,work,group},'saves'),
+    unifiedGroupsPreview:(revision,source)=>tracked('unified_groups_preview',{revision,source},'reads'),
+    unifiedGroupsImport:(revision,source,hash,confirmed)=>tracked('unified_groups_import',{revision,source,hash,confirmed},'saves'),
+    unifiedGroupsExport:(revision,destination)=>tracked('unified_groups_export',{revision,destination},'saves'),
+    unifiedCatalogPreview:(revision,source)=>tracked('unified_catalog_preview',{revision,source},'reads'),
+    unifiedCatalogApply:(revision,source,hash,confirmed)=>tracked('unified_catalog_apply',{revision,source,hash,confirmed},'saves'),
+    unifiedRenameOrganizations:(revision,names,destination)=>tracked('unified_rename_organizations',{revision,names,destination},'saves'),
+    unifiedClearReports:(revision,destination)=>tracked('unified_clear_reports',{revision,destination},'saves'),
+    managementReportPage:(revision,filter,after=null,limit=50)=>tracked('unified_report_page',{revision,filter,after,limit},'reads'),
+    managementReportSummary:(revision,filter)=>tracked('unified_report_summary',{revision,filter},'reads'),
+    managementReportOrgPage:(revision,id,after=null,limit=50)=>tracked('unified_report_org_page',{revision,id,after,limit},'reads'),
+    unifiedQualityPage:(revision,filter,offset=0,limit=50)=>tracked('unified_quality_page',{revision,filter,offset,limit},'reads'),
+    unifiedCalendar:(revision,year)=>tracked('unified_calendar',{revision,year},'reads'),
+    chooseXlsx:async()=>{
+      if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
+      return tauri.dialog.open({multiple:false,directory:false,title:'Выберите справочник XLSX',filters:[{name:'Excel XLSX',extensions:['xlsx']}]});
+    },
+    chooseGroupsImport:async()=>{
+      if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
+      return tauri.dialog.open({multiple:false,directory:false,title:'Импорт групп',filters:[{name:'JSON',extensions:['json']}]});
+    },
+    chooseGroupsExport:async()=>{
+      if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
+      if(typeof tauri.dialog.save!=='function')throw Error('Диалог сохранения недоступен.');
+      return tauri.dialog.save({title:'Сохранить группы',defaultPath:'groups.json',filters:[{name:'JSON',extensions:['json']}]});
+    },
     nativeRevision:()=>tracked('native_read_revision',{},'reads'),
     nativeSettingsBootstrap:()=>tracked('native_settings_bootstrap',{},'reads'),
     nativeGroupPage:(revision,afterHandle=null,limit=50)=>tracked(
@@ -55,7 +90,7 @@
       'native_daily_rollup',{revision,from,to,granularity,organizations,after,limit,selectedName,selectedNames},'reads'),
     nativeChangesPage:(request,after)=>tracked('native_changes_page',{request,after},'reads'),
     nativeChangesCsv:(request,destination)=>tracked('native_changes_csv',{request,destination},'saves'),
-    nativeCompositionPage:(request,before,mode,metric,after)=>tracked('native_composition_page',{request,before,mode,metric,after},'reads'),
+    nativeCompositionPage:(request,before,mode,metric,after,structureLimit=null)=>tracked('native_composition_page',{request,before,mode,metric,after,structureLimit},'reads'),
     nativePatternPage:(request,mode,windowSize,after)=>tracked('native_pattern_page',{request,mode,windowSize,after},'reads'),
     nativeAnalysisCompare:(revision,reportType,beforeFrom,beforeTo,from,to,organizations,selectedName=null,selectedNames=null)=>tracked(
       'native_analysis_compare',{revision,reportType,beforeFrom,beforeTo,from,to,organizations,selectedName,selectedNames},'reads'),

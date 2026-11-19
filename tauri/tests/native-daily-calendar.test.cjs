@@ -72,18 +72,7 @@ function mount(options={}){
  return {nodes,window,calls,overview};
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
-test('native daily calendar module is bundled before SQL workspace and not classic HTML',()=>{
- const root=path.resolve(__dirname,'../..'),output=fs.mkdtempSync(path.join(os.tmpdir(),'native-daily-calendar-'));
- try{
-  prepare({base:root,output});
-  const html=fs.readFileSync(path.join(output,'native-workspace.html'),'utf8');
-  assert.equal(fs.readFileSync(path.join(output,'tauri-native-daily-calendar.js'),'utf8'),calendar);
-  assert.ok(html.indexOf('tauri-native-period-selection.js')<html.indexOf('tauri-native-daily-calendar.js'));
-  assert.ok(html.indexOf('tauri-native-daily-calendar.js')<html.indexOf('tauri-native-workspace.js'));
-  assert.match(html,/id="sqlDailyRollups"/);
-  assert.ok(!fs.readFileSync(path.join(root,'index.html'),'utf8').includes('tauri-native-daily-calendar.js'));
- }finally{fs.rmSync(output,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 test('daily rollup selects ISO week full bounds with exact chosen organizations and revision',async()=>{
  const {nodes,window,calls}=mount();
  window.nativeDailyCalendar.setContext(42,['A','B']);

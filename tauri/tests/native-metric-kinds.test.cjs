@@ -98,16 +98,7 @@ test('cancelled file or denied confirmation makes no writes',async()=>{
  await declined.elements.metricKindApply.events.click();
  assert.equal(declined.calls.some(c=>c[0]==='apply'),false);
 });
-test('packaging includes registry viewer without altering standalone HTML',()=>{
- const out=fs.mkdtempSync(path.join(os.tmpdir(),'metric-ui-'));
- try{
-  prepare({base:path.resolve(__dirname,'../..'),output:out});
-  const html=fs.readFileSync(path.join(out,'native-workspace.html'),'utf8');
-  assert.match(html,/tauri-native-metric-kinds.js/);
-  assert.ok(fs.existsSync(path.join(out,'tauri-native-metric-kinds.js')));
-  assert.ok(!fs.readFileSync(path.join(__dirname,'../../index.html'),'utf8').includes('metricKindSelect'));
- }finally{fs.rmSync(out,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 
 test('mapped XLSX is previewed with selected profile and explicit dates',async()=>{
  const {elements:e,calls,window}=mount();await window.metricKindWorkspaceReady;

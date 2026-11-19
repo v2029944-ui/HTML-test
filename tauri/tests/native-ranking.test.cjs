@@ -17,18 +17,7 @@ function mount(){
  return {window,e:elements};
 }
 const item=(name,kind,count,amount)=>({name,key:kind+':'+name,kind,count,amount,active:true});
-test('ranking is bundled only into the Tauri workspace',()=>{
- const root=path.resolve(__dirname,'../..'),out=fs.mkdtempSync(path.join(os.tmpdir(),'sql-ranking-'));
- try{
-  prepare({base:root,output:out});
-  const html=fs.readFileSync(path.join(out,'native-workspace.html'),'utf8');
-  assert.equal(fs.readFileSync(path.join(out,'tauri-native-ranking.js'),'utf8'),script);
-  assert.match(html,/id="sqlRanking"/);
-  assert.match(html,/tauri-native-ranking.js/);
-  assert.ok(html.indexOf('tauri-native-ranking.js')<html.indexOf('tauri-native-workspace.js'));
-  assert.ok(!fs.readFileSync(path.join(root,'index.html'),'utf8').includes('tauri-native-ranking.js'));
- }finally{fs.rmSync(out,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 test('ranking preserves signed and zero amounts and renders labels as text',()=>{
  const {window,e}=mount();
  window.nativeRanking.show({complete:true,rows:[

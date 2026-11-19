@@ -1,6 +1,6 @@
 [package]
 name = "analiz-rabot-tauri"
-version = "1.7.0"
+version = "1.8.0"
 description = "Анализ выполненных работ — Tauri и SQLite"
 authors = ["HTML-test contributors"]
 edition = "2021"
@@ -19,7 +19,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.37", features = ["bundled", "blob", "backup", "hooks", "collation"] }
+rusqlite = { version = "0.37", features = ["bundled", "blob", "backup", "hooks", "collation", "functions"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 # ICU 1.5 accepts newer UTF iterators that require Rust 1.83.
 utf16_iter = "=1.0.5"

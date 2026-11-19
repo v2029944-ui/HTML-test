@@ -67,7 +67,7 @@ function openEditor(file,rule){
     rule.mappings&&typeof rule.mappings==='object'&&Object.keys(rule.mappings).length>0);
   if(advanced){
     invalidate();
-    ruleMessage('Этот файл использует расширенную настройку листов и столбцов. Для изменения откройте классический интерфейс.',true);
+    ruleMessage('Этот файл использует расширенную настройку листов и столбцов. Откройте файл для проверки в форме «Импорт Excel», измените настройки и нажмите «Запомнить настройки файла для автоимпорта».',true);
     return;
   }
   selected={name:file.name,signature:file.nativeSignature,folder,revision};
@@ -168,7 +168,7 @@ fields.save.addEventListener('click',async()=>{
   let rule;
   try{rule=makeRule();}catch(error){ruleMessage(String(error.message),true);return;}
   const choice={...selected};
-  if(!window.confirm('Сохранить правило для «'+choice.name+'»? '+ruleEffect()+' Правило также применяется в классическом интерфейсе.'))return;
+  if(!window.confirm('Сохранить правило для «'+choice.name+'»? '+ruleEffect()))return;
   changing=true;lock();
   let saved=false,reloaded=true,error=null;
   try{

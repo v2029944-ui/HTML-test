@@ -8,7 +8,7 @@
         "minWidth": 720,
         "minHeight": 530,
         "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --remote-debugging-port=9227",
-        "url": "startup.html"
+        "url": "index.html"
       }
     ]
   }

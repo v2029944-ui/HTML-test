@@ -3,6 +3,44 @@ use analiz_import_core::{LegacyOptions, Limits, PreparedImport, StageArea};
 use std::{io::Write, sync::atomic::AtomicBool};
 use zip::{write::SimpleFileOptions, ZipWriter};
 
+#[test]
+fn legacy_period_dates_preview_apply_preserve_dates_and_reject_changed_or_stale_review() {
+    let root=tempfile::tempdir().unwrap();
+    let source=root.path().join("dates.xlsx");
+    fixture(&source,2);
+    let area=StageArea::open(root.path().join("stage")).unwrap();
+    let cancel=AtomicBool::new(false);
+    let make=|date:&str| {
+        let mut stage=area.ingest(&source,Limits::default(),&cancel,|_|{}).unwrap();
+        stage.convert_legacy(&LegacyOptions {
+            period_dates:Some(vec![date.into()]),
+            sheet:"xl/worksheets/sheet1.xml".into(), kind:"day".into(),start:"2026-11-01".into(),
+            organizations:["СМУ16".into(),"АВТО".into(),"ТРАК".into(),"ЦЕНТР".into()],
+            mappings:Some(vec![analiz_import_core::TripleMapping{header_row:1,work_col:1,count_col:2,amount_col:3}]),
+        },&cancel,|_|{}).unwrap();
+        stage.prepare(&cancel,|_|{}).unwrap()
+    };
+    let first=make("2026-11-04");
+    let second=make("2026-11-05");
+    let storage=Storage::new(root.path().join("live")).unwrap();
+    let before=original(&storage);
+    let first_preview=storage.preview_import(&first).unwrap();
+    let second_preview=storage.preview_import(&second).unwrap();
+    assert_eq!(storage.load().unwrap(),before);
+    assert!(storage.apply_import(&second,&first_preview,ImportConfirmation::default(),&ImportJob::new(),|_|{}).is_err());
+    assert_eq!(storage.load().unwrap(),before);
+    storage.apply_import(&first,&first_preview,ImportConfirmation::default(),&ImportJob::new(),|_|{}).unwrap();
+    let after=storage.load().unwrap();
+    assert_eq!(after["settings"],before["settings"]);
+    assert_eq!(after["reports"][1]["start"],"2026-11-04");
+    assert_eq!(after["reports"][1]["end"],"2026-11-04");
+    assert_eq!(after["reports"][1]["rows"].as_array().unwrap().len(),2);
+    assert!(storage.apply_import(&second,&second_preview,ImportConfirmation::default(),&ImportJob::new(),|_|{}).is_err());
+    assert_eq!(storage.load().unwrap(),after);
+    let connection=storage.connect().unwrap();
+    assert_eq!(connection.query_row("PRAGMA integrity_check",[],|r|r.get::<_,String>(0)).unwrap(),"ok");
+}
+
 pub(super) fn fixture(path: &Path, rows: usize) {
     let mut zip = ZipWriter::new(fs::File::create(path).unwrap());
     zip.start_file("xl/worksheets/sheet1.xml", SimpleFileOptions::default())
@@ -27,6 +65,7 @@ pub(super) fn prepared<'a>(
     stage
         .convert_legacy(
             &LegacyOptions {
+                period_dates: None,
                 sheet: "xl/worksheets/sheet1.xml".into(),
                 kind: kind.into(),
                 start: start.into(),
@@ -364,6 +403,7 @@ fn preparation_cancellation_empty_data_and_budgets_leave_live_database_intact() 
     let storage = Storage::new(root.path().join("live")).unwrap();
     let before = original(&storage);
     let options = LegacyOptions {
+        period_dates: None,
         sheet: "xl/worksheets/sheet1.xml".into(),
         kind: "day".into(),
         start: "2026-11-01".into(),
@@ -435,6 +475,7 @@ fn complete_multi_report_preview_is_bound_to_target_database() {
     stage
         .convert_legacy(
             &LegacyOptions {
+                period_dates: None,
                 sheet: "xl/worksheets/sheet1.xml".into(),
                 kind: "day".into(),
                 start: "2026-11-01".into(),
@@ -510,6 +551,7 @@ fn preparation_holds_one_private_conversion_snapshot() {
     stage
         .convert_legacy(
             &LegacyOptions {
+                period_dates: None,
                 sheet: "xl/worksheets/sheet1.xml".into(),
                 kind: "day".into(),
                 start: "2026-11-01".into(),
@@ -636,6 +678,7 @@ fn documents_share_the_ingestion_stage_disk_budget() {
     let area = StageArea::open(root.path().join("stage")).unwrap();
     let cancel = AtomicBool::new(false);
     let options = LegacyOptions {
+        period_dates: None,
         sheet: "xl/worksheets/sheet1.xml".into(),
         kind: "day".into(),
         start: "2026-11-01".into(),
@@ -693,6 +736,7 @@ fn prepared_documents_keep_structured_diagnostics_controls_and_bound_source_hash
     stage
         .convert_legacy(
             &LegacyOptions {
+                period_dates: None,
                 sheet: "xl/worksheets/sheet1.xml".into(),
                 kind: "day".into(),
                 start: "2026-11-01".into(),
@@ -813,6 +857,7 @@ fn folder_prepared<'a>(area: &'a StageArea, source: &Path, days: usize) -> Prepa
     stage
         .convert_legacy(
             &LegacyOptions {
+                period_dates: None,
                 sheet: "xl/worksheets/sheet1.xml".into(),
                 kind: "day".into(),
                 start: "2026-11-01".into(),

@@ -23,18 +23,7 @@ function mount(opt={}){
  vm.runInNewContext(script,{window,document,TextEncoder});
  return {e,window,requests,notify};
 }
-test('native exact-name filter module is packaged and never included in the classic browser page',()=>{
- const root=path.resolve(__dirname,'../..'),out=fs.mkdtempSync(path.join(os.tmpdir(),'sql-name-filter-'));
- try{
-  prepare({base:root,output:out});
-  const html=fs.readFileSync(path.join(out,'native-workspace.html'),'utf8');
-  assert.equal(fs.readFileSync(path.join(out,'tauri-native-name-filter.js'),'utf8'),script);
-  assert.ok(html.indexOf('tauri-native-name-filter.js')<html.indexOf('tauri-native-workspace.js'));
-  for(const id of ['analysisNameSearch','analysisName','analysisNameSearchRun','analysisNameReset','analysisNameStatus','analysisNameAdd','analysisNameSelected'])
-   assert.match(html,new RegExp('id="'+id+'"'));
-  assert.ok(!fs.readFileSync(path.join(root,'index.html'),'utf8').includes('tauri-native-name-filter.js'));
- }finally{fs.rmSync(out,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 test('search uses bounded native SQLite results, explicit choice drives all filters',async()=>{
  const {e,window,requests,notify}=mount();
  assert.equal(e.analysisNameSearchRun.disabled,true,'no SQLite revision');

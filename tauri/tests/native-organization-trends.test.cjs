@@ -30,17 +30,7 @@ const point=(start,amount,count,missing=0)=>({
  total:missing?{amount:null,count:null}:{amount,count}
 });
 const series=(organization,points)=>({organization,points});
-test('organization trend script bundles for Tauri without modifying index.html',()=>{
- const root=path.resolve(__dirname,'../..'),out=fs.mkdtempSync(path.join(os.tmpdir(),'sql-org-trends-'));
- try{
-   prepare({base:root,output:out});
-   const html=fs.readFileSync(path.join(out,'native-workspace.html'),'utf8');
-   assert.equal(fs.readFileSync(path.join(out,'tauri-native-organization-trends.js'),'utf8'),script);
-   assert.match(html,/id="sqlOrganizationTrends"/);
-   assert.ok(html.indexOf('tauri-native-organization-trends.js')<html.indexOf('tauri-native-workspace.js'));
-   assert.ok(!fs.readFileSync(path.join(root,'index.html'),'utf8').includes('tauri-native-organization-trends.js'));
- }finally{fs.rmSync(out,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 test('separate missing division breaks only its line; zeros and negatives remain values',()=>{
  const {window,e}=mount();
  window.nativeOrganizationTrends.show({granularity:'period',selected_organizations:2,series:[

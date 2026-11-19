@@ -404,7 +404,7 @@ impl Storage {
                 return Err(e);
             }
         };
-        let mut conn = self.import_connection()?;
+        let conn = self.import_connection()?;
         // Durable receipt wins over stale revision, missing stage/source, and a late cancel.
         if let Some(done) = receipt(&conn, prepared.operation_id())? {
             job.completed();
@@ -415,10 +415,33 @@ impl Storage {
         }
         job.check()?;
         prepared.validate(&job.cancelled).map_err(err)?;
-        apply_in_connection(&mut conn, prepared, preview, confirmation, job, progress)
+        let catalog=match self.unified_prepare_import_catalog(&conn,prepared,preview.revision,job.cancellation_handle()) {
+            Ok(catalog)=>catalog,
+            Err(error)=>{
+                // A concurrent caller may have completed this exact operation
+                // after our first probe while catalog settings were staged.
+                if matches!(std::fs::canonicalize(self.db_path()),Ok(database) if database==preview.database) {
+                    if let Ok(Some(done))=receipt(&conn,prepared.operation_id()) {
+                        job.completed();
+                        return Ok(done);
+                    }
+                }
+                return Err(error);
+            },
+        };
+        let result=(|| {
+            if let Some(settings)=&catalog {settings.attach(&conn)?;}
+            with_sql_cancel(&conn,&job.cancelled,||apply_in_connection_inner(&conn,prepared,preview,confirmation,job,progress,catalog.as_ref()))
+        })();
+        // Release the attached private database before Stage::drop removes it
+        // (Windows does not permit unlinking an open SQLite file).
+        drop(conn);
+        drop(catalog);
+        result
     }
 }
 /// Shared actual publication path, allowing real constrained SQLite connections in unit tests.
+#[cfg(test)]
 fn apply_in_connection(
     conn: &mut Connection,
     prepared: &PreparedImport<'_>,
@@ -428,7 +451,7 @@ fn apply_in_connection(
     progress: impl FnMut(ImportProgress),
 ) -> Result<ImportReceipt, String> {
     with_sql_cancel(conn, &job.cancelled, || {
-        apply_in_connection_inner(conn, prepared, preview, confirmation, job, progress)
+        apply_in_connection_inner(conn, prepared, preview, confirmation, job, progress,None)
     })
 }
 fn apply_in_connection_inner(
@@ -438,6 +461,7 @@ fn apply_in_connection_inner(
     confirmation: ImportConfirmation,
     job: &ImportJob,
     mut progress: impl FnMut(ImportProgress),
+    catalog:Option<&super::management::PreparedCatalogSettings>,
 ) -> Result<ImportReceipt, String> {
     if std::fs::canonicalize(conn.path().ok_or("Import requires a file database")?).map_err(err)?
         != preview.database
@@ -672,6 +696,7 @@ fn apply_in_connection_inner(
     if reports != prepared.report_count() || all_rows != prepared.row_count() {
         return Err("Prepared report manifest mismatch.".into());
     }
+    if let Some(settings)=catalog {settings.publish(&tx,preview.revision,&job.cancelled)?;}
     // Detect source/index changes during I/O; external filesystem changes after this
     // observation cannot be synchronized with SQLite and are not claimed atomic.
     prepared

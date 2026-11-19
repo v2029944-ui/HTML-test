@@ -38,17 +38,4 @@ test('unknown and sensitive technical errors fail closed',()=>{
   assert.ok(!/secret=abc|SELECT \*|Stack trace/i.test(translated));
  }
 });
-test('native workspace bundles the error translator before its consumers, not in standalone HTML',()=>{
- const root=path.resolve(__dirname,'../..'),out=fs.mkdtempSync(path.join(os.tmpdir(),'native-errors-'));
- try{
-  prepare({base:root,output:out});
-  const html=fs.readFileSync(path.join(out,'native-workspace.html'),'utf8');
-  const translator=html.indexOf('tauri-native-errors.js');
-  const workspace=html.indexOf('tauri-native-workspace.js');
-  const wide=html.indexOf('tauri-native-wide-import.js');
-  const metrics=html.indexOf('tauri-native-metric-kinds.js');
-  assert.ok(translator>=0&&translator<workspace&&workspace<wide&&wide<metrics);
-  assert.ok(fs.existsSync(path.join(out,'tauri-native-errors.js')));
-  assert.ok(!fs.readFileSync(path.join(root,'index.html'),'utf8').includes('tauri-native-errors.js'));
- }finally{fs.rmSync(out,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).

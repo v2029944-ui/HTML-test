@@ -36,12 +36,156 @@ fn fixture_rows(path: &std::path::Path, rows: &[Vec<&str>]) {
 }
 fn options(kind: &str, start: &str) -> LegacyOptions {
     LegacyOptions {
+        period_dates: None,
         sheet: "xl/worksheets/sheet1.xml".into(),
         kind: kind.into(),
         start: start.into(),
         organizations: ["СМУ16".into(), "АВТО".into(), "ТРАК".into(), "ЦЕНТР".into()],
         mappings: None,
     }
+}
+
+#[test]
+fn legacy_period_dates_keep_independent_set_dates_for_day_week_and_month() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("dates.xlsx");
+    fixture_rows(
+        &source,
+        &[
+            vec![
+                "Работа",
+                "Количество",
+                "Сумма",
+                "Работа",
+                "Количество",
+                "Сумма",
+            ],
+            vec!["СМУ16", "1", "2", "СМУ16", "1", "2"],
+            vec!["Альфа", "1", "2", "Бета", "1", "2"],
+            vec!["Итого", "1", "2", "Итого", "1", "2"],
+        ],
+    );
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let cancel = AtomicBool::new(false);
+    for (kind, start, dates, ends) in [
+        (
+            "day",
+            "2026-11-01",
+            ["2026-11-11", "2026-11-04"],
+            ["2026-11-11", "2026-11-04"],
+        ),
+        (
+            "week",
+            "2026-11-01",
+            ["2026-11-11", "2026-12-01"],
+            ["2026-11-17", "2026-12-07"],
+        ),
+        (
+            "month",
+            "2026-01-01",
+            ["2026-01-01", "2026-03-01"],
+            ["2026-01-31", "2026-03-31"],
+        ),
+    ] {
+        let mut stage = area
+            .ingest(&source, Limits::default(), &cancel, |_| {})
+            .unwrap();
+        let mut cfg = options(kind, start);
+        cfg.period_dates = Some(dates.iter().map(|s| s.to_string()).collect());
+        assert_eq!(
+            stage.convert_legacy(&cfg, &cancel, |_| {}).unwrap().reports,
+            2
+        );
+        let reports = stage.report_page(0, 100).unwrap();
+        assert_eq!(
+            reports.iter().map(|r| r.start.as_str()).collect::<Vec<_>>(),
+            dates
+        );
+        assert_eq!(
+            reports.iter().map(|r| r.end.as_str()).collect::<Vec<_>>(),
+            ends
+        );
+        assert_eq!(
+            stage.report_rows(&reports[0].id, 0, 100).unwrap()[0].work,
+            "Альфа"
+        );
+        assert_eq!(
+            stage.report_rows(&reports[1].id, 0, 100).unwrap()[0].work,
+            "Бета"
+        );
+    }
+}
+
+#[test]
+fn legacy_period_dates_reject_partial_invalid_overlap_and_overflow_without_losing_conversion() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("dates.xlsx");
+    fixture_rows(
+        &source,
+        &[
+            vec![
+                "Работа",
+                "Количество",
+                "Сумма",
+                "Работа",
+                "Количество",
+                "Сумма",
+            ],
+            vec!["СМУ16", "1", "2", "СМУ16", "1", "2"],
+            vec!["Альфа", "1", "2", "Бета", "1", "2"],
+        ],
+    );
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut stage = area
+        .ingest(&source, Limits::default(), &cancel, |_| {})
+        .unwrap();
+    stage
+        .convert_legacy(&options("day", "2026-11-01"), &cancel, |_| {})
+        .unwrap();
+    let original = stage
+        .report_page(0, 100)
+        .unwrap()
+        .iter()
+        .map(|r| r.start.clone())
+        .collect::<Vec<_>>();
+    for (kind, dates) in [
+        ("day", vec![]),
+        ("day", vec!["2026-11-01"]),
+        ("day", vec!["2026-11-01", ""]),
+        ("day", vec!["2026-11-01", "2026-02-30"]),
+        ("day", vec!["2026-11-01", "2026-11-01"]),
+        ("week", vec!["2026-11-01", "2026-11-07"]),
+        ("month", vec!["2026-11-01", "2026-12-02"]),
+        ("week", vec!["2026-11-01", "9999-12-31"]),
+        ("day", vec!["2026-11-01"; 685]),
+    ] {
+        let mut cfg = options(kind, "2026-11-01");
+        cfg.period_dates = Some(dates.into_iter().map(String::from).collect());
+        assert!(stage.convert_legacy(&cfg, &cancel, |_| {}).is_err());
+        assert_eq!(
+            stage
+                .report_page(0, 100)
+                .unwrap()
+                .iter()
+                .map(|r| r.start.clone())
+                .collect::<Vec<_>>(),
+            original
+        );
+    }
+    let mut cfg = options("day", "2026-11-01");
+    cfg.period_dates = Some(vec!["2026-11-03".into(), "2026-11-05".into()]);
+    let json = serde_json::to_value(&cfg).unwrap();
+    assert_eq!(
+        json["periodDates"],
+        serde_json::json!(["2026-11-03", "2026-11-05"])
+    );
+    let mut omitted = json;
+    omitted.as_object_mut().unwrap().remove("periodDates");
+    assert!(serde_json::from_value::<LegacyOptions>(omitted)
+        .unwrap()
+        .period_dates
+        .is_none());
 }
 #[test]
 fn legacy_reports_keep_all_rows_and_complete_totals_beyond_page_one() {

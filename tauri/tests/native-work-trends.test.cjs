@@ -31,18 +31,7 @@ const point=(start,count,amount,missing=0)=>({
 const result=(points,key='group:one',name='Работа <script>')=>({
  key,name,kind:'group',granularity:'period',points
 });
-test('work/group trends use only Tauri resources, never the standalone index.html',()=>{
- const root=path.resolve(__dirname,'../..'),out=fs.mkdtempSync(path.join(os.tmpdir(),'native-work-trends-'));
- try{
-  prepare({base:root,output:out});
-  const html=fs.readFileSync(path.join(out,'native-workspace.html'),'utf8');
-  assert.equal(fs.readFileSync(path.join(out,'tauri-native-work-trends.js'),'utf8'),script);
-  assert.match(html,/id="sqlWorkTrends"/);
-  assert.match(html,/id="workTrendMetric"/);
-  assert.ok(html.indexOf('tauri-native-work-trends.js')<html.indexOf('tauri-native-workspace.js'));
-  assert.ok(!fs.readFileSync(path.join(root,'index.html'),'utf8').includes('tauri-native-work-trends.js'));
- }finally{fs.rmSync(out,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 test('real zero remains zero while missing periods break work trends',()=>{
  const {window,e}=mount();
  window.nativeWorkTrends.show(result([

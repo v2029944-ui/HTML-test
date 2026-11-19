@@ -33,18 +33,7 @@ const timeline=points=>({granularity:'period',points});
 function find(root,tag){
  return root.children.flatMap(child=>[...(child.tag===tag?[child]:[]),...find(child,tag)]);
 }
-test('daily-only chart renderer is packaged before calendar and excluded from classic HTML',()=>{
- const root=path.resolve(__dirname,'../..'),output=fs.mkdtempSync(path.join(os.tmpdir(),'daily-source-overview-'));
- try{
-  prepare({base:root,output});
-  assert.equal(fs.readFileSync(path.join(output,'tauri-native-daily-overview.js'),'utf8'),script);
-  const html=fs.readFileSync(path.join(output,'native-workspace.html'),'utf8');
-  assert.ok(html.indexOf('tauri-native-daily-overview.js')<html.indexOf('tauri-native-daily-calendar.js'));
-  assert.match(html,/id="dailySourceKpis"/);
-  assert.match(html,/id="dailySourceRows"/);
-  assert.ok(!fs.readFileSync(path.join(root,'index.html'),'utf8').includes('tauri-native-daily-overview.js'));
- }finally{fs.rmSync(output,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 test('observed-only KPI never claims full coverage, zero is real and missing gap breaks chart',()=>{
  const {e,api}=setup();
  api.show(summary(),timeline([

@@ -20,17 +20,7 @@ function fixture({configured=true,available=true,approve=false,fail=false}={}){
  return {ids,ops,calls,window,ready:window.nativeSqlUpdaterReady};
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
-test('SQL-only updater is packaged and original HTML stays independent',()=>{
- const root=path.resolve(__dirname,'../..'),dest=fs.mkdtempSync(path.join(os.tmpdir(),'sql-updates-'));
- try{
-  prepare({base:root,output:dest});
-  const html=fs.readFileSync(path.join(dest,'native-workspace.html'),'utf8');
-  assert.match(html,/src="tauri-native-updates.js"/);
-  assert.match(html,/id="sqlUpdateInstall"/);
-  assert.equal(fs.readFileSync(path.join(dest,'tauri-native-updates.js'),'utf8'),source);
-  assert.ok(!fs.readFileSync(path.join(root,'index.html'),'utf8').includes('sqlUpdateCheck'));
- }finally{fs.rmSync(dest,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 test('signed SQL mode checks on launch but requires confirmation to install',async()=>{
  const ui=fixture();await ui.ready;
  assert.equal(ui.calls.check,1);

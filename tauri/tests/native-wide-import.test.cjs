@@ -53,18 +53,7 @@ function setup(options={}){
  vm.runInNewContext(fs.readFileSync(filename,'utf8'),{window,document});
  return {elements,calls,window,confirmCount:()=>confirmCount};
 }
-test('Tauri-only wide importer is packaged without adding it to browser index.html',()=>{
- const root=path.resolve(__dirname,'../..');
- const destination=fs.mkdtempSync(path.join(os.tmpdir(),'wide-import-ui-'));
- try{
-  prepare({base:root,output:destination});
-  const native=fs.readFileSync(path.join(destination,'native-workspace.html'),'utf8');
-  assert.match(native,/tauri-native-wide-import.js/);
-  assert.match(native,/id="wideApply"/);
-  assert.ok(!fs.readFileSync(path.join(root,'index.html'),'utf8').includes('tauri-native-wide-import.js'));
-  assert.equal(fs.readFileSync(path.join(destination,'tauri-native-wide-import.js'),'utf8'),fs.readFileSync(filename,'utf8'));
- }finally{fs.rmSync(destination,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 test('native wide import requires review and independent acknowledgements',async()=>{
  const {elements:e,calls,confirmCount}=setup();
  assert.equal(e.widePreview.disabled,true);

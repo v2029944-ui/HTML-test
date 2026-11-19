@@ -47,21 +47,7 @@ function mount(options={}){
   return {nodes,window,calls,confirmations,getListing:()=>listing,setListing:v=>listing=v,onChanged:()=>onChanged?.(),isUnsubscribed:()=>unsubscribed};
 }
 
-test('native Excel source overview is packaged only for Tauri SQL workspace',()=>{
-  const root=path.resolve(__dirname,'../..');
-  const output=fs.mkdtempSync(path.join(os.tmpdir(),'sql-folder-'));
-  try{
-    prepare({base:root,output});
-    const html=fs.readFileSync(path.join(output,'native-workspace.html'),'utf8');
-    assert.match(html,/id="sourceFolderRows"/);
-    assert.match(html,/tauri-native-folder-status\.js/);
-    assert.equal(fs.readFileSync(path.join(output,'tauri-native-folder-status.js'),'utf8'),
-      fs.readFileSync(path.join(root,'tauri/native-folder-status.js'),'utf8'));
-    const browser=fs.readFileSync(path.join(root,'index.html'),'utf8');
-    assert.ok(!browser.includes('sourceFolderRows'));
-    assert.ok(!browser.includes('tauri-native-folder-status.js'));
-  }finally{fs.rmSync(output,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 
 test('metadata-only list is capped to 100 rendered names and escapes untrusted data',async()=>{
   const files=Array.from({length:140},(_,i)=>({
