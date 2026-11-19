@@ -546,7 +546,7 @@ async function calculateAnalysis(){
  try{
    const result=await api.nativeAnalysisRange(revision,kind,from,to,organizations,selectedName());
    const divisions=await api.nativeAnalysisOrganizations(revision,kind,from,to,organizations,selectedName());
-   displayAnalysisCoverage(result,{type:kind,from,to,organizations});
+   displayAnalysisCoverage(result,{type:kind,from,to,organizations,selectedName:selectedName()});
    showDivisionComparison(divisions,result.total?.amount,result.complete);
    // A failed chart must not discard already verified KPIs or division results.
    try{
