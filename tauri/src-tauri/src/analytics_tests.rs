@@ -1510,3 +1510,23 @@ fn schema_initialization_is_atomic_and_reopens_restore_delete_mode() {
     let c=rusqlite::Connection::open(&path).unwrap();
     assert_eq!(c.query_row("PRAGMA journal_mode",[],|r|r.get::<_,String>(0)).unwrap(),"delete");
 }
+
+#[test]
+fn analysis_filter_writers_share_only_their_database_queue() {
+    let dir=tempdir().unwrap();let root=dir.path().join("one");
+    let first=Storage::new(root.clone()).unwrap();let rev=prepare(&first,&fixture());
+    let second=Storage::new(root.join(".")).unwrap();
+    assert!(std::sync::Arc::ptr_eq(&first.analysis_filter_gate,&second.analysis_filter_gate));
+    let guard=first.analysis_filter_gate.lock().unwrap();
+    assert!(matches!(second.analysis_filter_gate.try_lock(),Err(std::sync::TryLockError::WouldBlock)));
+    let (send,receive)=std::sync::mpsc::channel();
+    let worker=std::thread::spawn(move||{send.send(second.analysis_filter_create(rev,"organizations")).unwrap();});
+    let other=Storage::new(dir.path().join("two")).unwrap();let other_rev=prepare(&other,&fixture());
+    assert!(!std::sync::Arc::ptr_eq(&first.analysis_filter_gate,&other.analysis_filter_gate));
+    let other_id=other.analysis_filter_create(other_rev,"organizations").unwrap();
+    other.analysis_filter_delete(&other_id).unwrap();
+    assert!(matches!(receive.try_recv(),Err(std::sync::mpsc::TryRecvError::Empty)));
+    drop(guard);
+    let id=receive.recv_timeout(std::time::Duration::from_secs(15)).unwrap().unwrap();
+    worker.join().unwrap();first.analysis_filter_delete(&id).unwrap();
+}

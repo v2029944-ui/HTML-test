@@ -7,7 +7,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex},
+    sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex, OnceLock, Weak},
     time::UNIX_EPOCH,
 };
 
@@ -168,6 +168,20 @@ pub struct Storage {
     root: PathBuf,
     gate: Mutex<()>,
     wal_anchor: Mutex<Option<Connection>>,
+    analysis_filter_gate: Arc<Mutex<()>>,
+}
+
+// Each live database has one queue for short analytical filter mutations. Weak
+// entries avoid retaining paths for databases which are no longer in use.
+fn analysis_filter_gate(root: &Path) -> Result<Arc<Mutex<()>>, String> {
+    static GATES: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+    let key = fs::canonicalize(root).map_err(err)?;
+    let mut gates = GATES.get_or_init(|| Mutex::new(HashMap::new())).lock().map_err(err)?;
+    gates.retain(|_, gate| gate.strong_count() > 0);
+    if let Some(gate) = gates.get(&key).and_then(Weak::upgrade) { return Ok(gate); }
+    let gate = Arc::new(Mutex::new(()));
+    gates.insert(key, Arc::downgrade(&gate));
+    Ok(gate)
 }
 
 fn valid_date(input: &str) -> bool {
@@ -462,10 +476,12 @@ fn opened_file_path(_file: &fs::File) -> Result<PathBuf, String> {
 impl Storage {
     pub fn new(root: PathBuf) -> Result<Self, String> {
         fs::create_dir_all(&root).map_err(err)?;
+        let analysis_filter_gate = analysis_filter_gate(&root)?;
         Ok(Self {
             root,
             gate: Mutex::new(()),
             wal_anchor: Mutex::new(None),
+            analysis_filter_gate,
             folder_import: Mutex::new(None),
             folder_import_serial: AtomicU64::new(0),
         })

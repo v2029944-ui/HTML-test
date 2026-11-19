@@ -1038,6 +1038,7 @@ impl Storage {
         if !matches!(kind, "organizations" | "names") {
             return Err("Unknown analysis filter kind".into());
         }
+        let _filter_writer = self.analysis_filter_gate.lock().map_err(err)?;
         let started = std::time::Instant::now();
         let stage_error = |stage: &str, detail: String| format!("{detail} [analysis filter {stage}; elapsed {} ms]", started.elapsed().as_millis());
         let sql_error = |stage: &str, failure: rusqlite::Error| {
@@ -1069,6 +1070,7 @@ impl Storage {
         for s in items {
             bounded(s)?;
         }
+        let _filter_writer = self.analysis_filter_gate.lock().map_err(err)?;
         let mut c = self.connect()?;
         let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(err)?;
         check_revision(&tx, expected)?;
@@ -1095,6 +1097,7 @@ impl Storage {
     }
     pub fn analysis_filter_seal(&self, expected: i64, id: &str) -> Result<(), String> {
         bounded(id)?;
+        let _filter_writer = self.analysis_filter_gate.lock().map_err(err)?;
         let mut c = self.connect()?;
         let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(err)?;
         check_revision(&tx, expected)?;
@@ -1112,6 +1115,7 @@ impl Storage {
     }
     pub fn analysis_filter_delete(&self, id: &str) -> Result<(), String> {
         bounded(id)?;
+        let _filter_writer = self.analysis_filter_gate.lock().map_err(err)?;
         let mut c = self.connect()?;
         let tx = c.transaction().map_err(err)?;
         tx.execute("DELETE FROM analysis_filter_items WHERE id=?1", [id])
