@@ -405,6 +405,60 @@ async fn native_analysis_organization_trends(
 
 
 #[tauri::command]
+async fn native_analysis_work_timeline(
+    app: tauri::AppHandle,
+    revision: i64,
+    report_type: String,
+    from: String,
+    to: String,
+    organizations: Vec<String>,
+    organization: Option<String>,
+    key: String,
+) -> Result<storage::WorkTrendSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !matches!(report_type.as_str(), "day" | "week" | "month") {
+            return Err("Unknown analysis report type".into());
+        }
+        if organizations.is_empty() || organizations.len() > 100 {
+            return Err("Select 1..=100 organizations for analysis".into());
+        }
+        if organization.as_deref().is_some_and(|org| !organizations.iter().any(|o| o==org)) {
+            return Err("Selected organization is outside the analysis scope".into());
+        }
+        let first = chrono::NaiveDate::parse_from_str(&from, "%Y-%m-%d")
+            .map_err(|_| "Invalid analysis start date".to_string())?;
+        let last = chrono::NaiveDate::parse_from_str(&to, "%Y-%m-%d")
+            .map_err(|_| "Invalid analysis end date".to_string())?;
+        if last < first || (last-first).num_days()>3660 {
+            return Err("Analysis range must not exceed ten years".into());
+        }
+        let store = app.state::<Storage>();
+        let id = store.analysis_filter_create(revision, "organizations")?;
+        let result=(|| {
+            store.analysis_filter_append(revision,&id,&organizations)?;
+            store.analysis_filter_seal(revision,&id)?;
+            let scope=AnalysisScope {
+                report_type,
+                organizations:id.clone(),
+                names:None,
+            };
+            store.analysis_work_timeline(
+                revision,&scope,&RangeQuery{from,to},organization.as_deref(),&key,
+            )
+        })();
+        let cleanup=store.analysis_filter_delete(&id);
+        match (result,cleanup) {
+            (Err(error),_)=>Err(error),
+            (Ok(rows),Ok(()))=>Ok(rows),
+            (Ok(_),Err(error))=>Err(error),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+
+#[tauri::command]
 async fn native_analysis_ranking(
     app: tauri::AppHandle,
     revision: i64,
@@ -784,7 +838,7 @@ fn main() {
             updater_configured, load_data, save_data, native_read_revision, native_report_page,
             native_settings_bootstrap, native_group_page, native_group_rename,
             native_analysis_index_page, native_analysis_index_settings, native_analysis_range,
-            native_analysis_timeline, native_analysis_ranking, native_analysis_organization_trends,
+            native_analysis_timeline, native_analysis_ranking, native_analysis_organization_trends, native_analysis_work_timeline,
             native_analysis_organizations, native_analysis_range_page,
             native_export_range_csv, native_backup_sqlite, native_restore_preview, native_restore_copy,
             native_restore_schedule, native_restore_launch_info, native_restore_cancel,
