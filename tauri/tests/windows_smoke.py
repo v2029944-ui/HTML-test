@@ -223,9 +223,21 @@ def run():
                 checkbox.focus();page.keyboard.press('Space');assert page.locator('#orgFilter input').first.is_checked()!=was
                 page.keyboard.press('Escape');report['checks'].append('native and multiple dropdown keyboard input')
                 page.locator('#reportsShortcut').click()
-                page.locator('#calendarYearSelect').select_option('2024');page.locator('#calendarType').select_option('day')
-                page.locator('[data-month="2024-02"]').click();assert page.locator('#calendarDetails button[data-date]').count()==29
-                report['checks'].append('leap February calendar')
+                assert page.locator('#calendarType').is_hidden()
+                assert page.locator('#calendarYearSelect').is_hidden()
+                assert page.locator('#calendarType').input_value()=='all'
+                displayed_year=int(page.locator('#calendarRange').inner_text().split()[0])
+                if abs(displayed_year-2024)>20:
+                    raise RuntimeError('Calendar navigation unexpectedly far from imported 2024 data')
+                for _ in range(abs(displayed_year-2024)):
+                    page.locator('#calendarPrev' if displayed_year>2024 else '#calendarNext').click()
+                assert page.locator('#calendarRange').inner_text()=='2024 год'
+                page.locator('[data-month="2024-02"]').click()
+                assert page.locator('#calendarDetails button[data-date]').count()==29
+                page.locator('#calendarDetails button').filter(has_text='Закрыть дни месяца').click()
+                assert page.locator('#calendarDetails button[data-date]').count()==0
+                assert page.locator('[data-month="2024-02"]').get_attribute('aria-expanded')=='false'
+                report['checks'].append('Leap February calendar, hidden redundant filters and real day-detail close')
                 # D4b: the alternate SQL-only page must render without starting
                 # the original in-memory report model. Exercise real Tauri IPC.
                 page.locator('#reportsShortcut').click()
