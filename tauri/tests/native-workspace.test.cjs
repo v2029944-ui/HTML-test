@@ -34,11 +34,11 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(options={}){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','rankingMetric','rankingCategory','workTrendMetric','sqlWorkTrends','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','rankingMetric','rankingCategory','workTrendMetric','sqlWorkTrends','comparisonBeforeFrom','comparisonBeforeTo','comparisonRun','comparisonCurrentContext','comparisonRankMetric','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
- e.rankingMetric.value='amount';e.rankingCategory.value='all';e.workTrendMetric.value='amount';
+ e.rankingMetric.value='amount';e.rankingCategory.value='all';e.workTrendMetric.value='amount';e.comparisonRankMetric.value='amount';
  const calls=[];
  const divisionAmounts=Array.isArray(options.divisionAmounts)?options.divisionAmounts:[1200,600];
  const report=n=>({id:'r'+n,period_start:'2024-02-'+String(n%28+1).padStart(2,'0'),period_end:'2024-02-29',report_type:'day',source_name:'<b>untrusted</b>'});
@@ -89,6 +89,22 @@ function mount(options={}){
        ?{complete:true,rows:[{key:'work:x',name:'Работа',kind:'work',count:-2,amount:300,active:true}]}
        :{complete:false,rows:[]};
    },
+   nativeAnalysisCompare:async(rev,kind,beforeFrom,beforeTo,from,to,organizations)=>{
+     calls.push({kind:'comparison',rev,reportType:kind,beforeFrom,beforeTo,from,to,organizations});
+     const measure=(base,current)=>({base,current,delta:current-base,percent:base===0?null:(current-base)/Math.abs(base)*100});
+     const comparison={
+       summary:{before:{complete:true},after:{complete:!!options.complete},
+         count:options.complete?measure(0,2):null,
+         amount:options.complete?measure(10,20):null},
+       divisions:[{organization:organizations[0],before:{count:2,amount:10},
+         after:{count:options.complete?4:null,amount:options.complete?20:null},
+         count:options.complete?measure(2,4):null,amount:options.complete?measure(10,20):null}],
+       top_amount:options.complete?[{key:'work:a',name:'A',kind:'work',amount:measure(10,20),count:measure(2,4)}]:[],
+       top_count:options.complete?[{key:'work:a',name:'A',kind:'work',amount:measure(10,20),count:measure(2,4)}]:[]
+     };
+     if(options.delayedComparison)return new Promise(resolve=>{options.resolveComparison=()=>resolve(comparison);});
+     return comparison;
+   },
    nativeWorkTimeline:async(rev,kind,from,to,organizations,organization,key)=>{
      calls.push({kind:'work_timeline',rev,reportType:kind,from,to,organizations,organization,key});
      const data={key,name:'Работа '+key,kind:key.startsWith('group:')?'group':'work',
@@ -109,7 +125,7 @@ function mount(options={}){
       :{org:'АВТО',complete:false,missing:2,total:{count:null,amount:null,average:null}}
    ];}
  };
- const chartCalls=[],rankingCalls=[],orgTrendsCalls=[],workTrendCalls=[];
+ const chartCalls=[],rankingCalls=[],orgTrendsCalls=[],workTrendCalls=[],comparisonCalls=[];
  const window={desktopAPI:api,confirm:()=>true,analizUserError:userError,
    nativeTimeline:{
      show:data=>chartCalls.push({action:'show',data}),
@@ -130,10 +146,15 @@ function mount(options={}){
      show:data=>workTrendCalls.push({action:'show',data}),
      clear:message=>workTrendCalls.push({action:'clear',message}),
      error:message=>workTrendCalls.push({action:'error',message})
+   },
+   nativeComparison:{
+     show:data=>comparisonCalls.push({action:'show',data}),
+     clear:message=>comparisonCalls.push({action:'clear',message}),
+     error:message=>comparisonCalls.push({action:'error',message})
    }};
 
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-workspace.js'),'utf8'),{window,document:{getElementById:id=>e[id],createElement:tag=>new Element(tag)}});
- return {e,calls,window,chartCalls,rankingCalls,orgTrendsCalls,workTrendCalls};
+ return {e,calls,window,chartCalls,rankingCalls,orgTrendsCalls,workTrendCalls,comparisonCalls};
 }
 test('native workspace displays only one keyset page and no HTML from source names',async()=>{
  const {e,calls,window}=mount();
@@ -550,4 +571,47 @@ test('late SQLite trend response cannot resurrect a graph after filters change',
  await new Promise(resolve=>setImmediate(resolve));
  assert.ok(!workTrendCalls.some(x=>x.action==='show'));
  assert.equal(workTrendCalls.at(-1).action,'clear');
+});
+
+test('SQL comparison uses the exact current KPI scope and explicit baseline dates',async()=>{
+ const {e,calls,window,comparisonCalls}=mount({complete:true});
+ await window.nativeWorkspaceReady;
+ e.analysisOrganization.value='СМУ16';e.analysisOrganization.events.change();
+ e.analysisFrom.value='2024-02-29';e.analysisTo.value='2024-03-01';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ assert.match(e.comparisonCurrentContext.textContent,/2024-02-29/);
+ assert.equal(e.comparisonRun.disabled,true);
+ e.comparisonBeforeFrom.value='2024-02-27';e.comparisonBeforeFrom.events.change();
+ e.comparisonBeforeTo.value='2024-02-28';e.comparisonBeforeTo.events.change();
+ assert.equal(e.comparisonRun.disabled,false);
+ await e.comparisonRun.events.click();
+ const c=calls.find(x=>x.kind==='comparison'),kpi=calls.find(x=>x.kind==='range');
+ assert.equal(c.rev,kpi.rev);
+ assert.equal(c.reportType,kpi.reportType);
+ assert.equal(c.from,kpi.from);assert.equal(c.to,kpi.to);
+ assert.equal(c.organizations.join(','),kpi.organizations.join(','));
+ assert.equal(c.beforeFrom,'2024-02-27');
+ assert.equal(c.beforeTo,'2024-02-28');
+ assert.equal(comparisonCalls.at(-1).action,'show');
+ e.comparisonBeforeFrom.value='2024-02-26';e.comparisonBeforeFrom.events.change();
+ assert.equal(comparisonCalls.at(-1).action,'clear');
+ e.analysisFrom.value='2024-03-02';e.analysisFrom.events.change();
+ assert.equal(e.comparisonRun.disabled,true);
+ assert.match(e.comparisonCurrentContext.textContent,/после расчёта/);
+});
+test('SQL comparison can return incomplete summary and blocks stale responses',async()=>{
+ const opts={complete:false,delayedComparison:true};
+ const {e,window,comparisonCalls}=mount(opts);
+ await window.nativeWorkspaceReady;
+ e.analysisFrom.value='2024-02-29';e.analysisTo.value='2024-03-01';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ e.comparisonBeforeFrom.value='2024-02-28';e.comparisonBeforeFrom.events.change();
+ e.comparisonBeforeTo.value='2024-02-28';e.comparisonBeforeTo.events.change();
+ e.comparisonRun.events.click();
+ assert.equal(typeof opts.resolveComparison,'function');
+ e.analysisOrganization.value='АВТО';e.analysisOrganization.events.change();
+ opts.resolveComparison();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.ok(!comparisonCalls.some(x=>x.action==='show'));
+ assert.equal(comparisonCalls.at(-1).action,'clear');
 });
