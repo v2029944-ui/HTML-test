@@ -34,10 +34,11 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(options={}){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','rankingMetric','rankingCategory','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
+ e.rankingMetric.value='amount';e.rankingCategory.value='all';
  const calls=[];
  const divisionAmounts=Array.isArray(options.divisionAmounts)?options.divisionAmounts:[1200,600];
  const report=n=>({id:'r'+n,period_start:'2024-02-'+String(n%28+1).padStart(2,'0'),period_end:'2024-02-29',report_type:'day',source_name:'<b>untrusted</b>'});
@@ -75,6 +76,12 @@ function mount(options={}){
      return {granularity:'period',points:[{start:from,periods:1,missing:options.complete?0:1,
        total:options.complete?{count:2,amount:100,average:50}:{count:null,amount:null,average:null}}]};
    },
+   nativeAnalysisRanking:async(rev,kind,from,to,organizations,organization,metric,category)=>{
+     calls.push({kind:'ranking',rev,reportType:kind,from,to,organizations,organization,metric,category});
+     return options.complete
+       ?{complete:true,rows:[{key:'work:x',name:'Работа',kind:'work',count:-2,amount:300,active:true}]}
+       :{complete:false,rows:[]};
+   },
    nativeAnalysisRangePage:async(rev,kind,from,to,organizations,organization,after,limit)=>{
      calls.push({kind:'work',rev,reportType:kind,from,to,organizations,organization,after,limit});
      const row=n=>({key:'work:'+String(n).padStart(4,'0'),name:n===0?'<b>Работа</b>':'Работа '+n,kind:'work',count:null,amount:null,average:null,active:true});
@@ -87,16 +94,21 @@ function mount(options={}){
       :{org:'АВТО',complete:false,missing:2,total:{count:null,amount:null,average:null}}
    ];}
  };
- const chartCalls=[];
+ const chartCalls=[],rankingCalls=[];
  const window={desktopAPI:api,confirm:()=>true,analizUserError:userError,
    nativeTimeline:{
      show:data=>chartCalls.push({action:'show',data}),
      clear:message=>chartCalls.push({action:'clear',message}),
      error:message=>chartCalls.push({action:'error',message})
+   },
+   nativeRanking:{
+     show:data=>rankingCalls.push({action:'show',data}),
+     clear:message=>rankingCalls.push({action:'clear',message}),
+     error:message=>rankingCalls.push({action:'error',message})
    }};
 
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-workspace.js'),'utf8'),{window,document:{getElementById:id=>e[id],createElement:tag=>new Element(tag)}});
- return {e,calls,window,chartCalls};
+ return {e,calls,window,chartCalls,rankingCalls};
 }
 test('native workspace displays only one keyset page and no HTML from source names',async()=>{
  const {e,calls,window}=mount();
@@ -403,4 +415,42 @@ test('SQL timeline uses identical date and organization filters and clears stale
  e.analysisTo.value='2024-03-31';e.analysisTo.events.change();
  assert.equal(chartCalls.at(-1).action,'clear');
  assert.match(chartCalls.at(-1).message,/Фильтры изменены/);
+});
+
+test('SQL work/group ranking uses exact KPI filter, reorders per metric and invalidates stale values',async()=>{
+ const {e,calls,window,rankingCalls}=mount({complete:true});
+ await window.nativeWorkspaceReady;
+ e.analysisOrganization.value='СМУ16';
+ e.analysisOrganization.events.change();
+ e.analysisFrom.value='2024-02-01';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();
+ await e.analysisRun.events.click();
+ const q=calls.find(x=>x.kind==='range');
+ const r=calls.find(x=>x.kind==='ranking');
+ assert.equal(r.rev,q.rev);assert.equal(r.from,q.from);assert.equal(r.to,q.to);
+ assert.equal(r.reportType,q.reportType);
+ assert.equal(r.organizations.join(','),q.organizations.join(','));
+ assert.equal(r.organization,'СМУ16');
+ assert.equal(r.metric,'amount');assert.equal(r.category,'all');
+ assert.ok(rankingCalls.some(x=>x.action==='show'));
+ e.rankingCategory.value='work';
+ e.rankingMetric.value='count';
+ await e.rankingMetric.events.change();
+ const latest=calls.filter(x=>x.kind==='ranking').at(-1);
+ assert.equal(latest.category,'work');
+ assert.equal(latest.metric,'count');
+ e.analysisFrom.value='2024-03-01';e.analysisFrom.events.change();
+ assert.equal(rankingCalls.at(-1).action,'clear');
+ assert.match(rankingCalls.at(-1).message,/Фильтры изменены/);
+});
+test('SQL ranking refuses incomplete aggregates without hiding still-valid KPI statuses',async()=>{
+ const {e,window,rankingCalls}=mount();
+ await window.nativeWorkspaceReady;
+ e.analysisFrom.value='2024-01-01';e.analysisTo.value='2024-12-31';
+ await e.analysisPrepare.events.click();
+ await e.analysisRun.events.click();
+ const last=rankingCalls.find(x=>x.action==='show');
+ assert.equal(last.data.complete,false);
+ assert.equal(last.data.rows.length,0);
+ assert.match(e.analysisStatus.textContent,/не все периоды/);
 });
