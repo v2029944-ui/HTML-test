@@ -34,7 +34,10 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(options={}){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportPageInfo','groupPageInfo','workPageInfo','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisPeriodHelp','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisCoverageNotice','analysisCoverageText','analysisAcknowledge','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','rankingMetric','rankingCategory','workTrendMetric','sqlWorkTrends','comparisonBeforeFrom','comparisonBeforeTo','comparisonRun','comparisonCurrentContext','comparisonRankMetric','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
+ // Derive the mock DOM from the shipped page so missing controls cannot be
+ // silently supplied by a hand-maintained test fixture.
+ const html=fs.readFileSync(path.join(__dirname,'../native-workspace.html'),'utf8');
+ const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(match=>match[1]);
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
