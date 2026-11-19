@@ -1849,6 +1849,22 @@ pub struct ComparisonSummary {
     pub amount: Option<ChangeMeasure>,
     pub average: AverageChange,
 }
+#[derive(Debug, Serialize)]
+pub struct DivisionPeriodChange {
+    pub organization: String,
+    pub before: AnalysisTotals,
+    pub after: AnalysisTotals,
+    pub count: Option<ChangeMeasure>,
+    pub amount: Option<ChangeMeasure>,
+}
+#[derive(Debug, Serialize)]
+pub struct ComparisonDashboard {
+    pub summary: ComparisonSummary,
+    pub divisions: Vec<DivisionPeriodChange>,
+    pub top_amount: Vec<ComparisonValue>,
+    pub top_count: Vec<ComparisonValue>,
+}
+
 fn comparison(
     c: &Connection,
     s: &AnalysisScope,
@@ -1945,6 +1961,85 @@ impl Storage {
             amount,
             average,
         })
+    }
+    /// One bounded, revision-consistent comparison of two exact date ranges.
+    /// Returns no work rankings when either selected range is incomplete;
+    /// division comparisons are independently hidden when their own history
+    /// is incomplete. All aggregation occurs in SQLite.
+    pub fn analysis_comparison_dashboard(
+        &self,
+        expected: i64,
+        s: &AnalysisScope,
+        q: &ComparisonQuery,
+    ) -> Result<ComparisonDashboard, String> {
+        let mut c = self.connect()?;
+        let tx = c.transaction().map_err(err)?;
+        workspace(&tx, expected, s)?;
+        let (before_complete, after_complete) = comparison(&tx, s, q, None)?;
+        let before = range_summary(&tx, s, 1)?;
+        let after = range_summary(&tx, s, 2)?;
+        let count = if let (Some(b), Some(a)) = (before.total.count, after.total.count) {
+            Some(measure(b, a, q.min_count, q.percent)?)
+        } else { None };
+        let amount = if let (Some(b), Some(a)) = (before.total.amount, after.total.amount) {
+            Some(measure(b, a, q.min_amount, q.percent)?)
+        } else { None };
+        let average = average_change(before.total.average, after.total.average, q.percent)?;
+        let summary = ComparisonSummary {
+            before, after,
+            values: count_sql(&tx, "SELECT COUNT(*) FROM temp.an_comparison")?,
+            count, amount, average,
+        };
+        let mut divisions = Vec::new();
+        let mut stmt = tx.prepare(
+            "SELECT item FROM analysis_filter_items WHERE id=?1 ORDER BY ordinal LIMIT 101"
+        ).map_err(err)?;
+        let mut orgs = stmt.query([&s.organizations]).map_err(err)?;
+        while let Some(row) = orgs.next().map_err(err)? {
+            if divisions.len()>=100 {return Err("Comparison exceeds 100 divisions".into());}
+            let org: String = row.get(0).map_err(err)?;
+            let available_before = complete(&tx,1,Some(&org))?;
+            let available_after = complete(&tx,2,Some(&org))?;
+            let get_totals = |slot:i64,ok:bool| -> Result<AnalysisTotals,String> {
+                let (c,a):(f64,f64) = tx.query_row(
+                    "SELECT COALESCE(SUM(count),0),COALESCE(SUM(amount),0)
+                     FROM temp.an_values WHERE slot=?1 AND org=?2",
+                    params![slot,&org],
+                    |r| Ok((r.get(0)?,r.get(1)?)),
+                ).map_err(err)?;
+                totals(c,a,ok)
+            };
+            let b = get_totals(1,available_before)?;
+            let a = get_totals(2,available_after)?;
+            let dc = if let (Some(b),Some(a)) = (b.count,a.count) {
+                Some(measure(b,a,q.min_count,q.percent)?)
+            } else {None};
+            let da = if let (Some(b),Some(a)) = (b.amount,a.amount) {
+                Some(measure(b,a,q.min_amount,q.percent)?)
+            } else {None};
+            divisions.push(DivisionPeriodChange {
+                organization:org,before:b,after:a,count:dc,amount:da
+            });
+        }
+        drop(orgs);
+        drop(stmt);
+        let mut top_amount=Vec::new();
+        let mut top_count=Vec::new();
+        if before_complete && after_complete {
+            for metric in ["amount","count"] {
+                let sql = "SELECT key,name,kind,bc,ba,cc,ca FROM temp.an_comparison
+                    ORDER BY ABS(CASE WHEN ?1='amount' THEN ca-ba ELSE cc-bc END) DESC,
+                             key ASC LIMIT 12";
+                let mut ranking = tx.prepare(sql).map_err(err)?;
+                let mut values=ranking.query([metric]).map_err(err)?;
+                while let Some(row)=values.next().map_err(err)? {
+                    let item=comparison_value(row,q,true,true)?;
+                    if metric=="amount" {top_amount.push(item);}
+                    else {top_count.push(item);}
+                }
+            }
+        }
+        Ok(ComparisonDashboard{summary,divisions,top_amount,top_count})
     }
     pub fn analysis_comparison_page(
         &self,
