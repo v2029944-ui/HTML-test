@@ -21,6 +21,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.37", features = ["bundled", "blob", "backup", "hooks", "collation"] }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+# ICU 1.5 accepts newer UTF iterators that require Rust 1.83.
+utf16_iter = "=1.0.5"
+utf8_iter = "=1.0.4"
 icu_collator = "1.5"
 icu_provider = { version = "1.5", features = ["sync"] }
 sha2 = "0.10"
