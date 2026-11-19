@@ -43,12 +43,33 @@
     nativeWideImportPreview:(source,options)=>tracked('native_wide_import_preview',{source,options},'reads'),
     nativeWideImportApply:(source,options,reviewToken,confirmation)=>tracked(
       'native_wide_import_apply',{source,options,reviewToken,confirmation},'saves'),
+    nativeLegacyImportSheets:source=>tracked(
+      'native_legacy_import_sheets',{source},'reads'),
+    nativeLegacyImportPreview:(source,options)=>tracked(
+      'native_legacy_import_preview',{source,options},'reads'),
+    nativeLegacyImportApply:(source,options,reviewToken,confirmation)=>tracked(
+      'native_legacy_import_apply',{source,options,reviewToken,confirmation},'saves'),
     chooseSqliteBackupPath:async defaultPath=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
       if(typeof tauri.dialog.save!=='function')throw Error('Диалог резервного копирования недоступен.');
       return tauri.dialog.save({title:'Сохранить резервную копию SQLite',defaultPath,filters:[{name:'База SQLite',extensions:['sqlite3']}]});
     },
     nativeBackupSqlite:destination=>tracked('native_backup_sqlite',{destination},'saves'),
+    chooseRestoreBackupPath:async()=>{
+      if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
+      return tauri.dialog.open({multiple:false,directory:false,title:'Проверить резервную копию SQLite',filters:[{name:'База SQLite',extensions:['sqlite3']}]});
+    },
+    chooseRestoreDestination:async defaultPath=>{
+      if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
+      return tauri.dialog.save({title:'Создать отдельную восстановленную копию',defaultPath,filters:[{name:'База SQLite',extensions:['sqlite3']}]});
+    },
+    nativeRestorePreview:source=>tracked('native_restore_preview',{source},'reads'),
+    nativeRestoreCopy:(source,verification,destination)=>tracked(
+      'native_restore_copy',{source,verification,destination},'saves'),
+    nativeRestoreSchedule:(source,verification)=>tracked(
+      'native_restore_schedule',{source,verification},'saves'),
+    nativeRestoreLaunchInfo:()=>tracked('native_restore_launch_info',{},'reads'),
+    nativeRestoreCancel:()=>tracked('native_restore_cancel',{},'saves'),
     nativeMetricKinds:()=>tracked('native_metric_kinds',{},'reads'),
     chooseMetricJson:async()=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
@@ -76,6 +97,8 @@
     },
     list:()=>invoke('list_excel'),
     setRule:(name,rule)=>tracked('set_rule',{name,rule},'saves'),
+    nativeSetRuleChecked:(name,rule,revision,folder,signature)=>tracked(
+      'native_set_rule_checked',{name,rule,revision,folder,signature},'saves'),
     readExcel:name=>tracked('read_excel',{name},'reads'),
     checkExcel:(name,signature)=>invoke('check_excel',{name,signature}),
     openDataFolder:()=>invoke('open_data_folder'),

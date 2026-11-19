@@ -14,7 +14,8 @@
         "width": 1320,
         "height": 900,
         "minWidth": 720,
-        "minHeight": 530
+        "minHeight": 530,
+        "url": "startup.html"
       }
     ],
     "security": {

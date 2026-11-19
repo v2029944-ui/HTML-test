@@ -24,14 +24,24 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .division-track{width:100%;min-width:110px;height:12px;border-radius:6px;background:#e7edf5;overflow:hidden}
 .division-fill{height:100%;background:#346d9d;border-radius:6px}
 .division-fill.negative{background:#846d9d}
+.startup-controls{display:flex;flex-direction:column;align-items:flex-start;gap:7px;max-width:440px}
+.startup-label{display:flex;align-items:center;gap:9px;line-height:1.4}
+.startup-label input{margin:0;flex-shrink:0}
 </style>
 </head>
 <body>
-<header><div><h1>Анализ работ · SQL-режим</h1><div class="intro">SQLite без загрузки полной истории в JavaScript</div></div><a id="legacyWorkspaceLink" href="index.html">Вернуться к полному интерфейсу</a></header>
+<header>
+<div><h1>Анализ работ · SQL-режим</h1><div class="intro">SQLite без загрузки полной истории в JavaScript</div></div>
+<div class="startup-controls">
+  <label class="startup-label" for="sqlStartupPreference"><input id="sqlStartupPreference" type="checkbox"> Открывать SQL-режим при запуске программы</label>
+  <span id="sqlStartupPreferenceStatus" class="intro" role="status" aria-live="polite"></span>
+  <a id="legacyWorkspaceLink" href="index.html">Классический интерфейс и импорт Excel</a>
+</div>
+</header>
 <main>
 <section class="panel" aria-label="Сводка SQLite">
 <h2>Состояние данных</h2>
-<p class="intro">Экспериментальный режим: постраничный просмотр отчётов и групп, безопасное переименование группы. Импорт, полный анализ и экспорт остаются в прежнем интерфейсе.</p>
+<p class="intro">SQL-режим: постраничный просмотр отчётов и групп, аналитика по периодам и подразделениям, CSV и резервная копия SQLite. Некоторые варианты импорта, графики и настройки пока доступны в классическом интерфейсе.</p>
 <div class="overview">
 <div class="metric"><strong id="metricReports">—</strong><span>Отчётов в SQLite</span></div>
 <div class="metric"><strong id="metricIndexed">—</strong><span>Индексированных отчётов</span></div>
@@ -42,7 +52,18 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <div class="controls">
 <button id="backupSqlite" type="button">Сохранить резервную копию SQLite</button>
 </div>
-<p id="backupStatus" class="status muted" role="status" aria-live="polite">Копия включает отчёты, настройки и служебные данные SQLite. Для восстановления потребуется отдельная проверенная процедура; не заменяйте файл открытой базы вручную.</p>
+<p id="backupStatus" class="status muted" role="status" aria-live="polite">Копия включает отчёты, настройки и служебные данные SQLite. Не заменяйте файл открытой базы вручную.</p>
+<h3>Проверить и подготовить восстановление</h3>
+<p class="intro">Выберите существующую резервную копию SQLite. Приложение проверит её целостность, структуру, JSON отчётов и настроек. После проверки можно создать <strong>отдельный восстановленный файл</strong>, не заменяя рабочую базу. Для переключения рабочей базы необходим дополнительный безопасный этап при закрытой программе.</p>
+<div class="controls">
+<button id="restoreChoose" type="button">Проверить резервную копию</button>
+<button id="restoreCopy" type="button" disabled>Создать отдельную восстановленную копию</button>
+<button id="restoreSchedule" type="button" disabled>Восстановить рабочую базу при следующем запуске</button>
+<button id="restoreCancel" type="button">Отменить отложенное восстановление</button>
+</div>
+<p id="restoreSelected" class="intro">Резервная копия не выбрана.</p>
+<p id="restoreStatus" class="status muted" role="status" aria-live="polite">Рабочая база не изменяется.</p>
+<p class="intro">Переключение рабочей базы доступно только после явного подтверждения. Приложение сохранит две защитные копии прежних данных и выполнит замену до открытия SQLite при следующем запуске. После подтверждения полностью закройте программу и откройте снова. Если проверка или безопасное переключение не удастся, приложение не начнёт работать с сомнительными данными.</p>
 </section>
 <section class="panel" aria-label="Отчёты SQL">
 <h2>Отчёты</h2><div class="controls"><label for="nativeReportType">Периоды</label>
@@ -102,9 +123,74 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p class="intro">Когда отсутствуют периоды, итоговые сумма и количество не показываются как ноль. Группы, совпадающие даты и ошибки проверяются по правилам D2; это не простая сумма всех строк.</p>
 </section>
 
+<section class="panel" aria-label="Источники Excel в SQL">
+<h2>Папка Excel</h2>
+<p class="intro">Просмотр метаданных XLSX без чтения самих книг и загрузки истории отчётов в JavaScript. Обнаружение изменений в этой панели не означает импорт. Настройка простых правил доступна здесь, а автоматический импорт и расширенные сопоставления Excel пока остаются в классическом интерфейсе.</p>
+<div class="controls">
+<button id="sourceFolderChoose" type="button">Выбрать папку Excel</button>
+<button id="sourceFolderRefresh" type="button">Проверить файлы</button>
+<a href="index.html">Настроить правила и автоимпорт</a>
+</div>
+<p id="sourceFolderLocation" class="intro">Получение папки…</p>
+<p id="sourceFolderCount" class="intro"></p>
+<p id="sourceFolderStatus" class="status muted" role="status" aria-live="polite"></p>
+<div class="controls" aria-label="Настройка правил Excel">
+  <strong id="sourceRuleFile">Файл не выбран.</strong>
+  <label for="sourceRuleFormat">Формат</label>
+  <select id="sourceRuleFormat" disabled>
+    <option value="legacy">Обычные периоды</option>
+    <option value="auto">Автоматическое распознавание</option>
+    <option value="daily-wide">Широкая таблица по дням</option>
+  </select>
+  <label for="sourceRuleType">Период</label>
+  <select id="sourceRuleType" disabled>
+    <option value="day">День</option><option value="week">Неделя</option><option value="month">Месяц</option>
+  </select>
+  <label for="sourceRuleStart">Начало первого периода</label>
+  <input id="sourceRuleStart" type="date" disabled>
+  <label for="sourceRuleSheet">Лист Excel (необязательно)</label>
+  <input id="sourceRuleSheet" type="text" maxlength="120" placeholder="Автоматически" disabled>
+  <label for="sourceRuleYear">Год широкой таблицы (необязательно)</label>
+  <input id="sourceRuleYear" type="number" min="1900" max="9999" placeholder="Из заголовков" disabled>
+  <button id="sourceRuleSave" type="button" disabled>Сохранить правило</button>
+</div>
+<p id="sourceRuleStatus" class="status muted" role="status" aria-live="polite">
+  Выберите файл и настройте его формат. Импорт данных выполняется отдельно с предпросмотром.
+</p>
+<div class="table-scroll"><table><thead><tr><th>Файл</th><th>Размер</th><th>Правило импорта</th><th>Действие</th></tr></thead>
+<tbody id="sourceFolderRows"></tbody></table></div>
+<p class="intro">Правила сохраняются в SQLite с проверкой ревизии, имени исходной папки и состояния файла. Сохранение правила само по себе не импортирует Excel. Изменение правил может повлиять на автоматический импорт, если одновременно открыт классический интерфейс. Расширенные сопоставления столбцов пока редактируются там же.</p>
+<p class="intro">При выборе другой папки существующие правила файлов могут быть сброшены; перед сменой программа запрашивает подтверждение. Уже сохранённые отчёты остаются в SQLite.</p>
+</section>
+
+<section class="panel" aria-label="Импорт обычных XLSX через Rust">
+<h2>Обычный Excel — импорт через SQLite</h2>
+<p class="intro">Нативный импорт таблицы с повторяющимися тройками «Работа / Количество / Сумма». Выберите найденный в XLSX лист, тип периода и дату первого периода. Rust читает книгу ограниченными порциями через временную базу на диске. Полная история не загружается в WebView.</p>
+<div class="controls">
+<button id="legacyChoose" type="button">Выбрать обычный XLSX</button>
+<label for="legacySheet">Лист Excel</label><select id="legacySheet" disabled></select>
+<label for="legacyType">Тип отчётов</label>
+<select id="legacyType"><option value="week">Недели</option><option value="day">Дни</option><option value="month">Месяцы</option></select>
+<label for="legacyStart">Первый период</label><input id="legacyStart" type="date">
+<button id="legacyPreview" type="button" disabled>Проверить XLSX в Rust</button>
+</div>
+<p id="legacyFile" class="intro">Файл не выбран.</p>
+<p id="legacyStatus" class="status muted" role="status" aria-live="polite">Данные SQLite не изменены.</p>
+<div id="legacySummary" class="overview"></div><p id="legacyIssues" class="intro"></p>
+<div class="table-scroll"><table><thead><tr><th>Начало</th><th>Конец</th><th>Тип</th><th>Строк</th><th>Замечаний</th></tr></thead><tbody id="legacyRows"></tbody></table></div>
+<div class="controls">
+<label><input type="checkbox" id="legacyReplace"> Разрешаю замену существующих периодов</label>
+<label><input type="checkbox" id="legacyOverlap"> Подтверждаю пересечения типов отчётов</label>
+<label><input type="checkbox" id="legacyQuality"> Ознакомился с замечаниями по качеству</label>
+<button id="legacyApply" type="button" disabled>Подтвердить и сохранить</button>
+</div>
+<p class="intro">Перед заменой существующих отчётов обязательна отдельная проверенная резервная копия SQLite. Вся книга повторно проверяется в Rust перед записью. Для расширенных ручных сопоставлений столбцов по-прежнему используйте классический импорт; здесь поддерживается автоматическое обнаружение троек по заголовкам выбранного листа.</p>
+</section>
+
 <section class="panel" aria-label="Нативный импорт XLSX">
 <h2>Импорт Excel в SQLite</h2>
 <p class="intro">Нативный импорт ежедневной широкой таблицы XLSX. Сначала выберите файл, укажите год при необходимости и просмотрите даты, ошибки и конфликты. Исходная книга не изменяется. Сохранение возможно только после подтверждения.</p>
+<p class="intro" id="wideImportLimits"><strong>До выбора файла, для нативного Rust-импорта:</strong> XLSX до <strong>100 МиБ</strong>, не более <strong>100 000 строк на лист</strong>, <strong>2 048 столбцов</strong> и <strong>15 000 000 ячеек</strong> на книгу. В классическом HTML-импорте сохраняется отдельный предел 30 МиБ. Могут действовать дополнительные ограничения распаковки и временной SQLite. Если книга превышает лимит, уменьшите файл или разделите данные и повторите проверку. Исходный файл не изменяется.</p>
 <div class="controls">
 <button id="wideChoose" type="button">Выберите файл XLSX</button>
 <label for="wideYear">Год (необязательно)</label>
@@ -147,12 +233,14 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <button type="button" id="metricKindChoose">Выбрать JSON-отчёт</button>
 <button type="button" id="metricKindApply" disabled>Подтвердить импорт</button>
 </div>
+<p class="intro" id="metricImportLimits"><strong>До выбора файла:</strong> для дополнительных отчётов поддерживается XLSX до <strong>30 МиБ</strong> либо JSON до <strong>8 МиБ</strong>, не более <strong>10 000 строк данных в отчёте</strong>. Для XLSX заранее выберите шаблон столбцов и обе даты. Файлы, превышающие ограничения, не сохраняются: уменьшите объём данных и повторите проверку. Предпросмотр не изменяет базу.</p>
 <p id="metricKindFile" class="intro">Для Excel выберите шаблон и укажите даты «С» и «По» выше. Названия листов, заголовки и столбцы определяются шаблоном. Перед записью показывается проверенный результат. Дополнительно поддерживается нормализованный JSON.</p>
 <div id="metricKindPreview" class="overview"></div>
 <p id="metricKindStatus" class="status muted" role="status" aria-live="polite">Загрузка каталога видов отчётов…</p>
 </section>
 </main>
-<script src="tauri-bridge.js"></script><script src="tauri-native-workspace.js"></script>
+<script src="tauri-bridge.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-workspace.js"></script>
+<script src="tauri-native-legacy-import.js"></script>
 <script src="tauri-native-wide-import.js"></script>
 <script src="tauri-native-metric-kinds.js"></script>
 </body></html>

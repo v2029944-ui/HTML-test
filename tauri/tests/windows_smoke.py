@@ -6,6 +6,7 @@ from playwright.sync_api import sync_playwright, Error as PlaywrightError, Timeo
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests'))
 from test_daily_wide import wide_xlsx
+from test_import_controls import daily_workbook_bytes
 sys.path.insert(0,str(ROOT/'tauri'/'examples'))
 from make_metric_xlsx import create_example
 
@@ -231,6 +232,40 @@ def run():
                 page.locator('#openNativeWorkspace').click()
                 wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)','Native SQLite workspace startup')
                 page.evaluate('window.nativeWorkspaceReady')
+                # SQL source panel must only enumerate Excel metadata via Rust.
+                wait_for_app_state(page, 'Boolean(window.nativeFolderReady)', 'SQL source folder startup')
+                page.evaluate('window.nativeFolderReady')
+                page.evaluate('async folder => window.__TAURI__.core.invoke("set_folder", {folder})', str(tmp))
+                page.locator('#sourceFolderRefresh').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#sourceFolderRows tr td")?.textContent === "synthetic-year.xlsx"',
+                    'SQL source folder metadata')
+                assert page.locator('#sourceFolderRows tr').count()==1
+                assert '1' in page.locator('#sourceFolderCount').inner_text()
+                # set_folder changed the SQLite config revision; reload the bounded
+                # read model so subsequent range queries do not use a stale revision.
+                assert page.evaluate('window.nativeWorkspaceRefresh()') is True
+                assert page.evaluate("typeof window.appReady === 'undefined'")
+                report['checks'].append('SQL-only folder metadata, no full-history bootstrap or implicit import')
+                # Read-only end-to-end native ordinary Excel preview; tests real Rust parser
+                # without adding or replacing user reports or loading XLSX bytes in JS.
+                legacy_source=tmp/'legacy-preview.xlsx'
+                legacy_source.write_bytes(daily_workbook_bytes())
+                sheets=page.evaluate('source => window.desktopAPI.nativeLegacyImportSheets(source)',str(legacy_source))
+                assert 'xl/worksheets/sheet1.xml' in sheets,sheets
+                legacy_options={'sheet':'xl/worksheets/sheet1.xml','kind':'week',
+                                'start':'2026-11-09','organizations':['СМУ16','АВТО','ТРАК','ЦЕНТР']}
+                legacy_preview=page.evaluate(
+                    'args => window.desktopAPI.nativeLegacyImportPreview(args.source,args.options)',
+                    {'source':str(legacy_source),'options':legacy_options})
+                assert legacy_preview['reportCount']>=1
+                assert len(legacy_preview['reviewToken'])==64
+                assert legacy_preview['sampleReports']
+                assert page.evaluate("typeof window.appReady === 'undefined'")
+                report['checks'].append('read-only streamed Rust legacy XLSX preview with real cells')
+                # Opt in to SQL-first startup; the setting must survive closing WebView2.
+                page.locator('#sqlStartupPreference').check()
+                assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") == 'sql'
                 if page.evaluate("typeof window.appReady !== 'undefined'"):
                     raise RuntimeError('Native workspace unexpectedly imported legacy full-history bootstrap')
                 # Declarative report families are separate from classic reports.
@@ -469,13 +504,121 @@ def run():
             process,_=start();browser=None
             try:
                 browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227');page=wait_for_webview_page(browser)
-                wait_for_app_state(page, 'Boolean(window.appReady)', 'Application initialization');page.evaluate('window.appReady')
+                # The lightweight launcher must go straight to SQLite on restart:
+                # no full-history window.appReady and no legacy frontend bootstrap.
+                wait_for_app_state(page, 'Boolean(window.nativeWorkspaceReady)', 'SQL-first application restart')
+                page.evaluate('window.nativeWorkspaceReady')
+                if page.evaluate("typeof window.appReady !== 'undefined'"):
+                    raise RuntimeError('SQL-first startup loaded the classic history')
+                assert page.locator('#metricReports').inner_text()=='366'
+                assert page.locator('#sqlStartupPreference').is_checked()
+                report['checks'].append('opt-in SQL-first startup avoids full report history')
+                # Switch the next launch back to classic; imports must remain accessible.
+                page.locator('#sqlStartupPreference').uncheck()
+                assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") is None
+                page.locator('#legacyWorkspaceLink').click()
+                wait_for_app_state(page, 'Boolean(window.appReady)', 'Classic interface after SQL-first restart')
+                page.evaluate('window.appReady')
                 assert len(page.evaluate('window.desktopAPI.load()')['reports'])==366
                 restored=page.evaluate("({view:document.querySelector('.view.active').id,saved:localStorage.getItem('work-reports-view-v1')})")
                 report['navigation_after_restart']=restored
                 (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
                 assert restored=={'view':'upload','saved':'upload'},restored
                 report['checks'].append('SQLite and last view survive application restart')
+                # Save an Excel rule through real WebView2 + Rust IPC, after all
+                # classic autoimport assertions so the new rule cannot alter them.
+                page.locator('#openNativeWorkspace').click()
+                # Finish both independent SQL startup tasks before editing a
+                # rule. Folder listing can finish before the bounded SQLite
+                # bootstrap; a save during bootstrap cannot refresh the page.
+                wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)',
+                    'SQL workspace ready before rule edit')
+                page.evaluate('window.nativeWorkspaceReady')
+                wait_for_app_state(page,'Boolean(window.nativeFolderReady)', 'SQL folder rule editor startup')
+                page.evaluate('window.nativeFolderReady')
+                # Re-establish the isolated test folder after the classic UI
+                # round-trip, then await metadata instead of assuming it survived.
+                page.evaluate('async folder => window.__TAURI__.core.invoke("set_folder", {folder})', str(tmp))
+                page.locator('#sourceFolderRefresh').click()
+                # Both synthetic-year.xlsx and metric-labor-demo.xlsx remain
+                # in the test folder; target the intended source by name rather
+                # than assuming the yearly workbook sorts first.
+                wait_for_app_state(page,
+                    'Array.from(document.querySelectorAll("#sourceFolderRows tr td:first-child")).some(td => td.textContent === "synthetic-year.xlsx")',
+                    'SQL editor source metadata')
+                year_row=page.locator('#sourceFolderRows tr').filter(has_text='synthetic-year.xlsx')
+                assert year_row.count()==1
+                year_row.locator('button').click()
+                page.locator('#sourceRuleFormat').select_option('daily-wide')
+                page.locator('#sourceRuleYear').fill('2024')
+                page.evaluate('window.confirm = () => true')  # Test only; real UI requires confirmation.
+                page.locator('#sourceRuleSave').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#sourceRuleStatus")?.textContent.includes("Правило сохранено")',
+                    'SQLite rule saved with revision check')
+                listing=page.evaluate('window.desktopAPI.list()')
+                assert listing['rules']['synthetic-year.xlsx']['format']=='daily-wide'
+                assert listing['rules']['synthetic-year.xlsx']['year']==2024
+                # Verify the persisted report count in SQLite, then await its
+                # propagation to the SQL view. Do not silently accept a smaller
+                # number or an incomplete asynchronous refresh.
+                actual_reports=page.evaluate('window.desktopAPI.nativeSettingsBootstrap()')['reports']
+                assert actual_reports==366,('SQLite report count changed after rule edit',actual_reports)
+                wait_for_app_state(page,
+                    'document.querySelector("#metricReports")?.textContent === "366"',
+                    'SQL report count after editing rule')
+                assert page.evaluate("typeof window.appReady === 'undefined'")
+                report['checks'].append('SQL-only Excel rule write with native revision and file validation')
+                # P0.3: schedule recovery from a real Online Backup while the
+                # installed app is running. It must not change the active DB.
+                reviewed=page.evaluate(
+                    'async source => window.__TAURI__.core.invoke("native_restore_preview",{source})',
+                    str(snapshot))
+                assert reviewed['reportCount']==366
+                assert len(reviewed['verification'])==64
+                requested=page.evaluate(
+                    'async args => window.__TAURI__.core.invoke("native_restore_schedule",args)',
+                    {'source':str(snapshot),'verification':reviewed['verification']})
+                assert requested=={'reportCount':366,'restartRequired':True},requested
+                still_live=page.evaluate('window.desktopAPI.load()')
+                assert len(still_live['reports'])==366
+                assert all(row.get('sourceFormat')=='daily-wide' for row in still_live['reports'])
+                report['checks'].append('Restore scheduled without mutating running SQLite')
+            except BaseException as error:
+                diagnostics(error);raise
+            finally:
+                try:stop(process)
+                finally:
+                    if browser and browser.is_connected():browser.close()
+            # The next real process starts with no SQLite handles from the
+            # previous instance. The staged copy must be activated before
+            # the WebView can read reports.
+            process,_=start();browser=None
+            try:
+                browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227')
+                page=wait_for_webview_page(browser)
+                wait_for_app_state(page,'Boolean(window.appReady)','Restore startup after full close')
+                page.evaluate('window.appReady')
+                actual=page.evaluate('window.desktopAPI.load()')
+                with closing(sqlite3.connect(str(snapshot))) as expected_db:
+                    expected_reports=[
+                        json.loads(row[0]) for row in expected_db.execute(
+                            'SELECT json FROM reports ORDER BY period_start,id')
+                    ]
+                assert actual['reports']==expected_reports, 'Recovery did not restore backup reports'
+                info=page.evaluate(
+                    'window.__TAURI__.core.invoke("native_restore_launch_info")')
+                assert info and info['restored'] is True,info
+                assert 'Восстановление выполнено' in info['message']
+                page.locator('#reportsShortcut').click()
+                page.locator('#openNativeWorkspace').click()
+                wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)',
+                    'SQL workspace after recovered startup')
+                wait_for_app_state(page,
+                    "() => document.getElementById('restoreStatus')?.textContent.includes('Восстановление выполнено')",
+                    'User-facing recovery confirmation')
+                report['checks'].append(
+                    'Installed Windows app restores SQLite on startup with retained backup and UI status')
             except BaseException as error:
                 diagnostics(error);raise
             finally:
