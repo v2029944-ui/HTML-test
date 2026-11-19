@@ -2,7 +2,7 @@
 import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib,sqlite3
 from pathlib import Path
 from contextlib import contextmanager, closing
-from playwright.sync_api import sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import expect, sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests'))
 from test_daily_wide import wide_xlsx
@@ -46,7 +46,54 @@ def record_secondary_failure(error, description, action):
 
 
 class NativeConfirmations:
-    """Drive only the installed test process's real, parented Win32 dialogs."""
+    """Drive only the installed test process's real, parented Win32 task dialogs."""
+
+    automation_script=r"""
+    [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)
+    $ErrorActionPreference='Stop'
+    Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+    $processId=[int]$env:ANALIZ_SMOKE_DIALOG_PID
+    $dialog=[System.Windows.Automation.AutomationElement]::FromHandle([IntPtr][long]$env:ANALIZ_SMOKE_DIALOG_HWND)
+    if ($null -eq $dialog -or $dialog.Current.ProcessId -ne $processId) {
+      throw 'UI Automation returned an unexpected dialog process'
+    }
+    $tree=[System.Windows.Automation.TreeScope]::Descendants
+    $nodes=$dialog.FindAll($tree,[System.Windows.Automation.Condition]::TrueCondition)
+    $inventory=@()
+    $body=@()
+    $buttons=@()
+    foreach ($node in $nodes) {
+      $info=$node.Current
+      if ($info.ProcessId -ne $processId) {continue}
+      $type=$info.ControlType.ProgrammaticName
+      $inventory += [PSCustomObject]@{type=$type;name=$info.Name;automationId=$info.AutomationId;enabled=$info.IsEnabled}
+      if ($type -eq 'ControlType.Button') {
+        if ($env:ANALIZ_SMOKE_DIALOG_BUTTON_ID -and $info.IsEnabled -and
+            ($info.AutomationId -ceq $env:ANALIZ_SMOKE_DIALOG_BUTTON_ID -or
+             $info.Name -ceq $env:ANALIZ_SMOKE_DIALOG_BUTTON_LABEL)) {
+          $buttons += $node
+        }
+      } else {
+        $body += $info.Name
+        $body += $info.HelpText
+      }
+    }
+    $text=[regex]::Replace(($body -join ' '),'\s+',' ').Trim()
+    $result=[PSCustomObject]@{matched=$text.Contains($env:ANALIZ_SMOKE_DIALOG_TEXT); controls=$inventory; invoked=$false}
+    if ($env:ANALIZ_SMOKE_DIALOG_BUTTON_ID) {
+      if (-not $result.matched -or $buttons.Count -ne 1) {
+        throw ('Unexpected native dialog text or buttons: ' + ($result | ConvertTo-Json -Depth 4 -Compress))
+      }
+      $buttonId=$buttons[0].Current.AutomationId
+      if ($buttonId -in @('1','2') -and $buttonId -ne $env:ANALIZ_SMOKE_DIALOG_BUTTON_ID) {
+        throw 'Native confirmation button label and numeric control ID disagree'
+      }
+      $invoke=$buttons[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+      $invoke.Invoke()
+      $result.invoked=$true
+    }
+    $result | ConvertTo-Json -Depth 4 -Compress
+    """
 
     def __init__(self, pid, database):
         import ctypes
@@ -59,15 +106,11 @@ class NativeConfirmations:
         self.enum_callback=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
         signatures={
             'EnumWindows':(wintypes.BOOL,self.enum_callback,wintypes.LPARAM),
-            'EnumChildWindows':(wintypes.BOOL,wintypes.HWND,self.enum_callback,wintypes.LPARAM),
             'GetWindow':(wintypes.HWND,wintypes.HWND,wintypes.UINT),
             'GetWindowThreadProcessId':(wintypes.DWORD,wintypes.HWND,ctypes.POINTER(wintypes.DWORD)),
             'GetClassNameW':(ctypes.c_int,wintypes.HWND,wintypes.LPWSTR,ctypes.c_int),
-            'GetDlgItem':(wintypes.HWND,wintypes.HWND,ctypes.c_int),
             'IsWindowVisible':(wintypes.BOOL,wintypes.HWND),
             'IsWindowEnabled':(wintypes.BOOL,wintypes.HWND),
-            'SendMessageTimeoutW':(ctypes.c_ssize_t,wintypes.HWND,wintypes.UINT,wintypes.WPARAM,
-                                    wintypes.LPARAM,wintypes.UINT,wintypes.UINT,ctypes.POINTER(ctypes.c_size_t)),
         }
         for name,(result,*arguments) in signatures.items():
             function=getattr(self.user32,name)
@@ -75,20 +118,18 @@ class NativeConfirmations:
             function.argtypes=arguments
         self.pid_type=wintypes.DWORD
 
-    def windows(self, parent=None):
+    def windows(self):
         windows=[]
         @self.enum_callback
         def collect(hwnd, _):
             windows.append(hwnd)
             return True
-        if parent is None:
-            if not self.user32.EnumWindows(collect,0):
-                raise self.ctypes.WinError(self.ctypes.get_last_error())
-        else:
-            self.user32.EnumChildWindows(parent,collect,0)
+        if not self.user32.EnumWindows(collect,0):
+            raise self.ctypes.WinError(self.ctypes.get_last_error())
         return windows
 
     def process(self, hwnd):
+        if not hwnd:return 0
         pid=self.pid_type()
         self.user32.GetWindowThreadProcessId(hwnd,self.ctypes.byref(pid))
         return pid.value
@@ -98,47 +139,46 @@ class NativeConfirmations:
         self.user32.GetClassNameW(hwnd,buffer,len(buffer))
         return buffer.value
 
-    def control_text(self, hwnd):
-        # GetWindowTextW cannot read another process's child controls. Windows
-        # marshals WM_GETTEXT across processes, and the call has a time limit.
-        buffer=self.ctypes.create_unicode_buffer(4096)
-        result=self.ctypes.c_size_t()
-        sent=self.user32.SendMessageTimeoutW(hwnd,0x000D,len(buffer),self.ctypes.addressof(buffer),
-                                            0x0002,500,self.ctypes.byref(result))
-        return buffer.value if sent else ''
+    def inspect(self, dialog, prompt, button_id=None):
+        # The dialog plugin enables rfd common-controls-v6. TaskDialogIndirect
+        # exposes its content and buttons through UI Automation.
+        result=subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command',self.automation_script],
+            env=dict(os.environ,ANALIZ_SMOKE_DIALOG_PID=str(self.pid),ANALIZ_SMOKE_DIALOG_HWND=str(dialog),
+                     ANALIZ_SMOKE_DIALOG_TEXT=prompt,ANALIZ_SMOKE_DIALOG_BUTTON_ID=str(button_id or ''),
+                     ANALIZ_SMOKE_DIALOG_BUTTON_LABEL={1:'OK',2:'Cancel'}.get(button_id,'')),
+            capture_output=True,encoding='utf-8',errors='replace',timeout=15)
+        if result.returncode:
+            raise RuntimeError(f'Native dialog UI Automation failed ({result.returncode}): {result.stderr.strip()}')
+        return json.loads(result.stdout)
 
     def find_dialog(self, expected):
         deadline=time.monotonic()+15
+        owned=[]
         while time.monotonic()<deadline:
-            dialogs=[]
+            owned=[];matches=[]
             for hwnd in self.windows():
-                if (self.process(hwnd)!=self.pid or self.window_class(hwnd)!='#32770'
-                        or not self.user32.IsWindowVisible(hwnd)):
+                if self.process(hwnd)!=self.pid:
                     continue
                 owner=self.user32.GetWindow(hwnd,4)  # GW_OWNER
-                if not owner or self.process(owner)!=self.pid:
+                facts={'hwnd':hwnd,'class':self.window_class(hwnd),'owner':owner,'owner_pid':self.process(owner),
+                       'visible':bool(self.user32.IsWindowVisible(hwnd)),'enabled':bool(self.user32.IsWindowEnabled(hwnd))}
+                owned.append(facts)
+                if facts['class']!='#32770' or not facts['visible'] or facts['owner_pid']!=self.pid:
                     continue
-                text=' '.join(self.control_text(child) for child in self.windows(hwnd)
-                              if self.window_class(child)=='Static')
-                if expected in ' '.join(text.split()):
-                    dialogs.append((hwnd,owner))
-            if dialogs:
-                assert len(dialogs)==1,('Multiple owned dialogs match',expected,dialogs)
-                return dialogs[0]
+                facts['controls']=self.inspect(hwnd,expected)
+                if facts['controls']['matched']:
+                    matches.append((hwnd,owner))
+            if matches:
+                assert len(matches)==1,('Multiple owned dialogs match',expected,owned)
+                return matches[0]
             time.sleep(.05)
-        owned=[(hwnd,self.window_class(hwnd),bool(self.user32.IsWindowEnabled(hwnd)))
-               for hwnd in self.windows() if self.process(hwnd)==self.pid]
-        raise AssertionError(f'Native confirmation did not appear for {expected!r}; owned windows: {owned}')
+        raise AssertionError(f'Native confirmation did not appear for {expected!r}; owned windows and controls: {owned}')
 
-    def answer(self, dialog, owner, button_id):
+    def answer(self, dialog, owner, prompt, button_id):
         assert self.process(dialog)==self.pid and self.user32.GetWindow(dialog,4)==owner
         assert self.process(owner)==self.pid and not self.user32.IsWindowEnabled(owner)
-        button=self.user32.GetDlgItem(dialog,button_id)
-        assert button and self.process(button)==self.pid and self.window_class(button)=='Button'
-        assert self.user32.IsWindowVisible(button) and self.user32.IsWindowEnabled(button)
-        result=self.ctypes.c_size_t()
-        if not self.user32.SendMessageTimeoutW(button,0x00F5,0,0,0x0002,3_000,self.ctypes.byref(result)):
-            raise self.ctypes.WinError(self.ctypes.get_last_error())  # BM_CLICK
+        result=self.inspect(dialog,prompt,button_id)
+        assert result['invoked'],result
         deadline=time.monotonic()+10
         while time.monotonic()<deadline:
             if not self.user32.IsWindowVisible(dialog) and self.user32.IsWindowEnabled(owner):
@@ -156,8 +196,9 @@ class NativeConfirmations:
             trigger.click()
             dialog,owner=self.find_dialog(prompt)
             assert self.revision()==revision,('Storage changed before native confirmation',prompt)
-            self.answer(dialog,owner,button_id)
+            self.answer(dialog,owner,prompt,button_id)
             if button_id==2:
+                expect(trigger).to_be_enabled(timeout=30_000)
                 assert self.revision()==revision,('Cancelled native confirmation changed storage',prompt)
 
 
