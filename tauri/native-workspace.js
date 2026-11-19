@@ -118,6 +118,9 @@ function acknowledgeCoverage(){
  displayAnalysisCoverage(coverageResult,coverageScope);
 }
 function controlState(){
+$('reportPageInfo').textContent='Страница '+(reportBack.length+1);
+$('groupPageInfo').textContent='Страница '+(groupBack.length+1);
+$('workPageInfo').textContent='Страница '+(workBack.length+1);
 $('reportBack').disabled=reportsBusy||refreshBusy||!reportBack.length;
 $('reportNext').disabled=reportsBusy||refreshBusy||!reportNext;
 $('nativeReportType').disabled=reportsBusy||refreshBusy;
