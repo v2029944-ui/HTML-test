@@ -86,6 +86,10 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 #dailyRollupDetailRows td{font-variant-numeric:tabular-nums}
 #dailyRollupRows button{font-size:13px;padding:7px 10px}
 #dailyRollupDetailPanel[hidden]{display:none}
+#dailySourceOverview{min-width:0;margin:14px 0 18px}
+#dailySourceOverview h4{font-size:15px;margin:12px 0 6px}
+#dailySourceOverview .timeline-chart svg{display:block;width:100%;height:auto;max-height:340px;border:1px solid #dce2e9;border-radius:8px;background:#fbfcfe}
+#dailySourceOverview .metric{min-width:0}
 .daily-rollup-controls{min-width:0}
 .daily-rollup-controls input{min-width:0;max-width:185px}
 #sqlDailyRollups{padding-top:8px;min-width:0}
@@ -377,6 +381,23 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </div>
 <p id="dailyRollupScope" class="filter-scope">Используются подразделения из фильтра аналитики.</p>
 <p id="dailyRollupStatus" class="status muted" role="status" aria-live="polite">Выберите даты и подготовьте индексы дневных отчётов.</p>
+<section id="dailySourceOverview" aria-label="KPI и динамика из дневных отчётов">
+<h4>Показатели и динамика по дневным отчётам</h4>
+<p class="intro">Итоги и график используют одни даты, подразделения и только дневной источник SQLite. Отдельно загруженные недельные и месячные отчёты не прибавляются. При неполном охвате видимые суммы относятся только к имеющимся данным.</p>
+<div id="dailySourceKpis" class="comparison-metrics" aria-live="polite"></div>
+<div class="timeline-controls">
+<label for="dailySourceMetric">Показатель графика</label>
+<select id="dailySourceMetric"><option value="amount">Сумма</option><option value="count">Количество / объём</option></select>
+</div>
+<p id="dailySourceStatus" class="status muted" role="status" aria-live="polite">Показатели появятся после расчёта календаря.</p>
+<div id="dailySourceChart" class="timeline-chart"></div>
+<details><summary>Точные значения динамики из дневного источника</summary>
+<div class="table-scroll"><table>
+<thead><tr><th>Период</th><th>Календарных дней</th><th>Пропусков по подразделениям</th><th>Количество / объём</th><th>Сумма</th></tr></thead>
+<tbody id="dailySourceRows"></tbody>
+</table></div>
+</details>
+</section>
 <div class="joined-pager" aria-label="Страницы календарной сводки">
 <button id="dailyRollupBack" type="button" disabled>Назад</button>
 <output id="dailyRollupPageInfo" aria-live="polite">Страница 1</output>
@@ -529,7 +550,8 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </section>
 </main>
 <script src="tauri-bridge.js"></script><script src="tauri-native-updates.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-timeline.js"></script><script src="tauri-native-ranking.js"></script><script src="tauri-native-organization-trends.js"></script><script src="tauri-native-period-selection.js"></script>
-<script src="tauri-native-work-trends.js"></script><script src="tauri-native-comparison.js"></script><script src="tauri-native-daily-calendar.js"></script>
+<script src="tauri-native-work-trends.js"></script><script src="tauri-native-comparison.js"></script><script src="tauri-native-daily-overview.js"></script>
+<script src="tauri-native-daily-calendar.js"></script>
 <script src="tauri-native-workspace.js"></script>
 <script src="tauri-native-legacy-import.js"></script>
 <script src="tauri-native-navigation.js"></script>
