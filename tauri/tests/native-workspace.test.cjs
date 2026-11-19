@@ -70,6 +70,11 @@ function mount(options={}){
    nativeAnalysisRange:async(rev,kind,from,to,organizations)=>{calls.push({kind:'range',rev,reportType:kind,from,to,organizations});return options.complete
     ?{complete:true,periods:12,missing:0,total:{count:12,amount:options.mismatchedTotal?1900:divisionAmounts[0]+divisionAmounts[1],average:150},invalid_reports:0,duplicate_issues:0,overlap_issues:0}
     :{complete:false,periods:366,missing:1,total:{count:null,amount:null,average:null},invalid_reports:1,duplicate_issues:0,overlap_issues:0};},
+   nativeAnalysisTimeline:async(rev,kind,from,to,organizations)=>{
+     calls.push({kind:'timeline',rev,reportType:kind,from,to,organizations});
+     return {granularity:'period',points:[{start:from,periods:1,missing:options.complete?0:1,
+       total:options.complete?{count:2,amount:100,average:50}:{count:null,amount:null,average:null}}]};
+   },
    nativeAnalysisRangePage:async(rev,kind,from,to,organizations,organization,after,limit)=>{
      calls.push({kind:'work',rev,reportType:kind,from,to,organizations,organization,after,limit});
      const row=n=>({key:'work:'+String(n).padStart(4,'0'),name:n===0?'<b>Работа</b>':'Работа '+n,kind:'work',count:null,amount:null,average:null,active:true});
@@ -82,9 +87,16 @@ function mount(options={}){
       :{org:'АВТО',complete:false,missing:2,total:{count:null,amount:null,average:null}}
    ];}
  };
- const window={desktopAPI:api,confirm:()=>true,analizUserError:userError};
+ const chartCalls=[];
+ const window={desktopAPI:api,confirm:()=>true,analizUserError:userError,
+   nativeTimeline:{
+     show:data=>chartCalls.push({action:'show',data}),
+     clear:message=>chartCalls.push({action:'clear',message}),
+     error:message=>chartCalls.push({action:'error',message})
+   }};
+
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-workspace.js'),'utf8'),{window,document:{getElementById:id=>e[id],createElement:tag=>new Element(tag)}});
- return {e,calls,window};
+ return {e,calls,window,chartCalls};
 }
 test('native workspace displays only one keyset page and no HTML from source names',async()=>{
  const {e,calls,window}=mount();
@@ -371,4 +383,24 @@ test('requesting live SQLite restore requires explicit review, confirmation and 
  await e.restoreCancel.events.click();
  assert.equal(calls.filter(c=>c.kind==='restore_cancel').length,1);
  assert.match(e.restoreStatus.textContent,/отменено/);
+});
+
+test('SQL timeline uses identical date and organization filters and clears stale graphics',async()=>{
+ const {e,calls,window,chartCalls}=mount({complete:true});
+ await window.nativeWorkspaceReady;
+ e.analysisOrganization.value='АВТО';e.analysisOrganization.events.change();
+ e.analysisFrom.value='2024-02-01';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();
+ await e.analysisRun.events.click();
+ const kpi=calls.find(x=>x.kind==='range');
+ const timeline=calls.find(x=>x.kind==='timeline');
+ assert.equal(timeline.reportType,kpi.reportType);
+ assert.equal(timeline.from,kpi.from);
+ assert.equal(timeline.to,kpi.to);
+ assert.equal(timeline.rev,kpi.rev);
+ assert.equal(timeline.organizations.join(','),kpi.organizations.join(','));
+ assert.ok(chartCalls.some(x=>x.action==='show'));
+ e.analysisTo.value='2024-03-31';e.analysisTo.events.change();
+ assert.equal(chartCalls.at(-1).action,'clear');
+ assert.match(chartCalls.at(-1).message,/Фильтры изменены/);
 });
