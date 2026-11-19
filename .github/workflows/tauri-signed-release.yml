@@ -11,13 +11,13 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: "Check keys, prepare the approved 1.6.0 draft, or publish an approved new version"
+        description: "Check keys, prepare a draft, publish an approved version, or advance the 1.6.0 channel"
         required: true
         type: choice
         default: check-keys
-        options: [check-keys, publish, prepare-draft]
+        options: [check-keys, publish, prepare-draft, advance-channel]
       version:
-        description: "For prepare-draft or publish, enter the approved version"
+        description: "For an operation other than check-keys, enter the approved version"
         type: string
         required: false
 
@@ -30,6 +30,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  advance-channel:
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'v2029944-ui/HTML-test' && github.ref == 'refs/heads/work/sql-160-draft-assets' && inputs.operation == 'advance-channel' && inputs.version == '1.6.0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install Minisign from Ubuntu
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends minisign
+      - name: Test channel replacement and recovery checks
+        run: python3 -B -m unittest discover -s .github/scripts -p test_advance_tauri_160_channel.py -v
+      - name: Verify signed installer and prepare both manifests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANALIZ_UPDATER_PUBLIC_KEY: ${{ secrets.ANALIZ_UPDATER_PUBLIC_KEY }}
+        run: python3 -B .github/scripts/advance_tauri_160_channel.py prepare "$RUNNER_TEMP/tauri-channel-manifests"
+      - name: Retain previous and candidate manifests before replacement
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-channel-1.6.0-manifests
+          path: ${{ runner.temp }}/tauri-channel-manifests/*.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Replace the existing channel manifest and verify public delivery
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/advance_tauri_160_channel.py advance "$RUNNER_TEMP/tauri-channel-manifests"
+
   prepare-draft:
     if: github.event_name == 'workflow_dispatch' && github.repository == 'v2029944-ui/HTML-test' && github.ref == 'refs/heads/work/sql-160-draft-assets' && inputs.operation == 'prepare-draft' && inputs.version == '1.6.0'
     runs-on: ubuntu-latest
