@@ -35,7 +35,7 @@ test('six SQL sections remain in one application without full-history bootstrap'
                     'sqlUpdateCheck','legacyWorkspaceLink']){
    assert.match(html,new RegExp('id="'+id+'"'));
   }
-  assert.match(html,/tauri-native-navigation\\.js/);
+  assert.ok(html.includes('tauri-native-navigation.js'));
   assert.equal(fs.readFileSync(path.join(tmp,'tauri-native-navigation.js'),'utf8'),script);
   assert.ok(!script.includes('desktopAPI.load('));
   assert.ok(!script.includes('load_data'));
