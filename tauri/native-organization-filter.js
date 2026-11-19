@@ -22,9 +22,9 @@ function setLocked(value){
  select.disabled=locked||!available.length;
  choices.disabled=select.disabled;
 }
-function changeSelection(names){
+function changeSelection(names,followAll){
  const previous=selected();
- subset=names.length===available.length?null:new Set(names);
+ subset=followAll?null:new Set(names);
  synchronize();
  if(previous.length!==names.length||previous.some(name=>!names.includes(name)))
   window.nativeWorkspaceFilterChanged?.();
@@ -61,7 +61,8 @@ function setOrganizations(names){
    const names=new Set(selected());
    if(input.checked)names.add(name);
    else names.delete(name);
-   changeSelection(Array.from(names));
+   // Checking every box restores the dynamic all-organizations mode.
+   changeSelection(Array.from(names),names.size===available.length);
   });
   label.append(input,make('span',name));choices.append(label);inputs.set(name,input);
  }
@@ -72,9 +73,9 @@ function setOrganizations(names){
 select.addEventListener('change',()=>{
  if(!initialized)return;
  if(!locked){
-  if(select.value===all){changeSelection(available);return;}
+  if(select.value===all){changeSelection(available,true);return;}
   for(const [name,value] of options){
-   if(select.value===value){changeSelection([name]);return;}
+   if(select.value===value){changeSelection([name],false);return;}
   }
  }
  synchronize();

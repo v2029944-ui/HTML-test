@@ -59,3 +59,14 @@ test('explicit empty and reserved organization names are never confused with dro
  filter.setOrganizations([]);
  assert.deepEqual(selected(),[]);
 });
+
+test('explicit single choice remains restricted when settings add an organization',()=>{
+ const {filter,select,selected}=mount();
+ filter.setOrganizations(['A']);
+ filter.setLocked(false);
+ select.value='A';select.events.change();
+ assert.equal(select.value,'A');
+ filter.setOrganizations(['A','B']);
+ assert.deepEqual(selected(),['A']);
+ assert.equal(select.value,'A');
+});
