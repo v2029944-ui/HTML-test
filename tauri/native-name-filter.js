@@ -3,23 +3,23 @@
 'use strict';
 const $=id=>document.getElementById(id),api=window.desktopAPI;
 const make=(tag,text)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);return el;};
-let revision=null,selected=null,request=0,busy=false;
+let revision=null,selected=null,request=0,busy=false,locked=false;
 const validName=name=>typeof name==='string'&&name.length>0&&
  new TextEncoder().encode(name).length<=512;
 const notify=()=>window.nativeWorkspaceFilterChanged?.();
 function selectedName(){return selected;}
 function control(){
- $('analysisNameSearchRun').disabled=busy||revision===null;
- $('analysisNameSearch').disabled=busy||revision===null;
- $('analysisName').disabled=busy||revision===null;
- $('analysisNameReset').disabled=busy||revision===null||selected===null;
+ $('analysisNameSearchRun').disabled=busy||locked||revision===null;
+ $('analysisNameSearch').disabled=busy||locked||revision===null;
+ $('analysisName').disabled=busy||locked||revision===null;
+ $('analysisNameReset').disabled=busy||locked||revision===null||selected===null;
 }
 function status(message,error=false){
  $('analysisNameStatus').textContent=message;
  $('analysisNameStatus').className='filter-scope'+(error?' error':'');
 }
 function reset(){
- if(selected===null)return;
+ if(locked||busy||selected===null)return;
  selected=null;
  $('analysisName').value='*';
  status('Фильтр сброшен: все работы и группы.');
@@ -40,7 +40,7 @@ function setRevision(rev){
  control();
 }
 async function search(){
- if(busy||revision===null)return;
+ if(busy||locked||revision===null)return;
  const text=$('analysisNameSearch').value;
  if(typeof text!=='string'||new TextEncoder().encode(text).length>128){
   status('Поисковый запрос должен быть не длиннее 128 байт.',true);
@@ -83,6 +83,7 @@ async function search(){
  }
 }
 function selectionChanged(){
+ if(locked||busy)return;
  const option=$('analysisName').value;
  const name=option==='*'?null:option;
  if(name!==null&&!validName(name)){
@@ -108,5 +109,7 @@ $('analysisNameSearch').addEventListener('keydown',event=>{
  }
 });
 setRevision(null);
-window.nativeNameFilter=Object.freeze({selectedName,setRevision,search,reset});
+window.nativeNameFilter=Object.freeze({selectedName,setRevision,search,reset,
+ setLocked(value){locked=!!value;control();}
+});
 })();
