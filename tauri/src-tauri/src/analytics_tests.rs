@@ -1406,3 +1406,24 @@ fn work_group_name_search_is_bounded_and_excludes_ambiguous_labels() {
     assert!(collision.rows.is_empty(),
         "a raw work and a group with identical names cannot be selected safely");
 }
+
+
+#[test]
+fn name_search_rejects_multibyte_labels_over_utf8_limit() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let mut data=fixture();
+    // 300 Cyrillic letters fit in SQLite length()<=512 characters, but
+    // require 600 UTF-8 bytes and must not enter a <=512-byte native filter.
+    let oversized="К".repeat(300);
+    data["reports"][0]["rows"].as_array_mut().unwrap().push(json!({
+        "organization":"A","work":oversized,
+        "count":1.,"amount":1.
+    }));
+    let revision=prepare(&store,&data);
+    let options=store.analysis_name_options(revision,"К",50).unwrap();
+    assert!(options.rows.is_empty(),"UTF-8 byte bound must agree with the native UI");
+    let baseline=store.analysis_name_options(revision,"Group",50).unwrap();
+    assert_eq!(baseline.rows.len(),1);
+    assert_eq!(baseline.rows[0].name,"Group");
+}

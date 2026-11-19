@@ -1001,7 +1001,7 @@ impl Storage {
                ) GROUP BY x.work
             )
             SELECT name,MIN(kind) FROM candidates
-            WHERE name<>'' AND length(name)<=512
+            WHERE name<>'' AND length(CAST(name AS BLOB))<=512
               AND (?1='' OR instr(name,?1)>0)
             GROUP BY name HAVING COUNT(*)=1
             ORDER BY name COLLATE BINARY

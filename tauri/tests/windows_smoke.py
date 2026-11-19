@@ -447,6 +447,42 @@ def run():
                 assert 'календарные месяцы' in page.locator('#dailySourceStatus').inner_text()
                 assert 'дневные' in page.locator('#dailyRollupScope').inner_text().lower()
                 report['checks'].append('SQL day-source KPIs and chart match the calendar scope, without weekly or monthly imports')
+                # Issue #64: the same exact work-name filter must affect the
+                # SQL calendar, KPI cards and graph, then restore the baseline.
+                baseline_amount=page.locator('#dailySourceKpis .comparison-metric').nth(1).locator('strong').inner_text()
+                page.locator('[data-nav-link="analysis"]').click()
+                assert page.locator('#sqlAnalysis').is_visible()
+                if not page.locator('#analysisMoreFilters').evaluate('(el) => el.open'):
+                    page.locator('#analysisMoreFilters summary').click()
+                page.locator('#analysisNameSearch').fill('Альфа')
+                page.locator('#analysisNameSearchRun').click()
+                wait_for_app_state(page,
+                    'Array.from(document.querySelector("#analysisName")?.options || []).some(o => o.value === "Альфа")',
+                    'Bounded SQLite work-name search includes synthetic daily work')
+                page.locator('#analysisName').select_option('Альфа')
+                assert 'Альфа' in page.locator('#analysisFilterScope').inner_text()
+                page.locator('[data-nav-link="reports"]').click()
+                assert 'Альфа' in page.locator('#dailyRollupScope').inner_text()
+                page.locator('#dailyRollupRun').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#dailySourceStatus")?.textContent.includes("календарные месяцы") && document.querySelectorAll("#dailySourceKpis .comparison-metric").length === 5',
+                    'Day-source KPI and graph recomputed for the chosen work')
+                filtered_amount=page.locator('#dailySourceKpis .comparison-metric').nth(1).locator('strong').inner_text()
+                if filtered_amount in ('—',baseline_amount):
+                    raise RuntimeError('Exact work filter did not change the daily-source amount: '+filtered_amount)
+                assert page.locator('#dailySourceRows tr').count()==12
+                assert page.locator('#dailySourceChart svg').count()==1
+                page.locator('[data-nav-link="analysis"]').click()
+                page.locator('#analysisNameReset').click()
+                assert 'все' in page.locator('#analysisFilterScope').inner_text()
+                page.locator('[data-nav-link="reports"]').click()
+                page.locator('#dailyRollupRun').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#dailySourceStatus")?.textContent.includes("календарные месяцы") && document.querySelectorAll("#dailySourceKpis .comparison-metric").length === 5',
+                    'Day-source KPI restores original scope after filter reset')
+                assert page.locator('#dailySourceKpis .comparison-metric').nth(1).locator('strong').inner_text()==baseline_amount
+                report['checks'].append('SQL exact work-name selection preserves coverage and resets cleanly')
+
                 assert page.evaluate("typeof window.appReady === 'undefined'")
                 report['checks'].append('SQL 2024 annual calendar is computed from daily reports only')
                 page.locator('#dailyRollupRows tr').first.locator('button').click()
