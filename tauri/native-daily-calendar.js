@@ -13,6 +13,7 @@ let revision=null,organizations=[],ready=false,busy=false;
 let generation=0,previousKind='day',cursor=null,back=[],next=null;
 let selection=null;
 let detailScope=null,detailCursor=null,detailNext=null,detailBack=[],detailRequest=0,detailBusy=false;
+let sourceOverviewTicket=0;
 const pageSize=60;
 function status(message,bad=false){
  const e=$('dailyRollupStatus');e.textContent=message;
@@ -30,6 +31,8 @@ function controls(){
    $(id).disabled=busy||!valid;
 }
 function clear(message='Выберите даты и подготовьте дневные индексы.'){
+ ++sourceOverviewTicket;
+ window.nativeDailyOverview?.clear('Рассчитайте календарь, чтобы увидеть KPI и график дневного источника.');
  closeDetails();
  ++generation;
  cursor=null;next=null;back=[];selection=null;
@@ -267,13 +270,31 @@ async function page(after,reset=false){
    return false;
  }finally{busy=false;controls();}
 }
+async function sourceOverview(scope){
+ const ticket=++sourceOverviewTicket;
+ try{
+  const summary=await api.nativeAnalysisRange(
+    scope.rev,'day',scope.from,scope.to,scope.orgs
+  );
+  if(ticket!==sourceOverviewTicket||selection!==scope)return;
+  const timeline=await api.nativeAnalysisTimeline(
+    scope.rev,'day',scope.from,scope.to,scope.orgs
+  );
+  if(ticket!==sourceOverviewTicket||selection!==scope)return;
+  window.nativeDailyOverview?.show(summary,timeline);
+ }catch(error){
+  if(ticket===sourceOverviewTicket&&selection===scope)
+   window.nativeDailyOverview?.error('Не удалось рассчитать показатели дневного источника: '+issue(error));
+ }
+}
 async function run(){
  if(busy||!ready)return;
  const scope=inputScope();
  if(!scope){clear('Выберите корректные даты календарного диапазона.');return;}
  clear('Рассчитываем сводку по дневным отчётам…');
  selection=scope;
- await page(null,true);
+ if(await page(null,true)&&selection===scope)
+   void sourceOverview(scope);
 }
 async function prepare(){
  if(busy||revision===null)return;
