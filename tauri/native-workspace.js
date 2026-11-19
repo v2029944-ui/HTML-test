@@ -44,6 +44,78 @@ function invalidateTimeline(message){
  timelineRequest++;
  window.nativeTimeline?.clear(message);
 }
+// Acknowledgement is display-only, scoped to the SQLite revision and exact
+// period/organizations/issue counts. It NEVER changes SQL completeness.
+let coverageKey=null,coverageResult=null,coverageScope=null;
+function clearAnalysisCoverage(){
+ coverageKey=null;coverageResult=null;coverageScope=null;
+ $('analysisCoverageNotice').hidden=true;
+ $('analysisCoverageText').textContent='';
+}
+function coverageAccepted(){
+ if(!coverageKey)return false;
+ try{return window.localStorage?.getItem(coverageKey)==='accepted';}
+ catch(_){return false;}
+}
+function displayAnalysisCoverage(result,scope){
+ coverageResult=result;coverageScope=scope;
+ const available=Number.isSafeInteger(result.available_reports)&&result.available_reports>0&&
+  Number.isFinite(result.available_total?.count)&&Number.isFinite(result.available_total?.amount);
+ const missing=!result.complete;
+ const invalid=(Number(result.invalid_reports)||0)+(Number(result.duplicate_issues)||0)+
+  (Number(result.overlap_issues)||0)+(Number(result.import_warning_reports)||0);
+ const flagged=missing||invalid>0;
+ coverageKey=flagged?'sql-coverage-ack-v1:'+JSON.stringify([
+  revision,scope.type,scope.from,scope.to,scope.organizations.slice().sort(),
+  result.periods,result.missing,result.invalid_reports,result.duplicate_issues,
+  result.overlap_issues,result.import_warning_reports,result.available_reports
+ ]):null;
+ const accepted=coverageAccepted();
+ const number=value=>typeof value==='number'&&Number.isFinite(value)
+  ?value.toLocaleString('ru-RU',{maximumFractionDigits:3}):'—';
+ const partial=missing&&available;
+ const total=partial?result.available_total:result.total||{};
+ const metrics=[
+  ['Полнота',result.complete?'Полная':accepted?'Неполная (известно)':'Есть пропуски'],
+  ['Периодов',number(result.periods)],['Пропущено',number(result.missing)],
+  [partial?'Количество / объём (имеющиеся данные)':'Количество / объём',number(total.count)],
+  [partial?'Сумма (имеющиеся данные)':'Сумма',number(total.amount)],
+  [partial?'Среднее (имеющиеся данные)':'Среднее',number(total.average)],
+  ['Некорректных отчётов',number(result.invalid_reports)],
+  ['Дубликатов',number(result.duplicate_issues)],
+  ['Перекрытий',number(result.overlap_issues)]
+ ];
+ const box=$('analysisValues');box.replaceChildren();
+ for(const [label,value] of metrics){
+  const item=make('div');item.className='metric';item.append(make('strong',value),make('span',label));box.append(item);
+ }
+ $('analysisCoverageNotice').hidden=!flagged||accepted;
+ $('analysisCoverageText').textContent=
+  'Данные неполные или содержат замечания. Пропусков: '+number(result.missing)+
+  ', некорректных: '+number(result.invalid_reports)+
+  ', дубликатов: '+number(result.duplicate_issues)+
+  ', перекрытий: '+number(result.overlap_issues)+
+  '. '+(partial?'Сумма, количество и среднее относятся только к имеющимся отчётам ('+
+   number(result.available_reports)+'). ':available?'':'Подтверждённых исходных отчётов нет. ')+
+  'Подтверждение скрывает это предупреждение для неизменённой ревизии и выборки, но не исправляет отчёты и не подтверждает отсутствующие периоды.';
+ const message=result.complete
+  ?'Расчёт выполнен по полной последовательности периодов.'
+  :partial
+   ?'Расчёт выполнен по имеющимся данным. Полный итог за выбранный диапазон неизвестен.'
+   :'Расчёт выполнен, но не все периоды подтверждены. Итоги скрыты до устранения пропусков.';
+ status('analysisStatus',message+(accepted?' Замечание подтверждено для этой выборки.':''),flagged&&!accepted);
+}
+function acknowledgeCoverage(){
+ if(!coverageKey||!coverageResult||!coverageScope)return;
+ try{
+  if(!window.localStorage)throw Error('No local storage');
+  window.localStorage.setItem(coverageKey,'accepted');
+ }catch(_){
+  status('analysisStatus','Подтверждение не удалось сохранить. Проверьте настройки хранилища приложения.',true);
+  return;
+ }
+ displayAnalysisCoverage(coverageResult,coverageScope);
+}
 function controlState(){
 $('reportBack').disabled=reportsBusy||refreshBusy||!reportBack.length;
 $('reportNext').disabled=reportsBusy||refreshBusy||!reportNext;
@@ -128,7 +200,7 @@ try{
  invalidateTimeline('Данные обновлены. Повторите расчёт графика.');
  invalidateRanking('Данные обновлены. Повторите расчёт рейтинга.');
  invalidateOrganizationTrends('Данные обновлены. Повторите расчёт динамики подразделений.');
- $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
+ $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearAnalysisCoverage();clearWork();
  status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
  orgNames=snapshot.org_names.slice();
  const orgSelect=$('analysisOrganization'),previousOrganization=orgSelect.value;
@@ -461,17 +533,8 @@ async function calculateAnalysis(){
  try{
    const result=await api.nativeAnalysisRange(revision,kind,from,to,organizations);
    const divisions=await api.nativeAnalysisOrganizations(revision,kind,from,to,organizations);
-   const total=result.total||{},number=value=>value===null||value===undefined?'—':Number(value).toLocaleString('ru-RU',{maximumFractionDigits:3});
-   const metrics=[
-     ['Полнота',result.complete?'Полная':'Есть пропуски'],
-     ['Периодов',number(result.periods)],['Пропущено',number(result.missing)],
-     ['Количество / объём',number(total.count)],['Сумма',number(total.amount)],
-     ['Среднее',number(total.average)],['Некорректных отчётов',number(result.invalid_reports)],
-     ['Дубликатов',number(result.duplicate_issues)],['Перекрытий',number(result.overlap_issues)]
-   ];
-   const box=$('analysisValues');box.replaceChildren();
-   for(const [label,value] of metrics){const item=make('div');item.className='metric';item.append(make('strong',value),make('span',label));box.append(item);}
-   showDivisionComparison(divisions,total.amount,result.complete);
+   displayAnalysisCoverage(result,{type:kind,from,to,organizations});
+   showDivisionComparison(divisions,result.total?.amount,result.complete);
    // A failed chart must not discard already verified KPIs or division results.
    try{
      const timeline=await api.nativeAnalysisTimeline(revision,kind,from,to,organizations);
@@ -492,9 +555,9 @@ async function calculateAnalysis(){
    updateComparisonContext();
    await reloadRanking();
    updateResultContext(kind,from,to,organizations);
-   status('analysisStatus',result.complete?'Расчёт выполнен по полной последовательности периодов.':'Расчёт выполнен, но не все периоды подтверждены. Итоги скрыты до устранения пропусков.',!result.complete);
+   // Full and partial status is set by displayAnalysisCoverage().
  }catch(err){
-   $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();
+   $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearAnalysisCoverage();
    invalidateTimeline('График недоступен: расчёт не завершён.');
    invalidateRanking('Рейтинг недоступен: расчёт не завершён.');
    invalidateOrganizationTrends('Динамика подразделений недоступна: расчёт не завершён.');
@@ -578,7 +641,7 @@ const year=String(new Date().getFullYear());
 $('analysisFrom').value=year+'-01-01';
 $('analysisTo').value=year+'-12-31';
 $('analysisType').addEventListener('change',()=>{
- analysisReady=false;invalidateRanking('Тип периода изменён. Повторите расчёт рейтинга.');invalidateOrganizationTrends('Тип периода изменён. Повторите расчёт динамики подразделений.');invalidateTimeline('Тип периода изменён. Подготовьте индексы и повторите расчёт.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
+ analysisReady=false;clearAnalysisCoverage();invalidateRanking('Тип периода изменён. Повторите расчёт рейтинга.');invalidateOrganizationTrends('Тип периода изменён. Повторите расчёт динамики подразделений.');invalidateTimeline('Тип периода изменён. Подготовьте индексы и повторите расчёт.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
  status('analysisStatus','Выбран другой тип периода. Подготовьте соответствующие индексы.');
  $('analysisResultScope').textContent='Тип периода изменён. Подготовьте индексы и повторите расчёт.';
@@ -588,6 +651,7 @@ $('analysisType').addEventListener('change',()=>{
 $('analysisPrepare').addEventListener('click',prepareAnalysis);
 $('analysisCancel').addEventListener('click',()=>{analysisCancelled=true;status('analysisStatus','Остановка после текущей порции…');});
 $('analysisRun').addEventListener('click',calculateAnalysis);
+$('analysisAcknowledge').addEventListener('click',acknowledgeCoverage);
 $('analysisExport').addEventListener('click',exportAnalysisCsv);
 $('comparisonRun').addEventListener('click',compareAnalysis);
 for(const id of ['comparisonBeforeFrom','comparisonBeforeTo']){
@@ -611,7 +675,7 @@ $('workBack').addEventListener('click',async()=>{
 });
 for(const id of ['analysisFrom','analysisTo','analysisOrganization']){
  $(id).addEventListener('change',()=>{
-  invalidateRanking('Фильтры изменены. Повторите расчёт рейтинга.');invalidateOrganizationTrends('Фильтры изменены. Повторите расчёт динамики подразделений.');invalidateTimeline('Фильтры изменены. Повторите расчёт графика.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork('Параметры изменены. Повторите расчёт.');
+  clearAnalysisCoverage();invalidateRanking('Фильтры изменены. Повторите расчёт рейтинга.');invalidateOrganizationTrends('Фильтры изменены. Повторите расчёт динамики подразделений.');invalidateTimeline('Фильтры изменены. Повторите расчёт графика.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork('Параметры изменены. Повторите расчёт.');
   status('divisionShareStatus','Доли сброшены: фильтры изменены.');
   status('divisionStatus','Параметры изменены. Нажмите «Рассчитать» ещё раз.');
   $('analysisResultScope').textContent='Фильтры изменены. Повторите расчёт, чтобы увидеть актуальную выборку.';
