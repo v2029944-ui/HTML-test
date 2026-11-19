@@ -95,3 +95,15 @@ test('unknown deep links fall back to analytics, no SQL controls are destroyed',
  assert.equal(ui.window.nativeWorkspaceNavigation.select('groups'),'groups');
  assert.equal(ui.panels.filter(p=>!p.hidden)[0].getAttribute('data-nav-panel'),'groups');
 });
+test('classic management menu closes accessibly and changes retains the shared filter panel',()=>{
+ const keys=['analysis','changes','reports'];const eventHandlers={};let focused=false;
+ const menu={open:false,contains:target=>target==='inside'};
+ const toggle={classList:{toggle(){}},focus(){focused=true;}};
+ const links=keys.map(key=>({textContent:key,events:{},getAttribute:()=>key,setAttribute(){},removeAttribute(){},addEventListener(name,fn){this.events[name]=fn;}}));
+ const panels=['analysis','changes','analysis changes','reports'].map(key=>({hidden:false,getAttribute:()=>key}));
+ const window={location:{hash:''},addEventListener(){}};
+ vm.runInNewContext(script,{window,document:{querySelectorAll:q=>q==='[data-nav-link]'?links:panels,getElementById:id=>id==='nativeViewStatus'?{textContent:''}:id==='managementNav'?menu:toggle,addEventListener:(name,fn)=>eventHandlers[name]=fn}});
+ menu.open=true;links[1].events.click();assert.equal(menu.open,false);assert.equal(panels[0].hidden,true);assert.equal(panels[1].hidden,false);assert.equal(panels[2].hidden,false);
+ menu.open=true;eventHandlers.keydown({key:'Escape'});assert.equal(menu.open,false);assert.equal(focused,true);
+ menu.open=true;eventHandlers.click({target:'outside'});assert.equal(menu.open,false);
+});

@@ -10,6 +10,7 @@ const describeNames=names=>names.length?names.join(', '):'все';
 const make=(tag,text)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);return el;};
 function status(id,text,error=false){$(id).textContent=String(text);$(id).className='status '+(error?'error':'muted');}
 const reportSize=100,groupSize=50;
+let reportRange=null;
 let revision=null,reportAfter=null,reportBack=[],reportNext=null,groupAfter=null,groupBack=[],groupNext=null;
 let reportsBusy=false,groupsBusy=false,refreshBusy=false;
 let queuedRefresh=null,refreshScheduled=false;
@@ -129,6 +130,7 @@ $('workPageInfo').textContent='Страница '+(workBack.length+1);
 $('reportBack').disabled=reportsBusy||refreshBusy||!reportBack.length;
 $('reportNext').disabled=reportsBusy||refreshBusy||!reportNext;
 $('nativeReportType').disabled=reportsBusy||refreshBusy;
+$('reportClearSelection').disabled=reportsBusy||refreshBusy;
 $('groupBack').disabled=groupsBusy||refreshBusy||!groupBack.length;
 $('groupNext').disabled=groupsBusy||refreshBusy||!groupNext;
 $('workspaceRefresh').disabled=reportsBusy||groupsBusy||refreshBusy||analysisBusy||workBusy||exportBusy||backupBusy||restoreBusy;
@@ -141,6 +143,7 @@ $('analysisPrepare').disabled=analysisBusy||refreshBusy||exportBusy||revision===
 $('analysisCancel').disabled=!analysisBusy;
 $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!analysisReady;
 $('analysisPrint').disabled=revision===null||analysisBusy||refreshBusy||workBusy||comparisonBusy||rankingBusy||workTrendBusy||exportBusy||!!queuedRefresh||window.nativeAdvancedAnalysis?.isBusy()||!workScope;
+$('changesPrint').disabled=$('analysisPrint').disabled;
 $('analysisExport').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!workScope;
 $('rankingMetric').disabled=analysisBusy||refreshBusy||!workScope;
 $('rankingCategory').disabled=analysisBusy||refreshBusy||!workScope;
@@ -175,24 +178,35 @@ if(reportsBusy||revision===null)return false;
 reportsBusy=true;controlState();
 try{
  const expected=revision;
- const rows=await api.nativeReportPage(expected,{report_type:$('nativeReportType').value||null},cursor,reportSize);
+ const filter={report_type:$('nativeReportType').value||null,...(reportRange?{start:reportRange.from}:{})};
+ const pageRows=await api.nativeReportPage(expected,filter,cursor,reportSize);
+ // SQL orders bounded headers by start date. Apply the selected start-date
+ // ceiling here: the generic read filter's end constrains period_end and
+ // would incorrectly hide a week/month beginning on the selected day.
+ if(!Array.isArray(pageRows)||pageRows.length>reportSize)throw Error('Некорректная страница отчётов');
+ const rows=reportRange?pageRows.filter(item=>item.period_start>=reportRange.from&&item.period_start<=reportRange.to):pageRows;
  if(!Array.isArray(rows)||rows.length>reportSize)throw Error('Некорректная страница отчётов');
  if(reset)reportBack=[];
  reportAfter=cursor;
  reportNext=rows.length===reportSize?{start:rows.at(-1).period_start,id:rows.at(-1).id}:null;
  const tbody=$('reportRows');tbody.replaceChildren();
  for(const item of rows){
-  const tr=make('tr');
-  for(const value of [item.period_start,item.period_end,item.report_type,item.source_name||'—',item.id])
+  const tr=make('tr');tr.setAttribute('data-report-id',item.id);
+  const periodNames={day:'День',week:'Неделя',month:'Месяц'};
+  const date=value=>/^\d{4}-\d{2}-\d{2}$/.test(value)?value.split('-').reverse().join('.'):value;
+  for(const value of [date(item.period_start),date(item.period_end),periodNames[item.report_type]||item.report_type,item.source_name||'—'])
    tr.append(make('td',value??''));
   const action=make('td');
   window.nativeReportQuality?.addReportAction(action,item,expected);
   window.nativeManagement?.addReportAction(action,item,expected);
   tr.append(action);tbody.append(tr);
  }
- status('reportStatus','На странице: '+rows.length+' отчётов. Сортировка по дате и идентификатору.');
+ status('reportStatus','На странице: '+rows.length+' отчётов.');
+ $('reportSelection').textContent=reportRange?'Даты начала отчётов: '+reportRange.from+' — '+reportRange.to:'Все загруженные периоды';
+ $('reportClearSelection').hidden=!reportRange;
+ void window.nativeReportCalendar?.setContext(expected,pageRows[0]?.period_start);
  return true;
-}catch(err){reportNext=null;reportBack=[];status('reportStatus','Ошибка SQLite: '+userError(err)+'. Нажмите «Обновить данные».',true);return false;}
+}catch(err){window.nativeReportCalendar?.setContext(null);$('reportRows').replaceChildren();reportNext=null;reportBack=[];status('reportStatus','Ошибка SQLite: '+userError(err)+'. Нажмите «Обновить данные».',true);return false;}
 finally{reportsBusy=false;controlState();}
 }
 async function groups(cursor,reset=false){
@@ -268,13 +282,13 @@ try{
  window.nativeDailyCalendar?.setContext(revision,analysisOrganizations(),selectedNames());
  $('analysisResultScope').textContent='Данные обновлены. Подготовьте индексы и повторите расчёт для выбранных фильтров.';
  for(const [id,value] of [['metricReports',snapshot.reports],['metricIndexed',snapshot.indexed_reports],['metricGroups',snapshot.groups],['metricCatalog',snapshot.catalog]])$(id).textContent=value;
- status('workspaceStatus','Ревизия SQLite: '+revision+' · подразделения: '+snapshot.org_names.join(', ')+'.');
+ status('workspaceStatus','Данные обновлены'+' · подразделения: '+snapshot.org_names.join(', ')+'.');
  reportAfter=null;reportNext=null;reportBack=[];groupAfter=null;groupNext=null;groupBack=[];
  const reportsLoaded=await reports(null,true);
  const groupsLoaded=await groups(null,true);
  return reportsLoaded&&groupsLoaded;
 }catch(err){
- revision=null;window.nativeReportQuality?.setRevision(null);void window.nativeManagement?.setContext(null);window.nativeNameFilter?.setRevision(null);$('reportRows').replaceChildren();$('groupRows').replaceChildren();
+ revision=null;window.nativeReportCalendar?.setContext(null);window.nativeReportQuality?.setRevision(null);void window.nativeManagement?.setContext(null);window.nativeNameFilter?.setRevision(null);$('reportRows').replaceChildren();$('groupRows').replaceChildren();
  analysisReady=false;$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearAnalysisCoverage();clearWork('Результаты недоступны. Обновите соединение с базой.');
  invalidateTimeline('Результаты недоступны до обновления базы.');invalidateRanking('Результаты недоступны до обновления базы.');invalidateOrganizationTrends('Результаты недоступны до обновления базы.');
  reportNext=null;groupNext=null;reportBack=[];groupBack=[];
@@ -380,6 +394,18 @@ $('restoreChoose').addEventListener('click',inspectBackup);
 $('restoreCopy').addEventListener('click',writeRestoreCopy);
 $('workspaceRefresh').addEventListener('click',()=>{void refresh();});
 $('backupSqlite').addEventListener('click',backupSqlite);
+$('reportClearSelection').addEventListener('click',async()=>{
+ if(reportsBusy||refreshBusy)return false;reportRange=null;reportAfter=null;reportBack=[];return reports(null,true);
+});
+window.nativeReportList=Object.freeze({selectRange:async(from,to)=>{
+ const valid=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number(value.slice(0,4))>0&&Number.isFinite(Date.parse(value+'T12:00:00Z'))&&new Date(value+'T12:00:00Z').toISOString().slice(0,10)===value;
+ if(!valid(from)||!valid(to)||from>to||reportsBusy||refreshBusy)return false;
+ reportRange={from,to};$('nativeReportType').value='';reportAfter=null;reportBack=[];
+ $('uploadedReports').open=true;
+ const ok=await reports(null,true);
+ if(ok)$('uploadedReports').scrollIntoView?.({block:'start',behavior:'auto'});
+ return ok;
+}});
 $('nativeReportType').addEventListener('change',()=>{reportAfter=null;reportBack=[];void reports(null,true);});
 $('reportNext').addEventListener('click',async()=>{if(!reportNext)return;const before=reportAfter;if(await reports(reportNext))reportBack.push(before);controlState();});
 $('reportBack').addEventListener('click',async()=>{if(!reportBack.length)return;const before=reportBack.at(-1);if(await reports(before))reportBack.pop();controlState();});
@@ -399,7 +425,7 @@ function describeOrganizations(names){
 function updateFilterContext(){
  $('analysisFilterScope').textContent='Подразделения: '+describeOrganizations(analysisOrganizations())+
   '. Работы и группы: '+describeNames(selectedNames())+
-  '. Итоги, графики, подразделения, рейтинг, сравнение, детализация и CSV используют этот отбор. Календарь — тоже.';
+  '. Один отбор: итоги, графики, сравнение, детализация и CSV.';
 }
 function updateResultContext(type,from,to,organizations,names,source){
  $('analysisResultScope').textContent='Выборка: '+type+', '+from+' — '+to+
@@ -609,7 +635,7 @@ async function calculateAnalysis(){
    try{
      const trends=await api.nativeOrganizationTrends(rev,kind,from,to,organizations,...nameArgs(names,selection.source==='daily'?selection.displayType:null));
      if(expectedTrends===organizationTrendsRequest)
-       window.nativeOrganizationTrends?.show(trends);
+       window.nativeOrganizationTrends?.show(trends,orgNames);
    }catch(trendsError){
      if(expectedTrends===organizationTrendsRequest)
        window.nativeOrganizationTrends?.error('График подразделений не построен: '+userError(trendsError));
@@ -688,7 +714,7 @@ async function compareAnalysis(){
 
 function printAnalysis(){
  if(revision===null||analysisBusy||refreshBusy||workBusy||comparisonBusy||rankingBusy||workTrendBusy||exportBusy||queuedRefresh||window.nativeAdvancedAnalysis?.isBusy()||!workScope)return;
- const details=Array.from(document.querySelectorAll?.('#sqlAnalysis details')||[]);
+ const details=Array.from(document.querySelectorAll?.('#sqlAnalysis details, #sqlChanges details')||[]);
  const previous=details.map(node=>node.open);
  try{
   details.forEach(node=>{node.open=true;});
@@ -741,6 +767,7 @@ $('analysisRun').addEventListener('click',calculateAnalysis);
 $('analysisAcknowledge').addEventListener('click',acknowledgeCoverage);
 $('analysisExport').addEventListener('click',exportAnalysisCsv);
 $('analysisPrint').addEventListener('click',printAnalysis);
+$('changesPrint').addEventListener('click',printAnalysis);
 $('comparisonRun').addEventListener('click',compareAnalysis);
 for(const id of ['comparisonBeforeFrom','comparisonBeforeTo']){
  $(id).addEventListener('change',()=>{

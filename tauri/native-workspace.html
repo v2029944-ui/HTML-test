@@ -1,101 +1,101 @@
 <!doctype html>
 <html lang="ru">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light"><meta name="theme-color" content="#f5f7fa">
 <title>Анализ работ — аналитика</title>
 <style>
-:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#223048;background:#f5f7fa}*{box-sizing:border-box}
-body{margin:0}header{padding:12px max(20px,4vw);background:#fff;border-bottom:1px solid #dbe1ea;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--text);background:var(--bg)}*{box-sizing:border-box}
+body{margin:0}header{padding:12px max(20px,4vw);background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
 main{margin:0 auto;max-width:1250px;padding:16px 22px 48px}h1{font-size:24px;margin:0}h2{font-size:19px;margin:0 0 14px}
-.panel{background:#fff;border:1px solid #dce2e9;border-radius:12px;margin-bottom:14px;padding:18px 22px;box-shadow:0 2px 9px #21334a0a}
-#reportQualityDialog{width:min(1080px,calc(100% - 24px));max-height:calc(100% - 24px);border:1px solid #aab9cb;border-radius:12px;padding:clamp(12px,3vw,24px);color:inherit}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:14px;padding:18px 22px;box-shadow:0 2px 9px var(--shadow-color)}
+#reportQualityDialog{width:min(1080px,calc(100% - 24px));max-height:calc(100% - 24px);border:1px solid var(--field-border);border-radius:12px;padding:clamp(12px,3vw,24px);color:inherit}
 #reportQualityDialog [hidden]{display:none}
 #reportQualityDialog::backdrop{background:#17294066}
 #reportQualityContext,#reportQualityAnchor{overflow-wrap:anywhere}
-#reportQualityDialog button[aria-pressed="true"]{background:#e5edf6;border-color:#476685;font-weight:650}
+#reportQualityDialog button[aria-pressed="true"]{background:var(--selected);border-color:var(--selected-border);font-weight:650}
 #reportQualityDialog button[aria-disabled="true"]{opacity:.55;cursor:not-allowed}
 .report-quality-action{margin:0 5px 5px 0}
-.intro{color:#55657a;font-size:14px;line-height:1.6}a{color:#1f5588}
-button,select,input{font:inherit;border:1px solid #aab9cb;border-radius:8px;padding:8px 12px;background:#fff;max-width:100%}
+.intro{color:var(--muted);font-size:14px;line-height:1.6}a{color:var(--accent)}
+button,select,input{font:inherit;border:1px solid var(--field-border);border-radius:8px;padding:8px 12px;background:var(--surface);max-width:100%}
 button{cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}
-button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #74a8d5;outline-offset:2px}
-.controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:14px 0}.muted{color:#53647a}.error{color:#a12228}.status{min-height:24px;font-size:14px}
+button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:14px 0}.muted{color:var(--muted)}.error{color:var(--negative)}.status{min-height:24px;font-size:14px}
 .overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,155px),1fr));gap:12px}
-.metric{background:#eff4f9;border-radius:9px;padding:10px 12px}.metric strong{display:block;font-size:22px;font-variant-numeric:tabular-nums}.metric span{color:#53647a;font-size:13px}
-.table-scroll{overflow:auto;max-width:100%;max-height:none} .table-scroll:focus-visible{outline:2px solid #24639a;outline-offset:2px} .period-visibility{display:flex;align-items:center;gap:8px;flex-wrap:wrap}table{width:100%;border-collapse:collapse;min-width:650px}
-th,td{text-align:left;border-bottom:1px solid #e4e9ef;padding:10px 9px;vertical-align:middle;font-size:13px;overflow-wrap:anywhere}
-th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
+.metric{background:var(--subtle);border-radius:9px;padding:10px 12px}.metric strong{display:block;font-size:22px;font-variant-numeric:tabular-nums}.metric span{color:var(--muted);font-size:13px}
+.table-scroll{overflow:auto;max-width:100%;max-height:none} .table-scroll:focus-visible{outline:2px solid var(--accent);outline-offset:2px} .period-visibility{display:flex;align-items:center;gap:8px;flex-wrap:wrap}table{width:100%;border-collapse:collapse;min-width:650px}
+th,td{text-align:left;border-bottom:1px solid var(--border);padding:10px 9px;vertical-align:middle;font-size:13px;overflow-wrap:anywhere}
+th{background:var(--subtle);font-weight:650}td input{width:100%;min-width:150px}
 @media(max-width:650px){header{padding:16px}main{padding:16px 10px}.panel{padding:15px}h1{font-size:20px}}
 
 .timeline-chart{width:100%;overflow:hidden;margin:12px 0}
-.timeline-chart svg{display:block;width:100%;height:auto;max-height:330px;background:#fbfcfe;border:1px solid #dce2e9;border-radius:10px}
-.timeline-chart svg text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:12px;fill:#435872}
-.timeline-chart svg .timeline-grid{stroke:#e5eaf0;stroke-width:1}
-.timeline-chart svg .timeline-zero{stroke:#8595a8;stroke-width:1.5}
-.timeline-chart svg .timeline-line{fill:none;stroke:#24639a;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
-.timeline-chart svg .timeline-point{fill:#24639a;stroke:#fff;stroke-width:1.5}
-.timeline-chart svg .timeline-bar{fill:#347db2}
-.timeline-chart svg .timeline-bar.negative{fill:#926da1}
+.timeline-chart svg{display:block;width:100%;height:auto;max-height:330px;background:var(--surface);border:1px solid var(--border);border-radius:10px}
+.timeline-chart svg text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:12px;fill:var(--muted)}
+.timeline-chart svg .timeline-grid{stroke:var(--grid);stroke-width:1}
+.timeline-chart svg .timeline-zero{stroke:var(--axis);stroke-width:1.5}
+.timeline-chart svg .timeline-line{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+.timeline-chart svg .timeline-point{fill:var(--accent);stroke:var(--surface);stroke-width:1.5}
+.timeline-chart svg .timeline-bar{fill:var(--accent)}
+.timeline-chart svg .timeline-bar.negative{fill:var(--plot-1)}
 .timeline-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:10px 0}
 .timeline-controls label{font-size:13px;font-weight:600}
-.timeline-table summary{cursor:pointer;font-size:14px;color:#275d88;padding:8px 0}
+.timeline-table summary{cursor:pointer;font-size:14px;color:var(--accent);padding:8px 0}
 .ranking-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0}
 .ranking-controls label{font-size:13px;font-weight:600}
 .ranking-list{list-style:decimal;padding:0 0 0 28px;margin:10px 0;max-width:100%}
-.ranking-list li{padding:7px 0;border-bottom:1px solid #e4e9ef;min-width:0}
+.ranking-list li{padding:7px 0;border-bottom:1px solid var(--border);min-width:0}
 .ranking-heading{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .ranking-name{font-weight:600;min-width:0;overflow-wrap:anywhere;flex:1}
 .ranking-value{font-variant-numeric:tabular-nums;white-space:nowrap}
-.ranking-track{height:12px;background:#e7edf5;border-radius:8px;overflow:hidden;margin-top:6px}
-.ranking-fill{height:100%;background:#347db2;border-radius:8px}
-.ranking-fill.negative{background:#926da1}
+.ranking-track{height:12px;background:var(--subtle);border-radius:8px;overflow:hidden;margin-top:6px}
+.ranking-fill{height:100%;background:var(--accent);border-radius:8px}
+.ranking-fill.negative{background:var(--plot-1)}
 @media(max-width:650px){.ranking-controls{align-items:stretch}.ranking-controls label{flex-basis:100%}.ranking-controls select{width:100%}}
 .organization-trends-legend{display:flex;flex-wrap:wrap;gap:8px 16px;margin:9px 0;font-size:13px}
 .organization-trends-legend span{display:inline-flex;align-items:center;gap:6px;overflow-wrap:anywhere}
 .organization-trends-swatch{width:12px;height:12px;border-radius:3px;flex:none}
 #organizationTrendsChart{margin:12px 0}
-#organizationTrendsChart svg{display:block;width:100%;height:auto;max-height:340px;border:1px solid #dce2e9;border-radius:10px;background:#fbfcfe}
-#organizationTrendsChart svg text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:12px;fill:#435872}
-.organization-trends-details summary{cursor:pointer;color:#275d88;padding:9px 0}
+#organizationTrendsChart svg{display:block;width:100%;height:auto;max-height:340px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+#organizationTrendsChart svg text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:12px;fill:var(--muted)}
+.organization-trends-details summary{cursor:pointer;color:var(--accent);padding:9px 0}
 .work-trend-chart{margin:12px 0;min-width:0}
-.work-trend-chart svg{display:block;width:100%;height:auto;max-height:340px;border-radius:10px;border:1px solid #dce2e9;background:#fbfcfe}
-.work-trend-chart svg text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:12px;fill:#435872}
-.work-trend-details summary{cursor:pointer;color:#275d88;padding:9px 0}
-.work-trend-heading{font-size:14px;font-weight:600;color:#344c64;overflow-wrap:anywhere}
+.work-trend-chart svg{display:block;width:100%;height:auto;max-height:340px;border-radius:10px;border:1px solid var(--border);background:var(--surface)}
+.work-trend-chart svg text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:12px;fill:var(--muted)}
+.work-trend-details summary{cursor:pointer;color:var(--accent);padding:9px 0}
+.work-trend-heading{font-size:14px;font-weight:600;color:var(--text);overflow-wrap:anywhere}
 .comparison-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
 .comparison-controls label{font-weight:600;font-size:13px}
 .comparison-controls input,.comparison-controls select{max-width:190px}
 .comparison-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));gap:12px;margin:12px 0}
-.comparison-metric{border:1px solid #dce2e9;border-radius:9px;padding:12px;min-width:0;background:#fbfcfe}
+.comparison-metric{border:1px solid var(--border);border-radius:9px;padding:12px;min-width:0;background:var(--surface)}
 .comparison-metric strong{display:block;margin-bottom:4px}
 .comparison-metric p{margin:3px 0;font-size:13px;overflow-wrap:anywhere}
 .comparison-ranks{list-style:decimal;padding-left:26px;margin:9px 0}
-.comparison-ranks li{margin:0;padding:9px 0;border-bottom:1px solid #e4e9ef}
+.comparison-ranks li{margin:0;padding:9px 0;border-bottom:1px solid var(--border)}
 .comparison-rank-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;justify-content:space-between}
 .comparison-rank-name{font-weight:600;overflow-wrap:anywhere}
 .comparison-rank-value{white-space:nowrap;font-variant-numeric:tabular-nums}
-.comparison-rank-track{height:9px;background:#e7edf5;border-radius:8px;overflow:hidden;margin-top:6px}
-.comparison-rank-fill{height:100%;border-radius:8px;background:#24639a}
-.comparison-rank-fill.decrease{background:#775bab}
+.comparison-rank-track{height:9px;background:var(--subtle);border-radius:8px;overflow:hidden;margin-top:6px}
+.comparison-rank-fill{height:100%;border-radius:8px;background:var(--accent)}
+.comparison-rank-fill.decrease{background:var(--plot-1)}
 @media(max-width:650px){.comparison-controls label{flex-basis:100%}.comparison-controls input,.comparison-controls select,.comparison-controls button{width:100%;max-width:none}}
-.coverage-notice{margin:9px 0;padding:10px 14px;border:1px solid #cda872;border-radius:8px;background:transparent}
+.coverage-notice{margin:9px 0;padding:10px 14px;border:1px solid var(--warning-border);border-radius:8px;background:transparent}
 .coverage-notice[hidden]{display:none}
 .coverage-notice p{margin:0 0 9px;overflow-wrap:anywhere}
 .coverage-notice button{max-width:100%;white-space:normal}
-.joined-pager{display:inline-flex;align-items:stretch;max-width:100%;border:1px solid #9eafc3;border-radius:8px;overflow:hidden;min-height:36px}
+.joined-pager{display:inline-flex;align-items:stretch;max-width:100%;border:1px solid var(--field-border);border-radius:8px;overflow:hidden;min-height:36px}
 .joined-pager button{border:0;border-radius:0;min-width:68px}
-.joined-pager button+output,.joined-pager output+button{border-left:1px solid #9eafc3}
+.joined-pager button+output,.joined-pager output+button{border-left:1px solid var(--field-border)}
 .joined-pager output{display:flex;align-items:center;justify-content:center;padding:4px 12px;white-space:nowrap;font-variant-numeric:tabular-nums;font-size:13px;min-width:91px}
 @media(max-width:500px){.joined-pager button{min-width:56px}.joined-pager output{min-width:77px;padding:4px 7px}}
 .daily-rollup-detail-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 0 5px}
 .daily-rollup-detail-heading h4{margin:0;font-size:15px}
-#dailyRollupDetailPanel{border-top:1px solid #dce2e9;padding-top:9px;margin-top:12px}
+#dailyRollupDetailPanel{border-top:1px solid var(--border);padding-top:9px;margin-top:12px}
 #dailyRollupDetailRows td{font-variant-numeric:tabular-nums}
 #dailyRollupRows button{font-size:13px;padding:7px 10px}
 #dailyRollupDetailPanel[hidden]{display:none}
 #dailySourceOverview{min-width:0;margin:14px 0 18px}
 #dailySourceOverview h4{font-size:15px;margin:12px 0 6px}
-#dailySourceOverview .timeline-chart svg{display:block;width:100%;height:auto;max-height:340px;border:1px solid #dce2e9;border-radius:8px;background:#fbfcfe}
+#dailySourceOverview .timeline-chart svg{display:block;width:100%;height:auto;max-height:340px;border:1px solid var(--border);border-radius:8px;background:var(--surface)}
 #dailySourceOverview .metric{min-width:0}
 #dailySourceDivisions{min-width:0;margin:15px 0}
 #dailySourceDivisions .table-scroll{max-width:100%}
@@ -106,11 +106,11 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 #dailyRollupRows td{font-variant-numeric:tabular-nums}
 @media(max-width:650px){.daily-rollup-controls input,.daily-rollup-controls select{width:100%;max-width:none}.daily-rollup-controls label{flex-basis:100%}}
 .division-title{font-size:17px;margin:22px 0 10px}
-.division-track{width:100%;min-width:110px;height:12px;border-radius:6px;background:#e7edf5;overflow:hidden}
-.division-fill{height:100%;background:#346d9d;border-radius:6px}
-.division-fill.negative{background:#846d9d}
-.division-share-track{height:6px;max-width:132px;min-width:82px;background:#e7edf5;border-radius:6px;overflow:hidden;margin-top:5px}
-.division-share-fill{height:100%;background:#346d9d;border-radius:6px}
+.division-track{width:100%;min-width:110px;height:12px;border-radius:6px;background:var(--subtle);overflow:hidden}
+.division-fill{height:100%;background:var(--accent);border-radius:6px}
+.division-fill.negative{background:var(--plot-1)}
+.division-share-track{height:6px;max-width:132px;min-width:82px;background:var(--subtle);border-radius:6px;overflow:hidden;margin-top:5px}
+.division-share-fill{height:100%;background:var(--accent);border-radius:6px}
 .division-share{white-space:nowrap;min-width:100px}
 .startup-controls{display:flex;flex-direction:row;align-items:center;justify-content:flex-end;gap:8px 12px;flex-wrap:wrap;max-width:none;flex:1}
 .startup-label{display:flex;align-items:center;gap:7px;line-height:1.35;font-size:13px}
@@ -121,11 +121,11 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .startup-controls .intro{font-size:12px}
 #sqlStartupPreferenceStatus:empty{display:none}
 @media(max-width:780px){header{align-items:flex-start}.startup-controls{justify-content:flex-start;flex-basis:100%}}
-.workspace-nav{position:sticky;top:0;z-index:5;display:flex;gap:6px;flex-wrap:wrap;padding:10px max(22px,5vw);background:#fff;border-bottom:1px solid #dce2e9;box-shadow:0 2px 6px #21334a12}
-.workspace-nav a{padding:10px 14px;border-radius:9px;text-decoration:none;font-weight:600;color:#344c64;white-space:nowrap}
-.workspace-nav a[aria-current="page"]{color:#fff;background:#275d88}
-.workspace-nav a:focus-visible{outline:3px solid #74a8d5;outline-offset:2px}
-.nav-status{margin:0 0 6px;color:#53647a;font-size:12px}
+.workspace-nav{position:sticky;top:0;z-index:5;display:flex;gap:6px;flex-wrap:wrap;padding:10px max(22px,5vw);background:var(--surface);border-bottom:1px solid var(--border);box-shadow:0 2px 6px var(--shadow-color)}
+.workspace-nav a{padding:10px 14px;border-radius:9px;text-decoration:none;font-weight:600;color:var(--text);white-space:nowrap}
+.workspace-nav a[aria-current="page"]{color:var(--surface);background:var(--accent)}
+.workspace-nav a:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+.nav-status{margin:0 0 6px;color:var(--muted);font-size:12px}
 .panel,.overview-head,.storage-summary,.analytics-toolbar,.timeline-controls,.ranking-controls,.comparison-controls,[data-nav-panel]{min-width:0}
 .panel>section,.panel>.table-scroll,.analytics-toolbar>.controls{max-width:100%;min-width:0}
 .metric,.metric strong,.metric span,.status,.filter-scope,.action-context{min-width:0;overflow-wrap:anywhere}
@@ -137,15 +137,15 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .overview-head{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .overview-head h2{margin-bottom:4px}
 .overview-head .intro{margin:0 0 8px;max-width:750px}
-.primary-action{display:inline-flex;align-items:center;padding:10px 16px;border-radius:9px;background:#275d88;color:#fff;text-decoration:none;font-weight:650}
-.primary-action:hover{background:#1e4c70}
-.analytics-toolbar{padding:12px;border-radius:10px;background:#f3f6fa;border:1px solid #dde5ed;margin:8px 0 10px}
+.primary-action{display:inline-flex;align-items:center;padding:10px 16px;border-radius:9px;background:var(--accent);color:var(--surface);text-decoration:none;font-weight:650}
+.primary-action:hover{background:var(--accent-hover)}
+.analytics-toolbar{padding:12px;border-radius:10px;background:var(--subtle);border:1px solid var(--border);margin:8px 0 10px}
 .analytics-toolbar .controls{margin:3px 0}
 .analytics-toolbar label{font-size:13px;font-weight:600}
 .analytics-toolbar input:is([type=date],[type=week],[type=month]){width:157px;min-width:0}
 .analytics-toolbar details{position:relative}
-.analytics-toolbar summary{cursor:pointer;list-style-position:inside;border:1px solid #aab9cb;border-radius:8px;padding:8px 12px;background:#fff}
-.analytics-toolbar details[open] summary{background:#e6eef7}
+.analytics-toolbar summary{cursor:pointer;list-style-position:inside;border:1px solid var(--field-border);border-radius:8px;padding:8px 12px;background:var(--surface)}
+.analytics-toolbar details[open] summary{background:var(--selected)}
 #analysisOrganizationChoices{display:flex;flex-wrap:wrap;gap:6px 14px;border:0;padding:4px 2px;margin:0;min-width:0}
 #analysisOrganizationChoices label{display:inline-flex;align-items:center;gap:5px;overflow-wrap:anywhere}
 .extra-filter-fields{display:flex;align-items:center;gap:10px;padding:10px 2px 3px}
@@ -157,15 +157,15 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 #analysisNameSelected button{margin-inline-start:8px}
 #analysisNameStatus{max-width:850px;overflow-wrap:anywhere}
 
-.filter-scope{margin:4px 0 0;font-size:12px;line-height:1.5;color:#455d78}
-.action-context{margin:6px 0;font-size:13px;color:#455d78}
-.storage-overview .metric{background:#f6f8fb}
+.filter-scope{margin:4px 0 0;font-size:12px;line-height:1.5;color:var(--muted)}
+.action-context{margin:6px 0;font-size:13px;color:var(--muted)}
+.storage-overview .metric{background:var(--subtle)}
 .storage-overview .metric strong{font-size:20px}
 .storage-overview{margin:4px 0 8px}
 .storage-summary{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
 .storage-summary .status{flex:1;min-width:180px;margin:0}
 #analysisValues:empty{display:none}
-@media(min-width:1280px){.analytics-toolbar{position:sticky;top:60px;z-index:4;box-shadow:0 2px 8px #1c324a12}.analytics-toolbar:has(details[open]){position:static}}
+@media(min-width:1280px){.analytics-toolbar{position:sticky;top:60px;z-index:4;box-shadow:0 2px 8px var(--shadow-color)}.analytics-toolbar:has(details[open]){position:static}}
 @media(max-width:650px){.overview-head{align-items:stretch}.primary-action{width:100%;justify-content:center}.analytics-toolbar input:is([type=date],[type=week],[type=month]){width:100%}.analytics-toolbar .controls{align-items:stretch}.analytics-toolbar .controls>label{flex-basis:100%}.analytics-toolbar details{width:100%}.analytics-toolbar details summary{width:100%}.extra-filter-fields{flex-direction:column;align-items:stretch}.extra-filter-fields select{width:100%}}
 [data-nav-panel][hidden]{display:none!important}
 @media(max-width:650px){.workspace-nav{flex-wrap:nowrap;overflow-x:auto;padding:9px 10px;gap:4px}.workspace-nav a{font-size:13px;padding:10px}.nav-status{padding:0 5px}}
@@ -176,38 +176,34 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
  td,th{overflow-wrap:anywhere;white-space:normal}.timeline-chart{break-inside:avoid}.status,.filter-scope,.action-context{color:#000}
 }
 </style>
+<link rel="stylesheet" href="tauri-classic.css">
+<link rel="stylesheet" href="tauri-native-skin.css">
+<link rel="stylesheet" href="tauri-app-status.css">
 </head>
 <body>
-<header>
-<div><h1>Анализ работ</h1><div class="intro">Аналитика, отчёты и Excel · локальные данные SQLite</div></div>
-<div class="startup-controls">
-  <label class="startup-label" for="sqlStartupPreference"><input id="sqlStartupPreference" type="checkbox"> Запускать основной экран SQLite</label>
-  <span id="sqlStartupPreferenceStatus" class="intro" role="status" aria-live="polite"></span>
-  <a id="legacyWorkspaceLink" href="index.html">Классический интерфейс</a>
-  <div class="controls" aria-label="Онлайн-обновления Tauri">
-    <button type="button" id="sqlUpdateCheck">Проверить обновления</button>
-    <button type="button" id="sqlUpdateNotes" hidden>Что нового</button>
-    <button type="button" id="sqlUpdateInstall" hidden>Установить обновление</button>
-  </div>
-  <span id="sqlUpdateStatus" class="status muted" role="status" aria-live="polite">Проверка обновлений…</span>
-</div>
+<header class="topbar">
+<div class="brand"><span class="brand-icon" aria-hidden="true">▥</span><div><strong>Анализ работ</strong><small>Локальная аналитика · SQLite <span id="appVersion" class="app-version" role="status">Версия: загрузка…</span></small></div></div>
+<div class="header-actions"><a href="#reports" class="button secondary reports-shortcut">Обновить отчёты</a><span class="privacy">Данные на этом компьютере</span><label class="theme-picker"><span>Тема</span><select id="themeToggle" aria-label="Светлая или тёмная тема"><option value="system">Как на устройстве</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label></div>
 </header>
+<div id="appActivity" class="app-activity" role="status" aria-live="polite" hidden><span class="app-activity-spinner" aria-hidden="true"></span><span id="appActivityText">Загрузка отчётов…</span></div>
 <dialog id="sqlUpdateDialog" aria-label="Изменения подписанного обновления" style="max-width:min(650px,95vw);border:1px solid #aab9cb;border-radius:12px;padding:20px">
   <h2>Что изменилось</h2><div id="sqlUpdateNotesText" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:65vh;overflow:auto"></div>
   <button type="button" id="sqlUpdateClose">Закрыть</button>
 </dialog>
-<nav class="workspace-nav" aria-label="Разделы программы">
-  <a href="#analysis" data-nav-link="analysis">Аналитика</a>
-  <a href="#reports" data-nav-link="reports">Отчёты</a>
-  <a href="#groups" data-nav-link="groups">Группы работ</a>
-  <a href="#excel" data-nav-link="excel">Excel и импорт</a>
-  <a href="#metrics" data-nav-link="metrics">Другие показатели</a>
-  <a href="#backup" data-nav-link="backup">База и резервные копии</a>
-</nav>
-<main>
+<main class="container" id="nativeContent">
+<section class="pagehead"><div><p class="eyebrow">ОТЧЁТНОСТЬ</p><h1>Анализ выполненных работ</h1><p class="muted">Количество и сумма по дням, неделям и месяцам, подразделениям и группам работ.</p></div><a class="primary-action" href="#excel">Выбрать Excel</a></section>
+<nav class="tabs workspace-nav" aria-label="Разделы программы">
+<a class="tab" href="#analysis" data-nav-link="analysis">Аналитика</a>
+<a class="tab" href="#changes" data-nav-link="changes">Анализ изменений</a>
+<details id="managementNav" class="management-nav"><summary id="managementToggle" aria-controls="managementMenu"><span class="management-label">Управление</span><span class="management-mobile-label" aria-hidden="true">Ещё</span></summary><div id="managementMenu" class="management-menu">
+<a class="tab" href="#reports" data-nav-link="reports"><span>Отчёты</span><small>Excel, календарь, качество данных</small></a>
+<a class="tab" href="#groups" data-nav-link="groups"><span>Группы работ</span><small>Справочник и объединение работ</small></a>
+<a class="tab" href="#backup" data-nav-link="backup"><span>Настройки</span><small>Хранение, резервные копии, оформление</small></a>
+<a class="tab" href="#excel" data-nav-link="excel"><span>Excel и импорт</span><small>Источники и загрузка файлов</small></a>
+<a class="tab" href="#metrics" data-nav-link="metrics"><span>Другие показатели</span><small>Трудозатраты и план / факт</small></a>
+</div></details></nav>
 <p class="nav-status" id="nativeViewStatus" role="status" aria-live="polite"></p>
-<div id="sqlMain" data-nav-panel="analysis">
-<div class="analytics-toolbar" aria-label="Фильтры и расчёт аналитики">
+<div class="analytics-toolbar" data-nav-panel="analysis changes" aria-label="Фильтры и расчёт аналитики">
 <div class="controls">
 <label for="analysisSource">Источник расчёта</label>
 <select id="analysisSource"><option value="imported">Отчёты выбранного типа</option><option value="daily">Только дневные отчёты</option></select>
@@ -239,13 +235,14 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </div>
 <p id="analysisFilterScope" class="filter-scope" role="status" aria-live="polite">Фильтры: все подразделения. Работы и группы: весь набор.</p>
 </div>
+<div id="sqlMain" data-nav-panel="analysis">
+
 <section class="panel" id="sqlOverview" aria-label="Сводка SQLite">
 <div class="overview-head">
-<div><h2>Аналитика</h2><p class="intro">Выберите период и рассчитайте показатели SQLite. Никакой полной загрузки истории в WebView.</p></div>
-<a class="primary-action" href="#excel">Выбрать Excel</a>
+<div><h2>Обзор данных</h2></div><p id="analysisStatus" class="status muted" role="status" aria-live="polite">Подготовка не выполнена.</p>
 </div>
 
-<p id="analysisStatus" class="status muted" role="status" aria-live="polite">Подготовка не выполнена.</p>
+
 <div id="analysisCoverageNotice" class="coverage-notice" hidden aria-label="Неполные данные или замечания к отчётам">
 <p id="analysisCoverageText" role="status"></p>
 <button type="button" id="analysisAcknowledge">Подтвердить, предупреждение мне известно</button>
@@ -263,8 +260,8 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </div>
 </section>
 <section class="panel" id="sqlAnalysis" aria-label="Аналитика SQL">
-<h2>Анализ периодов через SQLite</h2>
-<p class="intro">Нативный расчёт с проверкой полноты. Сначала подготовьте индексы выбранного типа (не более 20 отчётов за запрос). Обрабатываются только исходные отчёты в SQLite, полная история не загружается в браузер. Подготовку можно остановить после текущей порции.</p>
+<h2>Динамика работ и подразделений</h2>
+<p class="intro">Выберите период и подготовьте данные для расчёта. Во время подготовки виден индикатор загрузки; процесс можно остановить после текущей порции.</p>
 <p id="analysisResultScope" class="action-context">После расчёта здесь появятся подтверждённые данные. Действующие фильтры будут указаны отдельно.</p>
 <label class="period-visibility"><input type="checkbox" id="hideEmptyPeriods"> Скрывать пустые периоды на графиках и в их таблицах</label>
 <p class="intro">Скрываются только периоды с подтверждёнными нулевыми количеством и суммой. Пропуски остаются видимыми. Итоги и CSV не меняются.</p>
@@ -356,7 +353,15 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 
 
 
-<section id="sqlComparison" aria-label="Изменения между периодами">
+
+
+
+<p class="intro" id="analysisUnitsNote">Единицы измерения не определяются по названиям столбцов: дробное «количество» может означать объём, а «сумма» не обязательно указана в рублях. Сравнивайте средние только при сопоставимых единицах исходных отчётов.</p>
+<p class="intro">Когда отсутствуют периоды, итоговые сумма и количество не показываются как ноль. Группы, совпадающие даты и ошибки проверяются по правилам D2; это не простая сумма всех строк.</p>
+</section>
+
+</div>
+<section class="panel" id="sqlChanges" data-nav-panel="changes"><div class="sectionbar"><h2>Анализ изменений</h2><button id="changesPrint" type="button" class="button secondary" disabled>Печать анализа изменений / PDF</button></div><p class="intro">Сравнение периодов, вклады, обычный уровень, регулярность и структура. Используются общие фильтры выше.</p><section id="sqlComparison" aria-label="Изменения между периодами">
 <h3 class="division-title">Изменения между двумя диапазонами</h3>
 <p class="intro">Укажите базовый период. Для сравнения используется текущий рассчитанный диапазон, его тип периода и подразделения. Проценты при нулевой базе не вычисляются. Повышение и снижение — направления изменения, не оценка качества.</p>
 <div class="comparison-controls">
@@ -380,9 +385,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </div>
 <p id="comparisonRankStatus" class="status muted" role="status" aria-live="polite">Подборка появится после подтверждения обоих диапазонов.</p>
 <ol id="comparisonRankRows" class="comparison-ranks"></ol>
-</section>
-
-<section aria-labelledby="advancedTitle">
+</section><section aria-labelledby="advancedTitle">
 <h3 id="advancedTitle" class="division-title">Анализ работ по периодам</h3>
 <div class="controls">
 <label>Анализ <select id="advancedMode"><option value="changes">Изменения по подразделениям</option><option value="usual">Сравнение с обычным уровнем</option><option value="regularity">Регулярность выполнения</option><option value="structure">Структура работ и групп</option><option value="contributions">Вклад работ в общее изменение</option></select></label>
@@ -401,14 +404,20 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <div class="table-scroll" role="region" aria-label="Результат анализа по периодам" tabindex="0"><table><thead id="advancedHead"></thead><tbody id="advancedRows"></tbody></table></div>
 <p id="advancedPage" class="filter-scope"></p>
 <div class="controls"><button id="advancedPrev" type="button" disabled>Назад</button><button id="advancedNext" type="button" disabled>Далее</button></div>
-</section>
-<p class="intro" id="analysisUnitsNote">Единицы измерения не определяются по названиям столбцов: дробное «количество» может означать объём, а «сумма» не обязательно указана в рублях. Сравнивайте средние только при сопоставимых единицах исходных отчётов.</p>
-<p class="intro">Когда отсутствуют периоды, итоговые сумма и количество не показываются как ноль. Группы, совпадающие даты и ошибки проверяются по правилам D2; это не простая сумма всех строк.</p>
-</section>
-
-</div>
+</section></section>
 <section class="panel" id="sqlBackup" data-nav-panel="backup" aria-label="Резервное копирование SQLite">
-<h2>База данных и резервные копии</h2>
+<!-- CLASSIC_APPEARANCE --><p id="appearanceSaveStatus" class="status" role="status" aria-live="polite"></p><section class="panel"><h2>Приложение и обновления</h2><div class="startup-controls">
+  <label class="startup-label" for="sqlStartupPreference"><input id="sqlStartupPreference" type="checkbox"> Запускать основной экран SQLite</label>
+  <span id="sqlStartupPreferenceStatus" class="intro" role="status" aria-live="polite"></span>
+  <a id="legacyWorkspaceLink" href="index.html">Классический интерфейс</a>
+  <div class="controls" aria-label="Онлайн-обновления Tauri">
+    <button type="button" id="sqlUpdateCheck">Проверить обновления</button>
+    <button type="button" id="sqlUpdateNotes" hidden>Что нового</button>
+    <button type="button" id="sqlUpdateInstall" hidden>Установить обновление</button>
+  </div>
+  <span id="sqlUpdateStatus" class="status muted" role="status" aria-live="polite">Проверка обновлений…</span>
+</div>
+</section><h2>База данных и резервные копии</h2>
 <div class="controls">
 <button id="backupSqlite" type="button">Сохранить резервную копию SQLite</button>
 </div>
@@ -426,12 +435,16 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p class="intro">Переключение рабочей базы доступно только после явного подтверждения. Приложение сохранит две защитные копии прежних данных и выполнит замену до открытия SQLite при следующем запуске. После подтверждения полностью закройте программу и откройте снова. Если проверка или безопасное переключение не удастся, приложение не начнёт работать с сомнительными данными.</p>
 </section>
 <section class="panel" id="sqlReports" data-nav-panel="reports" aria-label="Отчёты SQL">
-<h2>Отчёты</h2><div class="controls"><label for="nativeReportType">Периоды</label>
+<div class="sectionbar"><div><h2>Отчёты по периодам</h2><p class="muted small">Загруженные отчёты по датам начала периода. Наличие отчёта не подтверждает полноту всех подразделений.</p></div><a class="button primary" href="#excel">Выбрать Excel</a></div>
+<div class="calendar-toolbar" aria-label="Выбор года"><button type="button" id="calendarPrev" class="button secondary" aria-label="Предыдущий год">← Год</button><strong id="calendarRange" aria-live="polite"></strong><button type="button" id="calendarNext" class="button secondary" aria-label="Следующий год">Год →</button></div>
+<p id="calendarStatus" class="status muted" role="status" aria-live="polite"></p><div id="reportCalendar" class="report-calendar"></div><div id="calendarDetails" class="calendar-details"></div>
+<details id="uploadedReports" class="uploaded-reports" open><summary>Загруженные отчёты</summary><p id="reportSelection" class="filter-scope"></p><button type="button" id="reportClearSelection" hidden>Все периоды</button><div class="controls"><label for="nativeReportType">Периоды</label>
 <select id="nativeReportType"><option value="">Все</option><option value="day">Дни</option><option value="week">Недели</option><option value="month">Месяцы</option></select>
 <div class="joined-pager" aria-label="Страницы отчётов"><button id="reportBack" type="button" aria-label="Предыдущая страница отчётов" disabled>Назад</button><output id="reportPageInfo" aria-live="polite">Страница 1</output><button id="reportNext" type="button" aria-label="Следующая страница отчётов" disabled>Далее</button></div></div>
 <p id="reportStatus" class="status muted" role="status" aria-live="polite"></p>
 <p id="managementReportStatus" class="status muted" role="status" aria-live="polite"></p>
-<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table><thead><tr><th>Начало</th><th>Конец</th><th>Тип</th><th>Источник</th><th>Идентификатор</th><th>Действия</th></tr></thead><tbody id="reportRows"></tbody></table></div>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table><thead><tr><th>Начало</th><th>Конец</th><th>Тип</th><th>Источник</th><th>Действия</th></tr></thead><tbody id="reportRows"></tbody></table></div>
+</details>
 <dialog id="reportQualityDialog" aria-labelledby="reportQualityTitle">
 <h2 id="reportQualityTitle">Сохранённые замечания</h2>
 <p id="reportQualityContext" class="intro"></p>
@@ -625,7 +638,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p id="importWizardStatus" class="status muted" role="status" aria-live="polite">Выбор файла не изменяет отчёты в базе.</p>
 </section>
 <section class="panel" id="sqlLegacyImport" data-nav-panel="excel" aria-label="Импорт обычных XLSX через Rust">
-<h2>Обычный Excel — импорт через SQLite</h2>
+<h2>Импорт отчётов Excel</h2>
 <p class="intro">Нативный импорт таблицы с повторяющимися тройками «Работа / Количество / Сумма». Выберите найденный в XLSX лист, тип периода и дату первого периода. Rust читает книгу ограниченными порциями через временную базу на диске. Полная история не загружается в WebView.</p>
 <div class="controls">
 <button id="legacyChoose" type="button">Выбрать обычный XLSX</button>
@@ -654,7 +667,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </section>
 
 <section class="panel" id="sqlWideImport" data-nav-panel="excel" aria-label="Нативный импорт XLSX">
-<h2>Импорт Excel в SQLite</h2>
+<h2>Дневные отчёты из широкой таблицы</h2>
 <p class="intro">Нативный импорт ежедневной широкой таблицы XLSX. Сначала выберите файл, укажите год при необходимости и просмотрите даты, ошибки и конфликты. Исходная книга не изменяется. Сохранение возможно только после подтверждения.</p>
 <p class="intro" id="wideImportLimits"><strong>До выбора файла, для нативного Rust-импорта:</strong> XLSX до <strong>100 МиБ</strong>, не более <strong>100 000 строк на лист</strong>, <strong>2 048 столбцов</strong> и <strong>15 000 000 ячеек</strong> на книгу. В классическом HTML-импорте сохраняется отдельный предел 30 МиБ. Могут действовать дополнительные ограничения распаковки и временной SQLite. Если книга превышает лимит, уменьшите файл или разделите данные и повторите проверку. Исходный файл не изменяется.</p>
 <div class="controls">
@@ -705,7 +718,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p id="metricKindStatus" class="status muted" role="status" aria-live="polite">Загрузка каталога видов отчётов…</p>
 </section>
 </main>
-<script src="tauri-bridge.js"></script><script src="tauri-native-updates.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-auto-import.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-period-visibility.js"></script><script src="tauri-native-timeline.js"></script><script src="tauri-native-ranking.js"></script><script src="tauri-native-organization-trends.js"></script><script src="tauri-native-period-selection.js"></script>
+<script src="tauri-bridge.js"></script><script src="tauri-app-status.js"></script><script src="tauri-appearance.js"></script><script src="tauri-native-report-calendar.js"></script><script src="tauri-native-updates.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-auto-import.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-period-visibility.js"></script><script src="tauri-native-timeline.js"></script><script src="tauri-native-ranking.js"></script><script src="tauri-native-organization-trends.js"></script><script src="tauri-native-period-selection.js"></script>
 <script src="tauri-native-work-trends.js"></script><script src="tauri-native-advanced-analysis.js"></script>
 <script src="tauri-native-comparison.js"></script><script src="tauri-native-daily-overview.js"></script>
 <script src="tauri-native-daily-calendar.js"></script>

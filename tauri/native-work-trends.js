@@ -85,14 +85,14 @@ function draw(){
  for(let i=0;i<=Math.min(12,ticks);i++){
    const v=axisMin+i*step,py=y(v);
    root.append(svg('line',{x1:left,x2:width-right,y1:py,y2:py,
-     stroke:v===0?'#8595a8':'#e5eaf0','stroke-width':v===0?1.5:1}));
+     stroke:v===0?'var(--axis)':'var(--grid)','stroke-width':v===0?1.5:1}));
    root.append(svg('text',{x:left-9,y:py+4,'text-anchor':'end'},format(v)));
  }
  const useBars=valid.length===1;
  const baseline=y(0),barW=Math.max(2,Math.min(38,w/valid.length*.7));
  let segment=[];
  const flush=()=>{
-   if(segment.length>1)root.append(svg('path',{fill:'none',stroke:'#24639a',
+   if(segment.length>1)root.append(svg('path',{fill:'none',stroke:'var(--plot-0)',
      'stroke-width':2.6,'stroke-linecap':'round','stroke-linejoin':'round',
      d:segment.map(([px,py],i)=>(i?'L':'M')+px.toFixed(2)+' '+py.toFixed(2)).join(' ')}));
    segment=[];
@@ -103,8 +103,8 @@ function draw(){
    const px=x(i),py=y(v);
    const mark=useBars
      ?svg('rect',{x:px-barW/2,y:Math.min(baseline,py),width:barW,
-       height:Math.max(1,Math.abs(py-baseline)),fill:v<0?'#926da1':'#347db2'})
-     :svg('circle',{cx:px,cy:py,r:3.8,fill:'#24639a',stroke:'#fff','stroke-width':1});
+       height:Math.max(1,Math.abs(py-baseline)),fill:v<0?'var(--plot-1)':'var(--plot-0)'})
+     :svg('circle',{cx:px,cy:py,r:3.8,fill:'var(--plot-0)',stroke:'var(--surface)','stroke-width':1});
    mark.append(svg('title',{},view.points[i].start+': '+format(v)));
    root.append(mark);
    if(!useBars)segment.push([px,py]);

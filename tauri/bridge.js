@@ -6,10 +6,20 @@
   }
   const invoke=(command,args)=>tauri.core.invoke(command,args||{});
   const operations=window.tauriOperations={saves:0,reads:0,updating:false};
+  function reportOperation(command){
+    // Activity observers must never interrupt IPC or hide its original error.
+    try{
+      if(typeof window.dispatchEvent==='function'&&typeof CustomEvent==='function')
+        window.dispatchEvent(new CustomEvent('tauri-operation-change',{
+          detail:{reads:operations.reads,saves:operations.saves,command}
+        }));
+    }catch{}
+  }
   async function tracked(command,args,kind){
     if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
     operations[kind]++;
-    try{return await invoke(command,args);}finally{operations[kind]--;}
+    reportOperation(command);
+    try{return await invoke(command,args);}finally{operations[kind]--;reportOperation(command);}
   }
   window.desktopAPI=Object.freeze({
     load:()=>invoke('load_data'),
@@ -118,6 +128,8 @@
       'native_metric_xlsx_preview',{source,profile,start,end},'reads'),
     nativeMetricXlsxApply:(source,profile,start,end,reviewToken)=>tracked(
       'native_metric_xlsx_apply',{source,profile,start,end,reviewToken},'saves'),
+    nativeReportCalendar:(revision,year)=>tracked(
+      'native_report_calendar',{revision,year},'reads'),
     nativeReportPage:(revision,filter,after=null,limit=100)=>tracked(
       'native_report_page',{revision,filter,after,limit},'reads'),
     save:data=>tracked('save_data',{data},'saves'),

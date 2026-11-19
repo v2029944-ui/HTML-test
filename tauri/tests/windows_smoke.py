@@ -70,6 +70,14 @@ def wait_for_app_state(page, expression, description, timeout_ms=30_000):
         if remaining<=0:raise RuntimeError(description+' did not complete within '+str(timeout_ms)+' ms')
         page.wait_for_timeout(min(100,remaining*1000))
 
+def navigate(page, section):
+    """Use the same right-hand management menu as an installed-app user."""
+    link=page.locator('[data-nav-link="'+section+'"]')
+    if not link.is_visible():
+        page.locator('#managementToggle').click()
+    link.click()
+    assert page.evaluate('!document.querySelector("#managementNav").open')
+
 def reveal_table(page, selector):
     """Read visible exact values only after opening their details disclosure."""
     for details in page.locator('details').filter(has=page.locator(selector)).all():
@@ -189,8 +197,46 @@ def run():
                 assert page.locator('#sqlStartupPreference').is_checked()
                 assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") is None
                 report['checks'].append('Default startup opens SQLite analysis without loading the classic Excel view or report history')
+                expected_version=json.loads(Path('tauri/package.json').read_text(encoding='utf-8'))['version']
+                wait_for_app_state(page,
+                    'document.querySelector("#appVersion")?.textContent === '+json.dumps('Версия '+expected_version),
+                    'Installed version comes from Tauri runtime')
+                wait_for_app_state(page,'!window.tauriOperations.reads && !window.tauriOperations.saves','Initial tracked SQLite operations finish')
+                page.evaluate("""() => {
+                    const core=window.__TAURI__.core;
+                    const gate=new Promise(resolve=>window.__releaseSmokeRead=resolve);
+                    window.__TAURI__.core={...core,invoke:(command,args)=>command==='native_settings_bootstrap'
+                        ?gate.then(()=>core.invoke(command,args)):core.invoke(command,args)};
+                    window.__smokeActivityRefresh=window.nativeWorkspaceRefresh().finally(()=>{
+                        window.__TAURI__.core=core;
+                    });
+                }""")
+                assert page.locator('#appActivity').is_visible()
+                assert 'Загрузка' in page.locator('#appActivityText').inner_text()
+                page.evaluate('window.__releaseSmokeRead()')
+                assert page.evaluate('window.__smokeActivityRefresh')
+                wait_for_app_state(page,'!window.tauriOperations.reads && !window.tauriOperations.saves','Tracked refresh releases the loading indicator')
+                assert not page.locator('#appActivity').is_visible()
+                navigate(page, 'backup')
+                page.locator('#appearanceTheme').select_option('dark')
+                page.locator('#appearancePalette').select_option('paper')
+                page.locator('#appearanceDesign').select_option('compact')
+                page.locator('#appearanceSize').select_option('large')
+                assert page.evaluate('({...document.documentElement.dataset})') == dict(theme='dark',palette='paper',design='compact',uiSize='large')
+                page.emulate_media(media='print')
+                assert page.locator('#nativeContent').is_visible()
+                print_ink=page.evaluate('({bg:getComputedStyle(document.body).backgroundColor,text:getComputedStyle(document.body).color,panel:getComputedStyle(document.querySelector("#sqlBackup")).backgroundColor})')
+                assert print_ink==dict(bg='rgb(255, 255, 255)',text='rgb(17, 17, 17)',panel='rgb(255, 255, 255)'),print_ink
+                page.emulate_media(media='screen')
+                assert page.evaluate("""document.fonts.ready.then(()=>document.fonts.check('16px "Inter"'))""")
+
+                page.locator('#appearanceTheme').select_option('system')
+                page.locator('#appearancePreset').select_option('minimal')
+                page.locator('#appearanceSize').select_option('standard')
+                report['checks'].append('Runtime installed version, real deferred IPC loading indicator, classic independent appearance and right-hand menu')
                 # Explicit classic navigation remains available for the existing
                 # Excel import fixture and compatibility checks below.
+                navigate(page, 'backup')
                 page.locator('#legacyWorkspaceLink').click()
                 wait_for_app_state(page, 'Boolean(window.appReady)', 'Explicit classic navigation');page.evaluate('window.appReady')
                 assert page.evaluate('!!window.__TAURI__.core.invoke')
@@ -313,7 +359,7 @@ def run():
                 wait_for_app_state(page,'Boolean(window.nativeWorkspaceNavigation)',
                     'Native workspace navigation startup')
                 assert page.locator('[data-nav-link="analysis"]').get_attribute('aria-current') == 'page'
-                page.locator('[data-nav-link="excel"]').click()
+                navigate(page, 'excel')
                 wait_for_app_state(page,
                     'document.querySelector("#sqlSources")?.offsetParent !== null && document.querySelector("#sqlAnalysis")?.offsetParent === null',
                     'SQL source section after tab navigation')
@@ -355,6 +401,7 @@ def run():
                 # SQL is the default. Explicit classic opt-out and returning
                 # to SQL must still save the selected route.
                 assert page.locator('#sqlStartupPreference').is_checked()
+                navigate(page, 'backup')
                 page.locator('#sqlStartupPreference').uncheck()
                 assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") == 'classic'
                 page.locator('#sqlStartupPreference').check()
@@ -378,7 +425,7 @@ def run():
                     'async data => window.__TAURI__.core.invoke("native_metric_apply",data)',
                     {'source':str(example),'reviewToken':metric_preview['reviewToken']})
                 assert metric_receipt['rowCount']==2
-                page.locator('[data-nav-link="metrics"]').click()
+                navigate(page, 'metrics')
                 assert page.locator('#sqlMetricKinds').is_visible()
                 page.locator('#metricKindCalculate').click()
                 wait_for_app_state(page,
@@ -430,18 +477,31 @@ def run():
                 assert page.locator('#metricReports').inner_text()=='366'
                 assert page.locator('#reportRows tr').count()==100
                 assert page.locator('#metricGroups').inner_text()=='0'
-                first_native=page.locator('#reportRows tr').first.locator('td').nth(4).inner_text()
-                page.locator('[data-nav-link="reports"]').click()
+                first_native=page.locator('#reportRows tr').first.get_attribute('data-report-id')
+                navigate(page, 'reports')
                 assert page.locator('#sqlReports').is_visible()
+                wait_for_app_state(page,'document.querySelectorAll("#reportCalendar>button").length===12','Metadata calendar shows twelve months')
+                february=page.locator('#reportCalendar>button').nth(1)
+                february.click()
+                assert page.locator('#calendarDetails [data-date]').count()==29
+                page.locator('#calendarDetails [data-date="2024-02-29"]').click()
+                wait_for_app_state(page,'document.querySelectorAll("#reportRows tr").length===1','Calendar day opens a bounded report list')
+                assert page.locator('#reportRows tr td').first.inner_text()=='29.02.2024'
+                page.locator('#reportClearSelection').click()
+                wait_for_app_state(page,'document.querySelectorAll("#reportRows tr").length===100','All periods restore paged report navigation')
+                page.get_by_role('button',name='Закрыть дни месяца',exact=True).click()
+                assert not page.locator('#calendarDetails').is_visible()
+                assert february.evaluate('(button)=>document.activeElement===button')
+                report['checks'].append('Classic twelve-month SQLite metadata calendar, leap days, close focus and bounded report selection')
                 page.locator('#reportNext').click()
                 wait_for_app_state(page,
-                    'document.querySelector("#reportRows tr td:nth-child(5)")?.textContent !== '+json.dumps(first_native),
+                    'document.querySelector("#reportRows tr")?.getAttribute("data-report-id") !== '+json.dumps(first_native),
                     'Native SQL next page')
                 assert page.locator('#reportRows tr').count()==100
                 assert page.locator('#reportPageInfo').inner_text()=='Страница 2'
                 page.locator('#reportBack').click()
                 wait_for_app_state(page,
-                    'document.querySelector("#reportRows tr td:nth-child(5)")?.textContent === '+json.dumps(first_native),
+                    'document.querySelector("#reportRows tr")?.getAttribute("data-report-id") === '+json.dumps(first_native),
                     'Native SQL previous page')
                 assert page.locator('#reportPageInfo').inner_text()=='Страница 1'
                 assert page.locator('#sqlDailyRollups').is_visible()
@@ -481,7 +541,7 @@ def run():
                 # Issue #64: the same exact work-name filter must affect the
                 # SQL calendar, KPI cards and graph, then restore the baseline.
                 baseline_amount=page.locator('#dailySourceKpis .comparison-metric').nth(1).locator('strong').inner_text()
-                page.locator('[data-nav-link="analysis"]').click()
+                navigate(page, 'analysis')
                 assert page.locator('#sqlAnalysis').is_visible()
                 if not page.locator('#analysisMoreFilters').evaluate('(el) => el.open'):
                     page.locator('#analysisMoreFilters summary').click()
@@ -493,7 +553,7 @@ def run():
                 page.locator('#analysisName').select_option('Альфа')
                 page.locator('#analysisNameAdd').click()
                 assert 'Альфа' in page.locator('#analysisFilterScope').inner_text()
-                page.locator('[data-nav-link="reports"]').click()
+                navigate(page, 'reports')
                 assert 'Альфа' in page.locator('#dailyRollupScope').inner_text()
                 page.locator('#dailyRollupRun').click()
                 wait_for_app_state(page,
@@ -517,10 +577,10 @@ def run():
                 assert absent_work['total']['count']==0
                 assert page.locator('#dailySourceRows tr').count()==12
                 assert page.locator('#dailySourceChart svg').count()==1
-                page.locator('[data-nav-link="analysis"]').click()
+                navigate(page, 'analysis')
                 page.locator('#analysisNameReset').click()
                 assert 'все' in page.locator('#analysisFilterScope').inner_text()
-                page.locator('[data-nav-link="reports"]').click()
+                navigate(page, 'reports')
                 page.locator('#dailyRollupRun').click()
                 wait_for_app_state(page,
                     'document.querySelector("#dailySourceStatus")?.textContent.includes("календарные месяцы") && document.querySelectorAll("#dailySourceKpis .comparison-metric").length === 5',
@@ -557,7 +617,7 @@ def run():
                 assert page.locator('#reportRows tr').count()==0
                 # Exercise the new SQL settings UI on synthetic CI data only.
                 page.evaluate('window.confirm = () => true')
-                page.locator('[data-nav-link="groups"]').click()
+                navigate(page, 'groups')
                 page.locator('#managementGroupName').fill('CI SQL group')
                 page.locator('#managementGroupCreate').click()
                 group_open=page.get_by_role('button',name='Открыть состав группы CI SQL group',exact=True)
@@ -578,7 +638,7 @@ def run():
                     '!Array.from(document.querySelectorAll("#groupRows button")).some(b => b.getAttribute("aria-label") === "Открыть состав группы CI SQL group") && !document.querySelector("#managementGroupCreate").disabled',
                     'SQL group removal')
                 report['checks'].append('Installed SQL group create/member add/member remove/group delete with confirmation')
-                page.locator('[data-nav-link="analysis"]').click()
+                navigate(page, 'analysis')
                 page.locator('#analysisSource').select_option('daily')
                 page.locator('#analysisType').select_option('month')
                 page.locator('#analysisFrom').fill('2024-02')
@@ -599,6 +659,7 @@ def run():
                 report['checks'].append('Daily-source KPI and monthly SQL bucket cover all leap-February days')
                 # Exercise the real native commands for every specialized view
                 # against one captured complete daily-source calendar month.
+                navigate(page, 'changes')
                 page.locator('#comparisonBeforeFrom').fill('2024-01')
                 page.locator('#comparisonBeforeTo').fill('2024-01')
                 for mode in ['changes', 'usual', 'regularity', 'structure', 'contributions']:
@@ -622,8 +683,11 @@ def run():
                 report['checks'].append('All five advanced SQL analyses use the daily-source scope; printed page retains row bounds and context')
                 if not page.locator('#analysisMoreFilters').evaluate('(el) => el.open'):
                     page.locator('#analysisMoreFilters summary').click()
+                navigate(page, 'analysis')
                 organization_choices=page.locator('#analysisOrganizationChoices label')
                 assert organization_choices.count()==4
+                wait_for_app_state(page,'document.querySelectorAll("#organizationTrendsLegend>span").length===4','All division colors before subset filtering')
+                division_colors=page.locator('#organizationTrendsLegend').evaluate("el=>Object.fromEntries([...el.children].map(row=>[row.children[1].textContent,getComputedStyle(row.children[0]).backgroundColor]))")
                 chosen_orgs=[organization_choices.nth(i).locator('span').text_content() for i in (0,2)]
                 for i in (1,3):
                     organization_choices.nth(i).locator('input').uncheck()
@@ -634,13 +698,17 @@ def run():
                     'document.querySelector("#analysisResultScope")?.textContent.includes("(2 из 4)") && document.querySelectorAll("#divisionRows tr").length === 2',
                     'SQLite analysis and division totals are scoped to two of four organizations')
                 assert set(page.locator('#divisionRows tr td:first-child').all_text_contents())==set(chosen_orgs)
+                wait_for_app_state(page,'document.querySelectorAll("#organizationTrendsLegend>span").length===2','Selected division colors remain stable')
+                subset_colors=page.locator('#organizationTrendsLegend').evaluate("el=>Object.fromEntries([...el.children].map(row=>[row.children[1].textContent,getComputedStyle(row.children[0]).backgroundColor]))")
+                assert subset_colors=={name:division_colors[name] for name in chosen_orgs}
+
                 page.locator('#analysisOrganization').select_option('*')
                 assert 'все из настроек (4)' in page.locator('#analysisFilterScope').inner_text()
                 report['checks'].append('SQL organization subset narrows division results and resets to all')
                 page.locator('#analysisSource').select_option('imported')
                 # D4c: a type with no reports can be indexed without loading
                 # history, then its incomplete SQL range must have NULL totals.
-                page.locator('[data-nav-link="analysis"]').click()
+                navigate(page, 'analysis')
                 assert page.locator('#sqlAnalysis').is_visible()
                 page.locator('#analysisType').select_option('week')
                 assert page.locator('#analysisFrom').get_attribute('type')=='week'
@@ -719,6 +787,7 @@ def run():
                 assert page.locator('#workTrendRows tr').count()==0
                 assert page.locator('#workTrendSelected').inner_text()=='Позиция не выбрана.'
                 report['checks'].append('SQL work/group trend controls start empty without fabricated data')
+                navigate(page, 'changes')
                 page.locator('#comparisonBeforeFrom').fill('2026-W45')
                 page.locator('#comparisonBeforeTo').fill('2026-W46')
                 wait_for_app_state(page,
@@ -836,15 +905,15 @@ def run():
                 assert all(r.get('sourceFormat')=='daily-wide' for r in updated['reports'])
                 report['checks'].append('reviewed native wide XLSX preview and atomic 366-report replacement')
                 assert page.evaluate('window.nativeWorkspaceRefresh()')
-                page.locator('[data-nav-link="reports"]').click()
+                navigate(page, 'reports')
                 source_anchor=next(row for row in updated['reports'] if 'sourceIssues' in row)
                 # The earlier empty-week scenario intentionally left this filter
                 # on week. The replacement above contains daily reports only.
                 page.locator('#nativeReportType').select_option('day')
                 wait_for_app_state(page,
-                    'document.querySelectorAll("#reportRows tr").length > 1 && document.querySelector("#reportRows tr td:nth-child(3)")?.textContent === "day"',
+                    'document.querySelectorAll("#reportRows tr").length > 1 && document.querySelector("#reportRows tr td:nth-child(3)")?.textContent === "День"',
                     'Daily report rows after replacing the wide source')
-                row=page.locator('#reportRows tr').filter(has_not_text=source_anchor['id']).first
+                row=page.locator('#reportRows tr:not([data-report-id="'+source_anchor['id']+'"])').first
                 quality=row.get_by_role('button',name='Замечания к отчёту',exact=False)
                 quality.click()
                 wait_for_app_state(page,
@@ -863,6 +932,7 @@ def run():
                 assert quality.evaluate('(button) => document.activeElement === button')
                 report['checks'].append('Saved report quality, shared SQLite anchor, bounded rows and keyboard focus')
                 report['checks'].append('SQL-only native page, bounded report navigation, settings bootstrap')
+                navigate(page, 'backup')
                 page.locator('#legacyWorkspaceLink').click()
                 wait_for_app_state(page,'Boolean(window.appReady)','Legacy workspace after native route')
                 page.evaluate('window.appReady')
@@ -898,8 +968,10 @@ def run():
                 assert page.evaluate("window.nativeWorkspaceNavigation.active()")=='analysis'
                 report['checks'].append('Default SQL restart ignores a remembered classic Excel view without loading full report history')
                 # Switch the next launch back to classic; imports must remain accessible.
+                navigate(page, 'backup')
                 page.locator('#sqlStartupPreference').uncheck()
                 assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") == 'classic'
+                navigate(page, 'backup')
                 page.locator('#legacyWorkspaceLink').click()
                 wait_for_app_state(page, 'Boolean(window.appReady)', 'Classic interface after SQL-first restart')
                 page.evaluate('window.appReady')
@@ -920,7 +992,7 @@ def run():
                 page.evaluate('window.nativeWorkspaceReady')
                 wait_for_app_state(page,'Boolean(window.nativeFolderReady)', 'SQL folder rule editor startup')
                 page.evaluate('window.nativeFolderReady')
-                page.locator('[data-nav-link="excel"]').click()
+                navigate(page, 'excel')
                 assert page.locator('#sqlSources').is_visible()
                 # Re-establish the isolated test folder after the classic UI
                 # round-trip, then await metadata instead of assuming it survived.
@@ -1033,7 +1105,7 @@ def run():
                 page.locator('#openNativeWorkspace').click()
                 wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)',
                     'SQL workspace after recovered startup')
-                page.locator('[data-nav-link="backup"]').click()
+                navigate(page, 'backup')
                 assert page.locator('#sqlBackup').is_visible()
                 wait_for_app_state(page,
                     "() => document.getElementById('restoreStatus')?.textContent.includes('Восстановление выполнено')",

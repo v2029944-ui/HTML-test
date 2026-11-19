@@ -93,3 +93,12 @@ test('all confirmed zero periods hidden never imply missing data',()=>{
  assert.match(e.organizationTrendsStatus.textContent,/нулевые и скрыты/);
  assert.ok(!e.organizationTrendsStatus.className.includes('error'));
 });
+test('division keeps its classic settings color when other divisions are filtered out',()=>{
+ const {window,e}=mount();const points=[point('2024-02-28',10,1),point('2024-02-29',20,2)];
+ window.nativeOrganizationTrends.show({granularity:'period',selected_organizations:2,series:[series('A',points),series('B',points)]},['A','B']);
+ const before=e.organizationTrendsLegend.children[1].children[0].style.backgroundColor;
+ window.nativeOrganizationTrends.show({granularity:'period',selected_organizations:1,series:[series('B',points)]},['A','B']);
+ assert.equal(e.organizationTrendsLegend.children[0].children[0].style.backgroundColor,before);
+ e.organizationTrendsMetric.value='count';e.organizationTrendsMetric.listeners.change();
+ assert.equal(e.organizationTrendsLegend.children[0].children[0].style.backgroundColor,before);
+});

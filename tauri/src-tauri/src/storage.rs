@@ -20,6 +20,9 @@ mod management_tree;
 #[path = "analytics.rs"]
 mod analytics;
 pub use analytics::*;
+#[path = "report_calendar.rs"]
+mod report_calendar;
+pub use report_calendar::ReportCalendar;
 #[path = "report_quality.rs"]
 mod report_quality;
 pub use report_quality::{QualityScope, ReportQualityPage};

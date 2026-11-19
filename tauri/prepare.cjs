@@ -1,6 +1,7 @@
 'use strict';
 const fs=require('node:fs');
 const path=require('node:path');
+const {classicAssets}=require('./classic-ui.cjs');
 
 function prepareHtml(source){
   if(!source.includes('window.appReady=main();'))
@@ -11,8 +12,8 @@ function prepareHtml(source){
     throw Error('Не найдены однозначные границы HTML.');
   // Keep the original HTML unchanged; inject Tauri access only into the generated copy.
   return source
-    .replace('</head>','<script src="tauri-bridge.js"></script>\n</head>')
-    .replace('</body>','<script src="tauri-folder-importer.js"></script>\n<script src="tauri-native-reader.js"></script>\n<script src="tauri-updates.js"></script>\n</body>');
+    .replace('</head>','<link rel="stylesheet" href="tauri-app-status.css">\n<script src="tauri-bridge.js"></script>\n</head>')
+    .replace('</body>','<script src="tauri-folder-importer.js"></script>\n<script src="tauri-native-reader.js"></script>\n<script src="tauri-app-status.js"></script>\n<script src="tauri-updates.js"></script>\n</body>');
 }
 
 function prepare(options={}){
@@ -20,6 +21,12 @@ function prepare(options={}){
   const output=options.output||path.join(__dirname,'web');
   const source=fs.readFileSync(path.join(base,'index.html'),'utf8');
   fs.mkdirSync(output,{recursive:true});
+  const appearance=classicAssets(source);
+  fs.writeFileSync(path.join(output,'tauri-classic.css'),appearance.css);
+  fs.writeFileSync(path.join(output,'tauri-appearance.js'),appearance.script);
+  fs.copyFileSync(path.join(__dirname,'native-skin.css'),path.join(output,'tauri-native-skin.css'));
+  fs.copyFileSync(path.join(__dirname,'app-status.js'),path.join(output,'tauri-app-status.js'));
+  fs.copyFileSync(path.join(__dirname,'app-status.css'),path.join(output,'tauri-app-status.css'));
   fs.writeFileSync(path.join(output,'index.html'),prepareHtml(source));
   fs.copyFileSync(path.join(__dirname,'bridge.js'),path.join(output,'tauri-bridge.js'));
   fs.copyFileSync(path.join(__dirname,'updates.js'),path.join(output,'tauri-updates.js'));
@@ -42,6 +49,7 @@ function prepare(options={}){
   fs.copyFileSync(path.join(__dirname,'native-advanced-analysis.js'),path.join(output,'tauri-native-advanced-analysis.js'));
   fs.copyFileSync(path.join(__dirname,'native-comparison.js'),path.join(output,'tauri-native-comparison.js'));
   fs.copyFileSync(path.join(__dirname,'native-navigation.js'),path.join(output,'tauri-native-navigation.js'));
+  fs.copyFileSync(path.join(__dirname,'native-report-calendar.js'),path.join(output,'tauri-native-report-calendar.js'));
   fs.copyFileSync(path.join(__dirname,'native-folder-auto-import.js'),path.join(output,'tauri-native-folder-auto-import.js'));
   fs.copyFileSync(path.join(__dirname,'native-folder-status.js'),path.join(output,'tauri-native-folder-status.js'));
   fs.copyFileSync(path.join(__dirname,'native-legacy-import.js'),path.join(output,'tauri-native-legacy-import.js'));
@@ -49,7 +57,8 @@ function prepare(options={}){
   fs.copyFileSync(path.join(__dirname,'native-import-wizard.js'),path.join(output,'tauri-native-import-wizard.js'));
   fs.copyFileSync(path.join(__dirname,'native-wide-import.js'),path.join(output,'tauri-native-wide-import.js'));
   fs.copyFileSync(path.join(__dirname,'native-metric-kinds.js'),path.join(output,'tauri-native-metric-kinds.js'));
-  fs.copyFileSync(path.join(__dirname,'native-workspace.html'),path.join(output,'native-workspace.html'));
+  const workspace=fs.readFileSync(path.join(__dirname,'native-workspace.html'),'utf8');
+  fs.writeFileSync(path.join(output,'native-workspace.html'),workspace.replace('<!-- CLASSIC_APPEARANCE -->',appearance.markup));
   fs.copyFileSync(path.join(__dirname,'startup.html'),path.join(output,'startup.html'));
   fs.copyFileSync(path.join(__dirname,'startup.js'),path.join(output,'tauri-startup.js'));
   fs.copyFileSync(path.join(__dirname,'startup-preference.js'),path.join(output,'tauri-startup-preference.js'));

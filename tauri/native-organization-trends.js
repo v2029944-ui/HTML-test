@@ -2,7 +2,7 @@
 (function(){
 'use strict';
 const $=id=>document.getElementById(id),ns='http://www.w3.org/2000/svg';
-const palette=['#24639a','#ad5c36','#328165','#8a5daa','#bb7832','#617c99','#a94e7c','#65713c'];
+const palette=['var(--plot-0)','var(--plot-1)','var(--plot-2)','var(--plot-3)','var(--plot-4)','var(--plot-5)','var(--plot-6)','var(--plot-7)'];
 let snapshot=null;
 const finite=value=>typeof value==='number'&&Number.isFinite(value);
 const format=value=>finite(value)?value.toLocaleString('ru-RU',{maximumFractionDigits:3}):'—';
@@ -59,6 +59,10 @@ function validate(data){
  }
  return verified;
 }
+function seriesColor(name,fallback){
+ const position=snapshot.organizationOrder.indexOf(name);
+ return palette[(position<0?fallback:position)%palette.length];
+}
 function draw(){
  const chart=$('organizationTrendsChart'),legend=$('organizationTrendsLegend'),table=$('organizationTrendsRows');
  chart.replaceChildren();legend.replaceChildren();table.replaceChildren();
@@ -71,7 +75,7 @@ function draw(){
  const available=series.flatMap(s=>s.points.map(p=>p[metric]).filter(finite));
  let skipped=0;
  series.forEach((s,i)=>{
-   const color=palette[i];
+   const color=seriesColor(s.organization,i);
    const label=document.createElement('span');
    const swatch=document.createElement('span');
    swatch.className='organization-trends-swatch';swatch.style.backgroundColor=color;
@@ -112,7 +116,7 @@ function draw(){
  for(let i=0;i<=Math.min(12,ticks);i++){
    const val=low+i*step,py=y(val);
    root.append(svg('line',{x1:left,y1:py,x2:width-right,y2:py,
-     stroke:val===0?'#8595a8':'#e5eaf0','stroke-width':val===0?1.5:1}));
+     stroke:val===0?'var(--axis)':'var(--grid)','stroke-width':val===0?1.5:1}));
    root.append(svg('text',{x:left-9,y:py+4,'text-anchor':'end'},format(val)));
  }
  series.forEach((serie,i)=>{
@@ -120,7 +124,7 @@ function draw(){
    const flush=()=>{
      if(points.length>1){
        const path=svg('path',{d:points.map(([px,py],j)=>(j?'L':'M')+px.toFixed(2)+' '+py.toFixed(2)).join(' '),
-         fill:'none',stroke:palette[i],'stroke-width':2.6,
+         fill:'none',stroke:seriesColor(serie.organization,i),'stroke-width':2.6,
          'stroke-linejoin':'round','stroke-linecap':'round'});
        path.append(svg('title',{},serie.organization));
        root.append(path);
@@ -133,7 +137,7 @@ function draw(){
      const px=x(j),py=y(value);
      points.push([px,py]);
      if(count<=35){
-       const dot=svg('circle',{cx:px,cy:py,r:3.5,fill:palette[i],stroke:'#fff','stroke-width':1});
+       const dot=svg('circle',{cx:px,cy:py,r:3.5,fill:seriesColor(serie.organization,i),stroke:'var(--surface)','stroke-width':1});
        dot.append(svg('title',{},serie.organization+' · '+p.start+': '+format(value)));
        root.append(dot);
      }
@@ -154,8 +158,9 @@ function draw(){
    (skipped?'Неполных точек: '+skipped+'; линии разорваны. ':'')+
    'Единицы измерения исходных данных не подтверждены.',skipped>0||limited>0);
 }
-function show(result){
- snapshot=result;
+function show(result,organizations){
+ const order=Array.isArray(organizations)?organizations:Array.isArray(result?.organizationOrder)?result.organizationOrder:[];
+ snapshot={...result,organizationOrder:order.slice()};
  try{draw();}catch(err){clear('График подразделений скрыт: '+err.message);status('График подразделений скрыт: '+err.message,true);}
 }
 function error(message){clear(message);status(message,true);}

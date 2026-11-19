@@ -904,3 +904,33 @@ test('print waits for the current ranking and selected-work trend requests',asyn
   e.analysisPrint.events.click();assert.equal(prints,1);
  }
 });
+test('calendar date selection opens bounded reports and clears back to all periods',async()=>{
+ const ui=mount();await ui.window.nativeWorkspaceReady;
+ assert.equal(typeof ui.window.nativeReportList?.selectRange,'function');
+ assert.equal(await ui.window.nativeReportList.selectRange('2024-02-29','2024-02-29'),true);
+ const filtered=ui.calls.filter(c=>c.kind==='report').at(-1);
+ assert.equal(filtered.filter.start,'2024-02-29');assert.equal(filtered.filter.end,undefined,'end would incorrectly exclude longer periods starting on this date');
+ assert.equal(filtered.limit,100);assert.equal(ui.e.uploadedReports.open,true);
+ assert.equal(ui.e.reportClearSelection.hidden,false);
+ await ui.e.reportClearSelection.events.click();
+ assert.equal(ui.calls.filter(c=>c.kind==='report').at(-1).filter.start,undefined);
+ assert.equal(await ui.window.nativeReportList.selectRange('2024-02-31','2024-02-31'),false);
+});
+test('failed header or bootstrap refresh invalidates the visible calendar and stale report rows',async()=>{
+ const options={};const ui=mount(options);await ui.window.nativeWorkspaceReady;
+ const contexts=[];ui.window.nativeReportCalendar={setContext:revision=>contexts.push(revision)};
+ options.failReports=true;assert.equal(await ui.window.nativeWorkspaceRefresh(),false);
+ assert.equal(contexts.at(-1),null);assert.equal(ui.e.reportRows.children.length,0);
+ ui.window.desktopAPI.nativeSettingsBootstrap=async()=>{throw Error('unavailable');};
+ contexts.length=0;assert.equal(await ui.window.nativeWorkspaceRefresh(),false);assert.equal(contexts.at(-1),null);
+});
+test('changes print action shares readiness and busy guards with the current analysis',async()=>{
+ const ui=mount({complete:true});await ui.window.nativeWorkspaceReady;
+ assert.equal(typeof ui.e.changesPrint?.events.click,'function');
+ let prints=0;ui.window.print=()=>prints++;
+ ui.e.changesPrint.events.click();assert.equal(prints,0);
+ ui.e.analysisFrom.value='2024-02-28';ui.e.analysisTo.value='2024-02-29';
+ await ui.e.analysisPrepare.events.click();await ui.e.analysisRun.events.click();
+ assert.equal(ui.e.changesPrint.disabled,false);ui.e.changesPrint.events.click();assert.equal(prints,1);
+ ui.e.analysisFrom.events.change();assert.equal(ui.e.changesPrint.disabled,true);ui.e.changesPrint.events.click();assert.equal(prints,1);
+});
