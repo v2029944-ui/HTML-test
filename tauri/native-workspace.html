@@ -75,6 +75,11 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .coverage-notice[hidden]{display:none}
 .coverage-notice p{margin:0 0 9px;overflow-wrap:anywhere}
 .coverage-notice button{max-width:100%;white-space:normal}
+.joined-pager{display:inline-flex;align-items:stretch;max-width:100%;border:1px solid #9eafc3;border-radius:8px;overflow:hidden;min-height:36px}
+.joined-pager button{border:0;border-radius:0;min-width:68px}
+.joined-pager button+output,.joined-pager output+button{border-left:1px solid #9eafc3}
+.joined-pager output{display:flex;align-items:center;justify-content:center;padding:4px 12px;white-space:nowrap;font-variant-numeric:tabular-nums;font-size:13px;min-width:91px}
+@media(max-width:500px){.joined-pager button{min-width:56px}.joined-pager output{min-width:77px;padding:4px 7px}}
 .division-title{font-size:17px;margin:22px 0 10px}
 .division-track{width:100%;min-width:110px;height:12px;border-radius:6px;background:#e7edf5;overflow:hidden}
 .division-fill{height:100%;background:#346d9d;border-radius:6px}
@@ -258,8 +263,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p class="intro">Расшифровка: не более 50 строк на странице. CSV экспортирует весь выбранный диапазон, а не только видимые строки. Подразделение выбирается в «Ещё фильтры».</p>
 <div class="controls">
 <button id="analysisExport" type="button" disabled>Скачать CSV по выбранному диапазону</button>
-<button id="workBack" type="button" disabled>Назад</button>
-<button id="workNext" type="button" disabled>Далее</button>
+<div class="joined-pager" aria-label="Страницы расшифровки"><button id="workBack" type="button" aria-label="Предыдущая страница работ" disabled>Назад</button><output id="workPageInfo" aria-live="polite">Страница 1</output><button id="workNext" type="button" aria-label="Следующая страница работ" disabled>Далее</button></div>
 </div>
 <p id="workStatus" class="status muted" role="status" aria-live="polite">Расшифровка появится после расчёта.</p>
 <div class="table-scroll"><table>
@@ -338,14 +342,14 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <section class="panel" id="sqlReports" data-nav-panel="reports" aria-label="Отчёты SQL">
 <h2>Отчёты</h2><div class="controls"><label for="nativeReportType">Периоды</label>
 <select id="nativeReportType"><option value="">Все</option><option value="day">Дни</option><option value="week">Недели</option><option value="month">Месяцы</option></select>
-<button id="reportBack" type="button" disabled>Назад</button><button id="reportNext" type="button" disabled>Далее</button></div>
+<div class="joined-pager" aria-label="Страницы отчётов"><button id="reportBack" type="button" aria-label="Предыдущая страница отчётов" disabled>Назад</button><output id="reportPageInfo" aria-live="polite">Страница 1</output><button id="reportNext" type="button" aria-label="Следующая страница отчётов" disabled>Далее</button></div></div>
 <p id="reportStatus" class="status muted" role="status" aria-live="polite"></p>
 <div class="table-scroll"><table><thead><tr><th>Начало</th><th>Конец</th><th>Тип</th><th>Источник</th><th>Идентификатор</th></tr></thead><tbody id="reportRows"></tbody></table></div>
 </section>
 <section class="panel" id="sqlGroups" data-nav-panel="groups" aria-label="Группы SQL">
 <h2>Сохранённые группы</h2>
 <p class="intro">Название можно изменить без перезаписи отчётов. Изменение сохраняется транзакционно с проверкой версии базы. Содержимое групп пока доступно в полном интерфейсе.</p>
-<div class="controls"><button id="groupBack" type="button" disabled>Назад</button><button id="groupNext" type="button" disabled>Далее</button></div>
+<div class="controls"><div class="joined-pager" aria-label="Страницы групп"><button id="groupBack" type="button" aria-label="Предыдущая страница групп" disabled>Назад</button><output id="groupPageInfo" aria-live="polite">Страница 1</output><button id="groupNext" type="button" aria-label="Следующая страница групп" disabled>Далее</button></div></div>
 <p id="groupStatus" class="status muted" role="status" aria-live="polite"></p>
 <div class="table-scroll"><table><thead><tr><th>ID группы</th><th>Название</th><th>Работ</th><th>Действие</th></tr></thead><tbody id="groupRows"></tbody></table></div>
 </section>
