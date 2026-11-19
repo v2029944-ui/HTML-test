@@ -3,6 +3,8 @@
 mod storage;
 mod native_import;
 mod native_management;
+mod native_advanced_analysis;
+use native_advanced_analysis::{native_changes_page,native_changes_csv,native_pattern_page,native_composition_page};
 mod native_report_quality;
 mod native_name_selection;
 
@@ -1053,7 +1055,7 @@ fn main() {
             native_report_quality_page, native_settings_bootstrap, native_group_page, native_group_rename,
             native_catalog_page, native_delete_report, native_member_page, native_settings_edit,
             native_analysis_index_page, native_analysis_index_settings, native_analysis_name_options, native_analysis_range,
-            native_analysis_timeline, native_analysis_ranking, native_analysis_organization_trends, native_analysis_work_timeline, native_analysis_compare, native_daily_rollup,
+            native_analysis_timeline, native_analysis_ranking, native_analysis_organization_trends, native_analysis_work_timeline, native_analysis_compare, native_daily_rollup, native_changes_page, native_changes_csv, native_pattern_page, native_composition_page,
             native_analysis_organizations, native_analysis_range_page,
             native_export_range_csv, native_backup_sqlite, native_restore_preview, native_restore_copy,
             native_restore_schedule, native_restore_launch_info, native_restore_cancel,

@@ -379,6 +379,25 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <ol id="comparisonRankRows" class="comparison-ranks"></ol>
 </section>
 
+<section aria-labelledby="advancedTitle">
+<h3 id="advancedTitle" class="division-title">Анализ работ по периодам</h3>
+<div class="controls">
+<label>Анализ <select id="advancedMode"><option value="changes">Изменения по подразделениям</option><option value="usual">Сравнение с обычным уровнем</option><option value="regularity">Регулярность выполнения</option><option value="structure">Структура работ и групп</option><option value="contributions">Вклад работ в общее изменение</option></select></label>
+<label id="advancedMethodLabel">Пары периодов <select id="advancedMethod"><option value="previous">Последний и предыдущий</option><option value="range">Соседние в диапазоне</option></select></label>
+<label id="advancedWindowLabel" hidden><span id="advancedWindowTitle">Базовых периодов</span> <select id="advancedWindow"><option>4</option><option>8</option></select></label>
+<label id="advancedPercentLabel">Порог, % <input type="number" min="0" step="any" id="advancedPercent" value="30"></label>
+<label id="advancedCountLabel">Мин. изменение количества / объёма <input type="number" min="0" step="any" id="advancedCount" value="1"></label>
+<label id="advancedAmountLabel">Мин. изменение суммы <input type="number" min="0" step="any" id="advancedAmount" value="1"></label>
+<label id="advancedMetricLabel">Показатель <select id="advancedMetric"><option value="amount">Сумма</option><option value="count">Количество / объём</option><option value="average">Средняя сумма на единицу</option></select></label>
+<button type="button" id="advancedRun" disabled>Рассчитать анализ</button>
+<button type="button" id="advancedExport" disabled>Сохранить все изменения в CSV</button>
+</div>
+<p id="advancedBaselineHelp" hidden>Базовые даты задаются выше в разделе «Изменения между двумя диапазонами». Используются тот же источник и те же подразделения.</p>
+<p id="advancedContext" class="filter-scope"></p>
+<p id="advancedStatus" role="status" class="status muted">Сначала рассчитайте диапазон.</p>
+<div class="table-scroll" role="region" aria-label="Результат анализа по периодам" tabindex="0"><table><thead id="advancedHead"></thead><tbody id="advancedRows"></tbody></table></div>
+<div class="controls"><button id="advancedPrev" type="button" disabled>Назад</button><span id="advancedPage"></span><button id="advancedNext" type="button" disabled>Далее</button></div>
+</section>
 <p class="intro" id="analysisUnitsNote">Единицы измерения не определяются по названиям столбцов: дробное «количество» может означать объём, а «сумма» не обязательно указана в рублях. Сравнивайте средние только при сопоставимых единицах исходных отчётов.</p>
 <p class="intro">Когда отсутствуют периоды, итоговые сумма и количество не показываются как ноль. Группы, совпадающие даты и ошибки проверяются по правилам D2; это не простая сумма всех строк.</p>
 </section>
@@ -683,7 +702,8 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </section>
 </main>
 <script src="tauri-bridge.js"></script><script src="tauri-native-updates.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-auto-import.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-period-visibility.js"></script><script src="tauri-native-timeline.js"></script><script src="tauri-native-ranking.js"></script><script src="tauri-native-organization-trends.js"></script><script src="tauri-native-period-selection.js"></script>
-<script src="tauri-native-work-trends.js"></script><script src="tauri-native-comparison.js"></script><script src="tauri-native-daily-overview.js"></script>
+<script src="tauri-native-work-trends.js"></script><script src="tauri-native-advanced-analysis.js"></script>
+<script src="tauri-native-comparison.js"></script><script src="tauri-native-daily-overview.js"></script>
 <script src="tauri-native-daily-calendar.js"></script>
 <script src="tauri-native-name-filter.js"></script>
 <script src="tauri-native-management.js"></script>

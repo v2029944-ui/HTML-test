@@ -38,6 +38,7 @@ function prepare(options={}){
   fs.copyFileSync(path.join(__dirname,'native-name-filter.js'),path.join(output,'tauri-native-name-filter.js'));
   fs.copyFileSync(path.join(__dirname,'native-daily-calendar.js'),path.join(output,'tauri-native-daily-calendar.js'));
   fs.copyFileSync(path.join(__dirname,'native-work-trends.js'),path.join(output,'tauri-native-work-trends.js'));
+  fs.copyFileSync(path.join(__dirname,'native-advanced-analysis.js'),path.join(output,'tauri-native-advanced-analysis.js'));
   fs.copyFileSync(path.join(__dirname,'native-comparison.js'),path.join(output,'tauri-native-comparison.js'));
   fs.copyFileSync(path.join(__dirname,'native-navigation.js'),path.join(output,'tauri-native-navigation.js'));
   fs.copyFileSync(path.join(__dirname,'native-folder-auto-import.js'),path.join(output,'tauri-native-folder-auto-import.js'));

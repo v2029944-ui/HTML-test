@@ -43,6 +43,10 @@
       'native_analysis_organization_trends',{revision,reportType,from,to,organizations,selectedName,grouping,selectedNames},'reads'),
     nativeDailyRollup:(revision,from,to,granularity,organizations,after,limit,selectedName=null,selectedNames=null)=>tracked(
       'native_daily_rollup',{revision,from,to,granularity,organizations,after,limit,selectedName,selectedNames},'reads'),
+    nativeChangesPage:(request,after)=>tracked('native_changes_page',{request,after},'reads'),
+    nativeChangesCsv:(request,destination)=>tracked('native_changes_csv',{request,destination},'saves'),
+    nativeCompositionPage:(request,before,mode,metric,after)=>tracked('native_composition_page',{request,before,mode,metric,after},'reads'),
+    nativePatternPage:(request,mode,windowSize,after)=>tracked('native_pattern_page',{request,mode,windowSize,after},'reads'),
     nativeAnalysisCompare:(revision,reportType,beforeFrom,beforeTo,from,to,organizations,selectedName=null,selectedNames=null)=>tracked(
       'native_analysis_compare',{revision,reportType,beforeFrom,beforeTo,from,to,organizations,selectedName,selectedNames},'reads'),
     nativeWorkTimeline:(revision,reportType,from,to,organizations,organization,key,selectedName=null,grouping=null,selectedNames=null)=>tracked(

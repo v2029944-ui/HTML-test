@@ -140,7 +140,7 @@ $('restoreCancel').disabled=restoreBusy||backupBusy||analysisBusy||exportBusy||r
 $('analysisPrepare').disabled=analysisBusy||refreshBusy||exportBusy||revision===null;
 $('analysisCancel').disabled=!analysisBusy;
 $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!analysisReady;
-$('analysisPrint').disabled=revision===null||analysisBusy||refreshBusy||workBusy||comparisonBusy||exportBusy||!!queuedRefresh||!workScope;
+$('analysisPrint').disabled=revision===null||analysisBusy||refreshBusy||workBusy||comparisonBusy||exportBusy||!!queuedRefresh||window.nativeAdvancedAnalysis?.isBusy()||!workScope;
 $('analysisExport').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!workScope;
 $('rankingMetric').disabled=analysisBusy||refreshBusy||!workScope;
 $('rankingCategory').disabled=analysisBusy||refreshBusy||!workScope;
@@ -504,6 +504,7 @@ function clearWork(message='Расшифровка появится после �
  invalidateComparison('Текущая выборка изменена. Рассчитайте диапазон повторно.');
  invalidateWorkTrend('Выборка изменена. Выберите работу или группу заново.');
  status('exportStatus','Экспорт доступен после расчёта. CSV сохраняется в новый файл.');
+ window.nativeAdvancedAnalysis?.clear();
  workScope=null;workAfter=null;workBack=[];workNext=null;
  updateComparisonContext();
  $('workRows').replaceChildren();
@@ -572,7 +573,7 @@ async function workPage(cursor,reset=false){
   status('workStatus','На странице: '+rows.length+' позиций. Сортировка по ключу SQLite.');
   return true;
  }catch(err){
-  workNext=null;workBack=[];workScope=null;
+  workNext=null;workBack=[];workScope=null;window.nativeAdvancedAnalysis?.clear();
   invalidateWorkTrend('Расшифровка недоступна. Повторите расчёт и выбор позиции.');
   $('workRows').replaceChildren();
   status('workStatus','Ошибка SQL-чтения: '+userError(err)+'. Повторите расчёт.',true);
@@ -614,6 +615,7 @@ async function calculateAnalysis(){
    }
    if(rev!==revision||expectedTimeline!==timelineRequest)return;
    workScope={type:kind,displayType:selection.displayType,source:selection.source,from,to,organizations,selectedNames:names,organization:$('analysisOrganization').value==='*'?null:$('analysisOrganization').value};
+   window.nativeAdvancedAnalysis?.setContext(revision,workScope);
    updateComparisonContext();
    await reloadRanking();
    updateResultContext(kind,from,to,organizations);
@@ -684,7 +686,7 @@ async function compareAnalysis(){
 }
 
 function printAnalysis(){
- if(revision===null||analysisBusy||refreshBusy||workBusy||comparisonBusy||exportBusy||queuedRefresh||!workScope)return;
+ if(revision===null||analysisBusy||refreshBusy||workBusy||comparisonBusy||exportBusy||queuedRefresh||window.nativeAdvancedAnalysis?.isBusy()||!workScope)return;
  const details=Array.from(document.querySelectorAll?.('#sqlAnalysis details')||[]);
  const previous=details.map(node=>node.open);
  try{
@@ -712,6 +714,7 @@ async function exportAnalysisCsv(){
   status('exportStatus','Экспорт не выполнен: '+userError(err)+'. Выберите новый CSV-файл.',true);
  }finally{exportBusy=false;controlState();}
 }
+window.nativeAdvancedAnalysis?.onStateChange(controlState);
 const year=String(new Date().getFullYear());
 $('analysisFrom').value=year+'-01-01';
 $('analysisTo').value=year+'-12-31';

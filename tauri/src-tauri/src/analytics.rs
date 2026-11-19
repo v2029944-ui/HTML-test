@@ -5,6 +5,9 @@ use chrono::{Datelike, Duration, Months};
 use rusqlite::OptionalExtension;
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use std::io::{BufReader, Read, Write};
+#[path = "advanced_analysis.rs"]
+mod advanced_analysis;
+pub use advanced_analysis::*;
 const BOUND: usize = 65536;
 
 pub(super) fn initialize(c: &Connection) -> Result<(), String> {
@@ -12,6 +15,7 @@ pub(super) fn initialize(c: &Connection) -> Result<(), String> {
  CREATE TABLE IF NOT EXISTS analysis_orgs(report_id TEXT NOT NULL,org TEXT NOT NULL,PRIMARY KEY(report_id,org)) WITHOUT ROWID;
  CREATE INDEX IF NOT EXISTS analysis_org_lookup ON analysis_orgs(org,report_id);
  CREATE TABLE IF NOT EXISTS analysis_settings(singleton INTEGER PRIMARY KEY CHECK(singleton=1));
+ CREATE TABLE IF NOT EXISTS analysis_group_names(name TEXT PRIMARY KEY,key TEXT) WITHOUT ROWID;
  CREATE TABLE IF NOT EXISTS analysis_groups(work TEXT PRIMARY KEY,key TEXT NOT NULL,name TEXT NOT NULL) WITHOUT ROWID;
  CREATE TABLE IF NOT EXISTS analysis_filters(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,kind TEXT NOT NULL,sealed INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS analysis_filter_items(id TEXT NOT NULL,item TEXT NOT NULL,ordinal INTEGER NOT NULL,PRIMARY KEY(id,item)) WITHOUT ROWID;
@@ -975,7 +979,7 @@ impl Storage {
             );
         }
         tx.execute("DELETE FROM analysis_groups", []).map_err(err)?;
-        tx.execute_batch("INSERT OR IGNORE INTO analysis_groups SELECT m.work,'group:'||d.id,d.name FROM temp.an_members m JOIN temp.an_descriptors d ON d.n=m.n ORDER BY m.n;INSERT OR REPLACE INTO analysis_settings VALUES(1);").map_err(err)?;
+        tx.execute_batch("DELETE FROM analysis_group_names;INSERT OR IGNORE INTO analysis_group_names SELECT name,'group:'||id FROM temp.an_descriptors ORDER BY n;INSERT OR IGNORE INTO analysis_groups SELECT m.work,'group:'||d.id,d.name FROM temp.an_members m JOIN temp.an_descriptors d ON d.n=m.n ORDER BY m.n;INSERT OR REPLACE INTO analysis_settings VALUES(1);").map_err(err)?;
         tx.commit().map_err(err)
     }
     /// Discover bounded exact display names. Colliding labels are hidden
@@ -2002,6 +2006,9 @@ fn fill_changes(c: &Connection, s: &AnalysisScope, q: &ChangeQuery) -> Result<()
     }
     c.execute("INSERT INTO temp.an_pairs SELECT p.start,p.base,f.item,b.report_id,v.report_id,COALESCE(b.warned,0) OR COALESCE(v.warned,0) FROM temp.an_currents p CROSS JOIN analysis_filter_items f LEFT JOIN temp.an_valid b ON b.org=f.item AND b.start=p.base LEFT JOIN temp.an_valid v ON v.org=f.item AND v.start=p.start WHERE f.id=?1",[&s.organizations]).map_err(err)?;
     c.execute("INSERT INTO temp.an_period_values SELECT v.start,v.org,COALESCE(g.key,'work:'||x.work),COALESCE(g.name,x.work),CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,SUM(x.count),SUM(x.amount) FROM temp.an_valid v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work WHERE EXISTS(SELECT 1 FROM temp.an_pairs p WHERE p.org=v.org AND p.base_id IS NOT NULL AND p.current_id IS NOT NULL AND (p.base=v.start OR p.start=v.start)) AND (?1 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=COALESCE(g.name,x.work))) GROUP BY v.start,v.org,COALESCE(g.key,'work:'||x.work)",[&s.names]).map_err(err)?;
+    finish_changes(c)
+}
+fn finish_changes(c: &Connection) -> Result<(), String> {
     c.execute_batch("INSERT INTO temp.an_changes SELECT p.start,p.base,p.org,k.key,COALESCE(b.name,a.name),COALESCE(b.kind,a.kind),COALESCE(b.count,0),COALESCE(b.amount,0),COALESCE(a.count,0),COALESCE(a.amount,0) FROM temp.an_pairs p JOIN (SELECT p.start,p.org,v.key FROM temp.an_pairs p JOIN temp.an_period_values v ON v.org=p.org AND (v.start=p.base OR v.start=p.start) WHERE p.base_id IS NOT NULL AND p.current_id IS NOT NULL GROUP BY p.start,p.org,v.key) k ON k.start=p.start AND k.org=p.org LEFT JOIN temp.an_period_values b ON b.start=p.base AND b.org=p.org AND b.key=k.key LEFT JOIN temp.an_period_values a ON a.start=p.start AND a.org=p.org AND a.key=k.key;").map_err(err)?;
     validate_numbers(c, "SELECT count,amount FROM temp.an_period_values")?;
     validate_numbers(
@@ -2078,12 +2085,15 @@ impl Storage {
         let tx = c.transaction().map_err(err)?;
         workspace(&tx, expected, s)?;
         fill_changes(&tx, s, q)?;
-        let (rows,new,gone):(i64,i64,i64)=tx.query_row("SELECT COUNT(*),COALESCE(SUM((bc=0 AND ba=0) AND (cc<>0 OR ca<>0)),0),COALESCE(SUM((bc<>0 OR ba<>0) AND (cc=0 AND ca=0)),0) FROM temp.an_changes",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
-        let (bc,ba,cc,ca):(f64,f64,f64,f64)=tx.query_row("SELECT COALESCE(SUM(bc),0),COALESCE(SUM(ba),0),COALESCE(SUM(cc),0),COALESCE(SUM(ca),0) FROM temp.an_changes",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(err)?;
-        let bt = totals(bc, ba, true)?;
-        let at = totals(cc, ca, true)?;
-        Ok(ChangesSummary{count:measure(bc,cc,q.min_count,q.percent)?,amount:measure(ba,ca,q.min_amount,q.percent)?,average:average_change(bt.average,at.average,q.percent)?,rows,new,gone,existing:rows-new-gone,missing_pairs:count_sql(&tx,"SELECT COUNT(*) FROM temp.an_pairs WHERE base_id IS NULL OR current_id IS NULL")?,import_warning_pairs:count_sql(&tx,"SELECT COUNT(*) FROM temp.an_pairs WHERE base_id IS NOT NULL AND current_id IS NOT NULL AND warned<>0")?,invalid_reports:count_sql(&tx,"SELECT COUNT(*) FROM temp.an_issues WHERE kind='invalid'")?,duplicate_issues:count_sql(&tx,"SELECT COUNT(*) FROM temp.an_issues WHERE kind='duplicate'")?,overlap_issues:count_sql(&tx,"SELECT COUNT(*) FROM temp.an_issues WHERE kind='overlap'")?})
+        changes_summary(&tx, q)
     }
+}
+fn changes_summary(tx: &Connection, q: &ChangeQuery) -> Result<ChangesSummary, String> {
+    let (rows,new,gone):(i64,i64,i64)=tx.query_row("SELECT COUNT(*),COALESCE(SUM((bc=0 AND ba=0) AND (cc<>0 OR ca<>0)),0),COALESCE(SUM((bc<>0 OR ba<>0) AND (cc=0 AND ca=0)),0) FROM temp.an_changes",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
+    let (bc,ba,cc,ca):(f64,f64,f64,f64)=tx.query_row("SELECT COALESCE(SUM(bc),0),COALESCE(SUM(ba),0),COALESCE(SUM(cc),0),COALESCE(SUM(ca),0) FROM temp.an_changes",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(err)?;
+    let bt = totals(bc, ba, true)?;
+    let at = totals(cc, ca, true)?;
+    Ok(ChangesSummary{count:measure(bc,cc,q.min_count,q.percent)?,amount:measure(ba,ca,q.min_amount,q.percent)?,average:average_change(bt.average,at.average,q.percent)?,rows,new,gone,existing:rows-new-gone,missing_pairs:count_sql(tx,"SELECT COUNT(*) FROM temp.an_pairs WHERE base_id IS NULL OR current_id IS NULL")?,import_warning_pairs:count_sql(tx,"SELECT COUNT(*) FROM temp.an_pairs WHERE base_id IS NOT NULL AND current_id IS NOT NULL AND warned<>0")?,invalid_reports:count_sql(tx,"SELECT COUNT(*) FROM temp.an_issues WHERE kind='invalid'")?,duplicate_issues:count_sql(tx,"SELECT COUNT(*) FROM temp.an_issues WHERE kind='duplicate'")?,overlap_issues:count_sql(tx,"SELECT COUNT(*) FROM temp.an_issues WHERE kind='overlap'")?})
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComparisonQuery {
@@ -2477,39 +2487,7 @@ impl Storage {
         let tx = c.transaction().map_err(err)?;
         workspace(&tx, expected, s)?;
         fill_changes(&tx, s, q)?;
-        export(destination, |w| {
-            use Cell::*;
-            csv_record(
-                w,
-                &[
-                    Text("key"),
-                    Text("name"),
-                    Text("kind"),
-                    Text("org"),
-                    Text("baseStart"),
-                    Text("currentStart"),
-                    Text("status"),
-                    Text("count.base"),
-                    Text("count.current"),
-                    Text("count.delta"),
-                    Text("count.percent"),
-                    Text("amount.base"),
-                    Text("amount.current"),
-                    Text("amount.delta"),
-                    Text("amount.percent"),
-                    Text("average.base"),
-                    Text("average.current"),
-                    Text("average.delta"),
-                    Text("average.percent"),
-                ],
-            )?;
-            let mut stmt=tx.prepare("SELECT start,base,org,key,name,kind,bc,ba,cc,ca FROM temp.an_changes ORDER BY start,org,key").map_err(err)?;
-            let mut rows = stmt.query([]).map_err(err)?;
-            while let Some(r) = rows.next().map_err(err)? {
-                change_csv(w, &change_value(r, q)?)?;
-            }
-            Ok(())
-        })
+        export_changes_table(&tx, q, destination)
     }
     pub fn analysis_export_range(
         &self,
@@ -2730,4 +2708,44 @@ impl Storage {
             .map_err(err)?;
         Ok(out)
     }
+}
+
+fn export_changes_table(
+    tx: &Connection,
+    q: &ChangeQuery,
+    destination: &Path,
+) -> Result<(), String> {
+    export(destination, |w| {
+        use Cell::*;
+        csv_record(
+            w,
+            &[
+                Text("key"),
+                Text("name"),
+                Text("kind"),
+                Text("org"),
+                Text("baseStart"),
+                Text("currentStart"),
+                Text("status"),
+                Text("count.base"),
+                Text("count.current"),
+                Text("count.delta"),
+                Text("count.percent"),
+                Text("amount.base"),
+                Text("amount.current"),
+                Text("amount.delta"),
+                Text("amount.percent"),
+                Text("average.base"),
+                Text("average.current"),
+                Text("average.delta"),
+                Text("average.percent"),
+            ],
+        )?;
+        let mut stmt=tx.prepare("SELECT start,base,org,key,name,kind,bc,ba,cc,ca FROM temp.an_changes ORDER BY start,org,key").map_err(err)?;
+        let mut rows = stmt.query([]).map_err(err)?;
+        while let Some(r) = rows.next().map_err(err)? {
+            change_csv(w, &change_value(r, q)?)?;
+        }
+        Ok(())
+    })
 }

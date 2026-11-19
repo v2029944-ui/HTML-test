@@ -27,7 +27,7 @@ fn golden(
     ranges: &[(&str, &str)],
     changes: &ChangeQuery,
 ) -> Value {
-    let input = json!({"reports":data["reports"],"settings":data["settings"],"scope":{"type":kind,"organizations":orgs,"names":names},"ranges":ranges.iter().map(|(from,to)|json!({"from":from,"to":to})).collect::<Vec<_>>(),"changes":{"method":changes.method,"from":changes.from,"to":changes.to,"percent":changes.percent,"minCount":changes.min_count,"minAmount":changes.min_amount}});
+    let input = json!({"advanced":data["advanced"],"reports":data["reports"],"settings":data["settings"],"scope":{"type":kind,"organizations":orgs,"names":names},"ranges":ranges.iter().map(|(from,to)|json!({"from":from,"to":to})).collect::<Vec<_>>(),"changes":{"method":changes.method,"from":changes.from,"to":changes.to,"percent":changes.percent,"minCount":changes.min_count,"minAmount":changes.min_amount}});
     let script =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/native_analytics_golden.cjs");
     let mut child = Command::new("node")
@@ -1474,4 +1474,279 @@ fn concurrent_sealed_analysis_filters_do_not_upgrade_stale_read_snapshots() {
     let results=workers.into_iter().map(|worker|worker.join()).collect::<Vec<_>>();
     assert!(results.into_iter().all(|result|result.is_ok()));
     assert_eq!(store.revision().unwrap(),rev);
+}
+
+#[test]
+fn daily_week_changes_use_complete_weeks_and_ignore_imported_totals() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    let reports = data["reports"].as_array_mut().unwrap();
+    reports.clear();
+    for day in 1..=21 {
+        if day == 17 {
+            continue;
+        }
+        let start = format!("2024-01-{day:02}");
+        let count = if day <= 7 { 0 } else { -1 };
+        reports.push(json!({"id":start,"type":"day","start":start,"end":start,"organizations":["A"],"rows":[{"organization":"A","work":"item","count":count,"amount":day}]}));
+    }
+    reports.push(json!({"id":"imported","type":"week","start":"2024-01-08","end":"2024-01-14","organizations":["A"],"rows":[{"organization":"A","work":"item","count":99,"amount":999}]}));
+    let rev = prepare(&store, &data);
+    let s = scope(&store, rev, "day", &["A"], None);
+    let q = ChangeQuery {
+        method: "range".into(),
+        from: "2024-01-01".into(),
+        to: "2024-01-21".into(),
+        percent: 20.,
+        min_count: 1.,
+        min_amount: 1.,
+    };
+    let page = store
+        .advanced_changes_page(rev, &s, &q, Some("week"), None)
+        .unwrap();
+    assert_eq!(page.summary.missing_pairs, 1);
+    assert_eq!(page.rows.len(), 1);
+    let item = &page.rows[0];
+    assert_eq!(
+        (&item.base_start, &item.current_start),
+        (&"2024-01-01".into(), &"2024-01-08".into())
+    );
+    assert_eq!(
+        (item.count.base, item.count.current, item.amount.current),
+        (0., -7., 77.)
+    );
+    assert_eq!(item.count.percent, None);
+}
+
+#[test]
+fn advanced_frequency_and_usual_match_classic() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    data["advanced"] = json!(true);
+    let rev = prepare(&store, &data);
+    let q = ChangeQuery {
+        method: "range".into(),
+        from: "2024-02-28".into(),
+        to: "2024-03-01".into(),
+        percent: 20.,
+        min_count: 1.,
+        min_amount: 1.,
+    };
+    for orgs in [&["A"][..], &["A", "B"][..]] {
+        let names = ["Group", "zero", "gone", "missing"];
+        let old = golden(&data, "day", orgs, Some(&names), &[], &q);
+        let scope = scope(&store, rev, "day", orgs, Some(&names));
+        for mode in ["usual", "regularity"] {
+            let page = store
+                .advanced_patterns(rev, &scope, &q, None, mode, 4, None)
+                .unwrap();
+            assert_eq!(normalized(json!(page.used)), old[mode]["used"]);
+            let mut actual = page.rows;
+            let mut expected = old[mode]["rows"].as_array().unwrap().clone();
+            for rows in [&mut actual, &mut expected] {
+                rows.sort_by_key(|v| v["key"].to_string());
+            }
+            assert_eq!(normalized(json!(actual)), normalized(json!(expected)));
+        }
+    }
+}
+
+#[test]
+fn structure_and_contributions_match_standalone_calculations() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    data["advanced"] = json!(true);
+    let rev = prepare(&store, &data);
+    let q = ChangeQuery {
+        method: "range".into(),
+        from: "2024-02-29".into(),
+        to: "2024-02-29".into(),
+        percent: 30.,
+        min_count: 0.,
+        min_amount: 0.,
+    };
+    let before = RangeQuery {
+        from: "2024-02-28".into(),
+        to: "2024-02-28".into(),
+    };
+    let s = scope(&store, rev, "day", &["A", "B"], None);
+    let old = golden(
+        &data,
+        "day",
+        &["A", "B"],
+        None,
+        &[(&before.from, &before.to), (&q.from, &q.to)],
+        &q,
+    );
+    let structure = store
+        .advanced_composition(rev, &s, &q, None, &before, "structure", "amount", None)
+        .unwrap();
+    let mut rows = structure["rows"].as_array().unwrap().clone();
+    let mut expected = old["structure"]["rows"].as_array().unwrap().clone();
+    for list in [&mut rows, &mut expected] {
+        list.sort_by_key(|row| row["key"].to_string());
+    }
+    for (row, want) in rows.iter_mut().zip(expected.iter_mut()) {
+        for field in [
+            "base",
+            "current",
+            "baseShare",
+            "share",
+            "cumulative",
+            "shareChange",
+        ] {
+            let a = row[field].as_f64().unwrap();
+            let b = want[field].as_f64().unwrap();
+            assert!((a - b).abs() < 1e-10, "{field}: {a} vs {b}");
+            row.as_object_mut().unwrap().remove(field);
+            want.as_object_mut().unwrap().remove(field);
+        }
+    }
+    assert_eq!(rows, expected);
+    let result = store
+        .advanced_composition(rev, &s, &q, None, &before, "contributions", "amount", None)
+        .unwrap();
+    assert_eq!(
+        normalized(result["check"].clone()),
+        old["contributions"]["amount"]
+    );
+    for row in result["rows"].as_array().unwrap() {
+        let original = old["contributions"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["key"] == row["key"])
+            .unwrap();
+        assert_eq!(
+            normalized(row["delta"].clone()),
+            original["amount"]["delta"]
+        );
+    }
+}
+
+#[test]
+fn complete_daily_months_match_independent_classic_month_reports() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    data["advanced"] = json!(true);
+    let reports = data["reports"].as_array_mut().unwrap();
+    reports.clear();
+    for (month, days, volume) in [(1, 31, 1), (2, 29, 3), (3, 31, 0)] {
+        for day in 1..=days {
+            let start = format!("2024-{month:02}-{day:02}");
+            reports.push(json!({"id":start,"type":"day","start":start,"end":start,"organizations":["A"],"rows":[{"organization":"A","work":"one","count":volume,"amount":10}]}));
+        }
+        reports.push(json!({"id":format!("m{month}"),"type":"month","start":format!("2024-{month:02}-01"),"end":format!("2024-{month:02}-{days:02}"),"organizations":["A"],"rows":[{"organization":"A","work":"one","count":volume*days,"amount":10*days}]}));
+    }
+    let rev = prepare(&store, &data);
+    let scope = scope(&store, rev, "day", &["A"], None);
+    let mut q = ChangeQuery {
+        method: "range".into(),
+        from: "2024-01-01".into(),
+        to: "2024-03-01".into(),
+        percent: 30.,
+        min_count: 0.,
+        min_amount: 0.,
+    };
+    let expected = golden(&data, "month", &["A"], None, &[], &q);
+    q.to = "2024-03-31".into();
+    for mode in ["usual", "regularity"] {
+        let page = store
+            .advanced_patterns(rev, &scope, &q, Some("month"), mode, 4, None)
+            .unwrap();
+        assert_eq!(normalized(json!(page.rows)), expected[mode]["rows"]);
+    }
+    let page = store
+        .advanced_changes_page(rev, &scope, &q, Some("month"), None)
+        .unwrap();
+    assert_eq!(normalized(json!(page.rows)), expected["changes"]);
+    let file = dir.path().join("changes.csv");
+    store
+        .advanced_changes_csv(rev, &scope, &q, Some("month"), &file)
+        .unwrap();
+    assert_eq!(
+        fs::read_to_string(file).unwrap(),
+        expected["changesCsv"].as_str().unwrap()
+    );
+    q.from = "2024-01-01".into();
+    q.to = "2024-12-31".into();
+    let year = store
+        .advanced_patterns(rev, &scope, &q, Some("year"), "regularity", 8, None)
+        .unwrap();
+    assert_eq!((year.used, year.expected), (0, 1));
+    assert_eq!(year.rows[0]["frequency"], Value::Null);
+}
+
+#[test]
+fn advanced_keyset_pages_and_csv_cover_every_selected_descriptor() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    for (i, r) in data["reports"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .enumerate()
+    {
+        r["rows"]=json!((0..63).map(|k|json!({"organization":"A","work":format!("work-{k:02}"),"count":1,"amount":(i+1)*k})).collect::<Vec<_>>());
+    }
+    let rev = prepare(&store, &data);
+    let s = scope(&store, rev, "day", &["A"], None);
+    let q = ChangeQuery {
+        method: "previous".into(),
+        from: "2024-02-29".into(),
+        to: "2024-02-29".into(),
+        percent: 30.,
+        min_count: 0.,
+        min_amount: 0.,
+    };
+    let first = store
+        .advanced_changes_page(rev, &s, &q, None, None)
+        .unwrap();
+    let next = store
+        .advanced_changes_page(rev, &s, &q, None, first.next.as_ref())
+        .unwrap();
+    assert_eq!((first.rows.len(), next.rows.len()), (50, 13));
+    assert!(next.next.is_none());
+    assert!(first.rows.last().unwrap().key < next.rows[0].key);
+    let file = dir.path().join("all.csv");
+    store
+        .advanced_changes_csv(rev, &s, &q, None, &file)
+        .unwrap();
+    assert_eq!(fs::read_to_string(file).unwrap().lines().count(), 64);
+    let p = store
+        .advanced_patterns(rev, &s, &q, None, "usual", 8, None)
+        .unwrap();
+    let n = store
+        .advanced_patterns(rev, &s, &q, None, "usual", 8, p.next.as_deref())
+        .unwrap();
+    assert_eq!((p.rows.len(), n.rows.len()), (50, 14));
+    assert!(n.next.is_none());
+    let before = RangeQuery {
+        from: "2024-02-28".into(),
+        to: "2024-02-28".into(),
+    };
+    let first = store
+        .advanced_composition(rev, &s, &q, None, &before, "contributions", "amount", None)
+        .unwrap();
+    let cursor: ContributionCursor = serde_json::from_value(first["next"].clone()).unwrap();
+    let last = store
+        .advanced_composition(
+            rev,
+            &s,
+            &q,
+            None,
+            &before,
+            "contributions",
+            "amount",
+            Some(&cursor),
+        )
+        .unwrap();
+    assert_eq!(first["rows"].as_array().unwrap().len(), 50);
+    assert_eq!(last["rows"].as_array().unwrap().len(), 12);
+    assert!(last["next"].is_null());
 }

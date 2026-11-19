@@ -17,10 +17,16 @@ result.changesCsv=analyticsCsv([changeHeader,...result.changes.map(x=>[x.key,x.n
 if(ranges.length>=2){
  const b=aggregateReportRange(index,{...ranges[0],organizations:scope.organizations,names:scope.names?new Set(scope.names):null});
  const a=aggregateReportRange(index,{...ranges[1],organizations:scope.organizations,names:scope.names?new Set(scope.names):null});
+ if(input.advanced){result.structure=analyzeStructure(b,a,"amount",12);result.contributions=analyzeContributions(b,a);}
  result.comparison=(scope.names?comparisonEntries([b,a],new Set(scope.names)).filter(Boolean):[...new Set([...b.by.keys(),...a.by.keys()])].map(key=>b.by.get(key)||a.by.get(key))).sort((a,b)=>a.key<b.key?-1:1).map(desc=>{
  const key=desc.key,bc=rangeMetric(b,null,key,'count'),ba=rangeMetric(b,null,key,'amount'),ac=rangeMetric(a,null,key,'count'),aa=rangeMetric(a,null,key,'amount'),bv=rangeMetric(b,null,key,'average'),av=rangeMetric(a,null,key,'average');
  return {key,name:desc.name,kind:desc.kind,status:!b.complete||!a.complete?null:bc===0&&ba===0&&(ac!==0||aa!==0)?'new':(bc!==0||ba!==0)&&ac===0&&aa===0?'gone':'existing',count:bc===null||ac===null?null:changeMeasure(bc,ac,changes.minCount,changes.percent),amount:ba===null||aa===null?null:changeMeasure(ba,aa,changes.minAmount,changes.percent),average:bv===null||av===null?{base:bv,current:av,delta:null,percent:null}:changeMeasure(bv,av,0,changes.percent)};
  });
+}
+if(input.advanced){
+ const opt={organizations:scope.organizations,names:scope.names?new Set(scope.names):null,groups:settings.groups};
+ result.usual=analyzeUsual(index,{...opt,period:changes.to,window:4,percent:changes.percent});
+ result.regularity=analyzeRegularity(index,{...opt,from:changes.from,to:changes.to,longGap:4});
 }
 return result;
 })()`,context);
