@@ -8,6 +8,7 @@
  if(!links.length||!panels.length||!status)return;
  const labels=new Map(links.map(link=>[link.getAttribute('data-nav-link'),link.textContent.trim()]));
  const keys=new Set(labels.keys());
+ let current='analysis';
  function selectedFromHash(){
   const hash=typeof window.location.hash==='string'?window.location.hash:'';
   const name=hash.startsWith('#')?hash.slice(1):'';
@@ -15,6 +16,7 @@
  }
  function select(name){
   const target=keys.has(name)?name:'analysis';
+  current=target;
   for(const panel of panels)panel.hidden=panel.getAttribute('data-nav-panel')!==target;
   for(const link of links){
    if(link.getAttribute('data-nav-link')===target)link.setAttribute('aria-current','page');
@@ -26,5 +28,5 @@
  function sync(){select(selectedFromHash());}
  window.addEventListener('hashchange',sync);
  sync();
- window.nativeWorkspaceNavigation=Object.freeze({select,active:selectedFromHash});
+ window.nativeWorkspaceNavigation=Object.freeze({select,active:()=>current});
 })();
