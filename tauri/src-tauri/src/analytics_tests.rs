@@ -1036,3 +1036,85 @@ fn work_timeline_distinguishes_confirmed_absence_from_missing_reports() {
     assert_eq!(annual.points.len(),12);
     assert!(annual.points.iter().all(|p| p.missing>0&&p.total.amount.is_none()));
 }
+
+
+#[test]
+fn comparison_dashboard_complete_partial_and_signed_changes() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let selected=scope(&store,rev,"day",&["A","B"],None);
+    let mut q=ComparisonQuery {
+        before:query("2024-02-28","2024-02-28"),
+        after:query("2024-02-29","2024-02-29"),
+        percent:0.,min_count:0.,min_amount:0.,
+    };
+    let dash=store.analysis_comparison_dashboard(rev,&selected,&q).unwrap();
+    assert!(dash.summary.before.complete);
+    assert!(dash.summary.after.complete);
+    assert_eq!(dash.summary.values,5);
+    assert_eq!(dash.summary.amount.as_ref().unwrap().delta,101.);
+    assert_eq!(dash.summary.count.as_ref().unwrap().delta,4.);
+    assert_eq!(dash.summary.amount.as_ref().unwrap().percent,Some(101./69.*100.));
+    assert_eq!(dash.divisions.len(),2);
+    assert_eq!(dash.divisions[0].organization,"A");
+    assert_eq!(dash.divisions[0].amount.as_ref().unwrap().delta,101.);
+    assert_eq!(dash.divisions[1].organization,"B");
+    assert_eq!(dash.divisions[1].amount.as_ref().unwrap().delta,0.);
+    assert_eq!(dash.top_amount[0].name,"Group");
+    assert_eq!(dash.top_amount[0].amount.as_ref().unwrap().delta,60.);
+    assert_eq!(dash.top_amount[1].name,"new");
+    assert_eq!(dash.top_amount[1].amount.as_ref().unwrap().delta,50.);
+    assert!(dash.top_amount.iter().any(|r|r.name=="zero"
+        && r.amount.as_ref().unwrap().delta<0.));
+    assert!(dash.top_count.len()<=12);
+    q.after=query("2024-03-01","2024-03-01");
+    let partial=store.analysis_comparison_dashboard(rev,&selected,&q).unwrap();
+    assert!(partial.summary.before.complete);
+    assert!(!partial.summary.after.complete);
+    assert!(partial.summary.amount.is_none());
+    assert!(partial.summary.count.is_none());
+    assert!(partial.top_amount.is_empty());
+    assert!(partial.top_count.is_empty());
+    let a=&partial.divisions[0];
+    assert_eq!(a.organization,"A");
+    assert_eq!(a.amount.as_ref().unwrap().delta,-59.);
+    let b=&partial.divisions[1];
+    assert_eq!(b.organization,"B");
+    assert_eq!(b.before.amount,Some(0.));
+    assert_eq!(b.after.amount,None);
+    assert!(b.amount.is_none());
+    assert!(b.count.is_none());
+    q.after=query("2024-02-30","2024-02-30");
+    assert!(store.analysis_comparison_dashboard(rev,&selected,&q).is_err());
+}
+
+#[test]
+fn comparison_dashboard_ranking_has_fixed_size_and_zero_base_no_percent() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let mut data=fixture();
+    for i in 0..30 {
+        let name=format!("many-{i:02}");
+        data["reports"][1]["rows"].as_array_mut().unwrap().push(
+            json!({"organization":"A","work":name,"count":1.,"amount":(i+1) as f64}),
+        );
+    }
+    let rev=prepare(&store,&data);
+    let selected=scope(&store,rev,"day",&["A"],None);
+    let q=ComparisonQuery {
+        before:query("2024-02-28","2024-02-28"),
+        after:query("2024-02-29","2024-02-29"),
+        percent:0.,min_count:0.,min_amount:0.,
+    };
+    let result=store.analysis_comparison_dashboard(rev,&selected,&q).unwrap();
+    assert_eq!(result.top_amount.len(),12);
+    assert_eq!(result.top_count.len(),12);
+    assert_eq!(result.top_amount[0].name,"Group");
+    assert!(result.top_amount.iter().any(|r|r.name=="many-29"
+        && r.amount.as_ref().unwrap().percent.is_none()));
+    // Keys from the old and new range are reconciled by canonical group/work key.
+    let new=result.top_amount.iter().find(|r|r.name=="many-29").unwrap();
+    assert_eq!(new.amount.as_ref().unwrap().base,0.);
+    assert_eq!(new.amount.as_ref().unwrap().current,30.);
+}
