@@ -34,7 +34,7 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(options={}){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionRows','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
@@ -139,6 +139,28 @@ test('D2 analysis indexes in bounded batches, cleans ranges, and never fabricate
  assert.equal(metrics[4].children[0].textContent,'—');
  e.analysisType.value='week';e.analysisType.events.change();
  assert.equal(e.analysisRun.disabled,true);
+});
+
+test('SQL filter context shows scope, preserves selection and clears stale results',async()=>{
+ const {e,calls,window}=mount();
+ await window.nativeWorkspaceReady;
+ assert.match(e.analysisFilterScope.textContent,/все из настроек \(2\)/);
+ assert.match(e.analysisFilterScope.textContent,/детализация и CSV/);
+ e.analysisFrom.value='2024-01-01';e.analysisTo.value='2024-12-31';
+ e.analysisOrganization.value='СМУ16';e.analysisOrganization.events.change();
+ assert.match(e.analysisFilterScope.textContent,/СМУ16 \(1 из 2\)/);
+ await e.analysisPrepare.events.click();
+ await e.analysisRun.events.click();
+ assert.equal(calls.filter(x=>x.kind==='range').at(-1).organizations.length,1);
+ assert.match(e.analysisResultScope.textContent,/СМУ16 \(1 из 2\)/);
+ assert.match(e.analysisResultScope.textContent,/не только показанные 50 строк/);
+ await window.nativeWorkspaceRefresh();
+ assert.equal(e.analysisOrganization.value,'СМУ16','refresh must preserve a valid selected organization');
+ assert.match(e.analysisFilterScope.textContent,/СМУ16/);
+ assert.match(e.analysisResultScope.textContent,/Повторите расчёт/);
+ e.analysisType.value='week';e.analysisType.events.change();
+ assert.equal(e.analysisOrganization.value,'СМУ16','period type change keeps organization selection');
+ assert.match(e.analysisResultScope.textContent,/Тип периода изменён/);
 });
 
 test('D2 per-division comparison keeps partial periods unknown and plots complete magnitude',async()=>{
