@@ -263,29 +263,44 @@ fn validate_data(data: &Value) -> Result<(), String> {
     Ok(())
 }
 
+// Increment when persisted schema definitions change. Connection-local settings
+// belong outside initialization: ready WAL readers must never acquire a writer.
+const STORAGE_SCHEMA_VERSION: i64 = 1;
 fn new_connection(path: &Path) -> Result<Connection, String> {
-    let conn = Connection::open(path).map_err(err)?;
-    conn.execute_batch(
-        "PRAGMA journal_mode=WAL;
-         PRAGMA synchronous=FULL;
-         CREATE TABLE IF NOT EXISTS reports (
-           id TEXT PRIMARY KEY,
-           report_type TEXT NOT NULL,
-           period_start TEXT NOT NULL,
-           period_end TEXT NOT NULL,
-           source_name TEXT,
-           json TEXT NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS kv (
-           name TEXT PRIMARY KEY,
-           json TEXT NOT NULL
-         );",
-    ).map_err(err)?;
-    read_model::initialize(&conn)?;
-    metric_reports::initialize(&conn)?;
-    analytics::initialize(&conn)?;
-    management::initialize(&conn)?;
-    import_apply::initialize(&conn)?;
+    let mut conn = Connection::open(path).map_err(err)?;
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(err)?;
+    if version > STORAGE_SCHEMA_VERSION {
+        return Err("Версия схемы SQLite новее поддерживаемой программой.".into());
+    }
+    let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).map_err(err)?;
+    if !mode.eq_ignore_ascii_case("wal") {
+        let mode: String = conn.query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0)).map_err(err)?;
+        if !mode.eq_ignore_ascii_case("wal") {
+            return Err("Не удалось включить WAL для SQLite.".into());
+        }
+    }
+    conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA temp_store=FILE; PRAGMA cache_size=-2048; PRAGMA temp.cache_size=-2048;").map_err(err)?;
+    if version == STORAGE_SCHEMA_VERSION { return Ok(conn); }
+    // A second opener may have initialized while we waited for the writer.
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(err)?;
+    let version: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(err)?;
+    if version > STORAGE_SCHEMA_VERSION {
+        return Err("Версия схемы SQLite новее поддерживаемой программой.".into());
+    }
+    if version < STORAGE_SCHEMA_VERSION {
+        tx.execute_batch("CREATE TABLE IF NOT EXISTS reports (
+           id TEXT PRIMARY KEY, report_type TEXT NOT NULL,
+           period_start TEXT NOT NULL, period_end TEXT NOT NULL,
+           source_name TEXT, json TEXT NOT NULL);
+         CREATE TABLE IF NOT EXISTS kv (name TEXT PRIMARY KEY, json TEXT NOT NULL);").map_err(err)?;
+        read_model::initialize(&tx)?;
+        metric_reports::initialize(&tx)?;
+        analytics::initialize(&tx)?;
+        management::initialize(&tx)?;
+        import_apply::initialize(&tx)?;
+        tx.pragma_update(None, "user_version", STORAGE_SCHEMA_VERSION).map_err(err)?;
+    }
+    tx.commit().map_err(err)?;
     Ok(conn)
 }
 
