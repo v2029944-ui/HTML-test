@@ -818,6 +818,12 @@ def run():
                 assert page.evaluate('window.nativeWorkspaceRefresh()')
                 page.locator('[data-nav-link="reports"]').click()
                 source_anchor=next(row for row in updated['reports'] if 'sourceIssues' in row)
+                # The earlier empty-week scenario intentionally left this filter
+                # on week. The replacement above contains daily reports only.
+                page.locator('#nativeReportType').select_option('day')
+                wait_for_app_state(page,
+                    'document.querySelectorAll("#reportRows tr").length > 1 && document.querySelector("#reportRows tr td:nth-child(3)")?.textContent === "day"',
+                    'Daily report rows after replacing the wide source')
                 row=page.locator('#reportRows tr').filter(has_not_text=source_anchor['id']).first
                 quality=row.get_by_role('button',name='Замечания к отчёту',exact=False)
                 quality.click()
