@@ -348,7 +348,7 @@ function updateFilterContext(){
   :orgNames.includes(choice)?choice+' (1 из '+total+')':'нет доступных';
  $('analysisFilterScope').textContent='Подразделения: '+orgText+
   '. Работы и группы: '+(selectedName()??'все')+
-  '. Итоги, графики, подразделения, рейтинг, сравнение, детализация, CSV и календарь используют этот отбор.';
+  '. Итоги, графики, подразделения, рейтинг, сравнение, детализация и CSV используют этот отбор. Календарь — тоже.';
 }
 function updateResultContext(type,from,to,scope){
  const selected=$('analysisOrganization').value;
