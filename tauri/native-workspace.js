@@ -373,10 +373,10 @@ function showDivisionComparison(rows,rangeTotal,rangeComplete){
 
 function clearWork(message='Расшифровка появится после расчёта.'){
  invalidateComparison('Текущая выборка изменена. Рассчитайте диапазон повторно.');
- updateComparisonContext();
  invalidateWorkTrend('Выборка изменена. Выберите работу или группу заново.');
  status('exportStatus','Экспорт доступен после расчёта. CSV сохраняется в новый файл.');
  workScope=null;workAfter=null;workBack=[];workNext=null;
+ updateComparisonContext();
  $('workRows').replaceChildren();
  status('workStatus',message);
  controlState();
