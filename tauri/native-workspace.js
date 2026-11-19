@@ -213,6 +213,7 @@ try{
  for(const name of orgNames){const opt=make('option',name);opt.value=name;orgSelect.append(opt);}
  orgSelect.value=orgNames.includes(previousOrganization)?previousOrganization:'*';
  updateFilterContext();
+ window.nativeDailyCalendar?.setContext(revision,analysisOrganizations());
  $('analysisResultScope').textContent='Данные обновлены. Подготовьте индексы и повторите расчёт для выбранных фильтров.';
  for(const [id,value] of [['metricReports',snapshot.reports],['metricIndexed',snapshot.indexed_reports],['metricGroups',snapshot.groups],['metricCatalog',snapshot.catalog]])$(id).textContent=value;
  status('workspaceStatus','Ревизия SQLite: '+revision+' · подразделения: '+snapshot.org_names.join(', ')+'.');
@@ -220,6 +221,7 @@ try{
 }catch(err){
  revision=null;$('reportRows').replaceChildren();$('groupRows').replaceChildren();
  reportNext=null;groupNext=null;reportBack=[];groupBack=[];
+ window.nativeDailyCalendar?.setContext(null,[]);
  status('workspaceStatus','Невозможно открыть SQLite: '+userError(err),true);
  $('analysisResultScope').textContent='Результаты недоступны до восстановления соединения с базой.';
  return false;
@@ -684,6 +686,7 @@ $('workBack').addEventListener('click',async()=>{
 });
 for(const id of ['analysisFrom','analysisTo','analysisOrganization']){
  $(id).addEventListener('change',()=>{
+  if(id==='analysisOrganization')window.nativeDailyCalendar?.setContext(revision,analysisOrganizations());
   clearAnalysisCoverage();invalidateRanking('Фильтры изменены. Повторите расчёт рейтинга.');invalidateOrganizationTrends('Фильтры изменены. Повторите расчёт динамики подразделений.');invalidateTimeline('Фильтры изменены. Повторите расчёт графика.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork('Параметры изменены. Повторите расчёт.');
   status('divisionShareStatus','Доли сброшены: фильтры изменены.');
   status('divisionStatus','Параметры изменены. Нажмите «Рассчитать» ещё раз.');
