@@ -438,6 +438,16 @@ def run():
                 assert page.locator('#rankingBars li').count()==0
                 assert page.locator('#rankingMetric').is_enabled()
                 report['checks'].append('SQL ranking excludes incomplete weekly ranges')
+                wait_for_app_state(page,
+                    'document.querySelector("#organizationTrendsStatus")?.textContent.includes("Нет подтверждённых точек")',
+                    'Native division trends hide missing weekly values')
+                assert page.locator('#organizationTrendsRows tr').count()>0
+                assert page.locator('#organizationTrendsRows tr').count()<=992
+                assert page.locator('#organizationTrendsChart svg').count()==0
+                assert all(row.locator('td').nth(5).inner_text()=='—'
+                    for row in page.locator('#organizationTrendsRows tr').all())
+                report['checks'].append('Division trend lines are missing when selected weeks are absent')
+
 
                 report['checks'].append('D2 incomplete SQL range keeps missing totals null')
                 report['checks'].append('Native division comparison preserves unknown incomplete amounts')
