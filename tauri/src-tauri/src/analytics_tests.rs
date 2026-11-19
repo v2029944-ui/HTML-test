@@ -1854,3 +1854,38 @@ fn missing_changes_export_captures_scope_and_source_even_without_data_rows() {
             .is_err());
     }
 }
+
+#[test]
+fn initialized_wal_reads_do_not_require_the_writer_lock() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let writer=rusqlite::Connection::open(dir.path().join("reports.sqlite3")).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let read=store.revision();
+    writer.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(read.unwrap(),rev,"opening a ready WAL database must not perform schema writes");
+}
+
+#[test]
+fn schema_initialization_is_atomic_and_reopens_restore_delete_mode() {
+    let dir=tempdir().unwrap();let path=dir.path().join("reports.sqlite3");
+    let c=rusqlite::Connection::open(&path).unwrap();
+    // A deliberately incompatible unversioned table must not leave a stamped,
+    // partially initialized schema. Repairing that fixture must allow retry.
+    c.execute_batch("CREATE TABLE report_rows(broken INTEGER)").unwrap();
+    assert!(super::new_connection(&path).is_err());
+    assert_eq!(c.query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    assert_eq!(c.query_row("SELECT count(*) FROM sqlite_schema WHERE name='reports'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    c.execute_batch("DROP TABLE report_rows").unwrap();drop(c);
+    let c=super::new_connection(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0)).unwrap(),super::STORAGE_SCHEMA_VERSION);
+    c.execute_batch("PRAGMA journal_mode=DELETE").unwrap();drop(c);
+    let c=super::new_connection(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA journal_mode",[],|r|r.get::<_,String>(0)).unwrap(),"wal");
+    c.pragma_update(None,"user_version",super::STORAGE_SCHEMA_VERSION+1).unwrap();
+    c.execute_batch("PRAGMA journal_mode=DELETE").unwrap();drop(c);
+    assert!(super::new_connection(&path).unwrap_err().contains("новее"));
+    let c=rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA journal_mode",[],|r|r.get::<_,String>(0)).unwrap(),"delete");
+}

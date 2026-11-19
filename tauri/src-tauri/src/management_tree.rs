@@ -3,8 +3,7 @@ use super::*;
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use std::io::{BufReader, Read, Write};
 pub(super) fn schema(c: &Connection) -> Result<(), String> {
-    c.execute_batch("PRAGMA temp_store=FILE;PRAGMA cache_size=-2048;PRAGMA temp.cache_size=-2048;
-CREATE TABLE IF NOT EXISTS management_nodes(handle INTEGER PRIMARY KEY,parent INTEGER,ordinal INTEGER NOT NULL,field TEXT,kind TEXT NOT NULL,value TEXT);
+    c.execute_batch("CREATE TABLE IF NOT EXISTS management_nodes(handle INTEGER PRIMARY KEY,parent INTEGER,ordinal INTEGER NOT NULL,field TEXT,kind TEXT NOT NULL,value TEXT);
 CREATE INDEX IF NOT EXISTS management_children ON management_nodes(parent,ordinal,handle);
 CREATE TABLE IF NOT EXISTS management_settings(root INTEGER,groups_node INTEGER,catalog_node INTEGER,orgs_node INTEGER);
 CREATE TABLE IF NOT EXISTS management_groups(handle INTEGER PRIMARY KEY,ordinal INTEGER,id TEXT,name TEXT,works_node INTEGER,members INTEGER,unique_members INTEGER);
