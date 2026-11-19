@@ -4,6 +4,7 @@
 const api=window.desktopAPI,$=id=>document.getElementById(id);
 const userError=window.analizUserError||(()=>'Операция не выполнена. Перезапустите программу и повторите действие.');
 const periodPicker=window.nativePeriodSelection;
+const selectedName=()=>window.nativeNameFilter?.selectedName()??null;
 const make=(tag,text)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);return el;};
 function status(id,text,error=false){$(id).textContent=String(text);$(id).className='status '+(error?'error':'muted');}
 const reportSize=100,groupSize=50;
@@ -32,7 +33,7 @@ function invalidateComparison(message='Укажите базовые даты и
 function updateComparisonContext(){
  const scope=workScope;
  $('comparisonCurrentContext').textContent=scope
-  ?'Текущий: '+scope.from+' — '+scope.to+' · '+scope.type+' · подразделения: '+scope.organizations.join(', ')
+  ?'Текущий: '+scope.from+' — '+scope.to+' · '+scope.type+' · подразделения: '+scope.organizations.join(', ')+(scope.selectedName?' · работа/группа: '+scope.selectedName:'')
   :'Текущий диапазон появится после расчёта аналитики.';
 }
 let rankingRequest=0;
@@ -67,7 +68,7 @@ function displayAnalysisCoverage(result,scope){
   (Number(result.overlap_issues)||0)+(Number(result.import_warning_reports)||0);
  const flagged=missing||invalid>0;
  coverageKey=flagged?'sql-coverage-ack-v1:'+JSON.stringify([
-  revision,scope.type,scope.from,scope.to,scope.organizations.slice().sort(),
+  revision,scope.type,scope.from,scope.to,scope.organizations.slice().sort(),scope.selectedName??null,
   result.periods,result.missing,result.invalid_reports,result.duplicate_issues,
   result.overlap_issues,result.import_warning_reports,result.available_reports
  ]):null;
@@ -147,6 +148,7 @@ $('analysisType').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
 $('analysisOrganization').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
 $('analysisFrom').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
 $('analysisTo').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
+window.nativeNameFilter?.setLocked(analysisBusy||refreshBusy||workBusy||exportBusy||comparisonBusy);
 }
 async function reports(cursor,reset=false){
 if(reportsBusy||revision===null)return false;
@@ -200,6 +202,7 @@ try{
  const snapshot=await api.nativeSettingsBootstrap();
  if(!Number.isSafeInteger(snapshot.revision)||snapshot.revision<0)throw Error('Ревизия SQLite слишком велика для JavaScript');
  revision=snapshot.revision;
+ window.nativeNameFilter?.setRevision(revision);
  analysisReady=false;
  invalidateTimeline('Данные обновлены. Повторите расчёт графика.');
  invalidateRanking('Данные обновлены. Повторите расчёт рейтинга.');
@@ -213,15 +216,15 @@ try{
  for(const name of orgNames){const opt=make('option',name);opt.value=name;orgSelect.append(opt);}
  orgSelect.value=orgNames.includes(previousOrganization)?previousOrganization:'*';
  updateFilterContext();
- window.nativeDailyCalendar?.setContext(revision,analysisOrganizations());
+ window.nativeDailyCalendar?.setContext(revision,analysisOrganizations(),selectedName());
  $('analysisResultScope').textContent='Данные обновлены. Подготовьте индексы и повторите расчёт для выбранных фильтров.';
  for(const [id,value] of [['metricReports',snapshot.reports],['metricIndexed',snapshot.indexed_reports],['metricGroups',snapshot.groups],['metricCatalog',snapshot.catalog]])$(id).textContent=value;
  status('workspaceStatus','Ревизия SQLite: '+revision+' · подразделения: '+snapshot.org_names.join(', ')+'.');
  reportAfter=null;reportNext=null;reportBack=[];groupAfter=null;groupNext=null;groupBack=[];
 }catch(err){
- revision=null;$('reportRows').replaceChildren();$('groupRows').replaceChildren();
+ revision=null;window.nativeNameFilter?.setRevision(null);$('reportRows').replaceChildren();$('groupRows').replaceChildren();
  reportNext=null;groupNext=null;reportBack=[];groupBack=[];
- window.nativeDailyCalendar?.setContext(null,[]);
+ window.nativeDailyCalendar?.setContext(null,[],null);
  status('workspaceStatus','Невозможно открыть SQLite: '+userError(err),true);
  $('analysisResultScope').textContent='Результаты недоступны до восстановления соединения с базой.';
  return false;
@@ -344,7 +347,8 @@ function updateFilterContext(){
   ?'все из настроек ('+total+')'
   :orgNames.includes(choice)?choice+' (1 из '+total+')':'нет доступных';
  $('analysisFilterScope').textContent='Подразделения: '+orgText+
-  '. Итоги, графики, сравнение, детализация и CSV используют этот отбор. Работы и группы: все внутри выбранных подразделений (отдельного фильтра пока нет).';
+  '. Работы и группы: '+(selectedName()??'все')+
+  '. Итоги, графики, подразделения, рейтинг, сравнение, детализация, CSV и календарь используют этот отбор.';
 }
 function updateResultContext(type,from,to,scope){
  const selected=$('analysisOrganization').value;
@@ -353,7 +357,8 @@ function updateResultContext(type,from,to,scope){
   :selected+' (1 из '+orgNames.length+')';
  $('analysisResultScope').textContent='Выборка: '+type+', '+from+' — '+to+
    '; подразделения: '+label+
-   '. Детализация: все работы и группы в этой выборке. CSV: весь диапазон, а не только показанные 50 строк.';
+   '. Работы и группы: '+(selectedName()??'все')+
+   '. CSV охватывает весь выбранный набор, а не только показанные 50 строк.';
 }
 async function prepareAnalysis(){
  if(analysisBusy||refreshBusy||revision===null)return;
@@ -472,7 +477,7 @@ async function selectWorkTrend(item){
  try{
    const data=await api.nativeWorkTimeline(
      revision,scope.type,scope.from,scope.to,scope.organizations,
-     scope.organization,item.key
+     scope.organization,item.key,scope.selectedName
    );
    if(ticket!==workTrendRequest||workTrendSelection!==chosen||workScope!==scope)return;
    if(!data||data.key!==item.key||data.kind!==item.kind)
@@ -496,7 +501,7 @@ async function workPage(cursor,reset=false){
   const scope=workScope;
   const rows=await api.nativeAnalysisRangePage(
     revision,scope.type,scope.from,scope.to,
-    scope.organizations,scope.organization,cursor,workSize
+    scope.organizations,scope.organization,cursor,workSize,scope.selectedName
   );
   if(!Array.isArray(rows)||rows.length>workSize)throw Error('Некорректная страница групп и работ');
   if(reset)workBack=[];
@@ -539,27 +544,27 @@ async function calculateAnalysis(){
  }
  analysisBusy=true;invalidateOrganizationTrends('Считываем ряды подразделений из SQLite…');const expectedTrends=organizationTrendsRequest;invalidateRanking('Подготавливаем рейтинг SQLite…');invalidateTimeline('Строим график из агрегатов SQLite…');const expectedTimeline=timelineRequest;clearWork();controlState();
  try{
-   const result=await api.nativeAnalysisRange(revision,kind,from,to,organizations);
-   const divisions=await api.nativeAnalysisOrganizations(revision,kind,from,to,organizations);
+   const result=await api.nativeAnalysisRange(revision,kind,from,to,organizations,selectedName());
+   const divisions=await api.nativeAnalysisOrganizations(revision,kind,from,to,organizations,selectedName());
    displayAnalysisCoverage(result,{type:kind,from,to,organizations});
    showDivisionComparison(divisions,result.total?.amount,result.complete);
    // A failed chart must not discard already verified KPIs or division results.
    try{
-     const timeline=await api.nativeAnalysisTimeline(revision,kind,from,to,organizations);
+     const timeline=await api.nativeAnalysisTimeline(revision,kind,from,to,organizations,selectedName());
      if(expectedTimeline===timelineRequest)window.nativeTimeline?.show(timeline);
    }catch(timelineError){
      if(expectedTimeline===timelineRequest)
        window.nativeTimeline?.error('График не построен: '+userError(timelineError));
    }
    try{
-     const trends=await api.nativeOrganizationTrends(revision,kind,from,to,organizations);
+     const trends=await api.nativeOrganizationTrends(revision,kind,from,to,organizations,selectedName());
      if(expectedTrends===organizationTrendsRequest)
        window.nativeOrganizationTrends?.show(trends);
    }catch(trendsError){
      if(expectedTrends===organizationTrendsRequest)
        window.nativeOrganizationTrends?.error('График подразделений не построен: '+userError(trendsError));
    }
-   workScope={type:kind,from,to,organizations,organization:$('analysisOrganization').value==='*'?null:$('analysisOrganization').value};
+   workScope={type:kind,from,to,organizations,selectedName:selectedName(),organization:$('analysisOrganization').value==='*'?null:$('analysisOrganization').value};
    updateComparisonContext();
    await reloadRanking();
    updateResultContext(kind,from,to,organizations);
@@ -589,7 +594,7 @@ async function reloadRanking(){
  try{
    const ranking=await api.nativeAnalysisRanking(
      revision,scope.type,scope.from,scope.to,scope.organizations,
-     scope.organization,metric,category
+     scope.organization,metric,category,scope.selectedName
    );
    if(ticket===rankingRequest&&workScope===scope)
      window.nativeRanking?.show(ranking);
@@ -613,7 +618,7 @@ async function compareAnalysis(){
  controlState();
  try{
    const result=await api.nativeAnalysisCompare(
-     revision,scope.type,beforeFrom,beforeTo,scope.from,scope.to,scope.organizations
+     revision,scope.type,beforeFrom,beforeTo,scope.from,scope.to,scope.organizations,scope.selectedName
    );
    if(ticket===comparisonRequest&&workScope===scope)
      window.nativeComparison?.show(result);
@@ -639,7 +644,7 @@ async function exportAnalysisCsv(){
   if(typeof destination!=='string')throw Error('Некорректный путь CSV');
   await api.nativeExportRangeCsv(
    revision,scope.type,scope.from,scope.to,
-   scope.organizations,scope.organization,destination
+   scope.organizations,scope.organization,destination,scope.selectedName
   );
   status('exportStatus','CSV сохранён. Исходные отчёты не изменены.');
  }catch(err){
@@ -684,16 +689,18 @@ $('workBack').addEventListener('click',async()=>{
  if(await workPage(previous))workBack.pop();
  controlState();
 });
-for(const id of ['analysisFrom','analysisTo','analysisOrganization']){
- $(id).addEventListener('change',()=>{
-  if(id==='analysisOrganization')window.nativeDailyCalendar?.setContext(revision,analysisOrganizations());
+function analysisFiltersChanged(){
+ window.nativeDailyCalendar?.setContext(revision,analysisOrganizations(),selectedName());
   clearAnalysisCoverage();invalidateRanking('Фильтры изменены. Повторите расчёт рейтинга.');invalidateOrganizationTrends('Фильтры изменены. Повторите расчёт динамики подразделений.');invalidateTimeline('Фильтры изменены. Повторите расчёт графика.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork('Параметры изменены. Повторите расчёт.');
   status('divisionShareStatus','Доли сброшены: фильтры изменены.');
   status('divisionStatus','Параметры изменены. Нажмите «Рассчитать» ещё раз.');
   $('analysisResultScope').textContent='Фильтры изменены. Повторите расчёт, чтобы увидеть актуальную выборку.';
   updateFilterContext();
- });
+ controlState();
 }
+for(const id of ['analysisFrom','analysisTo','analysisOrganization'])
+ $(id).addEventListener('change',analysisFiltersChanged);
+window.nativeWorkspaceFilterChanged=analysisFiltersChanged;
 
 controlState();
 // Called after a verified native SQLite commit; reads only bounded metadata/pages.
