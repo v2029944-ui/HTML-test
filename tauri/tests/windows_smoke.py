@@ -884,6 +884,39 @@ def run():
                     'SQL report count after editing rule')
                 assert page.evaluate("typeof window.appReady === 'undefined'")
                 report['checks'].append('SQL-only Excel rule write with native revision and file validation')
+                # Validate Windows handle/path authorization without committing
+                # any extra reports into the 366-report recovery fixture.
+                auto_probe=tmp/'auto-probe.xlsx'
+                auto_probe.write_bytes(daily_workbook_bytes())
+                auto_request=page.evaluate('''async () => {
+                  const listing=await window.desktopAPI.list();
+                  const file=listing.files.find(f => f.name==='auto-probe.xlsx');
+                  if(!file?.nativeSignature)throw Error('Native file signature is missing');
+                  await window.desktopAPI.nativeSetRuleChecked(file.name,
+                    {type:'day',start:'2025-01-01',sheet:'',format:'legacy'},
+                    listing.revision,listing.folder,file.nativeSignature);
+                  const current=await window.desktopAPI.list();
+                  const source=current.files.find(f => f.name==='auto-probe.xlsx');
+                  const session=await window.desktopAPI.nativeFolderImportSession(true);
+                  return {session,folder:current.folder,revision:current.revision,
+                    name:source.name,signature:source.nativeSignature};
+                }''')
+                try:
+                    auto_review=page.evaluate('request => window.desktopAPI.nativeFolderImportPreview(request)',auto_request)
+                    assert auto_review['reportCount']==6,auto_review
+                    assert auto_review['conflicts']['new_reports']==6,auto_review
+                finally:
+                    page.evaluate('window.desktopAPI.nativeFolderImportSession(false)')
+                try:
+                    page.evaluate('''args => window.desktopAPI.nativeFolderImportApply(args.request,args.token)''',
+                        {'request':auto_request,'token':auto_review['reviewToken']})
+                except Exception as error:
+                    assert 'выключен' in str(error) or 'сеанс' in str(error),str(error)
+                else:
+                    raise RuntimeError('Revoked folder session allowed a native commit')
+                assert page.evaluate('window.desktopAPI.nativeSettingsBootstrap()')['reports']==366
+                report['checks'].append('Checked native folder preview follows Windows handles; revoked session cannot commit')
+
                 # P0.3: schedule recovery from a real Online Backup while the
                 # installed app is running. It must not change the active DB.
                 reviewed=page.evaluate(
