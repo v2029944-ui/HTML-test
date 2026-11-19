@@ -2,19 +2,19 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light">
-<title>Анализ работ — SQL-режим</title>
+<title>Анализ работ — аналитика</title>
 <style>
 :root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#223048;background:#f5f7fa}*{box-sizing:border-box}
 body{margin:0}header{padding:22px max(24px,5vw);background:#fff;border-bottom:1px solid #dbe1ea;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
-main{margin:0 auto;max-width:1250px;padding:28px 22px 48px}h1{font-size:24px;margin:0}h2{font-size:19px;margin:0 0 14px}
-.panel{background:#fff;border:1px solid #dce2e9;border-radius:12px;margin-bottom:18px;padding:22px;box-shadow:0 2px 9px #21334a0a}
+main{margin:0 auto;max-width:1250px;padding:16px 22px 48px}h1{font-size:24px;margin:0}h2{font-size:19px;margin:0 0 14px}
+.panel{background:#fff;border:1px solid #dce2e9;border-radius:12px;margin-bottom:14px;padding:18px 22px;box-shadow:0 2px 9px #21334a0a}
 .intro{color:#55657a;font-size:14px;line-height:1.6}a{color:#1f5588}
 button,select,input{font:inherit;border:1px solid #aab9cb;border-radius:8px;padding:8px 12px;background:#fff;max-width:100%}
 button{cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}
 button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #74a8d5;outline-offset:2px}
 .controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:14px 0}.muted{color:#53647a}.error{color:#a12228}.status{min-height:24px;font-size:14px}
 .overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px}
-.metric{background:#eff4f9;border-radius:9px;padding:14px}.metric strong{display:block;font-size:24px;font-variant-numeric:tabular-nums}.metric span{color:#53647a;font-size:13px}
+.metric{background:#eff4f9;border-radius:9px;padding:10px 12px}.metric strong{display:block;font-size:22px;font-variant-numeric:tabular-nums}.metric span{color:#53647a;font-size:13px}
 .table-scroll{overflow:auto;max-width:100%}table{width:100%;border-collapse:collapse;min-width:650px}
 th,td{text-align:left;border-bottom:1px solid #e4e9ef;padding:10px 9px;vertical-align:middle;font-size:13px;overflow-wrap:anywhere}
 th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
@@ -31,7 +31,31 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .workspace-nav a{padding:10px 14px;border-radius:9px;text-decoration:none;font-weight:600;color:#344c64;white-space:nowrap}
 .workspace-nav a[aria-current="page"]{color:#fff;background:#275d88}
 .workspace-nav a:focus-visible{outline:3px solid #74a8d5;outline-offset:2px}
-.nav-status{margin:0 0 10px;color:#53647a;font-size:13px}
+.nav-status{margin:0 0 6px;color:#53647a;font-size:12px}
+
+.overview-head{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.overview-head h2{margin-bottom:4px}
+.overview-head .intro{margin:0 0 8px;max-width:750px}
+.primary-action{display:inline-flex;align-items:center;padding:10px 16px;border-radius:9px;background:#275d88;color:#fff;text-decoration:none;font-weight:650}
+.primary-action:hover{background:#1e4c70}
+.analytics-toolbar{padding:12px;border-radius:10px;background:#f3f6fa;border:1px solid #dde5ed;margin:8px 0 10px}
+.analytics-toolbar .controls{margin:3px 0}
+.analytics-toolbar label{font-size:13px;font-weight:600}
+.analytics-toolbar input[type=date]{width:157px;min-width:0}
+.analytics-toolbar details{position:relative}
+.analytics-toolbar summary{cursor:pointer;list-style-position:inside;border:1px solid #aab9cb;border-radius:8px;padding:8px 12px;background:#fff}
+.analytics-toolbar details[open] summary{background:#e6eef7}
+.extra-filter-fields{display:flex;align-items:center;gap:10px;padding:10px 2px 3px}
+.filter-scope{margin:4px 0 0;font-size:12px;line-height:1.5;color:#455d78}
+.action-context{margin:6px 0;font-size:13px;color:#455d78}
+.storage-overview .metric{background:#f6f8fb}
+.storage-overview .metric strong{font-size:20px}
+.storage-overview{margin:4px 0 8px}
+.storage-summary{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.storage-summary .status{flex:1;min-width:180px;margin:0}
+#analysisValues:empty{display:none}
+@media(min-width:1280px){.analytics-toolbar{position:sticky;top:60px;z-index:4;box-shadow:0 2px 8px #1c324a12}.analytics-toolbar:has(details[open]){position:static}}
+@media(max-width:650px){.overview-head{align-items:stretch}.primary-action{width:100%;justify-content:center}.analytics-toolbar input[type=date]{width:100%}.analytics-toolbar .controls{align-items:stretch}.analytics-toolbar .controls>label{flex-basis:100%}.analytics-toolbar details{width:100%}.analytics-toolbar details summary{width:100%}.extra-filter-fields{flex-direction:column;align-items:stretch}.extra-filter-fields select{width:100%}}
 [data-nav-panel][hidden]{display:none!important}
 @media(max-width:650px){.workspace-nav{flex-wrap:nowrap;overflow-x:auto;padding:9px 10px;gap:4px}.workspace-nav a{font-size:13px;padding:10px}.nav-status{padding:0 5px}}
 </style>
@@ -66,15 +90,39 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <main>
 <p class="nav-status" id="nativeViewStatus" role="status" aria-live="polite"></p>
 <section class="panel" id="sqlOverview" data-nav-panel="analysis" aria-label="Сводка SQLite">
-<h2>Обзор данных</h2>
-<p class="intro">Основной экран аналитики: сводка и сравнение подразделений рассчитываются по SQLite, без загрузки всей истории в WebView. Часть прежних графиков и расширенных настроек ещё доступна через ссылку на классический интерфейс.</p>
-<div class="overview">
+<div class="overview-head">
+<div><h2>Аналитика</h2><p class="intro">Выберите период и рассчитайте показатели SQLite. Никакой полной загрузки истории в WebView.</p></div>
+<a class="primary-action" href="#excel">Выбрать Excel</a>
+</div>
+<div class="analytics-toolbar" aria-label="Фильтры и расчёт аналитики">
+<div class="controls">
+<label for="analysisType">Период</label>
+<select id="analysisType"><option value="day">Дни</option><option value="week">Недели</option><option value="month">Месяцы</option></select>
+<label for="analysisFrom">С</label><input type="date" id="analysisFrom">
+<label for="analysisTo">По</label><input type="date" id="analysisTo">
+<details id="analysisMoreFilters">
+<summary>Ещё фильтры</summary>
+<div class="extra-filter-fields"><label for="analysisOrganization">Подразделение</label>
+<select id="analysisOrganization"><option value="*">Все из настроек</option></select></div>
+</details>
+<button id="analysisPrepare" type="button">Подготовить индексы</button>
+<button id="analysisCancel" type="button" disabled>Остановить</button>
+<button id="analysisRun" type="button" disabled>Рассчитать</button>
+</div>
+<p id="analysisFilterScope" class="filter-scope" role="status" aria-live="polite">Фильтры: все подразделения. Работы и группы: весь набор.</p>
+</div>
+<p id="analysisStatus" class="status muted" role="status" aria-live="polite">Подготовка не выполнена.</p>
+<div id="analysisValues" class="overview" aria-live="polite"></div>
+<div class="overview storage-overview" aria-label="Состояние базы данных">
 <div class="metric"><strong id="metricReports">—</strong><span>Отчётов в SQLite</span></div>
 <div class="metric"><strong id="metricIndexed">—</strong><span>Индексированных отчётов</span></div>
 <div class="metric"><strong id="metricGroups">—</strong><span>Групп</span></div>
-<div class="metric"><strong id="metricCatalog">—</strong><span>Позиций справочника</span></div></div>
-<p id="workspaceStatus" class="status muted" role="status" aria-live="polite">Открытие SQL-режима…</p>
+<div class="metric"><strong id="metricCatalog">—</strong><span>Позиций справочника</span></div>
+</div>
+<div class="storage-summary">
+<p id="workspaceStatus" class="status muted" role="status" aria-live="polite">Открытие данных…</p>
 <button id="workspaceRefresh" type="button">Обновить данные</button>
+</div>
 </section>
 <section class="panel" id="sqlBackup" data-nav-panel="backup" aria-label="Резервное копирование SQLite">
 <h2>База данных и резервные копии</h2>
@@ -112,33 +160,18 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <section class="panel" id="sqlAnalysis" data-nav-panel="analysis" aria-label="Аналитика SQL">
 <h2>Анализ периодов через SQLite</h2>
 <p class="intro">Нативный расчёт с проверкой полноты. Сначала подготовьте индексы выбранного типа (не более 20 отчётов за запрос). Обрабатываются только исходные отчёты в SQLite, полная история не загружается в браузер. Подготовку можно остановить после текущей порции.</p>
-<div class="controls">
-<label for="analysisType">Тип периода</label>
-<select id="analysisType"><option value="day">Дни</option><option value="week">Недели</option><option value="month">Месяцы</option></select>
-<label for="analysisFrom">С</label><input type="date" id="analysisFrom">
-<label for="analysisTo">По</label><input type="date" id="analysisTo">
-<label for="analysisOrganization">Подразделение</label>
-<select id="analysisOrganization"><option value="*">Все из настроек</option></select>
-</div>
-<div class="controls">
-<button id="analysisPrepare" type="button">Подготовить индексы</button>
-<button id="analysisCancel" type="button" disabled>Остановить</button>
-<button id="analysisRun" type="button" disabled>Рассчитать</button>
-<button id="analysisExport" type="button" disabled>Экспорт CSV</button>
-</div>
-<p id="analysisStatus" class="status muted" role="status" aria-live="polite">Подготовка не выполнена.</p>
-<p id="exportStatus" class="status muted" role="status" aria-live="polite">Экспорт доступен после расчёта. CSV сохраняется в новый файл без замены существующего.</p>
-<div id="analysisValues" class="overview" aria-live="polite"></div>
+<p id="analysisResultScope" class="action-context">После расчёта здесь появятся подтверждённые данные. Действующие фильтры будут указаны отдельно.</p>
 <h3 class="division-title">Сравнение подразделений</h3>
-<p class="intro">Положительные суммы показаны синим, отрицательные — фиолетовым. При отсутствии полного ряда сумма и количество скрываются, а пропуски остаются видимыми.</p>
+<p class="intro">Сравнение использует выбранные тип, диапазон и подразделения. Неполные данные не превращаются в ноль.</p>
 <p id="divisionStatus" class="status muted" role="status" aria-live="polite">После расчёта здесь появятся результаты по подразделениям.</p>
 <div class="table-scroll"><table>
 <thead><tr><th>Подразделение</th><th>Полнота</th><th>Пропусков</th><th>Количество</th><th>Сумма</th><th>Относительная сумма</th></tr></thead>
 <tbody id="divisionRows"></tbody>
 </table></div>
 <h3 class="division-title">Группы и отдельные работы</h3>
-<p class="intro">Расшифровка выбранного периода: не более 50 строк за запрос в порядке ключей SQLite. Чтобы показать только одно подразделение, выберите его выше и повторите расчёт.</p>
+<p class="intro">Расшифровка: не более 50 строк на странице. CSV экспортирует весь выбранный диапазон, а не только видимые строки. Подразделение выбирается в «Ещё фильтры».</p>
 <div class="controls">
+<button id="analysisExport" type="button" disabled>Скачать CSV по выбранному диапазону</button>
 <button id="workBack" type="button" disabled>Назад</button>
 <button id="workNext" type="button" disabled>Далее</button>
 </div>
