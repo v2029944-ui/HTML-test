@@ -7,8 +7,9 @@ const routes=['analysis','reports','groups','excel','metrics','backup'];
 function fake(){
  const links=routes.map(name=>({
    textContent:name,getAttribute(key){return key==='data-nav-link'?name:null;},
-   attributes:{},setAttribute(k,v){this.attributes[k]=v;},
-   removeAttribute(k){delete this.attributes[k];}
+   attributes:{},events:{},setAttribute(k,v){this.attributes[k]=v;},
+   removeAttribute(k){delete this.attributes[k];},
+   addEventListener(event,handler){this.events[event]=handler;}
  }));
  const panels=['analysis','backup','reports','groups','excel','excel','excel','metrics'].map(name=>({
    hidden:false,getAttribute(key){return key==='data-nav-panel'?name:null;}
@@ -72,6 +73,18 @@ test('navigation defaults to analytics and keeps the other SQL sections in the D
  ui.window.location.hash='#backup';ui.events.hashchange();
  assert.equal(ui.panels.filter(p=>!p.hidden).length,1);
  assert.equal(ui.panels.find(p=>!p.hidden).getAttribute('data-nav-panel'),'backup');
+});
+test('tab clicks switch visible SQL section immediately before delayed hashchange',()=>{
+ const ui=fake();
+ assert.equal(ui.window.nativeWorkspaceNavigation.active(),'analysis');
+ ui.links[3].events.click();
+ assert.equal(ui.window.nativeWorkspaceNavigation.active(),'excel');
+ assert.equal(ui.panels.filter(p=>!p.hidden).length,3);
+ assert.equal(ui.panels.filter(p=>!p.hidden).every(p=>p.getAttribute('data-nav-panel')==='excel'),true);
+ assert.equal(ui.links[3].attributes['aria-current'],'page');
+ ui.window.location.hash='#excel';ui.events.hashchange();
+ assert.equal(ui.window.nativeWorkspaceNavigation.active(),'excel');
+ assert.deepEqual(ui.scrolls,[[0,0]]);
 });
 test('unknown deep links fall back to analytics, no SQL controls are destroyed',()=>{
  const ui=fake();
