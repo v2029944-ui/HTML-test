@@ -382,7 +382,7 @@ async function calculateAnalysis(){
    const metrics=[
      ['Полнота',result.complete?'Полная':'Есть пропуски'],
      ['Периодов',number(result.periods)],['Пропущено',number(result.missing)],
-     ['Количество',number(total.count)],['Сумма',number(total.amount)],
+     ['Количество / объём',number(total.count)],['Сумма',number(total.amount)],
      ['Среднее',number(total.average)],['Некорректных отчётов',number(result.invalid_reports)],
      ['Дубликатов',number(result.duplicate_issues)],['Перекрытий',number(result.overlap_issues)]
    ];

@@ -40,6 +40,8 @@ test('six SQL sections remain in one application without full-history bootstrap'
   assert.match(html,/id="analysisFilterScope"/);
   assert.match(html,/id="analysisResultScope"/);
   assert.match(html,/id="divisionShareStatus"/);
+  assert.match(html,/id="analysisUnitsNote"/);
+  assert.match(html,/Количество \/ объём/);
   assert.ok(html.indexOf('id="analysisType"')<html.indexOf('id="metricReports"'),
     'primary filters must appear before overview KPI');
   const exportAt=html.indexOf('id="analysisExport"'),workSection=html.indexOf('>Группы и отдельные работы</h3>');

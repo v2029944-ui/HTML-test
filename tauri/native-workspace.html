@@ -156,11 +156,12 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </div>
 <p id="workStatus" class="status muted" role="status" aria-live="polite">Расшифровка появится после расчёта.</p>
 <div class="table-scroll"><table>
-<thead><tr><th>Группа / работа</th><th>Тип</th><th>Количество</th><th>Сумма</th><th>Среднее</th><th>Активна</th></tr></thead>
+<thead><tr><th>Группа / работа</th><th>Тип</th><th>Количество / объём</th><th>Сумма</th><th>Среднее</th><th>Активна</th></tr></thead>
 <tbody id="workRows"></tbody>
 </table></div>
 
 
+<p class="intro" id="analysisUnitsNote">Единицы измерения не определяются по названиям столбцов: дробное «количество» может означать объём, а «сумма» не обязательно указана в рублях. Сравнивайте средние только при сопоставимых единицах исходных отчётов.</p>
 <p class="intro">Когда отсутствуют периоды, итоговые сумма и количество не показываются как ноль. Группы, совпадающие даты и ошибки проверяются по правилам D2; это не простая сумма всех строк.</p>
 </section>
 
