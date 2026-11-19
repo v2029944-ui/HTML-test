@@ -17,9 +17,9 @@ let analysisBusy=false,analysisReady=false,analysisCancelled=false,orgNames=[];
 let workBusy=false,workScope=null,workAfter=null,workBack=[],workNext=null;
 let exportBusy=false,backupBusy=false,restoreBusy=false,restoreSelection=null;
 const workSize=50;
-let workTrendSelection=null,workTrendRequest=0;
+let workTrendSelection=null,workTrendRequest=0,workTrendBusy=false;
 function invalidateWorkTrend(message='Выберите работу или группу из таблицы выше.'){
- workTrendRequest++;
+ workTrendRequest++;workTrendBusy=false;
  workTrendSelection=null;
  window.nativeWorkTrends?.clear(message);
 }
@@ -40,9 +40,9 @@ function updateComparisonContext(){
   ?(comparisonBaseline?'База: '+comparisonBaseline.from+' — '+comparisonBaseline.to+'; ':'')+'Текущий: '+scope.from+' — '+scope.to+' · '+scope.type+' · подразделения: '+scope.organizations.join(', ')+(scope.selectedNames.length?' · работы/группы: '+describeNames(scope.selectedNames):'')
   :'Текущий диапазон появится после расчёта аналитики.';
 }
-let rankingRequest=0;
+let rankingRequest=0,rankingBusy=false;
 function invalidateRanking(message='Рейтинг появится после расчёта.'){
- rankingRequest++;
+ rankingRequest++;rankingBusy=false;
  window.nativeRanking?.clear(message);
 }
 let timelineRequest=0;
@@ -140,7 +140,7 @@ $('restoreCancel').disabled=restoreBusy||backupBusy||analysisBusy||exportBusy||r
 $('analysisPrepare').disabled=analysisBusy||refreshBusy||exportBusy||revision===null;
 $('analysisCancel').disabled=!analysisBusy;
 $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!analysisReady;
-$('analysisPrint').disabled=revision===null||analysisBusy||refreshBusy||workBusy||comparisonBusy||exportBusy||!!queuedRefresh||window.nativeAdvancedAnalysis?.isBusy()||!workScope;
+$('analysisPrint').disabled=revision===null||analysisBusy||refreshBusy||workBusy||comparisonBusy||rankingBusy||workTrendBusy||exportBusy||!!queuedRefresh||window.nativeAdvancedAnalysis?.isBusy()||!workScope;
 $('analysisExport').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!workScope;
 $('rankingMetric').disabled=analysisBusy||refreshBusy||!workScope;
 $('rankingCategory').disabled=analysisBusy||refreshBusy||!workScope;
@@ -519,7 +519,7 @@ async function selectWorkTrend(item){
  const scope=workScope;
  const chosen={scope,key:item.key,kind:item.kind};
  workTrendSelection=chosen;
- const ticket=++workTrendRequest;
+ const ticket=++workTrendRequest;workTrendBusy=true;
  window.nativeWorkTrends?.clear('Расчёт выбранной позиции в SQLite…');
  controlState();
  try{
@@ -539,7 +539,7 @@ async function selectWorkTrend(item){
      workTrendSelection=null;
      window.nativeWorkTrends?.error('Динамика выбранной позиции недоступна: '+userError(error));
    }
- }finally{controlState();}
+ }finally{if(ticket===workTrendRequest)workTrendBusy=false;controlState();}
 }
 
 async function workPage(cursor,reset=false){
@@ -641,7 +641,7 @@ async function reloadRanking(){
    invalidateRanking('Для рейтинга сначала рассчитайте выбранный диапазон.');
    return;
  }
- const ticket=++rankingRequest;
+ const ticket=++rankingRequest;rankingBusy=true;controlState();
  const metric=$('rankingMetric').value,category=$('rankingCategory').value;
  window.nativeRanking?.clear('Рассчитываем 12 крупнейших позиций в SQLite…');
  try{
@@ -654,7 +654,7 @@ async function reloadRanking(){
  }catch(error){
    if(ticket===rankingRequest&&workScope===scope)
      window.nativeRanking?.error('Рейтинг недоступен: '+userError(error));
- }
+ }finally{if(ticket===rankingRequest)rankingBusy=false;controlState();}
 }
 
 async function compareAnalysis(){
@@ -687,7 +687,7 @@ async function compareAnalysis(){
 }
 
 function printAnalysis(){
- if(revision===null||analysisBusy||refreshBusy||workBusy||comparisonBusy||exportBusy||queuedRefresh||window.nativeAdvancedAnalysis?.isBusy()||!workScope)return;
+ if(revision===null||analysisBusy||refreshBusy||workBusy||comparisonBusy||rankingBusy||workTrendBusy||exportBusy||queuedRefresh||window.nativeAdvancedAnalysis?.isBusy()||!workScope)return;
  const details=Array.from(document.querySelectorAll?.('#sqlAnalysis details')||[]);
  const previous=details.map(node=>node.open);
  try{

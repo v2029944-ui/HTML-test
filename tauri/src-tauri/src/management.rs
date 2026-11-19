@@ -370,7 +370,7 @@ fn new_stage(store: &Storage, quota: u64) -> Result<Stage, String> {
 }
 impl Storage {
     fn management_connect(&self) -> Result<Connection, String> {
-        let mut c = new_connection(&self.db_path())?;
+        let mut c = self.open_connection()?;
         let marker: Option<i64> = c
             .query_row(
                 "SELECT octet_length(json) FROM kv WHERE name='migration_v1'",
