@@ -1236,3 +1236,42 @@ fn daily_report_rollups_are_calendar_aligned_and_never_double_count_source_types
         rev,&all,&query("2024-01-01","2024-12-31"),"year",None,61,
     ).is_err());
 }
+
+
+#[test]
+fn daily_rollup_does_not_add_independently_uploaded_week_or_month_reports() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let mut data=fixture();
+    let reports=data["reports"].as_array_mut().unwrap();
+    reports.push(json!({
+        "id":"uploaded_week","type":"week",
+        "start":"2024-02-26","end":"2024-03-03",
+        "organizations":["A","B"],
+        "rows":[{"organization":"A","work":"one","count":100.,"amount":8000.}]
+    }));
+    reports.push(json!({
+        "id":"uploaded_month","type":"month",
+        "start":"2024-02-01","end":"2024-02-29",
+        "organizations":["A","B"],
+        "rows":[{"organization":"A","work":"one","count":100.,"amount":9000.}]
+    }));
+    let revision=prepare(&store,&data);
+    let scope=scope(&store,revision,"day",&["A","B"],None);
+    let feb=store.analysis_daily_rollup(
+        revision,&scope,&query("2024-02-01","2024-02-29"),
+        "month",None,60,
+    ).unwrap();
+    assert_eq!(feb.points.len(),1);
+    assert_eq!(feb.points[0].available_reports,4);
+    assert_eq!(feb.points[0].available_total.amount,Some(239.));
+    assert_eq!(feb.points[0].available_total.count,Some(4.));
+    let week=store.analysis_daily_rollup(
+        revision,&scope,&query("2024-02-26","2024-03-03"),
+        "week",None,60,
+    ).unwrap();
+    assert_eq!(week.points.len(),1);
+    assert_eq!(week.points[0].available_reports,5);
+    assert_eq!(week.points[0].available_total.amount,Some(249.));
+    assert_ne!(week.points[0].available_total.amount,Some(17249.));
+}
