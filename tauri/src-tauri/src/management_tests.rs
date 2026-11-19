@@ -863,3 +863,27 @@ fn management_settings_index_allows_concurrent_analysis_filter_writes() {
     assert!(result.is_ok(),"index publication failed during unrelated filter writes: {result:?}");
     assert_eq!(storage.management_bootstrap(revision).unwrap().catalog,15000);
 }
+
+#[test]
+fn management_settings_index_stages_before_entering_filter_writer_queue() {
+    let dir = tempdir().unwrap();
+    let storage = Storage::new(dir.path().into()).unwrap();
+    storage.save(management_data()).unwrap();
+    let revision = storage.revision().unwrap();
+    let job = ManagementJob::new();
+
+    // Deny admission deterministically, without relying on a thread winning
+    // a scheduling race or waiting for SQLite's busy timeout.
+    let gate = storage.analysis_filter_gate.clone();
+    let poisoned = std::thread::spawn(move || {
+        let _writer = gate.lock().unwrap();
+        panic!("simulate an unavailable filter writer queue");
+    });
+    assert!(poisoned.join().is_err());
+
+    let result = storage.management_index_settings(revision, &job);
+    assert!(job.records_processed() > 0, "staging should precede admission");
+    assert!(result.is_err(), "publication bypassed writer admission");
+    assert!(storage.management_bootstrap(revision).unwrap_err().contains("unindexed"));
+    assert_eq!(storage.revision().unwrap(), revision);
+}
