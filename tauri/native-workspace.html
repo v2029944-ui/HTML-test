@@ -20,6 +20,18 @@ th,td{text-align:left;border-bottom:1px solid #e4e9ef;padding:10px 9px;vertical-
 th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 @media(max-width:650px){header{padding:16px}main{padding:16px 10px}.panel{padding:15px}h1{font-size:20px}}
 
+.timeline-chart{width:100%;overflow:hidden;margin:12px 0}
+.timeline-chart svg{display:block;width:100%;height:auto;max-height:330px;background:#fbfcfe;border:1px solid #dce2e9;border-radius:10px}
+.timeline-chart svg text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:12px;fill:#435872}
+.timeline-chart svg .timeline-grid{stroke:#e5eaf0;stroke-width:1}
+.timeline-chart svg .timeline-zero{stroke:#8595a8;stroke-width:1.5}
+.timeline-chart svg .timeline-line{fill:none;stroke:#24639a;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+.timeline-chart svg .timeline-point{fill:#24639a;stroke:#fff;stroke-width:1.5}
+.timeline-chart svg .timeline-bar{fill:#347db2}
+.timeline-chart svg .timeline-bar.negative{fill:#926da1}
+.timeline-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:10px 0}
+.timeline-controls label{font-size:13px;font-weight:600}
+.timeline-table summary{cursor:pointer;font-size:14px;color:#275d88;padding:8px 0}
 .division-title{font-size:17px;margin:22px 0 10px}
 .division-track{width:100%;min-width:110px;height:12px;border-radius:6px;background:#e7edf5;overflow:hidden}
 .division-fill{height:100%;background:#346d9d;border-radius:6px}
@@ -139,6 +151,24 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <h2>Анализ периодов через SQLite</h2>
 <p class="intro">Нативный расчёт с проверкой полноты. Сначала подготовьте индексы выбранного типа (не более 20 отчётов за запрос). Обрабатываются только исходные отчёты в SQLite, полная история не загружается в браузер. Подготовку можно остановить после текущей порции.</p>
 <p id="analysisResultScope" class="action-context">После расчёта здесь появятся подтверждённые данные. Действующие фильтры будут указаны отдельно.</p>
+<section id="sqlTimeline" aria-label="График динамики">
+<h3 class="division-title">Динамика по периодам</h3>
+<p class="intro">График использует агрегаты SQLite для выбранных дат и подразделений. Пропуски не заменяются нулём; длинные диапазоны объединяются по календарным месяцам.</p>
+<div class="timeline-controls">
+<label for="timelineMetric">Показатель</label>
+<select id="timelineMetric"><option value="amount">Сумма</option><option value="count">Количество / объём</option></select>
+<label for="timelineMode">Вид</label>
+<select id="timelineMode"><option value="line">Линия</option><option value="bar">Столбцы</option></select>
+</div>
+<p id="timelineStatus" class="status muted" role="status" aria-live="polite">График появится после расчёта.</p>
+<div id="timelineChart" class="timeline-chart"></div>
+<details class="timeline-table"><summary>Точные значения графика</summary>
+<div class="table-scroll"><table>
+<thead><tr><th>Период</th><th>Исходных периодов</th><th>Пропусков</th><th>Количество / объём</th><th>Сумма</th></tr></thead>
+<tbody id="timelineRows"></tbody>
+</table></div>
+</details>
+</section>
 <h3 class="division-title">Сравнение подразделений</h3>
 <p class="intro">Сравнение использует выбранные тип, диапазон и подразделения. Неполные данные не превращаются в ноль.</p>
 <p id="divisionStatus" class="status muted" role="status" aria-live="polite">После расчёта здесь появятся результаты по подразделениям.</p>
