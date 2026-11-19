@@ -34,7 +34,7 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(options={}){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','rankingMetric','rankingCategory','workTrendMetric','sqlWorkTrends','comparisonBeforeFrom','comparisonBeforeTo','comparisonRun','comparisonCurrentContext','comparisonRankMetric','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisCoverageNotice','analysisCoverageText','analysisAcknowledge','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','rankingMetric','rankingCategory','workTrendMetric','sqlWorkTrends','comparisonBeforeFrom','comparisonBeforeTo','comparisonRun','comparisonCurrentContext','comparisonRankMetric','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
@@ -70,7 +70,10 @@ function mount(options={}){
    },
    nativeAnalysisRange:async(rev,kind,from,to,organizations)=>{calls.push({kind:'range',rev,reportType:kind,from,to,organizations});return options.complete
     ?{complete:true,periods:12,missing:0,total:{count:12,amount:options.mismatchedTotal?1900:divisionAmounts[0]+divisionAmounts[1],average:150},invalid_reports:0,duplicate_issues:0,overlap_issues:0}
-    :{complete:false,periods:366,missing:1,total:{count:null,amount:null,average:null},invalid_reports:1,duplicate_issues:0,overlap_issues:0};},
+    :{complete:false,periods:366,missing:1,total:{count:null,amount:null,average:null},
+      available_reports:options.observed?8:0,
+      available_total:options.observed?{count:7,amount:350,average:50}:{count:null,amount:null,average:null},
+      invalid_reports:1,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};},
    nativeAnalysisTimeline:async(rev,kind,from,to,organizations)=>{
      calls.push({kind:'timeline',rev,reportType:kind,from,to,organizations});
      return {granularity:'period',points:[{start:from,periods:1,missing:options.complete?0:1,
@@ -126,7 +129,9 @@ function mount(options={}){
    ];}
  };
  const chartCalls=[],rankingCalls=[],orgTrendsCalls=[],workTrendCalls=[],comparisonCalls=[];
+ const persistent=options.persistent||new Map();
  const window={desktopAPI:api,confirm:()=>true,analizUserError:userError,
+   localStorage:{getItem:key=>persistent.get(key)||null,setItem:(key,value)=>persistent.set(key,value)},
    nativeTimeline:{
      show:data=>chartCalls.push({action:'show',data}),
      clear:message=>chartCalls.push({action:'clear',message}),
@@ -614,4 +619,41 @@ test('SQL comparison can return incomplete summary and blocks stale responses',a
  await new Promise(resolve=>setImmediate(resolve));
  assert.ok(!comparisonCalls.some(x=>x.action==='show'));
  assert.equal(comparisonCalls.at(-1).action,'clear');
+});
+
+test('partial SQL totals stay labelled observed and acknowledgement survives refresh only for identical evidence',async()=>{
+ const persistent=new Map();
+ const {e,window}=mount({observed:true,persistent});
+ await window.nativeWorkspaceReady;
+ e.analysisFrom.value='2024-02-28';e.analysisTo.value='2024-03-01';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ assert.equal(e.analysisCoverageNotice.hidden,false);
+ assert.match(e.analysisCoverageText.textContent,/только к имеющимся отчётам/);
+ assert.equal(e.analysisValues.children[3].children[0].textContent,'7');
+ assert.match(e.analysisValues.children[3].children[1].textContent,/имеющиеся данные/);
+ assert.equal(e.analysisValues.children[4].children[0].textContent,'350');
+ assert.match(e.analysisStatus.textContent,/Полный итог .* неизвестен/);
+ await e.analysisAcknowledge.events.click();
+ assert.equal(e.analysisCoverageNotice.hidden,true);
+ assert.match(e.analysisStatus.textContent,/подтверждено/);
+ assert.match(e.analysisValues.children[0].children[0].textContent,/известно/);
+ assert.equal(persistent.size,1);
+ await window.nativeWorkspaceRefresh();
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ assert.equal(e.analysisCoverageNotice.hidden,true,'acknowledgement survives same revision and filters');
+ e.analysisFrom.value='2024-02-29';e.analysisFrom.events.change();
+ assert.equal(e.analysisCoverageNotice.hidden,true,'old result is cleared');
+ await e.analysisRun.events.click();
+ assert.equal(e.analysisCoverageNotice.hidden,false,'new date needs new acknowledgement');
+ assert.equal(persistent.size,1,'new acknowledgement is not implicit');
+});
+
+test('missing all reports does not turn SQL unknown into observed zero',async()=>{
+ const {e,window}=mount({observed:false});
+ await window.nativeWorkspaceReady;
+ e.analysisFrom.value='2024-02-28';e.analysisTo.value='2024-03-01';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ assert.equal(e.analysisValues.children[3].children[0].textContent,'—');
+ assert.equal(e.analysisValues.children[4].children[0].textContent,'—');
+ assert.equal(e.analysisCoverageNotice.hidden,false);
 });
