@@ -34,7 +34,7 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(options={}){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportPageInfo','groupPageInfo','workPageInfo','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisPeriodHelp','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisCoverageNotice','analysisCoverageText','analysisAcknowledge','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','rankingMetric','rankingCategory','workTrendMetric','sqlWorkTrends','comparisonBeforeFrom','comparisonBeforeTo','comparisonRun','comparisonCurrentContext','comparisonRankMetric','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportPageInfo','groupPageInfo','workPageInfo','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisPeriodHelp','analysisOrganization','analysisNameSearch','analysisNameSearchRun','analysisName','analysisNameReset','analysisNameStatus','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisCoverageNotice','analysisCoverageText','analysisAcknowledge','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','rankingMetric','rankingCategory','workTrendMetric','sqlWorkTrends','comparisonBeforeFrom','comparisonBeforeTo','comparisonRun','comparisonCurrentContext','comparisonRankMetric','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
@@ -49,6 +49,12 @@ function mount(options={}){
    nativeGroupRename:async(rev,handle,name)=>{calls.push({kind:'rename',rev,handle,name});return 13;},
    nativeAnalysisIndexPage:async(rev,kind,after,limit)=>{calls.push({kind:'index',rev,reportType:kind,after,limit});return {processed:2,next:null,done:true};},
    nativeAnalysisIndexSettings:async rev=>{calls.push({kind:'settings_index',rev});},
+   nativeAnalysisNameOptions:async(rev,search,limit)=>{
+     calls.push({kind:'names',rev,search,limit});
+     return {has_more:false,rows:[
+       {name:'Работа',kind:'work'},{name:'Группа',kind:'group'}
+     ]};
+   },
    chooseSqliteBackupPath:async defaultPath=>{calls.push({kind:'choose_backup',defaultPath});return 'C:/Backups/new.sqlite3';},
    nativeBackupSqlite:async destination=>{calls.push({kind:'sqlite_backup',destination});return 12;},
    chooseRestoreBackupPath:async()=>{calls.push({kind:'restore_picker'});return 'C:/Backups/snapshot.sqlite3';},
@@ -65,35 +71,35 @@ function mount(options={}){
    nativeRestoreLaunchInfo:async()=>null,
    nativeRestoreCancel:async()=>{calls.push({kind:'restore_cancel'});return true;},
    chooseCsvPath:async defaultPath=>{calls.push({kind:'save_csv',defaultPath});return 'C:/Exports/new.csv';},
-   nativeExportRangeCsv:async(rev,kind,from,to,organizations,organization,destination)=>{
-     calls.push({kind:'export_csv',rev,reportType:kind,from,to,organizations,organization,destination});
+   nativeExportRangeCsv:async(rev,kind,from,to,organizations,organization,destination,selectedName)=>{
+     calls.push({kind:'export_csv',rev,reportType:kind,from,to,organizations,organization,destination,selectedName});
    },
-   nativeAnalysisRange:async(rev,kind,from,to,organizations)=>{calls.push({kind:'range',rev,reportType:kind,from,to,organizations});return options.complete
+   nativeAnalysisRange:async(rev,kind,from,to,organizations,selectedName)=>{calls.push({kind:'range',rev,reportType:kind,from,to,organizations,selectedName});return options.complete
     ?{complete:true,periods:12,missing:0,total:{count:12,amount:options.mismatchedTotal?1900:divisionAmounts[0]+divisionAmounts[1],average:150},invalid_reports:0,duplicate_issues:0,overlap_issues:0}
     :{complete:false,periods:366,missing:1,total:{count:null,amount:null,average:null},
       available_reports:options.observed?8:0,
       available_total:options.observed?{count:7,amount:350,average:50}:{count:null,amount:null,average:null},
       invalid_reports:1,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};},
-   nativeAnalysisTimeline:async(rev,kind,from,to,organizations)=>{
-     calls.push({kind:'timeline',rev,reportType:kind,from,to,organizations});
+   nativeAnalysisTimeline:async(rev,kind,from,to,organizations,selectedName)=>{
+     calls.push({kind:'timeline',rev,reportType:kind,from,to,organizations,selectedName});
      return {granularity:'period',points:[{start:from,periods:1,missing:options.complete?0:1,
        total:options.complete?{count:2,amount:100,average:50}:{count:null,amount:null,average:null}}]};
    },
-   nativeOrganizationTrends:async(rev,kind,from,to,organizations)=>{
-     calls.push({kind:'org_trends',rev,reportType:kind,from,to,organizations});
+   nativeOrganizationTrends:async(rev,kind,from,to,organizations,selectedName)=>{
+     calls.push({kind:'org_trends',rev,reportType:kind,from,to,organizations,selectedName});
      return {granularity:'period',selected_organizations:organizations.length,series:[
        {organization:organizations[0],points:[{start:from,periods:1,missing:options.complete?0:1,
          total:options.complete?{count:2,amount:100,average:50}:{count:null,amount:null,average:null}}]}
      ]};
    },
-   nativeAnalysisRanking:async(rev,kind,from,to,organizations,organization,metric,category)=>{
-     calls.push({kind:'ranking',rev,reportType:kind,from,to,organizations,organization,metric,category});
+   nativeAnalysisRanking:async(rev,kind,from,to,organizations,organization,metric,category,selectedName)=>{
+     calls.push({kind:'ranking',rev,reportType:kind,from,to,organizations,organization,metric,category,selectedName});
      return options.complete
        ?{complete:true,rows:[{key:'work:x',name:'Работа',kind:'work',count:-2,amount:300,active:true}]}
        :{complete:false,rows:[]};
    },
-   nativeAnalysisCompare:async(rev,kind,beforeFrom,beforeTo,from,to,organizations)=>{
-     calls.push({kind:'comparison',rev,reportType:kind,beforeFrom,beforeTo,from,to,organizations});
+   nativeAnalysisCompare:async(rev,kind,beforeFrom,beforeTo,from,to,organizations,selectedName)=>{
+     calls.push({kind:'comparison',rev,reportType:kind,beforeFrom,beforeTo,from,to,organizations,selectedName});
      const measure=(base,current)=>({base,current,delta:current-base,percent:base===0?null:(current-base)/Math.abs(base)*100});
      const comparison={
        summary:{before:{complete:true},after:{complete:!!options.complete},
@@ -108,20 +114,20 @@ function mount(options={}){
      if(options.delayedComparison)return new Promise(resolve=>{options.resolveComparison=()=>resolve(comparison);});
      return comparison;
    },
-   nativeWorkTimeline:async(rev,kind,from,to,organizations,organization,key)=>{
-     calls.push({kind:'work_timeline',rev,reportType:kind,from,to,organizations,organization,key});
+   nativeWorkTimeline:async(rev,kind,from,to,organizations,organization,key,selectedName)=>{
+     calls.push({kind:'work_timeline',rev,reportType:kind,from,to,organizations,organization,key,selectedName});
      const data={key,name:'Работа '+key,kind:key.startsWith('group:')?'group':'work',
        granularity:'period',points:[{start:from,periods:1,missing:options.complete?0:1,
          total:options.complete?{count:-2,amount:20}:{count:null,amount:null}}]};
      if(options.delayedWorkTrend)return new Promise(resolve=>{options.resolveWorkTrend=()=>resolve(data);});
      return data;
    },
-   nativeAnalysisRangePage:async(rev,kind,from,to,organizations,organization,after,limit)=>{
-     calls.push({kind:'work',rev,reportType:kind,from,to,organizations,organization,after,limit});
+   nativeAnalysisRangePage:async(rev,kind,from,to,organizations,organization,after,limit,selectedName)=>{
+     calls.push({kind:'work',rev,reportType:kind,from,to,organizations,organization,after,limit,selectedName});
      const row=n=>({key:'work:'+String(n).padStart(4,'0'),name:n===0?'<b>Работа</b>':'Работа '+n,kind:'work',count:null,amount:null,average:null,active:true});
      return after?[row(50)]:Array.from({length:50},(_,i)=>row(i));
    },
-   nativeAnalysisOrganizations:async(rev,kind,from,to,organizations)=>{calls.push({kind:'divisions',rev,reportType:kind,from,to,organizations});return [
+   nativeAnalysisOrganizations:async(rev,kind,from,to,organizations,selectedName)=>{calls.push({kind:'divisions',rev,reportType:kind,from,to,organizations,selectedName});return [
      {org:'СМУ16',complete:true,missing:0,total:{count:8,amount:divisionAmounts[0],average:divisionAmounts[0]/8}},
      options.complete
       ?{org:'АВТО',complete:true,missing:0,total:{count:4,amount:divisionAmounts[1],average:divisionAmounts[1]/4}}
@@ -160,6 +166,7 @@ function mount(options={}){
 
  const document={getElementById:id=>e[id],createElement:tag=>new Element(tag)};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-period-selection.js'),'utf8'),{window,document});
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-name-filter.js'),'utf8'),{window,document,TextEncoder});
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-workspace.js'),'utf8'),{window,document});
  return {e,calls,window,chartCalls,rankingCalls,orgTrendsCalls,workTrendCalls,comparisonCalls};
 }
@@ -691,4 +698,45 @@ test('SQL calendar selector normalizes weekly and monthly values before calling 
  assert.equal(month.reportType,'month');
  assert.equal(month.from,'2024-02-01');
  assert.equal(month.to,'2024-03-01');
+});
+
+
+test('selected work name reaches all SQL KPI, chart, division, ranking, comparison and CSV calls',async()=>{
+ const {e,calls,window}=mount({complete:true});
+ await window.nativeWorkspaceReady;
+ await window.nativeNameFilter.search();
+ assert.equal(e.analysisName.children.length,3);
+ e.analysisName.value='Работа';e.analysisName.events.change();
+ assert.equal(window.nativeNameFilter.selectedName(),'Работа');
+ assert.match(e.analysisFilterScope.textContent,/Работа/);
+ e.analysisFrom.value='2024-02-28';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ for(const kind of ['range','timeline','org_trends','divisions','ranking','work']){
+   const call=calls.filter(x=>x.kind===kind).at(-1);
+   assert.ok(call,kind+' must be queried');
+   assert.equal(call.selectedName,'Работа',kind+' uses exact selected work');
+ }
+ assert.match(e.analysisResultScope.textContent,/Работа/);
+ e.comparisonBeforeFrom.value='2024-02-26';e.comparisonBeforeTo.value='2024-02-27';
+ await e.comparisonRun.events.click();
+ assert.equal(calls.filter(x=>x.kind==='comparison').at(-1).selectedName,'Работа');
+ await e.analysisExport.events.click();
+ assert.equal(calls.filter(x=>x.kind==='export_csv').at(-1).selectedName,'Работа');
+ e.analysisNameReset.events.click();
+ assert.equal(window.nativeNameFilter.selectedName(),null);
+ assert.equal(e.analysisValues.children.length,0,'changing selection invalidates old KPI');
+ assert.equal(e.workRows.children.length,0,'changing selection invalidates detail');
+ assert.match(e.analysisFilterScope.textContent,/все/);
+});
+test('work name selection cannot change while SQL computations are running',async()=>{
+ const opt={complete:true};
+ const {e,window}=mount(opt);await window.nativeWorkspaceReady;
+ await window.nativeNameFilter.search();
+ e.analysisName.value='Группа';e.analysisName.events.change();
+ e.analysisFrom.value='2024-02-28';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();
+ assert.equal(e.analysisName.disabled,false);
+ await e.analysisRun.events.click();
+ assert.equal(e.analysisName.disabled,false);
+ assert.equal(window.nativeNameFilter.selectedName(),'Группа');
 });
