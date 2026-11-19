@@ -300,7 +300,14 @@ test('late day-source KPI response cannot restore results after changing organiz
 });
 
 test('division query failure preserves verified day KPI and chart',async()=>{
- const {nodes,window,overview}=mount({failDivisions:true});
+ // One selected organization can provide only one report per calendar day.
+ const {nodes,window,overview}=mount({failDivisions:true,
+  page:({kind,from})=>({
+   granularity:kind,
+   points:[point(from,1,1,0,0,0)],
+   next_cursor:null
+  })
+ });
  window.nativeDailyCalendar.setContext(20,['A']);
  nodes.dailyRollupPrepare.events.click();await settle();
  nodes.dailyRollupFrom.value='2024-02-28';nodes.dailyRollupTo.value='2024-02-28';
