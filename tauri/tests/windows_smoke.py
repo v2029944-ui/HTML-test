@@ -232,6 +232,16 @@ def run():
                 page.locator('#openNativeWorkspace').click()
                 wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)','Native SQLite workspace startup')
                 page.evaluate('window.nativeWorkspaceReady')
+                # The native SQL workspace is now one application with sections.
+                # Switching sections must not initialize the full-history UI.
+                wait_for_app_state(page,'Boolean(window.nativeWorkspaceNavigation)',
+                    'Native workspace navigation startup')
+                assert page.locator('[data-nav-link="analysis"]').get_attribute('aria-current') == 'page'
+                page.locator('[data-nav-link="excel"]').click()
+                assert page.locator('#sqlSources').is_visible()
+                assert not page.locator('#sqlAnalysis').is_visible()
+                assert page.evaluate("typeof window.appReady === 'undefined'")
+                report['checks'].append('Unified SQL navigation preserves bounded loading and Excel controls')
                 # SQL source panel must only enumerate Excel metadata via Rust.
                 wait_for_app_state(page, 'Boolean(window.nativeFolderReady)', 'SQL source folder startup')
                 page.evaluate('window.nativeFolderReady')
@@ -285,6 +295,8 @@ def run():
                     'async data => window.__TAURI__.core.invoke("native_metric_apply",data)',
                     {'source':str(example),'reviewToken':metric_preview['reviewToken']})
                 assert metric_receipt['rowCount']==2
+                page.locator('[data-nav-link="metrics"]').click()
+                assert page.locator('#sqlMetricKinds').is_visible()
                 page.locator('#metricKindCalculate').click()
                 wait_for_app_state(page,
                     'document.querySelector("#metricKindCount")?.textContent.includes("Отчётов: 1")',
@@ -336,6 +348,8 @@ def run():
                 assert page.locator('#reportRows tr').count()==100
                 assert page.locator('#metricGroups').inner_text()=='0'
                 first_native=page.locator('#reportRows tr').first.locator('td').nth(4).inner_text()
+                page.locator('[data-nav-link="reports"]').click()
+                assert page.locator('#sqlReports').is_visible()
                 page.locator('#reportNext').click()
                 wait_for_app_state(page,
                     'document.querySelector("#reportRows tr td:last-child")?.textContent !== '+json.dumps(first_native),
@@ -352,6 +366,8 @@ def run():
                 assert page.locator('#reportRows tr').count()==0
                 # D4c: a type with no reports can be indexed without loading
                 # history, then its incomplete SQL range must have NULL totals.
+                page.locator('[data-nav-link="analysis"]').click()
+                assert page.locator('#sqlAnalysis').is_visible()
                 page.locator('#analysisType').select_option('week')
                 page.locator('#analysisFrom').fill('2026-11-02')
                 page.locator('#analysisTo').fill('2026-11-09')
@@ -536,6 +552,8 @@ def run():
                 page.evaluate('window.nativeWorkspaceReady')
                 wait_for_app_state(page,'Boolean(window.nativeFolderReady)', 'SQL folder rule editor startup')
                 page.evaluate('window.nativeFolderReady')
+                page.locator('[data-nav-link="excel"]').click()
+                assert page.locator('#sqlSources').is_visible()
                 # Re-establish the isolated test folder after the classic UI
                 # round-trip, then await metadata instead of assuming it survived.
                 page.evaluate('async folder => window.__TAURI__.core.invoke("set_folder", {folder})', str(tmp))
@@ -614,6 +632,8 @@ def run():
                 page.locator('#openNativeWorkspace').click()
                 wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)',
                     'SQL workspace after recovered startup')
+                page.locator('[data-nav-link="backup"]').click()
+                assert page.locator('#sqlBackup').is_visible()
                 wait_for_app_state(page,
                     "() => document.getElementById('restoreStatus')?.textContent.includes('Восстановление выполнено')",
                     'User-facing recovery confirmation')
