@@ -1368,3 +1368,41 @@ fn selected_work_filter_preserves_missing_reports_and_negative_amounts() {
     assert_eq!(daily.points[2].total.amount,None);
     assert_eq!(daily.points[2].available_total.amount,Some(0.));
 }
+
+
+#[test]
+fn work_group_name_search_is_bounded_and_excludes_ambiguous_labels() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let list=store.analysis_name_options(rev,"",50).unwrap();
+    assert!(!list.has_more);
+    let names=list.rows.iter().map(|x|x.name.as_str()).collect::<Vec<_>>();
+    assert!(names.contains(&"Group"));
+    assert!(names.contains(&"Ignored"));
+    assert!(names.contains(&"gone"));
+    assert!(names.contains(&"zero"));
+    assert!(!names.contains(&"one")); // grouped work has a group identity
+    assert!(!names.contains(&"two"));
+    assert_eq!(list.rows.iter().find(|x|x.name=="Group").unwrap().kind,"group");
+    assert_eq!(list.rows.iter().find(|x|x.name=="gone").unwrap().kind,"work");
+    let filtered=store.analysis_name_options(rev,"gro",50).unwrap();
+    assert!(filtered.rows.is_empty()); // exact-case Cyrillic/Latin display search
+    let filtered=store.analysis_name_options(rev,"Gro",50).unwrap();
+    assert_eq!(filtered.rows.len(),1);
+    assert_eq!(filtered.rows[0].name,"Group");
+    let page=store.analysis_name_options(rev,"",2).unwrap();
+    assert_eq!(page.rows.len(),2);
+    assert!(page.has_more);
+    assert!(store.analysis_name_options(rev,"",0).is_err());
+    assert!(store.analysis_name_options(rev,"",81).is_err());
+    assert!(store.analysis_name_options(rev,&"a".repeat(129),50).is_err());
+    assert!(store.analysis_name_options(rev+1,"",50).is_err());
+    let mut modified=fixture();
+    modified["reports"][0]["rows"].as_array_mut().unwrap()
+        .push(json!({"organization":"A","work":"Group","count":1.,"amount":2.}));
+    let newer=prepare(&store,&modified);
+    let collision=store.analysis_name_options(newer,"Group",50).unwrap();
+    assert!(collision.rows.is_empty(),
+        "a raw work and a group with identical names cannot be selected safely");
+}
