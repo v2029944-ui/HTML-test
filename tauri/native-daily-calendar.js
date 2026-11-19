@@ -9,7 +9,7 @@ const issue=window.analizUserError||(()=>'Операция не выполнен
 const make=(tag,value)=>{const e=document.createElement(tag);if(value!==undefined)e.textContent=String(value);return e;};
 const finite=n=>typeof n==='number'&&Number.isFinite(n);
 const number=n=>finite(n)?n.toLocaleString('ru-RU',{maximumFractionDigits:3}):'—';
-let revision=null,organizations=[],ready=false,busy=false;
+let revision=null,organizations=[],workName=null,ready=false,busy=false;
 let generation=0,previousKind='day',cursor=null,back=[],next=null;
 let selection=null;
 let detailScope=null,detailCursor=null,detailNext=null,detailBack=[],detailRequest=0,detailBusy=false;
@@ -78,16 +78,18 @@ function changeKind(){
  clear('Выбрана сводка по '+({day:'дням',week:'неделям',month:'месяцам',year:'годам'}[kind])+
   '. Рассчитываются только дневные отчёты SQLite.');
 }
-function setContext(rev,names){
- const accepted=Number.isSafeInteger(rev)&&rev>=0&&Array.isArray(names)&&
+function setContext(rev,names,selectedName=null){
+ const acceptedName=selectedName===null||(typeof selectedName==='string'&&selectedName.length>0&&selectedName.length<=512);
+ const accepted=acceptedName&&Number.isSafeInteger(rev)&&rev>=0&&Array.isArray(names)&&
    names.length>0&&names.length<=100&&names.every(n=>typeof n==='string'&&n.length>0);
- const changed=revision!==rev||JSON.stringify(organizations)!==JSON.stringify(names);
+ const changed=revision!==rev||JSON.stringify(organizations)!==JSON.stringify(names)||workName!==selectedName;
  if(!changed)return;
  const revisionChanged=revision!==rev;
- revision=accepted?rev:null;organizations=accepted?names.slice():[];
+ revision=accepted?rev:null;organizations=accepted?names.slice():[];workName=accepted?selectedName:null;
  if(revisionChanged)ready=false;
  $('dailyRollupScope').textContent=accepted?
    'Дневные отчёты SQLite · подразделения: '+organizations.join(', ')+
+   ' · работы/группы: '+(workName??'все')+
    '. Отдельные недельные и месячные отчёты не прибавляются.':
    'Нет доступной выбранной базы или подразделений.';
  clear(revisionChanged?
@@ -158,7 +160,7 @@ async function detailPage(after,reset=false){
  const ticket=++detailRequest;
  try{
   const result=await api.nativeDailyRollup(scope.rev,scope.from,scope.to,
-   'day',scope.orgs,after,pageSize);
+   'day',scope.orgs,after,pageSize,scope.selectedName);
   if(ticket!==detailRequest||detailScope!==scope||selection!==scope.parent)return false;
   validate(result,'day');
   for(const point of result.points){
@@ -201,7 +203,7 @@ async function openDetails(point,kind){
  }
  closeDetails();
  detailScope={
-  from,to,rev:parent.rev,orgs:parent.orgs.slice(),parent
+  from,to,rev:parent.rev,orgs:parent.orgs.slice(),selectedName:parent.selectedName,parent
  };
  $('dailyRollupDetailTitle').textContent='Дни периода '+(
   kind==='year'?from.slice(0,4):kind==='month'?from.slice(0,7):from+' — '+to);
@@ -247,7 +249,7 @@ function inputScope(){
  const from=canonical(kind,$('dailyRollupFrom').value);
  const to=canonical(kind,$('dailyRollupTo').value,true);
  if(!from||!to||from>to)return null;
- return {kind,from,to,rev:revision,orgs:organizations.slice()};
+ return {kind,from,to,rev:revision,orgs:organizations.slice(),selectedName:workName};
 }
 async function page(after,reset=false){
  if(busy||!ready||revision===null)return false;
@@ -258,7 +260,7 @@ async function page(after,reset=false){
  const ticket=++generation;
  try{
    const result=await api.nativeDailyRollup(scope.rev,scope.from,scope.to,
-     scope.kind,scope.orgs,after,pageSize);
+     scope.kind,scope.orgs,after,pageSize,scope.selectedName);
    if(ticket!==generation||!selection||scope!==selection)return false;
    validate(result,scope.kind);
    display(result);
@@ -274,7 +276,7 @@ async function sourceOverview(scope){
  const ticket=++sourceOverviewTicket;
  try{
   const summary=await api.nativeAnalysisRange(
-    scope.rev,'day',scope.from,scope.to,scope.orgs
+    scope.rev,'day',scope.from,scope.to,scope.orgs,scope.selectedName
   );
   if(ticket!==sourceOverviewTicket||selection!==scope)return;
   const timeline=await api.nativeAnalysisTimeline(
@@ -286,7 +288,7 @@ async function sourceOverview(scope){
   // A failed division query must not discard verified KPI/timeline results.
   try{
    const divisions=await api.nativeAnalysisOrganizations(
-    scope.rev,'day',scope.from,scope.to,scope.orgs
+    scope.rev,'day',scope.from,scope.to,scope.orgs,scope.selectedName
    );
    if(ticket===sourceOverviewTicket&&selection===scope)
     window.nativeDailyOverview?.showOrganizations(divisions,scope.orgs);
