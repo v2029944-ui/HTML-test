@@ -309,6 +309,89 @@ test('missing monthly period is identified without replacing it with zero',()=>{
   assert.equal(gaps[0].last,'2027-01-01');
 });
 
+test('chart axis uses zero and rounded ticks for nonnegative metrics, and retains real negatives',()=>{
+  const positive=run('chartNiceScale([0,7.525,27.475])');
+  assert.equal(positive.min,0);
+  assert.equal(positive.max,30);
+  assert.deepEqual(Array.from(positive.ticks),[0,10,20,30]);
+  assert.deepEqual(Array.from(run('chartNiceScale([-3,27.475]).ticks')),[-10,0,10,20,30]);
+  const fractional=run('chartNiceScale([0.02,0.067])');
+  assert.equal(fractional.min,0);
+  assert.equal(fractional.max,0.08);
+  assert.deepEqual(Array.from(fractional.ticks),[0,.02,.04,.06,.08]);
+  assert.equal(run("chartTickLabel(0.025,0.025)"),'0,025');
+  assert.equal(run("chartTickLabel(20,10)"),'20');
+  assert.equal(run('chartNiceScale([0,0]).max'),1);
+});
+
+test('two-period SVG axis never invents negative ticks for nonnegative values',()=>{
+  const root=new MockNode('div');
+  const input=[new Map([['Кран',{amount:7.525}]]),new Map([['Кран',{amount:27.475}]])];
+  run("state.chart='line';drawChart(periods,new Set(['СМУ16']),'amount',root,{categories:['Кран'],data:input,chart:'line'})",{
+    root,input,periods
+  });
+  const plot=nodes(root).find(node=>node.tag==='svg');
+  assert.ok(plot);
+  const ticks=nodes(plot).filter(node=>node.tag==='text'&&node.attributes['text-anchor']==='end');
+  assert.deepEqual(ticks.map(node=>node.textContent),['0','10','20','30']);
+  assert.equal(nodes(plot).filter(node=>node.tag==='polyline').length,1);
+});
+
+test('one period shows an accessible, descending horizontal ranking instead of an empty line',()=>{
+  const root=new MockNode('div'),one=[periods[0]];
+  const input=[new Map([['Шлифовка',{amount:7.525}],['Расточка',{amount:27.475}],['Сборка',{amount:0}]])];
+  run("state.chart='line';drawChart(one,new Set(['СМУ16']),'amount',root,{categories:['Шлифовка','Расточка','Сборка'],data:input,chart:'line'})",{
+    root,one,input
+  });
+  const all=nodes(root),rows=all.filter(node=>node.attributes.role==='listitem');
+  assert.equal(all.filter(node=>node.tag==='svg').length,0);
+  assert.equal(rows.length,3);
+  assert.deepEqual(rows.map(row=>row.children[0].textContent),['Расточка','Шлифовка','Сборка']);
+  assert.equal(rows[0].children[1].children[0].style['--rank-share'],'100%');
+  assert.equal(rows[2].children[1].children[0].style['--rank-share'],'0%');
+  assert.ok(all.some(node=>node.textContent?.includes('Для динамики выберите несколько периодов')));
+  assert.match(rows[0].attributes['aria-label'],/Расточка: 27,48/);
+});
+
+test('ranking flags actual negative values and never turns incomplete reports into zero',()=>{
+  const one=[periods[0]],root=new MockNode('div');
+  const input=[new Map([['Плюс',{count:3}],['Минус',{count:-2}]])];
+  run("drawChart(one,new Set(['СМУ16']),'count',root,{categories:['Минус','Плюс'],data:input,chart:'line'})",{
+    one,root,input
+  });
+  const list=nodes(root);
+  assert.ok(list.some(node=>node.textContent?.includes('модуль значения')));
+  assert.ok(list.some(node=>node.attributes.role==='listitem'&&(node.attributes['aria-label']?.includes('−2')||node.attributes['aria-label']?.includes('-2'))));
+  const missing=new MockNode('div');
+  run("drawChart(one,new Set(['СМУ16']),'amount',missing,{categories:['Кран'],data:[null]})",{
+    one,missing
+  });
+  assert.equal(nodes(missing).filter(node=>node.attributes.role==='listitem').length,0);
+  assert.ok(nodes(missing).some(node=>node.textContent?.includes('Отсутствующие данные не считаются нулём')));
+});
+
+test('combined multi-metric view explains why a line cannot show one period',()=>{
+  const root=new MockNode('div'),one=[periods[0]],oneData=[data[0]];
+  run("state.chart='line';drawDepartmentMultiChart(one,organizations,metrics,oneData,root)",{
+    root,one,oneData,organizations,metrics
+  });
+  assert.equal(nodes(root).filter(node=>node.tag==='svg').length,0);
+  assert.ok(nodes(root).some(node=>node.textContent?.includes('выберите несколько периодов')));
+  run("state.chart='bar';drawDepartmentMultiChart(one,organizations,metrics,oneData,root)",{
+    root,one,oneData,organizations,metrics
+  });
+  assert.ok(nodes(root).some(node=>node.tag==='svg'),'Столбцы за один период остаются доступны');
+});
+
+test('overview differences use directional arrows without redundant growth labels',()=>{
+  const up=run("overviewDifference(105,100,'amount')"),down=run("overviewDifference(95,100,'amount')");
+  assert.match(up,/^▲ \+5,00 \(\+5%\)$/);
+  assert.match(down,/^▼ -5,00 \(-5%\)$/);
+  assert.equal(run("overviewDifference(100,100,'amount')"),'Без изменений');
+  assert.equal(run("overviewDifference(null,100,'amount')"),'Нет сопоставимой базы');
+  assert.match(run("overviewDifference(10,0,'count')"),/процент не рассчитан/);
+});
+
 test('numeric movement colors distinguish increase, decrease and no change without assigning quality',()=>{
   assert.equal(run('numericChangeClass(20)'),'numeric-rise');
   assert.equal(run('numericChangeClass(-5)'),'numeric-fall');
