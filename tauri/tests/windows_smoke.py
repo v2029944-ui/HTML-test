@@ -266,7 +266,7 @@ def run():
                     # SQL screen to scroll horizontally. Tables may scroll
                     # internally by design, but the page itself must fit.
                     page.set_viewport_size({'width':1280,'height':720})
-                    for scale in ('1.25','1.5'):
+                    for scale in ('1.25','1.5','2'):
                         zoom=page.evaluate('''scale => {
                           const html=document.documentElement;
                           const before=html.style.zoom;
@@ -276,14 +276,18 @@ def run():
                             viewport:innerWidth,
                             page:html.scrollWidth,
                             toolbar:document.querySelector('.analytics-toolbar').getBoundingClientRect().right,
-                            panel:document.querySelector('#sqlOverview').getBoundingClientRect().right
+                            panel:document.querySelector('#sqlOverview').getBoundingClientRect().right,
+                            chart:document.querySelector('#timelineChart').getBoundingClientRect().right,
+                            controls:document.querySelector('.analytics-toolbar .controls').getBoundingClientRect().right
                           };
                           html.style.zoom=before;
                           return output;
                         }''',scale)
-                        if zoom['page']>zoom['viewport']+2:
-                            raise RuntimeError(f'SQL zoom {scale} produces page-level horizontal overflow: {zoom}')
-                    report['checks'].append('SQL zoomed cards and calendar controls remain within page width')
+                        if zoom['page']>zoom['viewport']+2 or zoom['panel']>zoom['viewport']+2 or zoom['controls']>zoom['viewport']+2:
+                            raise RuntimeError(f'SQL zoom {scale} produces horizontal overflow: {zoom}')
+                        if scale=='2':
+                            page.screenshot(path=str(output/'windows-sql-zoom-200.png'),full_page=False)
+                    report['checks'].append('SQL zoomed cards and calendar controls remain within page width at 125, 150 and 200 percent')
                 finally:
                     page.set_viewport_size(previous_viewport)
                 # The native SQL workspace is now one application with sections.
