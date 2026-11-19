@@ -23,3 +23,15 @@ test('advanced pages capture grouped source, filter, revision, keyset and invali
  w.nativeAdvancedAnalysis.clear();calls[1].resolve(result);await Promise.resolve();await Promise.resolve();
  assert.equal($('advancedRows').children.length,0);assert.equal($('advancedContext').textContent,'');assert.equal($('advancedRun').disabled,true);
 });
+test('current-page captions stay visible in print and identify partial output',async()=>{
+ const html=fs.readFileSync(path.join(__dirname,'../native-workspace.html'),'utf8');
+ assert.match(html,/<p id="advancedPage"[^>]*><\/p>/);
+ const { $,calls }=setup();
+ const run=$('advancedRun').events.click();
+ calls[0].resolve({...result,rows:Array(50).fill({name:'n',amount:{},status:'existing'})});await run;
+ assert.match($('advancedPage').textContent,/1–50 из 51/);
+ $('advancedNext').events.click();
+ calls[1].resolve({...result,next:null,rows:[{name:'z',amount:{},status:'existing'}]});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.match($('advancedPage').textContent,/51–51 из 51/);
+});

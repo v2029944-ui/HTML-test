@@ -1668,10 +1668,8 @@ fn complete_daily_months_match_independent_classic_month_reports() {
     store
         .advanced_changes_csv(rev, &scope, &q, Some("month"), &file)
         .unwrap();
-    assert_eq!(
-        fs::read_to_string(file).unwrap(),
-        expected["changesCsv"].as_str().unwrap()
-    );
+    let csv=fs::read_to_string(file).unwrap();
+    assert!(csv.ends_with(expected["changesCsv"].as_str().unwrap().trim_start_matches('\u{feff}')));
     q.from = "2024-01-01".into();
     q.to = "2024-12-31".into();
     let year = store
@@ -1717,7 +1715,7 @@ fn advanced_keyset_pages_and_csv_cover_every_selected_descriptor() {
     store
         .advanced_changes_csv(rev, &s, &q, None, &file)
         .unwrap();
-    assert_eq!(fs::read_to_string(file).unwrap().lines().count(), 64);
+    assert_eq!(fs::read_to_string(file).unwrap().lines().skip_while(|line| !line.starts_with("\"key\";")).count(), 64);
     let p = store
         .advanced_patterns(rev, &s, &q, None, "usual", 8, None)
         .unwrap();
@@ -1725,6 +1723,7 @@ fn advanced_keyset_pages_and_csv_cover_every_selected_descriptor() {
         .advanced_patterns(rev, &s, &q, None, "usual", 8, p.next.as_deref())
         .unwrap();
     assert_eq!((p.rows.len(), n.rows.len()), (50, 14));
+    assert_eq!((p.total_rows,n.total_rows),(64,64));
     assert!(n.next.is_none());
     let before = RangeQuery {
         from: "2024-02-28".into(),
@@ -1748,5 +1747,110 @@ fn advanced_keyset_pages_and_csv_cover_every_selected_descriptor() {
         .unwrap();
     assert_eq!(first["rows"].as_array().unwrap().len(), 50);
     assert_eq!(last["rows"].as_array().unwrap().len(), 12);
+    assert_eq!(last["total_rows"],62);
     assert!(last["next"].is_null());
+}
+
+#[test]
+fn russian_collation_selects_classic_structure_remainder_at_cutoff() {
+    for (left, right) in [("Ёж", "Ева"), ("Ёж", "Е\u{308}ж")] {
+        let dir = tempdir().unwrap();
+        let store = Storage::new(dir.path().into()).unwrap();
+        let mut data = fixture();
+        data["advanced"] = json!(true);
+        let reports = data["reports"].as_array_mut().unwrap();
+        reports.truncate(2);
+        for (i, report) in reports.iter_mut().enumerate() {
+            let mut rows:Vec<_>=(0..11).map(|k|json!({"organization":"A","work":format!("Крупная {k}"),"count":1,"amount":100+k})).collect();
+            for (name, base, current) in [(left, 90, 1), (right, 10, -1)] {
+                rows.push(json!({"organization":"A","work":name,"count":1,"amount":if i==0 {base}else{current}}));
+            }
+            report["rows"] = json!(rows);
+        }
+        let rev = prepare(&store, &data);
+        let scope = scope(&store, rev, "day", &["A"], None);
+        let q = ChangeQuery {
+            method: "previous".into(),
+            from: "2024-02-29".into(),
+            to: "2024-02-29".into(),
+            percent: 0.,
+            min_count: 0.,
+            min_amount: 0.,
+        };
+        let before = RangeQuery {
+            from: "2024-02-28".into(),
+            to: "2024-02-28".into(),
+        };
+        let old = golden(
+            &data,
+            "day",
+            &["A"],
+            None,
+            &[(&before.from, &before.to), (&q.from, &q.to)],
+            &q,
+        );
+        let actual = store
+            .advanced_composition(rev, &scope, &q, None, &before, "structure", "amount", None)
+            .unwrap();
+        assert_eq!(
+            actual["rows"][11]["name"],
+            old["structure"]["rows"][11]["name"]
+        );
+        for field in ["base", "current", "baseShare", "share", "shareChange"] {
+            assert_eq!(
+                normalized(actual["rows"][12][field].clone()),
+                old["structure"]["rows"][12][field]
+            );
+        }
+    }
+}
+
+#[test]
+fn missing_changes_export_captures_scope_and_source_even_without_data_rows() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let rev = prepare(&store, &fixture());
+    for (source, kind, grouping, to) in [
+        ("daily", "day", Some("month"), "2024-05-31"),
+        ("imported", "month", None, "2024-05-01"),
+    ] {
+        let s = scope(
+            &store,
+            rev,
+            kind,
+            &["A", "B"],
+            Some(&["=untrusted", "zero"]),
+        );
+        let q = ChangeQuery {
+            method: "previous".into(),
+            from: "2024-05-01".into(),
+            to: to.into(),
+            percent: 37.,
+            min_count: 2.,
+            min_amount: 15.,
+        };
+        let file = dir.path().join(format!("{source}.csv"));
+        store
+            .advanced_changes_csv(rev, &s, &q, grouping, &file)
+            .unwrap();
+        let text = fs::read_to_string(&file).unwrap();
+        for cell in [
+            format!("\"source\";\"{source}\""),
+            "\"displayPeriod\";\"month\"".into(),
+            "\"method\";\"previous\"".into(),
+            "\"percentThreshold\";\"37\"".into(),
+            "\"minCount\";\"2\"".into(),
+            "\"minAmount\";\"15\"".into(),
+            "\"organization\";\"B\"".into(),
+            "\"selectedName\";\"'=untrusted\"".into(),
+            "\"missingPairs\";\"2\"".into(),
+            "\"comparableRows\";\"0\"".into(),
+            format!("\"to\";\"{to}\""),
+        ] {
+            assert!(text.contains(&cell), "{cell}");
+        }
+        assert!(store
+            .advanced_changes_csv(rev, &s, &q, grouping, &file)
+            .is_err());
+    }
 }

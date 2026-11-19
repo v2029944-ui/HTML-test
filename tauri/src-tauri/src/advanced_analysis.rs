@@ -227,12 +227,81 @@ impl Storage {
         let tx = conn.transaction().map_err(err)?;
         workspace(&tx, revision, s)?;
         prepare_changes(&tx, s, q, grouping)?;
-        export_changes_table(&tx, q, path)
+        let coverage = changes_summary(&tx, q)?;
+        export(path, |w| {
+            use Cell::{Number, Text};
+            let source = if grouping.is_some() {
+                "daily"
+            } else {
+                "imported"
+            };
+            for (label, value) in [
+                ("source", source),
+                ("displayPeriod", grouping.unwrap_or(&s.report_type)),
+                ("reportType", s.report_type.as_str()),
+                ("from", q.from.as_str()),
+                ("to", q.to.as_str()),
+                ("method", q.method.as_str()),
+                (
+                    "nameSelection",
+                    if s.names.is_some() { "selected" } else { "all" },
+                ),
+                (
+                    "countUnit",
+                    "Количество / объём в единицах исходных отчётов",
+                ),
+                ("amountUnit", "Сумма в единицах исходных отчётов"),
+                ("averageUnit", "Сумма / единица количества"),
+            ] {
+                csv_record(w, &[Text(label), Text(value)])?;
+            }
+            for (label, value) in [
+                ("revision", revision),
+                ("comparableRows", coverage.rows),
+                ("missingPairs", coverage.missing_pairs),
+                ("importWarningPairs", coverage.import_warning_pairs),
+                ("invalidReports", coverage.invalid_reports),
+                ("duplicateIssues", coverage.duplicate_issues),
+                ("overlapIssues", coverage.overlap_issues),
+            ] {
+                csv_record(w, &[Text(label), Text(&value.to_string())])?;
+            }
+            for (label, value) in [
+                ("percentThreshold", q.percent),
+                ("minCount", q.min_count),
+                ("minAmount", q.min_amount),
+            ] {
+                csv_record(w, &[Text(label), Number(Some(value))])?;
+            }
+            for (label, id) in [
+                ("organization", Some(&s.organizations)),
+                ("selectedName", s.names.as_ref()),
+            ] {
+                let mut stmt = tx
+                    .prepare("SELECT item FROM analysis_filter_items WHERE id=?1 ORDER BY ordinal")
+                    .map_err(err)?;
+                let mut items = stmt.query([id]).map_err(err)?;
+                while let Some(row) = items.next().map_err(err)? {
+                    let value: String = row.get(0).map_err(err)?;
+                    csv_record(w, &[Text(label), Text(&value)])?;
+                }
+            }
+            let (base, last): (Option<String>, Option<String>) = tx
+                .query_row("SELECT min(base),max(start) FROM an_currents", [], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+                .map_err(err)?;
+            for (label, value) in [("firstBase", base), ("lastCurrent", last)] {
+                csv_record(w, &[Text(label), Text(value.as_deref().unwrap_or(""))])?;
+            }
+            write_changes_rows(&tx, q, w)
+        })
     }
 }
 
 #[derive(Serialize)]
 pub struct PatternPage {
+    pub total_rows: i64,
     pub rows: Vec<Value>,
     pub next: Option<String>,
     pub used: i64,
@@ -469,6 +538,7 @@ impl Storage {
             rows.push(row);
         }
         Ok(PatternPage {
+            total_rows: count_sql(&tx, "SELECT count(*) FROM adv_keys")?,
             rows,
             next,
             used: if usual { previous } else { used },
@@ -536,7 +606,7 @@ impl Storage {
         let tx = conn.transaction().map_err(err)?;
         workspace(&tx, revision, s)?;
         let (base_complete, current_complete) = comparison(&tx, s, &q, None)?;
-        let mut result = json!({"baseComplete":base_complete,"currentComplete":current_complete,"rows":[],"next":null});
+        let mut result = json!({"baseComplete":base_complete,"currentComplete":current_complete,"total_rows":0,"rows":[],"next":null});
         if !current_complete || (mode == "contributions" && !base_complete) {
             return Ok(result);
         }
@@ -558,7 +628,26 @@ impl Storage {
             let (bv,av):(bool,bool)=tx.query_row(&format!("SELECT NOT EXISTS(SELECT 1 FROM an_comparison WHERE {b}<0),NOT EXISTS(SELECT 1 FROM an_comparison WHERE {a}<0)"),[],|r|Ok((r.get(0)?,r.get(1)?))).map_err(err)?;
             let valid = av && at > 0.;
             let base_valid = bv && bt > 0. && base_complete;
-            let mut stmt=tx.prepare(&format!("WITH ranked AS (SELECT key,name,kind,{b} base,{a} current,row_number() OVER(ORDER BY abs({a}) DESC,name,key) n FROM an_comparison)
+            let locale: icu_provider::DataLocale = "ru".parse().map_err(err)?;
+            let collator =
+                icu_collator::Collator::try_new(&locale, Default::default()).map_err(err)?;
+            tx.create_collation("classic_ru", move |a, b| collator.compare(a, b))
+                .map_err(err)?;
+            // The classic stable sort retains the first encounter when names
+            // compare equal (including canonically equivalent spellings).
+            // Current range precedes baseline; then selected org, period and row.
+            tx.execute(
+                "CREATE TEMP TABLE adv_encounter AS SELECT c.key,
+                min(printf('%d/%020d/%s/%020d',2-p.slot,f.ordinal,p.start,x.row_index)) AS encounter
+                FROM an_periods p JOIN an_valid v ON v.start=p.start
+                JOIN analysis_filter_items f ON f.id=?1 AND f.item=v.org
+                JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
+                LEFT JOIN analysis_groups g ON g.work=x.work
+                JOIN an_comparison c ON c.key=coalesce(g.key,'work:'||x.work) GROUP BY c.key",
+                [&s.organizations],
+            )
+            .map_err(err)?;
+            let mut stmt=tx.prepare(&format!("WITH ranked AS (SELECT key,name,kind,{b} base,{a} current,row_number() OVER(ORDER BY abs({a}) DESC,name COLLATE classic_ru,encounter) n FROM an_comparison JOIN adv_encounter USING(key))
                 SELECT key,name,kind,base,current,n,0 FROM ranked WHERE n<=12 UNION ALL
                 SELECT NULL,'Остальные услуги ('||count(*)||')',NULL,sum(base),sum(current),13,1 FROM ranked WHERE n>12 HAVING count(*)>0 ORDER BY 6")).map_err(err)?;
             let mut data = stmt.query([]).map_err(err)?;
@@ -588,6 +677,10 @@ impl Storage {
                 finite(c.magnitude)?;
                 key_bound(&c.key)?;
             }
+            result["total_rows"] = json!(count_sql(
+                &tx,
+                &format!("SELECT count(*) FROM an_comparison WHERE {a}<>{b}")
+            )?);
             let delta = finite(at - bt)?;
             let sum: f64 = tx
                 .query_row(
@@ -636,6 +729,9 @@ impl Storage {
                 cursor = json!({"key":key,"magnitude":v.delta.abs()});
                 rows.push(json!({"key":key,"name":name,"kind":kind,"base":v.base,"current":v.current,"delta":v.delta,"percent":v.percent,"contribution":percent_of(v.delta,delta,true)?}));
             }
+        }
+        if mode == "structure" {
+            result["total_rows"] = json!(rows.len());
         }
         result["rows"] = json!(rows);
         Ok(result)

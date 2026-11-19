@@ -19,7 +19,9 @@ function controls(){
  $('WindowTitle').textContent=regular?'Длительность перерыва, периодов':'Базовых периодов';
  $('Run').disabled=!scope||busy;$('Prev').disabled=busy||positions.length===1;
  $('Next').disabled=busy||!page?.next;$('Export').disabled=busy||!page||!changes;
- $('Page').textContent=page?'Страница '+positions.length:'';
+ const offset=(positions.length-1)*50;
+ const total=page?.summary?.rows??page?.total_rows??0;
+ $('Page').textContent=page?(page.rows.length?'Страница '+positions.length+' · Строки '+(offset+1)+'–'+(offset+page.rows.length)+' из '+total:'Строк в результате: 0'):'';
  onStateChange();
 }
 function reset(){

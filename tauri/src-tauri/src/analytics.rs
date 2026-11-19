@@ -2715,37 +2715,39 @@ fn export_changes_table(
     q: &ChangeQuery,
     destination: &Path,
 ) -> Result<(), String> {
-    export(destination, |w| {
-        use Cell::*;
-        csv_record(
-            w,
-            &[
-                Text("key"),
-                Text("name"),
-                Text("kind"),
-                Text("org"),
-                Text("baseStart"),
-                Text("currentStart"),
-                Text("status"),
-                Text("count.base"),
-                Text("count.current"),
-                Text("count.delta"),
-                Text("count.percent"),
-                Text("amount.base"),
-                Text("amount.current"),
-                Text("amount.delta"),
-                Text("amount.percent"),
-                Text("average.base"),
-                Text("average.current"),
-                Text("average.delta"),
-                Text("average.percent"),
-            ],
-        )?;
-        let mut stmt=tx.prepare("SELECT start,base,org,key,name,kind,bc,ba,cc,ca FROM temp.an_changes ORDER BY start,org,key").map_err(err)?;
-        let mut rows = stmt.query([]).map_err(err)?;
-        while let Some(r) = rows.next().map_err(err)? {
-            change_csv(w, &change_value(r, q)?)?;
-        }
-        Ok(())
-    })
+    export(destination, |w| write_changes_rows(tx, q, w))
+}
+
+fn write_changes_rows(tx: &Connection, q: &ChangeQuery, w: &mut impl Write) -> Result<(), String> {
+    use Cell::*;
+    csv_record(
+        w,
+        &[
+            Text("key"),
+            Text("name"),
+            Text("kind"),
+            Text("org"),
+            Text("baseStart"),
+            Text("currentStart"),
+            Text("status"),
+            Text("count.base"),
+            Text("count.current"),
+            Text("count.delta"),
+            Text("count.percent"),
+            Text("amount.base"),
+            Text("amount.current"),
+            Text("amount.delta"),
+            Text("amount.percent"),
+            Text("average.base"),
+            Text("average.current"),
+            Text("average.delta"),
+            Text("average.percent"),
+        ],
+    )?;
+    let mut stmt=tx.prepare("SELECT start,base,org,key,name,kind,bc,ba,cc,ca FROM temp.an_changes ORDER BY start,org,key").map_err(err)?;
+    let mut rows = stmt.query([]).map_err(err)?;
+    while let Some(r) = rows.next().map_err(err)? {
+        change_csv(w, &change_value(r, q)?)?;
+    }
+    Ok(())
 }
