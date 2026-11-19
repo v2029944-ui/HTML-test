@@ -536,14 +536,30 @@ fn apply_in_connection_inner(
     // replacement must therefore remove its non-anchor days first.
     let diagnostic_anchor = prepared.next_report(0).map_err(err)?
         .and_then(|first| first.provenance.map(|_| first.id));
-    // Delete one owned report at a time so cancellation stays observable and all
-    // removals (including absent days) remain inside the same rollback boundary.
-    if prepared.mode() == ImportMode::Folder {
+    let deletion_plan=if prepared.mode()==ImportMode::Folder {
+        Some("import_source_plan")
+    } else if confirmation.replace_exact {
+        // Plan ALL old exact matches before removing an anchor. Incoming report
+        // order must not make a complete manual replacement look like a partial
+        // source deletion to the diagnostic-link guard.
+        tx.execute_batch("CREATE TEMP TABLE IF NOT EXISTS import_exact_plan(report_id TEXT PRIMARY KEY) WITHOUT ROWID;DELETE FROM temp.import_exact_plan;").map_err(err)?;
+        let mut after=0;
+        while let Some(report)=prepared.next_report(after).map_err(err)? {
+            job.check()?;
+            tx.execute("INSERT OR IGNORE INTO temp.import_exact_plan SELECT id FROM reports WHERE report_type=?1 AND period_start=?2 AND period_end=?3",params![report.kind,report.start,report.end]).map_err(err)?;
+            after=report.ordinal;
+        }
+        Some("import_exact_plan")
+    } else {None};
+    // Delete one planned old report at a time, non-anchors before anchors. The
+    // existing trigger still rejects an anchor with any UNPLANNED survivor and
+    // the transaction restores all preceding deletions on that error or cancel.
+    if let Some(plan)=deletion_plan {
         loop {
             job.check()?;
             let target: Option<String> = tx
                 .query_row(
-                    "SELECT p.report_id FROM temp.import_source_plan p LEFT JOIN report_source_diagnostic_links l ON l.report_id=p.report_id ORDER BY CASE WHEN l.anchor_id=p.report_id THEN 1 ELSE 0 END, p.report_id LIMIT 1",
+                    &format!("SELECT p.report_id FROM temp.{plan} p LEFT JOIN report_source_diagnostic_links l ON l.report_id=p.report_id ORDER BY CASE WHEN l.anchor_id=p.report_id THEN 1 ELSE 0 END, p.report_id LIMIT 1"),
                     [],
                     |r| r.get(0),
                 )
@@ -555,7 +571,7 @@ fn apply_in_connection_inner(
             tx.execute("DELETE FROM reports WHERE id=?1", [&target])
                 .map_err(err)?;
             tx.execute(
-                "DELETE FROM temp.import_source_plan WHERE report_id=?1",
+                &format!("DELETE FROM temp.{plan} WHERE report_id=?1"),
                 [&target],
             )
             .map_err(err)?;
@@ -572,13 +588,6 @@ fn apply_in_connection_inner(
             || report.bytes > i32::MAX as u64
         {
             return Err("Invalid or empty prepared report.".into());
-        }
-        if prepared.mode() == ImportMode::Manual && confirmation.replace_exact {
-            tx.execute(
-                "DELETE FROM reports WHERE report_type=?1 AND period_start=?2 AND period_end=?3",
-                params![report.kind, report.start, report.end],
-            )
-            .map_err(err)?;
         }
         tx.execute("INSERT INTO reports(id,report_type,period_start,period_end,source_name,json) VALUES(?1,?2,?3,?4,?5,zeroblob(?6))", params![report.id, report.kind, report.start, report.end, prepared.source_name(), report.bytes]).map_err(err)?;
         let rowid = tx.last_insert_rowid();

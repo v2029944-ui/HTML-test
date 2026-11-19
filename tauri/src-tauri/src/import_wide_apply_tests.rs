@@ -822,3 +822,45 @@ fn wide_manual_exact_anchor_replacement_and_legacy_save_fail_closed() {
     assert!(storage.load().unwrap()["reports"].as_array().unwrap()
         .iter().any(|r| r["id"]==dependent.id));
 }
+
+#[test]
+fn wide_manual_complete_source_exact_replacement_orders_old_deletions_and_rolls_back_faults() {
+    for fault in ["none","cancel","write"] {
+        let root=tempfile::tempdir().unwrap();
+        let source=root.path().join("old-wide.xlsx");fixture(&source,2,false,false,false);
+        let area=StageArea::open(root.path().join("old-stage")).unwrap();let old=prepared(&area,&source,"2024-03-01");
+        let storage=Storage::new(root.path().join("live")).unwrap();let untouched=super::import_apply_tests::original(&storage);
+        let preview=storage.preview_import(&old).unwrap();storage.apply_import(&old,&preview,ImportConfirmation::default(),&ImportJob::new(),|_|{}).unwrap();
+        let before=storage.load().unwrap();let revision=storage.revision().unwrap();
+        let manual_source=root.path().join("different-content-and-name.xlsx");fixture(&manual_source,2,true,false,false);
+        let manual_area=StageArea::open(root.path().join("manual-stage")).unwrap();let manual=converted(&manual_area,&manual_source,"2024-03-01").prepare_with_mode(ImportMode::Manual,&AtomicBool::new(false),|_|{}).unwrap();
+        let preview=storage.preview_import(&manual).unwrap();assert_eq!(preview.counts().replacements,2);
+        if fault=="write" {storage.connect().unwrap().execute_batch("CREATE TRIGGER reject_replacement BEFORE INSERT ON reports BEGIN SELECT RAISE(ABORT,'replacement publication failure');END;").unwrap();}
+        let job=ImportJob::new();let mut copied=false;
+        let result=storage.apply_import(&manual,&preview,ImportConfirmation {replace_exact:true,accept_quality:true,..Default::default()},&job,|event|{if fault=="cancel"&&event.phase=="copy" {copied=true;job.cancel();}});
+        if fault!="none" {
+            let error=result.unwrap_err();assert!(if fault=="cancel"{copied&&error.contains("cancel")}else{error.contains("replacement publication failure")},"{fault}: {error}");
+            assert_eq!(storage.load().unwrap(),before,"{fault}");assert_eq!(storage.revision().unwrap(),revision);assert!(storage.committed_import(manual.operation_id()).unwrap().is_none());
+        } else {
+            let receipt=result.unwrap();assert_eq!(receipt.replaced,2);assert_eq!(receipt.reports,2);assert_eq!(receipt.rows,0);
+            let after=storage.load().unwrap();assert_eq!(after["settings"],before["settings"]);assert_eq!(after["reports"].as_array().unwrap().len(),3);
+            assert!(after["reports"].as_array().unwrap().contains(&untouched["reports"][0]));
+            for old_report in old.reports(0,2).unwrap() {assert!(!after["reports"].as_array().unwrap().iter().any(|r|r["id"]==old_report.id));}
+            let conn=storage.connect().unwrap();let (links,orphans):(i64,i64)=conn.query_row("SELECT COUNT(*),SUM(CASE WHEN r.id IS NULL THEN 1 ELSE 0 END) FROM report_source_diagnostic_links l LEFT JOIN reports r ON r.id=l.anchor_id",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();assert_eq!((links,orphans),(2,0));
+            assert_eq!(storage.apply_import(&manual,&preview,ImportConfirmation::default(),&ImportJob::new(),|_|{}).unwrap(),receipt);
+        }
+        assert!(source.exists());assert!(manual_source.exists());
+    }
+}
+
+#[test]
+fn wide_manual_partial_anchor_replacement_rolls_back_predeleted_nonanchor() {
+    let root=tempfile::tempdir().unwrap();let source=root.path().join("wide.xlsx");fixture(&source,3,false,false,false);
+    let area=StageArea::open(root.path().join("old-stage")).unwrap();let old=prepared(&area,&source,"2024-03-01");let storage=Storage::new(root.path().join("live")).unwrap();storage.revision().unwrap();
+    let preview=storage.preview_import(&old).unwrap();storage.apply_import(&old,&preview,ImportConfirmation::default(),&ImportJob::new(),|_|{}).unwrap();let before=storage.load().unwrap();let revision=storage.revision().unwrap();
+    let replacement=root.path().join("partial.xlsx");fixture(&replacement,2,true,false,false);let replacement_area=StageArea::open(root.path().join("partial-stage")).unwrap();let manual=converted(&replacement_area,&replacement,"2024-03-01").prepare_with_mode(ImportMode::Manual,&AtomicBool::new(false),|_|{}).unwrap();
+    let preview=storage.preview_import(&manual).unwrap();assert_eq!(preview.counts().replacements,2);
+    let error=storage.apply_import(&manual,&preview,ImportConfirmation {replace_exact:true,accept_quality:true,..Default::default()},&ImportJob::new(),|_|{}).unwrap_err();assert!(error.contains("Shared source diagnostics"),"{error}");
+    assert_eq!(storage.load().unwrap(),before);assert_eq!(storage.revision().unwrap(),revision);assert!(storage.committed_import(manual.operation_id()).unwrap().is_none());
+    assert_eq!(storage.connect().unwrap().query_row("SELECT COUNT(*) FROM report_source_diagnostic_links",[],|r|r.get::<_,i64>(0)).unwrap(),3);
+}
