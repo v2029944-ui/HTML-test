@@ -871,3 +871,44 @@ fn sql_timeline_preserves_missing_and_zero_amounts_without_loading_history() {
     assert!(year.points.iter().all(|point| point.total.amount.is_none()));
     assert!(year.points.iter().all(|point| point.missing>0));
 }
+
+
+#[test]
+fn sql_ranking_is_sorted_bounded_and_complete() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let rev = prepare(&store, &fixture());
+    let selected = scope(&store, rev, "day", &["A"], None);
+    let days = query("2024-02-28", "2024-02-29");
+    let top = store.analysis_ranking(rev, &selected, &days, None, "amount", "all").unwrap();
+    assert!(top.complete);
+    assert!(!top.rows.is_empty());
+    assert!(top.rows.len() <= 12);
+    assert_eq!(top.rows[0].kind, "group");
+    assert_eq!(top.rows[0].name, "Group");
+    assert_eq!(top.rows[0].amount, Some(100.));
+    assert_eq!(top.rows[1].name, "two");
+    assert_eq!(top.rows[1].amount, Some(70.));
+
+    let counts = store.analysis_ranking(rev, &selected, &days, None, "count", "work").unwrap();
+    assert!(counts.complete);
+    assert!(counts.rows.iter().all(|r| r.kind == "work"));
+    assert_eq!(counts.rows[0].name, "two");
+    assert_eq!(counts.rows[0].count, Some(-5.));
+    assert_eq!(counts.rows[1].name, "new");
+    assert_eq!(counts.rows[1].count, Some(2.));
+    let only_groups = store.analysis_ranking(rev, &selected, &days, None, "amount", "group").unwrap();
+    assert_eq!(only_groups.rows.len(), 1);
+    assert_eq!(only_groups.rows[0].name, "Group");
+
+    let combined = scope(&store, rev, "day", &["A", "B"], None);
+    let incomplete = store.analysis_ranking(
+        rev, &combined, &query("2024-02-28", "2024-03-01"), None, "amount", "all"
+    ).unwrap();
+    assert!(!incomplete.complete);
+    assert!(incomplete.rows.is_empty());
+
+    assert!(store.analysis_ranking(rev, &selected, &days, None, "percent", "all").is_err());
+    assert!(store.analysis_ranking(rev, &selected, &days, None, "amount", "unknown").is_err());
+    assert!(store.analysis_ranking(rev, &selected, &days, Some("B"), "amount", "all").is_err());
+}
