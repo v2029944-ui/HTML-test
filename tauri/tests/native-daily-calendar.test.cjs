@@ -20,7 +20,7 @@ const point=(start,days,reports,missing,count,amount)=>({
 function mount(options={}){
  const ids=['analysisFrom','analysisTo','comparisonBeforeFrom','comparisonBeforeTo','analysisPeriodHelp',
  'dailyRollupGranularity','dailyRollupFrom','dailyRollupTo','dailyRollupPrepare','dailyRollupRun',
- 'dailyRollupBack','dailyRollupNext','dailyRollupPageInfo','dailyRollupRows','dailyRollupScope','dailyRollupStatus',
+ 'dailyRollupPeriodBack','dailyRollupPeriodNext','dailyRollupBack','dailyRollupNext','dailyRollupPageInfo','dailyRollupRows','dailyRollupScope','dailyRollupStatus',
  'dailyRollupDetailPanel','dailyRollupDetailTitle','dailyRollupDetailClose','dailyRollupDetailStatus',
  'dailyRollupDetailBack','dailyRollupDetailNext','dailyRollupDetailPage','dailyRollupDetailRows'];
  const nodes=Object.fromEntries(ids.map(id=>[id,new Element(id)]));
@@ -29,26 +29,26 @@ function mount(options={}){
  const api={
   nativeAnalysisIndexPage:async(rev,kind,cursor,limit)=>{calls.push({op:'index',rev,kind,cursor,limit});return {processed:3,done:true,next:null};},
   nativeAnalysisIndexSettings:async rev=>{calls.push({op:'settings',rev});},
-  nativeAnalysisRange:async(rev,kind,from,to,orgs)=>{
-   calls.push({op:'range',rev,kind,from,to,orgs});
+  nativeAnalysisRange:async(rev,kind,from,to,orgs,selectedName,selectedNames)=>{
+   calls.push({op:'range',rev,kind,from,to,orgs,selectedName,selectedNames});
    const result={complete:false,periods:7,organizations:orgs.length,missing:1,
     available_reports:6,available_total:{count:2,amount:11,average:5.5},
     total:{count:null,amount:null,average:null}};
    if(options.delayedOverview)return new Promise(resolve=>{options.resolveOverview=()=>resolve(result);});
    return result;
   },
-  nativeAnalysisTimeline:async(rev,kind,from,to,orgs)=>{
-   calls.push({op:'timeline',rev,kind,from,to,orgs});
+  nativeAnalysisTimeline:async(rev,kind,from,to,orgs,selectedName,grouping,selectedNames)=>{
+   calls.push({op:'timeline',rev,kind,from,to,orgs,selectedName,selectedNames});
    return {granularity:'period',points:[]};
   },
-  nativeAnalysisOrganizations:async(rev,kind,from,to,orgs)=>{
-   calls.push({op:'divisions',rev,kind,from,to,orgs});
+  nativeAnalysisOrganizations:async(rev,kind,from,to,orgs,selectedName,selectedNames)=>{
+   calls.push({op:'divisions',rev,kind,from,to,orgs,selectedName,selectedNames});
    if(options.failDivisions)throw Error('Division data unavailable');
    return orgs.map(org=>({org,complete:true,missing:0,
     total:{count:0,amount:0,average:null}}));
   },
-  nativeDailyRollup:async(rev,from,to,kind,orgs,after,limit)=>{
-   calls.push({op:'page',rev,from,to,kind,orgs,after,limit});
+  nativeDailyRollup:async(rev,from,to,kind,orgs,after,limit,selectedName,selectedNames)=>{
+   calls.push({op:'page',rev,from,to,kind,orgs,after,limit,selectedName,selectedNames});
    if(options.fail)throw Error('Synthetic index failure');
    if(options.page)return options.page({rev,from,to,kind,orgs,after,limit});
    return {granularity:kind,points:[
@@ -68,7 +68,7 @@ function mount(options={}){
  }};
  const document={getElementById:id=>nodes[id],createElement:tag=>new Element(tag)};
  vm.runInNewContext(selection,{window,document});
- vm.runInNewContext(calendar,{window,document});
+ vm.runInNewContext(calendar,{window,document,TextEncoder});
  return {nodes,window,calls,overview};
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
@@ -170,7 +170,7 @@ test('month detail is scoped to calendar and displays exact day evidence with cl
   ],next_cursor:null};
   return {granularity:kind,points:[point('2024-02-01',29,3,26,4,24)],next_cursor:null};
  }});
- window.nativeDailyCalendar.setContext(11,['A']);
+ window.nativeDailyCalendar.setContext(11,['A'],['Group','Работа']);
  nodes.dailyRollupPrepare.events.click();await settle();
  nodes.dailyRollupGranularity.value='month';nodes.dailyRollupGranularity.events.change();
  nodes.dailyRollupFrom.value='2024-02';nodes.dailyRollupTo.value='2024-02';
@@ -183,6 +183,12 @@ test('month detail is scoped to calendar and displays exact day evidence with cl
  assert.equal(q.from,'2024-02-01');
  assert.equal(q.to,'2024-02-29');
  assert.equal(q.orgs.join(','),'A');
+ const filtered=calls.filter(x=>['range','timeline','divisions','page'].includes(x.op));
+ assert.deepEqual(filtered.map(x=>x.op).sort(),['divisions','page','page','range','timeline']);
+ for(const call of filtered){
+  assert.equal(call.selectedName,null,call.op);
+  assert.deepEqual(Array.from(call.selectedNames),['Group','Работа'],call.op);
+ }
  assert.equal(nodes.dailyRollupDetailPanel.hidden,false);
  assert.equal(nodes.dailyRollupDetailRows.children.length,2);
  assert.equal(nodes.dailyRollupDetailRows.children[0].children[4].textContent,'0');
@@ -315,4 +321,15 @@ test('division query failure preserves verified day KPI and chart',async()=>{
  assert.ok(overview.some(x=>x.op==='show'));
  assert.equal(overview.at(-1).op,'divisionsError');
  assert.match(overview.at(-1).message,/недоступны/);
+});
+test('calendar period navigation crosses leap February and invalidates old summaries',()=>{
+ const {nodes,window}=mount();
+ window.nativeDailyCalendar.setContext(12,['A']);
+ nodes.dailyRollupGranularity.value='month';nodes.dailyRollupGranularity.events.change();
+ nodes.dailyRollupFrom.value='2024-01';nodes.dailyRollupTo.value='2024-01';
+ nodes.dailyRollupPeriodNext.events.click();
+ assert.equal(nodes.dailyRollupFrom.value,'2024-02');assert.equal(nodes.dailyRollupTo.value,'2024-02');
+ nodes.dailyRollupPeriodNext.events.click();
+ assert.equal(nodes.dailyRollupTo.value,'2024-03');
+ nodes.dailyRollupPeriodBack.events.click();assert.equal(nodes.dailyRollupTo.value,'2024-02');
 });

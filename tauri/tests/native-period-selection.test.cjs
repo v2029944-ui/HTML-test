@@ -34,7 +34,7 @@ test('calendar months and ISO calendar weeks resolve to actual period starts',()
  assert.equal(picker.normalize('week','2021-W53'),null);
  assert.equal(picker.normalize('week','2024-W00'),null);
  assert.equal(picker.normalize('week','2024-W99'),null);
- assert.equal(picker.normalize('year','2024'),null);
+ assert.equal(picker.normalize('year','2024'),'2024-01-01');
  assert.equal(picker.fromIsoDate('2024-12-30','week'),'2025-W01');
  assert.equal(picker.fromIsoDate('2024-02-29','month'),'2024-02');
 });
@@ -60,4 +60,16 @@ test('switching calendar granularity retains equivalent dates and baseline contr
  assert.equal(nodes.analysisFrom.type,'date');
  assert.equal(nodes.analysisFrom.value,'2024-02-01');
  assert.equal(nodes.analysisTo.value,'2024-03-01');
+});
+test('daily-source ranges cover full selected calendar periods and do not use other source types',()=>{
+ const {picker}=mount();
+ assert.equal(picker.range('month','2024-02','2024-02','daily').type,'day');
+ assert.equal(picker.range('month','2024-02','2024-02','daily').to,'2024-02-29');
+ assert.equal(picker.range('week','2025-W01','2025-W01','daily').from,'2024-12-30');
+ assert.equal(picker.range('week','2025-W01','2025-W01','daily').to,'2025-01-05');
+ assert.equal(picker.range('year','2024','2024','daily').to,'2024-12-31');
+ assert.equal(picker.range('month','2024-02','2024-02','imported').type,'month');
+ assert.equal(picker.range('month','2024-02','2024-02','imported').to,'2024-02-01');
+ assert.equal(picker.range('year','2024','2024','imported'),null);
+ assert.equal(picker.range('day','2024-02-30','2024-03-01','daily'),null);
 });

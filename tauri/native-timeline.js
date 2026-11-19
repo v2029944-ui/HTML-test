@@ -20,11 +20,13 @@ function clear(message='График появится после расчёта.
  state(message);
 }
 function draw(){
+ const view=snapshot&&{...snapshot,points:window.nativePeriodVisibility?.visiblePoints(snapshot.points,Boolean($('hideEmptyPeriods')?.checked))||snapshot.points};
  const container=$('timelineChart'),table=$('timelineRows');
  container.replaceChildren();table.replaceChildren();
- if(!snapshot)return;
- const points=snapshot.points;
- if(!Array.isArray(points)||points.length>124||!['period','month'].includes(snapshot.granularity))
+ if(!view)return;
+ if(snapshot.points?.length&&view.points?.length===0){state('Все периоды подтверждены как нулевые и скрыты. Итоги не изменены.');return;}
+ const points=view.points;
+ if(!Array.isArray(points)||points.length>124||!['period','month','week','year'].includes(view.granularity))
    throw Error('Некорректные данные SQL-графика');
  const measure=$('timelineMetric').value==='count'?'count':'amount';
  const label=measure==='count'?'Количество / объём':'Сумма';
@@ -97,10 +99,10 @@ function draw(){
  const every=Math.max(1,Math.ceil(points.length/8));
  for(let i=0;i<points.length;i++){
    if(i%every!==0&&i!==points.length-1)continue;
-   svg.append(node('text',{x:x(i),y:height-bottom+22,'text-anchor':'middle'},points[i].start.slice(5)));
+   svg.append(node('text',{x:x(i),y:height-bottom+22,'text-anchor':'middle'},(view.granularity==='year'?points[i].start.slice(0,4):view.granularity==='month'?points[i].start:points[i].start.slice(5))));
  }
  container.append(svg);
- state(label+' · '+(snapshot.granularity==='month'?'по месяцам':'по исходным периодам')+
+ state(label+' · '+({month:'по месяцам',week:'по неделям',year:'по годам',period:'по исходным периодам'}[view.granularity])+
    ' · полных точек '+numbers.length+' из '+points.length+
    (missing?'; '+missing+' с пропусками (без соединяющих линий)':'')+
    '. Единицы исходного отчёта не подтверждены.',missing>0);
@@ -109,5 +111,6 @@ function show(data){snapshot=data;try{draw();}catch(e){clear('Невозможн
 function error(message){clear(message);state(message,true);}
 $('timelineMetric').addEventListener('change',()=>{if(snapshot)draw();});
 $('timelineMode').addEventListener('change',()=>{if(snapshot)draw();});
+$('hideEmptyPeriods')?.addEventListener('change',()=>{if(snapshot)show(snapshot);});
 window.nativeTimeline=Object.freeze({show,clear,error});
 })();

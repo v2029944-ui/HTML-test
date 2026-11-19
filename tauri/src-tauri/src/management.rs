@@ -422,13 +422,19 @@ impl Storage {
         job.run(&dest,||{let st=dest.unchecked_transaction().map_err(err)?;let rowid:Option<i64>=tx.query_row("SELECT rowid FROM kv WHERE name='settings'",[],|r|r.get(0)).optional().map_err(err)?;let root=if let Some(rowid)=rowid{tree::parse(&st,tx.blob_open("main","kv","json",rowid,true).map_err(err)?,job)?}else{tree::parse(&st,std::io::Cursor::new("{\"orgNames\":[\"СМУ16\",\"АВТО\",\"ТРАК\",\"ЦЕНТР\"],\"groups\":[],\"catalog\":[]}".as_bytes()),job)?};tree::derive(&st,root,job)?;st.commit().map_err(err)})?;
         drop(dest);
         stage.check_quota()?;
-        tx.execute(
+        // End the read snapshot before acquiring the publication writer lock.
+        // Unrelated sealed-filter writes can commit during staging; upgrading
+        // that old snapshot would fail with SQLITE_BUSY_SNAPSHOT in WAL mode.
+        tx.commit().map_err(err)?;
+        job.check()?;
+        src.execute(
             "ATTACH DATABASE ?1 AS management_stage",
             [stage.db().to_string_lossy().as_ref()],
         )
         .map_err(err)?;
-        tx.execute_batch("PRAGMA management_stage.cache_size=-2048;")
+        src.execute_batch("PRAGMA management_stage.cache_size=-2048;")
             .map_err(err)?;
+        let tx=src.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(err)?;
         job.run(&tx, || {
             check_revision(&tx, rev)?;
             copy_tables(&tx)
@@ -1020,6 +1026,29 @@ impl Storage {
             deleted: 0,
             cleanup_error,
         })
+    }
+    pub fn management_delete_report_with_backup(
+        &self,
+        expected: i64,
+        id: &str,
+        destination: &Path,
+        job: &ManagementJob,
+    ) -> Result<ManagementReceipt, String> {
+        label(id)?;
+        job.check()?;
+        check_revision(&self.management_connect()?, expected)?;
+        let backed_revision = self.backup_sqlite_verified(destination)?;
+        if backed_revision != expected {
+            return Err("Stale storage revision; refresh the selection.".into());
+        }
+
+        // The backup precedes indexing and retains the original report.
+        // The final transaction rechecks the revision and rejects linked sources.
+        job.check()?;
+        self.index_report(id, expected)?;
+        job.check()?;
+        self.management_index_report(id, expected, &ManagementJob::new())?;
+        self.management_delete_reports(expected, &[id.to_owned()], job)
     }
     pub fn management_delete_reports(
         &self,

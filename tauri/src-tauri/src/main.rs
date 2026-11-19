@@ -2,9 +2,14 @@
 
 mod storage;
 mod native_import;
+mod native_management;
+mod native_name_selection;
+
+use native_management::{native_catalog_page, native_delete_report, native_member_page, native_settings_edit};
 
 use native_import::{
     native_wide_import_preview, native_wide_import_apply,
+    native_folder_import_session, native_folder_import_preview, native_folder_import_apply,
     native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
 };
 
@@ -153,6 +158,7 @@ async fn native_group_page(
     limit: usize,
 ) -> Result<Vec<NativeGroup>, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        native_management::page_limit(limit)?;
         let after = after_handle
             .as_deref()
             .map(|value| value.parse::<i64>().map_err(|_| "Invalid group cursor".to_string()))
@@ -258,20 +264,21 @@ async fn native_analysis_index_settings(
 // name filters. Native callers create a short-lived sealed SQLite selection,
 // never a WebView-side scan of historic report JSON. Cleanup also runs after
 // an error, so stale names cannot leak into subsequent queries.
-fn with_selected_work_name<T>(
+fn with_selected_work_names<T>(
     store: &Storage,
     revision: i64,
     name: Option<String>,
+    names: Option<Vec<String>>,
     mut scope: AnalysisScope,
     action: impl FnOnce(&AnalysisScope) -> Result<T, String>,
 ) -> Result<T, String> {
-    let Some(name) = name else { return action(&scope); };
-    if name.is_empty() || name.len()>512 {
-        return Err("Selected group/work name must contain 1..=512 bytes".into());
+    let names = native_name_selection::normalize(name, names)?;
+    if names.is_empty() {
+        return action(&scope);
     }
     let id=store.analysis_filter_create(revision,"names")?;
     let result=(|| {
-        store.analysis_filter_append(revision,&id,&[name])?;
+        store.analysis_filter_append(revision,&id,&names)?;
         store.analysis_filter_seal(revision,&id)?;
         scope.names=Some(id.clone());
         action(&scope)
@@ -309,6 +316,7 @@ async fn native_analysis_range(
     to: String,
     organizations: Vec<String>,
     selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
 ) -> Result<RangeSummary, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<RangeSummary, String> {
         if !matches!(report_type.as_str(), "day" | "week" | "month") {
@@ -339,7 +347,7 @@ async fn native_analysis_range(
                 organizations: id.clone(),
                 names: None,
             };
-            with_selected_work_name(&*store,revision,selected_name,scope,|scope| {
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
                 store.analysis_range_summary(
                 revision, scope, &RangeQuery { from, to },
             )
@@ -366,6 +374,8 @@ async fn native_analysis_timeline(
     to: String,
     organizations: Vec<String>,
     selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
+    grouping: Option<String>,
 ) -> Result<storage::TimelineSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !matches!(report_type.as_str(), "day" | "week" | "month") {
@@ -391,8 +401,8 @@ async fn native_analysis_timeline(
                 organizations: id.clone(),
                 names: None,
             };
-            with_selected_work_name(&*store,revision,selected_name,scope,|scope| {
-                store.analysis_timeline(revision, scope, &RangeQuery { from, to })
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
+                store.analysis_timeline_grouped(revision, scope, &RangeQuery { from, to },grouping.as_deref())
             })
         })();
         let cleanup = store.analysis_filter_delete(&id);
@@ -416,6 +426,8 @@ async fn native_analysis_organization_trends(
     to: String,
     organizations: Vec<String>,
     selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
+    grouping: Option<String>,
 ) -> Result<storage::OrganizationTrends, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !matches!(report_type.as_str(), "day" | "week" | "month") {
@@ -441,9 +453,9 @@ async fn native_analysis_organization_trends(
                 organizations: id.clone(),
                 names: None,
             };
-            with_selected_work_name(&*store,revision,selected_name,scope,|scope| {
-                store.analysis_organization_trends(
-                revision, scope, &RangeQuery { from, to },
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
+                store.analysis_organization_trends_grouped(
+                revision, scope, &RangeQuery { from, to },grouping.as_deref(),
             )
             })
         })();
@@ -470,6 +482,7 @@ async fn native_daily_rollup(
     after: Option<String>,
     limit: usize,
     selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
 ) -> Result<storage::DailyRollupPage, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if organizations.is_empty() || organizations.len()>100 {
@@ -498,7 +511,7 @@ async fn native_daily_rollup(
                 organizations:filter.clone(),
                 names:None,
             };
-            with_selected_work_name(&*store,revision,selected_name,scope,|scope| {
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
                 store.analysis_daily_rollup(
                 revision, scope,
                 &RangeQuery{from,to},&granularity,after.as_deref(),limit,
@@ -528,6 +541,7 @@ async fn native_analysis_compare(
     to: String,
     organizations: Vec<String>,
     selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
 ) -> Result<storage::ComparisonDashboard, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !matches!(report_type.as_str(), "day" | "week" | "month") {
@@ -551,7 +565,7 @@ async fn native_analysis_compare(
             store.analysis_filter_append(revision,&filter,&organizations)?;
             store.analysis_filter_seal(revision,&filter)?;
             let scope=AnalysisScope{report_type,organizations:filter.clone(),names:None};
-            with_selected_work_name(&*store,revision,selected_name,scope,|scope| {
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
                 store.analysis_comparison_dashboard(
                 revision, scope,
                 &storage::ComparisonQuery{
@@ -585,6 +599,8 @@ async fn native_analysis_work_timeline(
     organization: Option<String>,
     key: String,
     selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
+    grouping: Option<String>,
 ) -> Result<storage::WorkTrendSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !matches!(report_type.as_str(), "day" | "week" | "month") {
@@ -613,9 +629,9 @@ async fn native_analysis_work_timeline(
                 organizations:id.clone(),
                 names:None,
             };
-            with_selected_work_name(&*store,revision,selected_name,scope,|scope| {
-                store.analysis_work_timeline(
-                revision,scope,&RangeQuery{from,to},organization.as_deref(),&key,
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
+                store.analysis_work_timeline_grouped(
+                revision,scope,&RangeQuery{from,to},organization.as_deref(),&key,grouping.as_deref(),
             )
             })
         })();
@@ -643,6 +659,7 @@ async fn native_analysis_ranking(
     metric: String,
     category: String,
     selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
 ) -> Result<storage::RankingSummary, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if !matches!(report_type.as_str(), "day" | "week" | "month") {
@@ -671,7 +688,7 @@ async fn native_analysis_ranking(
                 organizations: id.clone(),
                 names: None,
             };
-            with_selected_work_name(&*store,revision,selected_name,scope,|scope| {
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
                 store.analysis_ranking(
                 revision, scope, &RangeQuery { from, to },
                 organization.as_deref(), &metric, &category,
@@ -699,6 +716,7 @@ async fn native_analysis_organizations(
     to: String,
     organizations: Vec<String>,
     selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
 ) -> Result<Vec<storage::OrganizationSummary>, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<storage::OrganizationSummary>, String> {
         if !matches!(report_type.as_str(), "day" | "week" | "month") {
@@ -726,7 +744,7 @@ async fn native_analysis_organizations(
             };
             // The exact selection contains at most 100 organizations.
             // SQL aggregation never materializes historical report JSON in JS.
-            with_selected_work_name(&*store,revision,selected_name,scope,|scope| {
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
                 store.analysis_organization_page(
                 revision, scope, &RangeQuery { from, to }, None, 100,
             )
@@ -756,6 +774,7 @@ async fn native_analysis_range_page(
     after: Option<String>,
     limit: usize,
     selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
 ) -> Result<Vec<storage::RangeValue>, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<storage::RangeValue>, String> {
         if !matches!(report_type.as_str(), "day" | "week" | "month") {
@@ -787,7 +806,7 @@ async fn native_analysis_range_page(
                 organizations: id.clone(),
                 names: None,
             };
-            with_selected_work_name(&*store,revision,selected_name,scope,|scope| {
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
                 store.analysis_range_page(
                 revision, scope, &RangeQuery { from, to },
                 organization.as_deref(), after.as_deref(), limit,
@@ -817,6 +836,7 @@ async fn native_export_range_csv(
     organization: Option<String>,
     destination: String,
     selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         if !matches!(report_type.as_str(), "day" | "week" | "month") {
@@ -856,7 +876,7 @@ async fn native_export_range_csv(
                 organizations: id.clone(),
                 names: None,
             };
-            with_selected_work_name(&*store,revision,selected_name,scope,|scope| {
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
                 store.analysis_export_range(
                 revision, scope, &RangeQuery { from, to }, organization.as_deref(), path,
             )
@@ -999,6 +1019,13 @@ fn updater_configured() -> bool {
 
 fn main() {
     tauri::Builder::default()
+        .on_window_event(|window,event| {
+            if matches!(event,tauri::WindowEvent::Destroyed) {
+                if let Some(store)=window.try_state::<Storage>() {
+                    let _=store.set_folder_import_session(window.label(),false);
+                }
+            }
+        })
         .plugin(tauri_plugin_updater::Builder::new()
             .pubkey(option_env!("ANALIZ_UPDATER_PUBLIC_KEY").unwrap_or(""))
             .build())
@@ -1022,11 +1049,15 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             updater_configured, load_data, save_data, native_read_revision, native_report_page,
             native_settings_bootstrap, native_group_page, native_group_rename,
+            native_catalog_page, native_delete_report, native_member_page, native_settings_edit,
             native_analysis_index_page, native_analysis_index_settings, native_analysis_name_options, native_analysis_range,
             native_analysis_timeline, native_analysis_ranking, native_analysis_organization_trends, native_analysis_work_timeline, native_analysis_compare, native_daily_rollup,
             native_analysis_organizations, native_analysis_range_page,
             native_export_range_csv, native_backup_sqlite, native_restore_preview, native_restore_copy,
             native_restore_schedule, native_restore_launch_info, native_restore_cancel,
+            native_folder_import_session,
+            native_folder_import_preview,
+            native_folder_import_apply,
             native_wide_import_preview, native_wide_import_apply,
             native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
             native_metric_kinds, native_metric_preview, native_metric_apply, native_metric_summary,

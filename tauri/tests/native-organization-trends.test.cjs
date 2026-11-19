@@ -11,11 +11,11 @@ class Element{
  addEventListener(type,handler){(this.listeners||(this.listeners={}))[type]=handler;}
 }
 function mount(){
- const ids=['organizationTrendsMetric','organizationTrendsStatus','organizationTrendsChart',
+ const ids=['hideEmptyPeriods','organizationTrendsMetric','organizationTrendsStatus','organizationTrendsChart',
             'organizationTrendsLegend','organizationTrendsRows'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element(id)]));
  e.organizationTrendsMetric.value='amount';
- const window={},document={getElementById:id=>e[id],createElement:tag=>new Element(tag),
+ const window={nativePeriodVisibility:require('../native-period-visibility.js')},document={getElementById:id=>e[id],createElement:tag=>new Element(tag),
    createElementNS:(ns,tag)=>{assert.equal(ns,'http://www.w3.org/2000/svg');return new Element(tag);}};
  vm.runInNewContext(script,{window,document});
  return {window,e};
@@ -79,4 +79,17 @@ test('subset is explicit, untrusted names are text, inconsistent series are reje
    series:Array.from({length:9},(_,i)=>series('Org'+i,[point('2024-02-28',i,i)]))});
  assert.equal(e.organizationTrendsChart.children.length,0);
  assert.match(e.organizationTrendsStatus.textContent,/Некорректный ответ/);
+});
+
+test('hidden zero periods still validate every original organization series',()=>{
+ const {window,e}=mount();e.hideEmptyPeriods.checked=true;
+ const a=point('2024-01-01',0,0),b={...point('2024-01-01',0,0),periods:2};
+ window.nativeOrganizationTrends.show({granularity:'period',selected_organizations:2,series:[series('A',[a]),series('B',[b])]});
+ assert.match(e.organizationTrendsStatus.textContent,/Расхождение периодов/);
+});
+test('all confirmed zero periods hidden never imply missing data',()=>{
+ const {window,e}=mount();e.hideEmptyPeriods.checked=true;
+ window.nativeOrganizationTrends.show({granularity:'period',selected_organizations:1,series:[series('A',[point('2024-01-01',0,0)])]});
+ assert.match(e.organizationTrendsStatus.textContent,/нулевые и скрыты/);
+ assert.ok(!e.organizationTrendsStatus.className.includes('error'));
 });

@@ -1,0 +1,20 @@
+{
+  "date": "2026-11-19",
+  "platform": "Cloud Linux, debug Rust build, synthetic data",
+  "fixture": {
+    "rows_in_large_report": 250000,
+    "historic_reports": 2000,
+    "reports": 2001
+  },
+  "result": {
+    "values": 250000,
+    "amount": 502000,
+    "change_rows": 250000,
+    "range_csv_bytes": 12827863,
+    "changes_csv_bytes": 27828049,
+    "elapsed_seconds": 31.308,
+    "peak_rss_kib": 11132
+  },
+  "command": "cargo run --manifest-path tauri/storage-core/Cargo.toml --example analysis -- /tmp/sql-transition-perf",
+  "limits": "Includes indexing and analytical/CSV work. Does not measure installed Windows/WebView2 or real user workbooks."
+}

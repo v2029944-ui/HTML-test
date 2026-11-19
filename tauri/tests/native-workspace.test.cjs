@@ -74,35 +74,35 @@ function mount(options={}){
    nativeRestoreLaunchInfo:async()=>null,
    nativeRestoreCancel:async()=>{calls.push({kind:'restore_cancel'});return true;},
    chooseCsvPath:async defaultPath=>{calls.push({kind:'save_csv',defaultPath});return 'C:/Exports/new.csv';},
-   nativeExportRangeCsv:async(rev,kind,from,to,organizations,organization,destination,selectedName)=>{
-     calls.push({kind:'export_csv',rev,reportType:kind,from,to,organizations,organization,destination,selectedName});
+   nativeExportRangeCsv:async(rev,kind,from,to,organizations,organization,destination,selectedName,selectedNames)=>{
+     calls.push({kind:'export_csv',rev,reportType:kind,from,to,organizations,organization,destination,selectedName,selectedNames});
    },
-   nativeAnalysisRange:async(rev,kind,from,to,organizations,selectedName)=>{calls.push({kind:'range',rev,reportType:kind,from,to,organizations,selectedName});return options.complete
+   nativeAnalysisRange:async(rev,kind,from,to,organizations,selectedName,selectedNames)=>{calls.push({kind:'range',rev,reportType:kind,from,to,organizations,selectedName,selectedNames});return options.complete
     ?{complete:true,periods:12,missing:0,total:{count:12,amount:options.mismatchedTotal?1900:divisionAmounts[0]+divisionAmounts[1],average:150},invalid_reports:0,duplicate_issues:0,overlap_issues:0}
     :{complete:false,periods:366,missing:1,total:{count:null,amount:null,average:null},
       available_reports:options.observed?8:0,
       available_total:options.observed?{count:7,amount:350,average:50}:{count:null,amount:null,average:null},
       invalid_reports:1,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};},
-   nativeAnalysisTimeline:async(rev,kind,from,to,organizations,selectedName)=>{
-     calls.push({kind:'timeline',rev,reportType:kind,from,to,organizations,selectedName});
+   nativeAnalysisTimeline:async(rev,kind,from,to,organizations,selectedName,grouping,selectedNames)=>{
+     calls.push({kind:'timeline',rev,reportType:kind,from,to,organizations,selectedName,selectedNames});
      return {granularity:'period',points:[{start:from,periods:1,missing:options.complete?0:1,
        total:options.complete?{count:2,amount:100,average:50}:{count:null,amount:null,average:null}}]};
    },
-   nativeOrganizationTrends:async(rev,kind,from,to,organizations,selectedName)=>{
-     calls.push({kind:'org_trends',rev,reportType:kind,from,to,organizations,selectedName});
+   nativeOrganizationTrends:async(rev,kind,from,to,organizations,selectedName,grouping,selectedNames)=>{
+     calls.push({kind:'org_trends',rev,reportType:kind,from,to,organizations,selectedName,selectedNames});
      return {granularity:'period',selected_organizations:organizations.length,series:[
        {organization:organizations[0],points:[{start:from,periods:1,missing:options.complete?0:1,
          total:options.complete?{count:2,amount:100,average:50}:{count:null,amount:null,average:null}}]}
      ]};
    },
-   nativeAnalysisRanking:async(rev,kind,from,to,organizations,organization,metric,category,selectedName)=>{
-     calls.push({kind:'ranking',rev,reportType:kind,from,to,organizations,organization,metric,category,selectedName});
+   nativeAnalysisRanking:async(rev,kind,from,to,organizations,organization,metric,category,selectedName,selectedNames)=>{
+     calls.push({kind:'ranking',rev,reportType:kind,from,to,organizations,organization,metric,category,selectedName,selectedNames});
      return options.complete
        ?{complete:true,rows:[{key:'work:x',name:'Работа',kind:'work',count:-2,amount:300,active:true}]}
        :{complete:false,rows:[]};
    },
-   nativeAnalysisCompare:async(rev,kind,beforeFrom,beforeTo,from,to,organizations,selectedName)=>{
-     calls.push({kind:'comparison',rev,reportType:kind,beforeFrom,beforeTo,from,to,organizations,selectedName});
+   nativeAnalysisCompare:async(rev,kind,beforeFrom,beforeTo,from,to,organizations,selectedName,selectedNames)=>{
+     calls.push({kind:'comparison',rev,reportType:kind,beforeFrom,beforeTo,from,to,organizations,selectedName,selectedNames});
      const measure=(base,current)=>({base,current,delta:current-base,percent:base===0?null:(current-base)/Math.abs(base)*100});
      const comparison={
        summary:{before:{complete:true},after:{complete:!!options.complete},
@@ -117,20 +117,20 @@ function mount(options={}){
      if(options.delayedComparison)return new Promise(resolve=>{options.resolveComparison=()=>resolve(comparison);});
      return comparison;
    },
-   nativeWorkTimeline:async(rev,kind,from,to,organizations,organization,key,selectedName)=>{
-     calls.push({kind:'work_timeline',rev,reportType:kind,from,to,organizations,organization,key,selectedName});
+   nativeWorkTimeline:async(rev,kind,from,to,organizations,organization,key,selectedName,grouping,selectedNames)=>{
+     calls.push({kind:'work_timeline',rev,reportType:kind,from,to,organizations,organization,key,selectedName,selectedNames});
      const data={key,name:'Работа '+key,kind:key.startsWith('group:')?'group':'work',
        granularity:'period',points:[{start:from,periods:1,missing:options.complete?0:1,
          total:options.complete?{count:-2,amount:20}:{count:null,amount:null}}]};
      if(options.delayedWorkTrend)return new Promise(resolve=>{options.resolveWorkTrend=()=>resolve(data);});
      return data;
    },
-   nativeAnalysisRangePage:async(rev,kind,from,to,organizations,organization,after,limit,selectedName)=>{
-     calls.push({kind:'work',rev,reportType:kind,from,to,organizations,organization,after,limit,selectedName});
+   nativeAnalysisRangePage:async(rev,kind,from,to,organizations,organization,after,limit,selectedName,selectedNames)=>{
+     calls.push({kind:'work',rev,reportType:kind,from,to,organizations,organization,after,limit,selectedName,selectedNames});
      const row=n=>({key:'work:'+String(n).padStart(4,'0'),name:n===0?'<b>Работа</b>':'Работа '+n,kind:'work',count:null,amount:null,average:null,active:true});
      return after?[row(50)]:Array.from({length:50},(_,i)=>row(i));
    },
-   nativeAnalysisOrganizations:async(rev,kind,from,to,organizations,selectedName)=>{calls.push({kind:'divisions',rev,reportType:kind,from,to,organizations,selectedName});return [
+   nativeAnalysisOrganizations:async(rev,kind,from,to,organizations,selectedName,selectedNames)=>{calls.push({kind:'divisions',rev,reportType:kind,from,to,organizations,selectedName,selectedNames});return [
      {org:'СМУ16',complete:true,missing:0,total:{count:8,amount:divisionAmounts[0],average:divisionAmounts[0]/8}},
      options.complete
       ?{org:'АВТО',complete:true,missing:0,total:{count:4,amount:divisionAmounts[1],average:divisionAmounts[1]/4}}
@@ -709,7 +709,7 @@ test('selected work name reaches all SQL KPI, chart, division, ranking, comparis
  await window.nativeWorkspaceReady;
  await window.nativeNameFilter.search();
  assert.equal(e.analysisName.children.length,3);
- e.analysisName.value='Работа';e.analysisName.events.change();
+ e.analysisName.value='Работа';e.analysisName.events.change();e.analysisNameAdd.events.click();
  assert.equal(window.nativeNameFilter.selectedName(),'Работа');
  assert.match(e.analysisFilterScope.textContent,/Работа/);
  e.analysisFrom.value='2024-02-28';e.analysisTo.value='2024-02-29';
@@ -735,11 +735,87 @@ test('work name selection cannot change while SQL computations are running',asyn
  const opt={complete:true};
  const {e,window}=mount(opt);await window.nativeWorkspaceReady;
  await window.nativeNameFilter.search();
- e.analysisName.value='Группа';e.analysisName.events.change();
+ e.analysisName.value='Группа';e.analysisName.events.change();e.analysisNameAdd.events.click();
  e.analysisFrom.value='2024-02-28';e.analysisTo.value='2024-02-29';
  await e.analysisPrepare.events.click();
  assert.equal(e.analysisName.disabled,false);
  await e.analysisRun.events.click();
  assert.equal(e.analysisName.disabled,false);
  assert.equal(window.nativeNameFilter.selectedName(),'Группа');
+});
+
+test('daily source uses identical full-month day bounds for every SQL analysis block and CSV',async()=>{
+ const {e,calls,window}=mount({complete:true});await window.nativeWorkspaceReady;
+ e.analysisSource.value='daily';e.analysisSource.events.change();
+ e.analysisType.value='month';e.analysisType.events.change();
+ e.analysisFrom.value='2024-02';e.analysisTo.value='2024-02';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ assert.equal(calls.filter(c=>c.kind==='index').at(-1).reportType,'day');
+ for(const kind of ['range','timeline','org_trends','divisions','ranking','work']){
+  const call=calls.filter(c=>c.kind===kind).at(-1);
+  assert.ok(call,kind);assert.equal(call.reportType,'day',kind);
+  assert.equal(call.from,'2024-02-01',kind);assert.equal(call.to,'2024-02-29',kind);
+ }
+ e.comparisonBeforeFrom.value='2024-01';e.comparisonBeforeTo.value='2024-01';
+ await e.comparisonRun.events.click();
+ const comparison=calls.filter(c=>c.kind==='comparison').at(-1);
+ assert.equal(comparison.reportType,'day');assert.equal(comparison.beforeFrom,'2024-01-01');assert.equal(comparison.beforeTo,'2024-01-31');
+ await e.analysisExport.events.click();
+ const csv=calls.filter(c=>c.kind==='export_csv').at(-1);
+ assert.equal(csv.reportType,'day');assert.equal(csv.to,'2024-02-29');
+ assert.match(e.analysisResultScope.textContent,/только дневные/);
+});
+
+test('multiple exact names reach each SQLite analysis block and CSV',async()=>{
+ const {e,calls,window}=mount({complete:true});
+ await window.nativeWorkspaceReady;
+ await window.nativeNameFilter.search();
+ for(const name of ['Работа','Группа']){
+  e.analysisName.value=name;
+  e.analysisName.events.change();
+  e.analysisNameAdd.events.click();
+ }
+ e.analysisFrom.value='2024-02-28';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ e.comparisonBeforeFrom.value='2024-02-26';e.comparisonBeforeTo.value='2024-02-27';
+ await e.comparisonRun.events.click();
+ await e.analysisExport.events.click();
+ e.workRows.children[0].children[6].children[0].events.click();
+ await new Promise(resolve=>setImmediate(resolve));
+ for(const kind of ['range','timeline','org_trends','divisions','ranking','work','work_timeline','comparison','export_csv']){
+  const call=calls.filter(x=>x.kind===kind).at(-1);
+  assert.equal(call.selectedName,null,kind);
+  assert.deepEqual(Array.from(call.selectedNames),['Группа','Работа'],kind);
+ }
+});
+
+test('verified mutations queue a mandatory refresh behind active SQL analysis',async()=>{
+ const {e,window}=mount({complete:true});await window.nativeWorkspaceReady;
+ e.analysisFrom.value='2024-02-28';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();
+ const original=window.desktopAPI.nativeAnalysisRange;
+ let release,entered=false;
+ window.desktopAPI.nativeAnalysisRange=async(...args)=>{entered=true;await new Promise(r=>{release=r;});return original(...args);};
+ const analysis=e.analysisRun.events.click();while(!entered)await Promise.resolve();
+ window.desktopAPI.nativeSettingsBootstrap=async()=>({revision:13,reports:367,indexed_reports:366,groups:1,catalog:0,org_names:['СМУ16','АВТО']});
+ const refresh=window.nativeWorkspaceRefresh();release();await analysis;
+ assert.equal(await refresh,true);
+ assert.equal(e.metricReports.textContent,367);
+ assert.equal(e.analysisValues.children.length,0,'old-revision KPI must be cleared by mandatory refresh');
+});
+
+test('queued refresh cannot bootstrap a newer snapshot before older report and group pages finish',async()=>{
+ const {e,window}=mount();await window.nativeWorkspaceReady;
+ let bootstraps=0,releaseReport,releaseGroup,groupStarted=false;
+ const report=window.desktopAPI.nativeReportPage,group=window.desktopAPI.nativeGroupPage;
+ let reportCalls=0,groupCalls=0;
+ window.desktopAPI.nativeSettingsBootstrap=async()=>({revision:12+(++bootstraps),reports:366+bootstraps,indexed_reports:366,groups:1,catalog:0,org_names:['СМУ16','АВТО']});
+ window.desktopAPI.nativeReportPage=async(...args)=>{if(++reportCalls===1)await new Promise(r=>{releaseReport=r;});return report(...args);};
+ window.desktopAPI.nativeGroupPage=async(...args)=>{if(++groupCalls===1){groupStarted=true;await new Promise(r=>{releaseGroup=r;});}return group(...args);};
+ const first=window.nativeWorkspaceRefresh();while(!releaseReport)await Promise.resolve();
+ const second=window.nativeWorkspaceRefresh();releaseReport();while(!groupStarted)await Promise.resolve();
+ const beforeRelease=bootstraps;
+ releaseGroup();await first;assert.equal(await second,true);
+ assert.equal(beforeRelease,1,'new bootstrap must wait until both old pages complete');
+ assert.equal(e.metricReports.textContent,368);
 });

@@ -737,6 +737,12 @@ fn c3_source_diagnostic_links_block_management_delete_even_without_json_sidecars
         &ManagementJob::new(),
     ).unwrap_err();
     assert!(error.contains("source diagnostics"), "{error}");
+    let backup = dir.path().join("linked.sqlite3");
+    let error = s
+        .management_delete_report_with_backup(revision, "keep", &backup, &ManagementJob::new())
+        .unwrap_err();
+    assert!(error.contains("source diagnostics"), "{error}");
+    assert!(backup.exists());
     assert_eq!(s.revision().unwrap(), revision);
     assert_eq!(s.load().unwrap(), before);
     assert_eq!(
@@ -756,4 +762,104 @@ fn c3_source_diagnostic_links_block_management_delete_even_without_json_sidecars
         c.query_row("SELECT COUNT(*) FROM report_source_diagnostic_links", [], |r| r.get::<_, i64>(0)).unwrap(),
         1,
     );
+}
+
+
+#[test]
+fn management_reindex_after_folder_change_keeps_reports_and_settings() {
+    let dir = tempdir().unwrap();
+    let storage = Storage::new(dir.path().join("live")).unwrap();
+    let data = management_data();
+    let original_revision = management_setup(&storage, &data);
+    let before = storage.management_bootstrap(original_revision).unwrap();
+    let excel_folder = dir.path().join("excel-files");
+    std::fs::create_dir(&excel_folder).unwrap();
+
+    // Changing the Excel folder changes the SQLite revision but must not
+    // erase existing reports or break the bounded settings bootstrap.
+    storage
+        .set_folder(excel_folder.to_string_lossy().into_owned())
+        .unwrap();
+    let current_revision = storage.revision().unwrap();
+    assert!(current_revision > original_revision);
+    for _ in 0..2 {
+        storage
+            .management_index_settings(current_revision, &ManagementJob::new())
+            .unwrap();
+        let after = storage.management_bootstrap(current_revision).unwrap();
+        assert_eq!(after.reports, before.reports);
+        assert_eq!(after.org_names, before.org_names);
+        assert_eq!(after.groups, before.groups);
+        assert_eq!(after.catalog, before.catalog);
+    }
+    assert_eq!(storage.load().unwrap()["reports"], data["reports"]);
+    assert_eq!(storage.load().unwrap()["settings"], data["settings"]);
+}
+
+#[test]
+fn management_single_report_delete_requires_fresh_verified_backup() {
+    let dir = tempdir().unwrap();
+    let s = Storage::new(dir.path().into()).unwrap();
+    let data = management_data();
+    s.save(data.clone()).unwrap();
+    let revision = s.revision().unwrap();
+    let stale = dir.path().join("stale.sqlite3");
+    let job = ManagementJob::new();
+    assert!(s
+        .management_delete_report_with_backup(revision - 1, "keep", &stale, &job)
+        .unwrap_err()
+        .contains("Stale storage revision"));
+    assert!(!stale.exists());
+
+    let existing = dir.path().join("existing.sqlite3");
+    fs::write(&existing, "keep this file").unwrap();
+    assert!(s
+        .management_delete_report_with_backup(revision, "keep", &existing, &job)
+        .is_err());
+    assert_eq!(fs::read_to_string(&existing).unwrap(), "keep this file");
+    assert_eq!(s.revision().unwrap(), revision);
+
+    let backup = dir.path().join("before-delete.sqlite3");
+    let receipt = s
+        .management_delete_report_with_backup(revision, "keep", &backup, &job)
+        .unwrap();
+    assert_eq!(receipt.deleted, 1);
+    assert!(receipt.revision > revision);
+    assert!(s.load().unwrap()["reports"].as_array().unwrap().is_empty());
+    assert_eq!(s.load().unwrap()["settings"], data["settings"]);
+    let copy = Connection::open_with_flags(backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .unwrap();
+    assert_eq!(read_model::revision(&copy).unwrap(), revision);
+    let backed_up: String = copy
+        .query_row("SELECT id FROM reports", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(backed_up, "keep");
+}
+
+#[test]
+fn management_settings_index_allows_concurrent_analysis_filter_writes() {
+    let dir=tempdir().unwrap();
+    let root=dir.path().to_path_buf();
+    let storage=Storage::new(root.clone()).unwrap();
+    let mut data=management_data();
+    data["settings"]["catalog"]=Value::Array((0..15000).map(|i| json!({"work":format!("Work {i}")})).collect());
+    storage.save(data).unwrap();
+    let revision=storage.revision().unwrap();
+    let running=std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let writer_running=running.clone();
+    let writer=std::thread::spawn(move || {
+        let concurrent=Storage::new(root).unwrap();
+        let mut writes=0;
+        while writer_running.load(std::sync::atomic::Ordering::SeqCst) {
+            let id=concurrent.analysis_filter_create(revision,"organizations").unwrap();
+            concurrent.analysis_filter_delete(&id).unwrap();writes+=1;
+        }
+        writes
+    });
+    let result=storage.management_index_settings(revision,&ManagementJob::new());
+    running.store(false,std::sync::atomic::Ordering::SeqCst);
+    let writes=writer.join().unwrap();
+    assert!(writes>0,"concurrent writes must overlap staging");
+    assert!(result.is_ok(),"index publication failed during unrelated filter writes: {result:?}");
+    assert_eq!(storage.management_bootstrap(revision).unwrap().catalog,15000);
 }

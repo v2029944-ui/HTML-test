@@ -15,7 +15,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{ou
 .controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:14px 0}.muted{color:#53647a}.error{color:#a12228}.status{min-height:24px;font-size:14px}
 .overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,155px),1fr));gap:12px}
 .metric{background:#eff4f9;border-radius:9px;padding:10px 12px}.metric strong{display:block;font-size:22px;font-variant-numeric:tabular-nums}.metric span{color:#53647a;font-size:13px}
-.table-scroll{overflow:auto;max-width:100%}table{width:100%;border-collapse:collapse;min-width:650px}
+.table-scroll{overflow:auto;max-width:100%;max-height:none} .table-scroll:focus-visible{outline:2px solid #24639a;outline-offset:2px} .period-visibility{display:flex;align-items:center;gap:8px;flex-wrap:wrap}table{width:100%;border-collapse:collapse;min-width:650px}
 th,td{text-align:left;border-bottom:1px solid #e4e9ef;padding:10px 9px;vertical-align:middle;font-size:13px;overflow-wrap:anywhere}
 th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 @media(max-width:650px){header{padding:16px}main{padding:16px 10px}.panel{padding:15px}h1{font-size:20px}}
@@ -143,6 +143,9 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .work-filter-search{flex-wrap:wrap;max-width:min(100%,940px)}
 .work-filter-search input{flex:1 1 210px;min-width:0}
 .work-filter-search select{flex:1 1 220px;min-width:0}
+#analysisNameSelected{margin:8px 0;max-width:850px;overflow-wrap:anywhere}
+#analysisNameSelected li+li{margin-top:4px}
+#analysisNameSelected button{margin-inline-start:8px}
 #analysisNameStatus{max-width:850px;overflow-wrap:anywhere}
 
 .filter-scope{margin:4px 0 0;font-size:12px;line-height:1.5;color:#455d78}
@@ -191,8 +194,10 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <div id="sqlMain" data-nav-panel="analysis">
 <div class="analytics-toolbar" aria-label="Фильтры и расчёт аналитики">
 <div class="controls">
+<label for="analysisSource">Источник расчёта</label>
+<select id="analysisSource"><option value="imported">Отчёты выбранного типа</option><option value="daily">Только дневные отчёты</option></select>
 <label for="analysisType">Период</label>
-<select id="analysisType"><option value="day">Дни</option><option value="week">Недели</option><option value="month">Месяцы</option></select>
+<select id="analysisType"><option value="day">Дни</option><option value="week">Недели</option><option value="month">Месяцы</option><option value="year" id="analysisYearOption" disabled>Год</option></select>
 <label for="analysisFrom">С</label><input type="date" id="analysisFrom">
 <label for="analysisTo">По</label><input type="date" id="analysisTo">
 <span id="analysisPeriodHelp" class="intro">Выбирайте даты в календаре.</span>
@@ -204,10 +209,12 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <label for="analysisNameSearch">Найти работу / группу</label>
 <input id="analysisNameSearch" type="search" maxlength="128" placeholder="Часть точного названия" autocomplete="off">
 <button type="button" id="analysisNameSearchRun">Найти</button>
-<label for="analysisName">Фильтр работ и групп</label>
-<select id="analysisName"><option value="*">Все работы и группы</option></select>
-<button type="button" id="analysisNameReset">Сбросить</button>
+<label for="analysisName">Результаты поиска работ и групп</label>
+<select id="analysisName"><option value="">Выберите название</option></select>
+<button type="button" id="analysisNameAdd">Добавить</button>
+<button type="button" id="analysisNameReset">Очистить выбор</button>
 </div>
+<ul id="analysisNameSelected" aria-label="Выбранные работы и группы" hidden></ul>
 <p id="analysisNameStatus" class="filter-scope" role="status" aria-live="polite">Найдите нужную работу или группу. До выбора применяются все позиции.</p>
 </details>
 <button id="analysisPrepare" type="button">Подготовить индексы</button>
@@ -243,6 +250,8 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <h2>Анализ периодов через SQLite</h2>
 <p class="intro">Нативный расчёт с проверкой полноты. Сначала подготовьте индексы выбранного типа (не более 20 отчётов за запрос). Обрабатываются только исходные отчёты в SQLite, полная история не загружается в браузер. Подготовку можно остановить после текущей порции.</p>
 <p id="analysisResultScope" class="action-context">После расчёта здесь появятся подтверждённые данные. Действующие фильтры будут указаны отдельно.</p>
+<label class="period-visibility"><input type="checkbox" id="hideEmptyPeriods"> Скрывать пустые периоды на графиках и в их таблицах</label>
+<p class="intro">Скрываются только периоды с подтверждёнными нулевыми количеством и суммой. Пропуски остаются видимыми. Итоги и CSV не меняются.</p>
 <section id="sqlTimeline" aria-label="График динамики">
 <h3 class="division-title">Динамика по периодам</h3>
 <p class="intro">График использует агрегаты SQLite для выбранных дат и подразделений. Пропуски не заменяются нулём; длинные диапазоны объединяются по календарным месяцам.</p>
@@ -255,7 +264,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p id="timelineStatus" class="status muted" role="status" aria-live="polite">График появится после расчёта.</p>
 <div id="timelineChart" class="timeline-chart"></div>
 <details class="timeline-table"><summary>Точные значения графика</summary>
-<div class="table-scroll"><table>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
 <thead><tr><th>Период</th><th>Исходных периодов</th><th>Пропусков</th><th>Количество / объём</th><th>Сумма</th></tr></thead>
 <tbody id="timelineRows"></tbody>
 </table></div>
@@ -272,7 +281,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <div id="organizationTrendsLegend" class="organization-trends-legend" aria-label="Условные обозначения подразделений"></div>
 <div id="organizationTrendsChart"></div>
 <details class="organization-trends-details"><summary>Точные значения по подразделениям и периодам</summary>
-<div class="table-scroll"><table>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
 <thead><tr><th>Подразделение</th><th>Период</th><th>Исходных периодов</th><th>Пропусков</th><th>Количество / объём</th><th>Сумма</th></tr></thead>
 <tbody id="organizationTrendsRows"></tbody>
 </table></div>
@@ -282,7 +291,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p class="intro">Сравнение использует выбранные тип, диапазон и подразделения. Неполные данные не превращаются в ноль.</p>
 <p id="divisionStatus" class="status muted" role="status" aria-live="polite">После расчёта здесь появятся результаты по подразделениям.</p>
 <p id="divisionShareStatus" class="filter-scope" role="status" aria-live="polite">Доли появятся только при полном подтверждённом ряде с положительной общей суммой.</p>
-<div class="table-scroll"><table>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
 <thead><tr><th>Подразделение</th><th>Полнота</th><th>Пропусков</th><th>Количество / объём</th><th>Сумма</th><th>Относительная сумма</th><th>Доля выбранной суммы</th></tr></thead>
 <tbody id="divisionRows"></tbody>
 </table></div>
@@ -306,7 +315,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </div>
 <p id="exportStatus" class="status muted" role="status" aria-live="polite">Экспорт доступен после расчёта. CSV сохраняется в новый файл.</p>
 <p id="workStatus" class="status muted" role="status" aria-live="polite">Расшифровка появится после расчёта.</p>
-<div class="table-scroll"><table>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
 <thead><tr><th>Группа / работа</th><th>Тип</th><th>Количество / объём</th><th>Сумма</th><th>Среднее</th><th>Активна</th><th>Динамика</th></tr></thead>
 <tbody id="workRows"></tbody>
 </table></div>
@@ -321,7 +330,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p id="workTrendStatus" class="status muted" role="status" aria-live="polite">Выберите работу или группу из таблицы выше.</p>
 <div id="workTrendChart" class="work-trend-chart"></div>
 <details class="work-trend-details"><summary>Точные значения выбранной позиции</summary>
-<div class="table-scroll"><table>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
 <thead><tr><th>Период</th><th>Исходных периодов</th><th>Пропусков отчётов</th><th>Количество / объём</th><th>Сумма</th></tr></thead>
 <tbody id="workTrendRows"></tbody>
 </table></div>
@@ -343,7 +352,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <div id="comparisonMetrics" class="comparison-metrics" aria-label="Итоговые изменения"></div>
 <h4>Изменения по подразделениям</h4>
 <p class="intro">Если данные подразделения неполные хотя бы в одном диапазоне, изменения для него показываются как «—».</p>
-<div class="table-scroll"><table>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
 <thead><tr><th>Подразделение</th><th>Сумма: было</th><th>Стало</th><th>Изменение суммы</th><th>Изменение количества / объёма</th></tr></thead>
 <tbody id="comparisonDivisionRows"></tbody>
 </table></div>
@@ -384,7 +393,8 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <select id="nativeReportType"><option value="">Все</option><option value="day">Дни</option><option value="week">Недели</option><option value="month">Месяцы</option></select>
 <div class="joined-pager" aria-label="Страницы отчётов"><button id="reportBack" type="button" aria-label="Предыдущая страница отчётов" disabled>Назад</button><output id="reportPageInfo" aria-live="polite">Страница 1</output><button id="reportNext" type="button" aria-label="Следующая страница отчётов" disabled>Далее</button></div></div>
 <p id="reportStatus" class="status muted" role="status" aria-live="polite"></p>
-<div class="table-scroll"><table><thead><tr><th>Начало</th><th>Конец</th><th>Тип</th><th>Источник</th><th>Идентификатор</th></tr></thead><tbody id="reportRows"></tbody></table></div>
+<p id="managementReportStatus" class="status muted" role="status" aria-live="polite"></p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table><thead><tr><th>Начало</th><th>Конец</th><th>Тип</th><th>Источник</th><th>Идентификатор</th><th>Действия</th></tr></thead><tbody id="reportRows"></tbody></table></div>
 <section id="sqlDailyRollups" aria-label="Календарные сводки из дневных отчётов">
 <h3 class="division-title">Календарные сводки из дневных отчётов</h3>
 <p class="intro">Дни, недели, месяцы и годы рассчитываются из исходных дневных отчётов SQLite. Отдельно загруженные недельные и месячные источники сюда не прибавляются. Пропущенные дни показываются отдельно; суммы неполных периодов относятся только к имеющимся данным.</p>
@@ -393,6 +403,8 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <select id="dailyRollupGranularity"><option value="day">Дням</option><option value="week">Неделям</option><option value="month">Месяцам</option><option value="year">Годам</option></select>
 <label for="dailyRollupFrom">С</label><input type="date" id="dailyRollupFrom">
 <label for="dailyRollupTo">По</label><input type="date" id="dailyRollupTo">
+<button id="dailyRollupPeriodBack" type="button" disabled>← Предыдущий период</button>
+<button id="dailyRollupPeriodNext" type="button" disabled>Следующий период →</button>
 <button id="dailyRollupPrepare" type="button" disabled>Подготовить дневные индексы</button>
 <button id="dailyRollupRun" type="button" disabled>Рассчитать сводку</button>
 </div>
@@ -412,13 +424,13 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <h4>Подразделения по дневному источнику</h4>
 <p class="intro">Сумма и количество каждого подразделения показываются только при полном наличии его дневных отчётов. Неполный период не превращается в ноль.</p>
 <p id="dailySourceDivisionStatus" class="status muted" role="status" aria-live="polite">Сравнение подразделений появится после расчёта календаря.</p>
-<div class="table-scroll"><table>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
 <thead><tr><th>Подразделение</th><th>Пропущенных дней</th><th>Количество / объём</th><th>Сумма</th><th>Полнота</th></tr></thead>
 <tbody id="dailySourceDivisionRows"></tbody>
 </table></div>
 </section>
 <details><summary>Точные значения динамики из дневного источника</summary>
-<div class="table-scroll"><table>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
 <thead><tr><th>Период</th><th>Календарных дней</th><th>Пропусков по подразделениям</th><th>Количество / объём</th><th>Сумма</th></tr></thead>
 <tbody id="dailySourceRows"></tbody>
 </table></div>
@@ -429,7 +441,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <output id="dailyRollupPageInfo" aria-live="polite">Страница 1</output>
 <button id="dailyRollupNext" type="button" disabled>Далее</button>
 </div>
-<div class="table-scroll"><table>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
 <thead><tr><th>Период</th><th>Календарных дней</th><th>Имеющихся отчётов</th><th>Пропусков</th><th>Количество / объём</th><th>Сумма</th><th>Охват</th><th>Дни</th></tr></thead>
 <tbody id="dailyRollupRows"></tbody>
 </table></div>
@@ -444,7 +456,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <output id="dailyRollupDetailPage" aria-live="polite">Страница 1</output>
 <button id="dailyRollupDetailNext" type="button" disabled>Далее</button>
 </div>
-<div class="table-scroll"><table>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
 <thead><tr><th>Дата</th><th>Дневных отчётов</th><th>Пропущено</th><th>Количество / объём</th><th>Сумма</th><th>Охват</th></tr></thead>
 <tbody id="dailyRollupDetailRows"></tbody>
 </table></div>
@@ -452,16 +464,65 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </section>
 </section>
 <section class="panel" id="sqlGroups" data-nav-panel="groups" aria-label="Группы SQL">
-<h2>Сохранённые группы</h2>
-<p class="intro">Название можно изменить без перезаписи отчётов. Изменение сохраняется транзакционно с проверкой версии базы. Содержимое групп пока доступно в полном интерфейсе.</p>
+<h2>Группы работ и справочник</h2>
+<p class="intro">Группы, их состав и справочник сохраняются в SQLite с проверкой ревизии.</p>
+<form id="managementGroupForm" class="controls">
+<label for="managementGroupName">Название новой группы</label>
+<input id="managementGroupName" type="text" maxlength="1024" required>
+<button id="managementGroupCreate" type="submit" disabled>Создать группу</button>
+</form>
+<p id="managementStatus" role="status" aria-live="polite" class="status muted"></p>
 <div class="controls"><div class="joined-pager" aria-label="Страницы групп"><button id="groupBack" type="button" aria-label="Предыдущая страница групп" disabled>Назад</button><output id="groupPageInfo" aria-live="polite">Страница 1</output><button id="groupNext" type="button" aria-label="Следующая страница групп" disabled>Далее</button></div></div>
 <p id="groupStatus" class="status muted" role="status" aria-live="polite"></p>
-<div class="table-scroll"><table><thead><tr><th>ID группы</th><th>Название</th><th>Работ</th><th>Действие</th></tr></thead><tbody id="groupRows"></tbody></table></div>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table><thead><tr><th>ID группы</th><th>Название</th><th>Работ</th><th>Действие</th></tr></thead><tbody id="groupRows"></tbody></table></div>
+<section id="managementMembers" aria-labelledby="managementMemberTitle" hidden>
+<div class="controls">
+<h3 id="managementMemberTitle" tabindex="-1">Состав группы</h3>
+<button id="managementMemberClose" type="button">Закрыть состав</button>
+</div>
+<form id="managementMemberForm" class="controls">
+<label for="managementMemberName">Точное название работы</label>
+<input id="managementMemberName" type="text" maxlength="65536" required>
+<button id="managementMemberAdd" type="submit" disabled>Добавить работу</button>
+</form>
+<p id="managementMemberStatus" role="status" aria-live="polite" class="status muted"></p>
+<div class="joined-pager" aria-label="Страницы состава группы">
+<button id="managementMemberBack" type="button" disabled>Назад</button>
+<output id="managementMemberPage" aria-live="polite">Страница 1</output>
+<button id="managementMemberNext" type="button" disabled>Далее</button>
+</div>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Состав группы">
+<table><thead><tr><th scope="col">Работа</th><th scope="col">Действия</th></tr></thead><tbody id="managementMemberRows"></tbody></table>
+</div>
+</section>
+
+<details id="managementCatalog">
+<summary>Справочник услуг</summary>
+<form id="managementCatalogForm" class="controls">
+<label for="managementCatalogWork">Название работы</label>
+<input id="managementCatalogWork" type="text" maxlength="65536" required>
+<label for="managementCatalogOrganization">Подразделение (необязательно)</label>
+<input id="managementCatalogOrganization" type="text" maxlength="65536">
+<button id="managementCatalogSave" type="submit" disabled>Добавить в справочник</button>
+<button id="managementCatalogCancel" type="button" hidden>Отменить редактирование</button>
+</form>
+<p id="managementCatalogStatus" role="status" aria-live="polite" class="status muted"></p>
+<div class="joined-pager" aria-label="Страницы справочника">
+<button id="managementCatalogBack" type="button" disabled>Назад</button>
+<output id="managementCatalogPage" aria-live="polite">Страница 1</output>
+<button id="managementCatalogNext" type="button" disabled>Далее</button>
+</div>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Справочник услуг">
+<table><thead><tr><th scope="col">Работа</th><th scope="col">Подразделение</th><th scope="col">Действия</th></tr></thead><tbody id="managementCatalogRows"></tbody></table>
+</div>
+</details>
 </section>
 
 <section class="panel" id="sqlSources" data-nav-panel="excel" aria-label="Источники Excel в SQL">
 <h2>Папка Excel</h2>
-<p class="intro">Просмотр метаданных XLSX без чтения самих книг и загрузки истории отчётов в JavaScript. Обнаружение изменений в этой панели не означает импорт. Настройка простых правил доступна здесь, а автоматический импорт и расширенные сопоставления Excel пока остаются в классическом интерфейсе.</p>
+<label><input type="checkbox" id="sourceAutoImport"> Автоматически добавлять новые проверенные отчёты в этом сеансе</label>
+<p id="sourceAutoStatus" class="status muted" role="status" aria-live="polite">По умолчанию выключено. Замены, неоднозначные файлы и замечания требуют ручной проверки.</p>
+<p class="intro">Просмотр метаданных XLSX без чтения самих книг и загрузки истории отчётов в JavaScript. Обнаружение изменений в этой панели не означает импорт. Настройка простых правил доступна здесь, автоматическое добавление новых проверенных отчётов включается отдельно на текущий сеанс.</p>
 <div class="controls">
 <button id="sourceFolderChoose" type="button">Выбрать папку Excel</button>
 <button id="sourceFolderRefresh" type="button">Проверить файлы</button>
@@ -491,14 +552,22 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
   <button id="sourceRuleSave" type="button" disabled>Сохранить правило</button>
 </div>
 <p id="sourceRuleStatus" class="status muted" role="status" aria-live="polite">
-  Выберите файл и настройте его формат. Импорт данных выполняется отдельно с предпросмотром.
+  Выберите файл и настройте его формат.
 </p>
-<div class="table-scroll"><table><thead><tr><th>Файл</th><th>Размер</th><th>Правило импорта</th><th>Действие</th></tr></thead>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table><thead><tr><th>Файл</th><th>Размер</th><th>Правило импорта</th><th>Действие</th></tr></thead>
 <tbody id="sourceFolderRows"></tbody></table></div>
-<p class="intro">Правила сохраняются в SQLite с проверкой ревизии, имени исходной папки и состояния файла. Сохранение правила само по себе не импортирует Excel. Изменение правил может повлиять на автоматический импорт, если одновременно открыт классический интерфейс. Расширенные сопоставления столбцов пока редактируются там же.</p>
+<p class="intro">Правила сохраняются в SQLite с проверкой ревизии, имени исходной папки и состояния файла. Если автоимпорт включён, после сохранения правила новые отчёты без замечаний и пересечений могут добавиться автоматически. Правила также применяются в классическом интерфейсе. Расширенные сопоставления столбцов пока редактируются там же.</p>
 <p class="intro">При выборе другой папки существующие правила файлов могут быть сброшены; перед сменой программа запрашивает подтверждение. Уже сохранённые отчёты остаются в SQLite.</p>
 </section>
 
+<section class="panel" id="sqlImportWizard" data-nav-panel="excel" aria-label="Загрузка Excel">
+<h2>Загрузить Excel</h2>
+<p class="intro">Выберите структуру книги. Ниже проверьте распознанные периоды, суммы и замечания перед сохранением.</p>
+<div class="controls"><label for="importWizardFormat">Структура таблицы</label>
+<select id="importWizardFormat"><option value="legacy">Повторяющиеся столбцы «Работа / Количество / Сумма»</option><option value="wide">Общий список работ и пары столбцов по дням</option></select>
+<button id="importWizardChoose" type="button">Выбрать Excel</button></div>
+<p id="importWizardStatus" class="status muted" role="status" aria-live="polite">Выбор файла не изменяет отчёты в базе.</p>
+</section>
 <section class="panel" id="sqlLegacyImport" data-nav-panel="excel" aria-label="Импорт обычных XLSX через Rust">
 <h2>Обычный Excel — импорт через SQLite</h2>
 <p class="intro">Нативный импорт таблицы с повторяющимися тройками «Работа / Количество / Сумма». Выберите найденный в XLSX лист, тип периода и дату первого периода. Rust читает книгу ограниченными порциями через временную базу на диске. Полная история не загружается в WebView.</p>
@@ -508,12 +577,17 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <label for="legacyType">Тип отчётов</label>
 <select id="legacyType"><option value="week">Недели</option><option value="day">Дни</option><option value="month">Месяцы</option></select>
 <label for="legacyStart">Первый период</label><input id="legacyStart" type="date">
+<details><summary>Исправить столбцы вручную</summary>
+<label for="legacyMappingText">Блоки отчётов: строка заголовка; столбец работы; количества; суммы</label>
+<textarea id="legacyMappingText" rows="3" maxlength="8192" placeholder="1; A; B; C&#10;1; D; E; F"></textarea>
+<p class="intro">Одна строка на каждый последовательный отчётный период. Номера строк начинаются с 1, столбцы — латинские буквы Excel. Пустое поле включает автоматическое распознавание. Не более 64 блоков за импорт. После изменения повторите проверку.</p>
+</details>
 <button id="legacyPreview" type="button" disabled>Проверить XLSX в Rust</button>
 </div>
 <p id="legacyFile" class="intro">Файл не выбран.</p>
 <p id="legacyStatus" class="status muted" role="status" aria-live="polite">Данные SQLite не изменены.</p>
 <div id="legacySummary" class="overview"></div><p id="legacyIssues" class="intro"></p>
-<div class="table-scroll"><table><thead><tr><th>Начало</th><th>Конец</th><th>Тип</th><th>Строк</th><th>Замечаний</th></tr></thead><tbody id="legacyRows"></tbody></table></div>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table><thead><tr><th>Начало</th><th>Конец</th><th>Тип</th><th>Строк</th><th>Замечаний</th></tr></thead><tbody id="legacyRows"></tbody></table></div>
 <div class="controls">
 <label><input type="checkbox" id="legacyReplace"> Разрешаю замену существующих периодов</label>
 <label><input type="checkbox" id="legacyOverlap"> Подтверждаю пересечения типов отчётов</label>
@@ -537,7 +611,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p id="wideStatus" class="status muted" role="status" aria-live="polite">Изменения в SQLite пока не выполняются.</p>
 <div id="wideSummary" class="overview" aria-live="polite"></div>
 <p id="wideIssues" class="intro" aria-live="polite"></p>
-<div class="table-scroll"><table>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
 <thead><tr><th>Источник</th><th>Тип</th><th>Начало</th><th>Окончание</th><th>Строк</th><th>Замечаний</th></tr></thead>
 <tbody id="wideReportRows"></tbody>
 </table></div>
@@ -575,13 +649,15 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p id="metricKindStatus" class="status muted" role="status" aria-live="polite">Загрузка каталога видов отчётов…</p>
 </section>
 </main>
-<script src="tauri-bridge.js"></script><script src="tauri-native-updates.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-timeline.js"></script><script src="tauri-native-ranking.js"></script><script src="tauri-native-organization-trends.js"></script><script src="tauri-native-period-selection.js"></script>
+<script src="tauri-bridge.js"></script><script src="tauri-native-updates.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-auto-import.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-period-visibility.js"></script><script src="tauri-native-timeline.js"></script><script src="tauri-native-ranking.js"></script><script src="tauri-native-organization-trends.js"></script><script src="tauri-native-period-selection.js"></script>
 <script src="tauri-native-work-trends.js"></script><script src="tauri-native-comparison.js"></script><script src="tauri-native-daily-overview.js"></script>
 <script src="tauri-native-daily-calendar.js"></script>
 <script src="tauri-native-name-filter.js"></script>
+<script src="tauri-native-management.js"></script>
 <script src="tauri-native-workspace.js"></script>
-<script src="tauri-native-legacy-import.js"></script>
+<script src="tauri-native-import-mappings.js"></script><script src="tauri-native-legacy-import.js"></script>
 <script src="tauri-native-navigation.js"></script>
 <script src="tauri-native-wide-import.js"></script>
 <script src="tauri-native-metric-kinds.js"></script>
+<script src="tauri-native-import-wizard.js"></script>
 </body></html>

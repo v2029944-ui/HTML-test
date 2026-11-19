@@ -345,7 +345,7 @@ impl<'a> Stage<'a> {
                 .parent()
                 .ok_or_else(|| fail("missing source folder"))?,
         )?;
-        if fingerprint(&self.source_path, cancel, self.limits.archive_bytes)? != self.bound_hash {
+        if self.current_source_hash(cancel)? != self.bound_hash {
             return Err(fail("source changed since ingestion"));
         }
         // Random 24-character stage name supplies operation uniqueness; hash gives bounded IDs.
@@ -705,11 +705,7 @@ impl PreparedImport<'_> {
         self.rows
     }
     pub fn validate_source_and_database(&self, cancel: &AtomicBool) -> Result<()> {
-        if fingerprint(
-            &self.stage.source_path,
-            cancel,
-            self.stage.limits.archive_bytes,
-        )? != self.stage.bound_hash
+        if self.stage.current_source_hash(cancel)? != self.stage.bound_hash
         {
             return Err(fail("source changed since ingestion"));
         }

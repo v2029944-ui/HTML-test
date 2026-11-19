@@ -24,7 +24,7 @@ function clear(message='Динамика появится после расчё�
  status(message);
 }
 function validate(data){
- if(!data||!['period','month'].includes(data.granularity)||
+ if(!data||!['period','month','week','year'].includes(data.granularity)||
     !Number.isSafeInteger(data.selected_organizations)||data.selected_organizations<1||
     data.selected_organizations>100||!Array.isArray(data.series)||
     data.series.length>8||data.series.length>data.selected_organizations)
@@ -63,7 +63,8 @@ function draw(){
  const chart=$('organizationTrendsChart'),legend=$('organizationTrendsLegend'),table=$('organizationTrendsRows');
  chart.replaceChildren();legend.replaceChildren();table.replaceChildren();
  if(!snapshot)return;
- const series=validate(snapshot);
+ validate(snapshot);
+ const series=validate({...snapshot,series:window.nativePeriodVisibility?.visibleSeries(snapshot.series,Boolean($('hideEmptyPeriods')?.checked))||snapshot.series});
  if(!series.length){status('Не найдены выбранные подразделения.');return;}
  const metric=$('organizationTrendsMetric').value==='count'?'count':'amount';
  const title=metric==='amount'?'Сумма':'Количество / объём';
@@ -86,6 +87,7 @@ function draw(){
      table.append(tr);
    }
  });
+ if(!available.length&&snapshot.series.some(s=>s.points.length)&&series.every(s=>s.points.length===0)){status('Все показанные периоды подтверждены как нулевые и скрыты. Итоги не изменены.');return;}
  if(!available.length){
    status('Нет подтверждённых точек: пропуски каждого подразделения указаны в таблице.',true);
    return;
@@ -142,7 +144,7 @@ function draw(){
  for(let i=0;i<count;i++){
    if(i%every!==0&&i!==count-1)continue;
    root.append(svg('text',{x:x(i),y:height-bottom+21,'text-anchor':'middle'},
-     series[0].points[i].start.slice(5)));
+     (snapshot.granularity==='year'?series[0].points[i].start.slice(0,4):snapshot.granularity==='month'?series[0].points[i].start:series[0].points[i].start.slice(5))));
  }
  chart.append(root);
  const limited=snapshot.selected_organizations-series.length;
@@ -158,5 +160,6 @@ function show(result){
 }
 function error(message){clear(message);status(message,true);}
 $('organizationTrendsMetric').addEventListener('change',()=>{if(snapshot)show(snapshot);});
+$('hideEmptyPeriods')?.addEventListener('change',()=>{if(snapshot)show(snapshot);});
 window.nativeOrganizationTrends=Object.freeze({show,clear,error});
 })();

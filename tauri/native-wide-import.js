@@ -31,21 +31,23 @@ function resetReview(message){
  if(message)status(message);
  updateControls();
 }
-$('wideChoose').addEventListener('click',async()=>{
- if(busy)return;
+async function selectSource(chosenPath){
+ if(busy)return false;
  busy=true;updateControls();
  try{
-  const path=await api.chooseWideXlsx();
+  const path=chosenPath??await api.chooseWideXlsx();
   if(typeof path==='string'&&path){
    source=path;resetReview();
    const name=path.split(/[\\/]/).pop();
    $('wideFile').textContent='Выбран XLSX: '+name;
-   status('Файл выбран. Выполните проверку перед сохранением.');
-  }else status('Выбор XLSX отменён.');
+   status('Файл выбран. Выполните проверку перед сохранением.');return true;
+  }else {status('Выбор XLSX отменён.');return false;}
  }catch(error){
-  resetReview();status('Ошибка выбора файла: '+userError(error),true);
+  resetReview();status('Ошибка выбора файла: '+userError(error),true);return false;
  }finally{busy=false;updateControls();}
-});
+}
+$('wideChoose').addEventListener('click',()=>selectSource());
+window.nativeWideImporter=Object.freeze({selectSource,busy:()=>busy,invalidate:()=>{if(!busy){source=null;resetReview('Выбран другой сценарий импорта.');}}});
 $('wideYear').addEventListener('input',()=>resetReview('Год изменён. Проверьте Excel заново.'));
 $('widePreview').addEventListener('click',async()=>{
  if(busy||!source)return;

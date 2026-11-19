@@ -78,7 +78,8 @@ enum JobState {
 /// Cancellation and commit serialize on state; a successful commit always wins over late cancel.
 pub struct ImportJob {
     state: Mutex<JobState>,
-    cancelled: AtomicBool,
+    cancelled: Arc<AtomicBool>,
+    check_source: Option<Box<dyn Fn() -> Result<(), String> + Send + Sync>>,
 }
 impl Default for ImportJob {
     fn default() -> Self {
@@ -89,8 +90,20 @@ impl ImportJob {
     pub fn new() -> Self {
         Self {
             state: Mutex::new(JobState::Open),
-            cancelled: AtomicBool::new(false),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            check_source: None,
         }
+    }
+    pub(super) fn for_checked_source(
+        check_source: impl Fn() -> Result<(), String> + Send + Sync + 'static,
+    ) -> Self {
+        Self { check_source: Some(Box::new(check_source)), ..Self::new() }
+    }
+    pub fn cancellation(&self) -> &AtomicBool {
+        &self.cancelled
+    }
+    pub fn cancellation_handle(&self) -> Arc<AtomicBool> {
+        self.cancelled.clone()
     }
     /// False means commit already succeeded; true means cancellation is accepted.
     pub fn cancel(&self) -> bool {
@@ -688,6 +701,9 @@ fn apply_in_connection_inner(
         reports,
         elapsed_millis: started.elapsed().as_millis(),
     });
+    if let Some(check_source) = &job.check_source {
+        check_source()?;
+    }
     let mut state = job.state.lock().map_err(err)?;
     match *state {
         JobState::Cancelled => return Err("Import cancelled before commit.".into()),

@@ -7,7 +7,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex},
     time::UNIX_EPOCH,
 };
 
@@ -107,6 +107,7 @@ struct ExcelFile {
     name: String,
     size: u64,
     signature: String,
+    native_signature: String,
     too_large: bool,
     /// Independent from the old browser 30-MiB limit.
     native_too_large: bool,
@@ -128,7 +129,42 @@ pub struct ReadExcel {
     sha256: String,
 }
 
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FolderImportRequest {
+    pub session: String,
+    pub folder: String,
+    pub revision: i64,
+    pub name: String,
+    pub signature: String,
+}
+
+struct FolderImportSession {
+    token: String,
+    owner: String,
+    active: Option<Arc<ImportJob>>,
+}
+
+pub struct FolderImportOperation<'a> {
+    store: &'a Storage,
+    pub job: Arc<ImportJob>,
+}
+
+impl Drop for FolderImportOperation<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut session) = self.store.folder_import.lock() {
+            if let Some(session) = session.as_mut() {
+                if session.active.as_ref().is_some_and(|active| Arc::ptr_eq(active, &self.job)) {
+                    session.active = None;
+                }
+            }
+        }
+    }
+}
+
 pub struct Storage {
+    folder_import: Mutex<Option<FolderImportSession>>,
+    folder_import_serial: AtomicU64,
     root: PathBuf,
     gate: Mutex<()>,
 }
@@ -316,6 +352,7 @@ fn write_data(tx: &Transaction<'_>, data: &Value) -> Result<(), String> {
     Ok(())
 }
 
+// Classic folder reports persist this signature in desktopSignature.
 fn file_signature(meta: &fs::Metadata) -> Result<String, String> {
     let millis = |time: Result<std::time::SystemTime, std::io::Error>| {
         time.ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok())
@@ -324,10 +361,97 @@ fn file_signature(meta: &fs::Metadata) -> Result<String, String> {
     Ok(format!("{}:{}:{}", meta.len(), millis(meta.modified()), millis(meta.created())))
 }
 
+fn native_file_signature(meta: &fs::Metadata) -> String {
+    let nanos = |time: Result<std::time::SystemTime, std::io::Error>| {
+        time.ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|x| x.as_nanos()).unwrap_or(0)
+    };
+    let signature = format!("v1:{}:{}:{}", meta.len(), nanos(meta.modified()), nanos(meta.created()));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        format!("{signature}:{}:{}:{}:{}", meta.dev(), meta.ino(), meta.ctime(), meta.ctime_nsec())
+    }
+    #[cfg(not(unix))]
+    signature
+}
+
+fn open_checked_folder_excel(path: &Path, expected_signature: &str) -> Result<fs::File, String> {
+    let changed = "Файл Excel изменился или недоступен. Обновите список файлов.";
+    let matches = |meta: &fs::Metadata| {
+        meta.is_file() && meta.len() <= analiz_import_core::NATIVE_XLSX_ARCHIVE_LIMIT
+            && native_file_signature(meta) == expected_signature
+    };
+    if !matches(&fs::symlink_metadata(path).map_err(err)?) { return Err(changed.into()); }
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // O_NONBLOCK avoids blocking if a substituted entry is a FIFO.
+        options.custom_flags(0o4000);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_FLAG_OPEN_REPARSE_POINT, and share read access only.
+        options.custom_flags(0x00200000).share_mode(1);
+    }
+    let file = options.open(path).map_err(err)?;
+    let metadata = file.metadata().map_err(err)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 { return Err(changed.into()); }
+    }
+    // Check the actual opened handle. A lexical path or pre-open canonicalize
+    // alone cannot catch a substituted link or a redirected parent directory.
+    if !matches(&metadata) || opened_file_path(&file)? != path
+        || !matches(&fs::symlink_metadata(path).map_err(err)?)
+    {
+        return Err(changed.into());
+    }
+    Ok(file)
+}
+
+#[cfg(target_os = "linux")]
+fn opened_file_path(file: &fs::File) -> Result<PathBuf, String> {
+    use std::os::fd::AsRawFd;
+    fs::read_link(Path::new("/proc/self/fd").join(file.as_raw_fd().to_string())).map_err(err)
+}
+
+#[cfg(windows)]
+fn opened_file_path(file: &fs::File) -> Result<PathBuf, String> {
+    use std::ffi::{c_void, OsString};
+    use std::os::windows::{ffi::OsStringExt, io::AsRawHandle};
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetFinalPathNameByHandleW(file: *mut c_void, path: *mut u16, size: u32, flags: u32) -> u32;
+    }
+    let mut path = vec![0u16; 32768];
+    // The handle is valid for this call and the API receives the exact buffer length.
+    let length = unsafe {
+        GetFinalPathNameByHandleW(file.as_raw_handle(), path.as_mut_ptr(), path.len() as u32, 0)
+    } as usize;
+    if length == 0 { return Err(err(std::io::Error::last_os_error())); }
+    if length >= path.len() { return Err("Excel path is too long.".into()); }
+    Ok(PathBuf::from(OsString::from_wide(&path[..length])))
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+fn opened_file_path(_file: &fs::File) -> Result<PathBuf, String> {
+    Err("Проверяемый автоматический импорт недоступен на этой платформе.".into())
+}
+
 impl Storage {
     pub fn new(root: PathBuf) -> Result<Self, String> {
         fs::create_dir_all(&root).map_err(err)?;
-        Ok(Self { root, gate: Mutex::new(()) })
+        Ok(Self {
+            root,
+            gate: Mutex::new(()),
+            folder_import: Mutex::new(None),
+            folder_import_serial: AtomicU64::new(0),
+        })
     }
 
     fn db_path(&self) -> PathBuf {
@@ -507,7 +631,7 @@ impl Storage {
         let meta = fs::symlink_metadata(&path).map_err(err)?;
         if !meta.file_type().is_file()
             || meta.len() > analiz_import_core::NATIVE_XLSX_ARCHIVE_LIMIT
-            || file_signature(&meta)? != expected_signature
+            || native_file_signature(&meta) != expected_signature
         {
             return Err("Файл Excel изменился или недоступен. Обновите список файлов.".into());
         }
@@ -517,6 +641,70 @@ impl Storage {
         insert_key(&tx, "config", &serde_json::to_string(&config).map_err(err)?)?;
         tx.commit().map_err(err)?;
         read_model::revision(&conn)
+    }
+
+    pub fn set_folder_import_session(&self, owner: &str, enabled: bool) -> Result<Option<String>, String> {
+        let mut session = self.folder_import.lock().map_err(err)?;
+        if session.as_ref().is_some_and(|current| current.owner != owner) {
+            return Err("Auto import is controlled by another window.".into());
+        }
+        if let Some(previous) = session.take() {
+            if let Some(active) = previous.active { active.cancel(); }
+        }
+        if !enabled { return Ok(None); }
+        let token = self.folder_import_serial.fetch_add(1, Ordering::Relaxed).to_string();
+        *session = Some(FolderImportSession { token:token.clone(), owner:owner.into(), active:None });
+        Ok(Some(token))
+    }
+
+    pub fn begin_folder_import(&self, owner: &str, request: &FolderImportRequest) -> Result<FolderImportOperation<'_>, String> {
+        if !safe_excel_name(&request.name) || request.folder.is_empty() || request.folder.len() > 32767
+            || request.revision < 0 || request.signature.is_empty() || request.signature.len() > 256
+        {
+            return Err("Некорректные данные исходной папки или XLSX.".into());
+        }
+        let mut session = self.folder_import.lock().map_err(err)?;
+        let session = session.as_mut().filter(|s| s.owner == owner && s.token == request.session)
+            .ok_or("Автоматический импорт выключен.")?;
+        if session.active.is_some() { return Err("Автоматический импорт уже выполняется.".into()); }
+        let path = Path::new(&request.folder).join(&request.name);
+        let signature = request.signature.clone();
+        let job = Arc::new(ImportJob::for_checked_source(move || {
+            open_checked_folder_excel(&path, &signature).map(|_| ())
+        }));
+        session.active = Some(job.clone());
+        Ok(FolderImportOperation { store:self, job })
+    }
+
+    pub fn checked_folder_import(&self, request: &FolderImportRequest) -> Result<(Rule, PathBuf, fs::File), String> {
+        let _guard = self.gate.lock().map_err(err)?;
+        let conn = self.connect()?;
+        let tx = conn.unchecked_transaction().map_err(err)?;
+        read_model::check_revision(&tx, request.revision)?;
+        let config = self.config(&tx)?;
+        if config.folder.as_deref() != Some(&request.folder) {
+            return Err("Папка Excel изменилась. Обновите список файлов.".into());
+        }
+        let rule = config.rules.get(&request.name).ok_or("Для файла Excel нет сохранённого правила.")?;
+        validate_rule(rule)?;
+        let path = Path::new(&request.folder).join(&request.name);
+        let handle = open_checked_folder_excel(&path, &request.signature)?;
+        Ok((rule.clone(), path, handle))
+    }
+
+    pub fn folder_import_organizations(&self, revision: i64) -> Result<[String; 4], String> {
+        let indexed: bool = {
+            let _guard = self.gate.lock().map_err(err)?;
+            let conn = self.connect()?;
+            let tx = conn.unchecked_transaction().map_err(err)?;
+            read_model::check_revision(&tx, revision)?;
+            tx.query_row("SELECT EXISTS(SELECT 1 FROM management_settings)", [], |r| r.get(0)).map_err(err)?
+        };
+        if !indexed {
+            self.management_index_settings(revision, &ManagementJob::new())?;
+        }
+        self.management_bootstrap(revision)?.org_names.try_into()
+            .map_err(|_| "Для Excel требуются четыре организации.".into())
     }
 
     pub fn list_excel(&self) -> Result<Value, String> {
@@ -533,12 +721,14 @@ impl Storage {
         if let Some(ref folder) = config.folder {
             for entry in fs::read_dir(folder).map_err(err)? {
                 let entry = entry.map_err(err)?;
-                if !entry.file_type().map_err(err)?.is_file() { continue; }
-                let name = entry.file_name().to_string_lossy().to_string();
+                if !entry.file_type().is_ok_and(|kind| kind.is_file()) { continue; }
+                let Ok(name) = entry.file_name().into_string() else { continue; };
                 if !safe_excel_name(&name) { continue; }
-                let meta = entry.metadata().map_err(err)?;
+                let Ok(meta) = entry.metadata() else { continue; };
+                if !meta.is_file() { continue; }
                 files.push(ExcelFile {
                     name, size:meta.len(),signature:file_signature(&meta)?,
+                    native_signature:native_file_signature(&meta),
                     too_large:meta.len()>MAX_EXCEL_BYTES,
                     native_too_large:meta.len()>analiz_import_core::NATIVE_XLSX_ARCHIVE_LIMIT,
                 });
@@ -621,6 +811,134 @@ mod tests {
     }
 
     #[test]
+    fn classic_reports_keep_the_persisted_desktop_signature() {
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("excel");
+        fs::create_dir(&folder).unwrap();
+        let name = "same.xlsx";
+        let source = folder.join(name);
+        fs::write(&source, b"sample").unwrap();
+        let store = Storage::new(temp.path().join("store")).unwrap();
+        store.set_folder(folder.to_str().unwrap().into()).unwrap();
+        let meta = fs::metadata(source).unwrap();
+        let millis = |time: std::io::Result<std::time::SystemTime>| time.ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |x| x.as_millis());
+        let persisted = format!("{}:{}:{}", meta.len(), millis(meta.modified()), millis(meta.created()));
+        let listing = store.list_excel().unwrap();
+        let file = &listing["files"][0];
+        assert_eq!(file["signature"], persisted);
+        assert_ne!(file["nativeSignature"], persisted);
+        assert_eq!(store.read_excel(name.into()).unwrap().signature, persisted);
+        assert!(store.check_excel(name.into(), persisted));
+    }
+
+    #[cfg(any(target_os = "linux", windows))]
+    #[test]
+    fn folder_import_checks_session_revision_and_source_and_cancels_at_commit() {
+        use analiz_import_core::{ImportMode, LegacyOptions, Limits, StageArea, TripleMapping};
+        use std::sync::atomic::Ordering;
+        let temp = tempfile::tempdir().unwrap();
+        let store = Storage::new(temp.path().join("data")).unwrap();
+        let folder = temp.path().join("Excel");
+        fs::create_dir(&folder).unwrap();
+        let source = folder.join("report.xlsx");
+        import_apply_tests::fixture(&source, 1);
+        store.set_folder(folder.to_str().unwrap().into()).unwrap();
+        let rule = Rule { format:Some("legacy".into()), kind:"day".into(), start:"2025-01-01".into(), ..Rule::default() };
+        store.set_rule("report.xlsx".into(), rule.clone()).unwrap();
+        let listing = store.list_excel().unwrap();
+        let mut request = FolderImportRequest {
+            session:"outside-window".into(),
+            folder:listing["folder"].as_str().unwrap().into(),
+            revision:listing["revision"].as_i64().unwrap(),
+            name:"report.xlsx".into(),
+            signature:listing["files"][0]["nativeSignature"].as_str().unwrap().into(),
+        };
+        assert_eq!(
+            store.folder_import_organizations(request.revision).unwrap(),
+            ["СМУ16", "АВТО", "ТРАК", "ЦЕНТР"]
+        );
+        assert_eq!(store.revision().unwrap(), request.revision);
+        assert!(store.begin_folder_import("main", &request).is_err());
+        request.session = store.set_folder_import_session("main", true).unwrap().unwrap();
+        assert!(store.begin_folder_import("other-window", &request).is_err());
+        assert!(store.set_folder_import_session("other-window", false).is_err());
+        let operation = store.begin_folder_import("main", &request).unwrap();
+        assert!(store.begin_folder_import("main", &request).is_err());
+        request.name = "../report.xlsx".into();
+        assert!(store.begin_folder_import("main", &request).is_err());
+        request.name = "report.xlsx".into();
+        let (current, path, file) = store.checked_folder_import(&request).unwrap();
+        assert_eq!(current.start, rule.start);
+        let area = StageArea::open(temp.path().join("stage")).unwrap();
+        let cancel = operation.job.cancellation();
+        let mut stage = area.ingest_opened(path, file, Limits::default(), cancel, |_|{}).unwrap();
+        stage.convert_legacy(&LegacyOptions {
+            sheet:"xl/worksheets/sheet1.xml".into(),
+            kind:rule.kind.clone(),
+            start:rule.start.clone(),
+            organizations:["СМУ16".into(), "АВТО".into(), "ТРАК".into(), "ЦЕНТР".into()],
+            mappings:Some(vec![TripleMapping { header_row:1, work_col:1, count_col:2, amount_col:3 }]),
+        }, cancel, |_|{}).unwrap();
+        let prepared = stage.prepare_with_mode(ImportMode::Folder, cancel, |_|{}).unwrap();
+        assert_eq!(prepared.source_folder(), request.folder);
+        assert_eq!(prepared.source_name(), request.name);
+        let preview = store.preview_import(&prepared).unwrap();
+        let out = store.apply_import(&prepared, &preview, ImportConfirmation::default(), &operation.job, |progress| {
+            if progress.phase == "before_commit" {
+                store.set_folder_import_session("main", false).unwrap();
+            }
+        });
+        assert!(out.is_err());
+        assert!(cancel.load(Ordering::Acquire));
+        assert_eq!(store.revision().unwrap(), request.revision);
+        assert!(store.begin_folder_import("main", &request).is_err());
+        drop(operation);
+
+        request.session = store.set_folder_import_session("main", true).unwrap().unwrap();
+        let operation = store.begin_folder_import("main", &request).unwrap();
+        let receipt = store.apply_import(&prepared, &preview, ImportConfirmation::default(), &operation.job, |_|{}).unwrap();
+        assert_eq!(receipt.reports, 1);
+        assert_eq!(receipt.replaced, 0);
+        assert!(store.checked_folder_import(&request).is_err(), "The consumed revision is stale");
+        request.revision = receipt.revision;
+        assert!(store.checked_folder_import(&request).is_ok());
+        let changed = Rule { start:"2025-02-01".into(), ..rule };
+        store.set_rule("report.xlsx".into(), changed).unwrap();
+        assert!(store.checked_folder_import(&request).is_err(), "A changed rule invalidates the snapshot");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn checked_folder_import_rejects_swapped_links_files_and_parent() {
+        use std::os::unix::fs::symlink;
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("folder");
+        let outside = temp.path().join("outside");
+        fs::create_dir(&folder).unwrap();
+        fs::create_dir(&outside).unwrap();
+        let source = folder.join("report.xlsx");
+        let target = outside.join("report.xlsx");
+        fs::write(&source, b"valid").unwrap();
+        fs::write(&target, b"other").unwrap();
+        let signature = native_file_signature(&fs::metadata(&source).unwrap());
+        assert!(open_checked_folder_excel(&source, &signature).is_ok());
+
+        fs::rename(&source, folder.join("old")).unwrap();
+        symlink(&target, &source).unwrap();
+        assert!(open_checked_folder_excel(&source, &signature).is_err());
+        fs::remove_file(&source).unwrap();
+
+        fs::hard_link(&target, &source).unwrap();
+        assert!(open_checked_folder_excel(&source, &signature).is_err());
+        fs::remove_file(&source).unwrap();
+        fs::rename(&folder, temp.path().join("old-folder")).unwrap();
+        symlink(&outside, &folder).unwrap();
+        let target_signature = native_file_signature(&fs::metadata(&target).unwrap());
+        assert!(open_checked_folder_excel(&source, &target_signature).is_err());
+    }
+
+    #[test]
     fn checked_rule_saves_only_for_current_sql_revision_folder_and_file() {
         let tmp = tempdir().unwrap();
         let excel_dir = tmp.path().join("excel");
@@ -631,7 +949,7 @@ mod tests {
         store.set_folder(excel_dir.to_string_lossy().to_string()).unwrap();
         let listing = store.list_excel().unwrap();
         let folder = listing["folder"].as_str().unwrap().to_string();
-        let signature = listing["files"][0]["signature"].as_str().unwrap().to_string();
+        let signature = listing["files"][0]["nativeSignature"].as_str().unwrap().to_string();
         let revision = store.revision().unwrap();
         let rule = Rule {
             kind: "week".to_string(),
@@ -688,7 +1006,7 @@ mod tests {
             ..Default::default()
         };
         let rev = listing["revision"].as_i64().unwrap();
-        let sig = listing["files"][0]["signature"].as_str().unwrap();
+        let sig = listing["files"][0]["nativeSignature"].as_str().unwrap();
         // On Windows, set_folder canonicalizes to a verbatim ("\\\\?\\") path;
         // versioned rule writes must pass that exact folder from the snapshot.
         let selected_folder = listing["folder"].as_str().unwrap().to_string();
@@ -703,7 +1021,7 @@ mod tests {
         let current = refreshed["revision"].as_i64().unwrap();
         assert!(store.set_rule_checked("native-only.xlsx".into(), rule, current,
             refreshed["folder"].as_str().unwrap().to_string(),
-            refreshed["files"][0]["signature"].as_str().unwrap().into()).is_err());
+            refreshed["files"][0]["nativeSignature"].as_str().unwrap().into()).is_err());
         assert_eq!(store.revision().unwrap(), current);
     }
 

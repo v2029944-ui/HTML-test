@@ -1,5 +1,4 @@
-// SQL-only Excel source manager: metadata, version-checked rule edits, no XLSX bytes.
-// Folder notifications refresh the list, never write/import reports in the background.
+// SQL Excel source manager with version-checked rule edits and session auto-import status.
 (function nativeFolderStatus(){
 'use strict';
 const api=window.desktopAPI;
@@ -16,6 +15,10 @@ const fields={
 if(!choose||!refresh||!location||!status||!rows||!count||
    Object.values(fields).some(item=>!item))return;
 const maxVisible=100;
+const autoEnabled=()=>window.nativeFolderAutoImport?.isEnabled()===true;
+const ruleEffect=()=>autoEnabled()
+  ?'Автоимпорт включён. После сохранения правила новые отчёты без замечаний и пересечений могут быть добавлены автоматически.'
+  :'При включении автоимпорта новое правило будет применено при проверке файла.';
 const make=(tag,value)=>{
   const node=document.createElement(tag);
   if(value!==undefined)node.textContent=String(value);
@@ -55,7 +58,7 @@ function invalidate(message='Выберите файл из списка, что
 }
 function openEditor(file,rule){
   if(busy||changing)return;
-  if(!file.signature||(file.nativeTooLarge??file.tooLarge)){
+  if(!file.nativeSignature||(file.nativeTooLarge??file.tooLarge)){
     invalidate();
     ruleMessage('Невозможно настроить правило: файл недоступен или слишком велик.',true);
     return;
@@ -67,7 +70,7 @@ function openEditor(file,rule){
     ruleMessage('Этот файл использует расширенную настройку листов и столбцов. Для изменения откройте классический интерфейс.',true);
     return;
   }
-  selected={name:file.name,signature:file.signature,folder,revision};
+  selected={name:file.name,signature:file.nativeSignature,folder,revision};
   fields.file.textContent='Файл: '+file.name;
   fields.format.value=['auto','legacy','daily-wide'].includes(rule?.format)?rule.format:'legacy';
   fields.type.value=['day','week','month'].includes(rule?.type)?rule.type:'week';
@@ -75,7 +78,7 @@ function openEditor(file,rule){
   fields.sheet.value=rule?.sheet||'';
   fields.year.value=rule?.year||'';
   if(fields.format.value==='daily-wide')fields.type.value='day';
-  ruleMessage('Проверьте формат, даты и параметры. Сохранение правила не импортирует Excel.');
+  ruleMessage('Проверьте формат, даты и параметры. '+ruleEffect());
   lock();
 }
 function isoDate(value){
@@ -134,14 +137,16 @@ async function load(){
         make('td',(file.nativeTooLarge??file.tooLarge)?'Превышен предел нативного импорта (100 МиБ)':hasRule?'Есть правило':'Правило не задано')
       );
       const action=make('td'),button=make('button','Настроить');
-      button.type='button';button.disabled=(file.nativeTooLarge??file.tooLarge)||!file.signature;
+      button.type='button';button.disabled=(file.nativeTooLarge??file.tooLarge)||!file.nativeSignature;
       button.setAttribute('aria-label','Настроить правило для '+file.name);
       button.addEventListener('click',()=>openEditor(file,hasRule?rules[file.name]:null));
       action.append(button);tr.append(action);rows.append(tr);
     }
-    report(folder?'Папка проверена. Данные Excel не импортируются автоматически в SQL-режиме.':
+    void window.nativeFolderAutoImport?.updateSnapshot(result);
+    report(folder?'Папка проверена. Состояние автоимпорта указано рядом с переключателем.':
       'Выберите папку Excel. Импорт отчётов выполняется отдельно с проверкой.');
   }catch(error){
+    void window.nativeFolderAutoImport?.updateSnapshot(null);
     rows.replaceChildren();
     invalidate();
     count.textContent='Список XLSX недоступен.';
@@ -163,7 +168,7 @@ fields.save.addEventListener('click',async()=>{
   let rule;
   try{rule=makeRule();}catch(error){ruleMessage(String(error.message),true);return;}
   const choice={...selected};
-  if(!window.confirm('Сохранить правило для «'+choice.name+'»? Это не импортирует файл в SQL-режиме, но может повлиять на автоматический импорт при работе в классическом интерфейсе.'))return;
+  if(!window.confirm('Сохранить правило для «'+choice.name+'»? '+ruleEffect()+' Правило также применяется в классическом интерфейсе.'))return;
   changing=true;lock();
   let saved=false,reloaded=true,error=null;
   try{
@@ -186,7 +191,8 @@ fields.save.addEventListener('click',async()=>{
 choose.addEventListener('click',async()=>{
   if(busy||changing)return;
   if(folder&&!window.confirm(
-    'При выборе другой папки правила файлов прежней папки будут сброшены. Сохранённые отчёты в SQLite останутся. Продолжить?'
+    'При выборе другой папки правила файлов прежней папки будут сброшены. Сохранённые отчёты в SQLite останутся. '+
+    (autoEnabled()?'Автоимпорт продолжится для настроенной папки. ':'')+'Продолжить?'
   ))return;
   changing=true;lock();
   let changed=false,reloaded=true;

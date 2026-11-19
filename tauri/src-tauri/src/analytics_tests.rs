@@ -1427,3 +1427,29 @@ fn name_search_rejects_multibyte_labels_over_utf8_limit() {
     assert_eq!(baseline.rows.len(),1);
     assert_eq!(baseline.rows[0].name,"Group");
 }
+
+#[test]
+fn daily_source_trends_respect_explicit_calendar_buckets() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let s=scope(&store,rev,"day",&["A"],None);
+    let q=RangeQuery{from:"2024-02-26".into(),to:"2024-03-10".into()};
+    let timeline=store.analysis_timeline_grouped(rev,&s,&q,Some("week")).unwrap();
+    assert_eq!(timeline.granularity,"week");
+    assert_eq!(timeline.points.len(),2);
+    assert_eq!(timeline.points[0].start,"2024-02-26");
+    assert_eq!(timeline.points[0].periods,7);
+    assert_eq!(timeline.points[0].missing,4);
+    assert!(timeline.points[0].total.amount.is_none());
+    let orgs=store.analysis_organization_trends_grouped(rev,&s,&q,Some("week")).unwrap();
+    assert_eq!(orgs.series[0].points.len(),2);
+    assert_eq!(orgs.series[0].points[0].missing,4);
+    let work=store.analysis_work_timeline_grouped(rev,&s,&q,None,"group:g",Some("week"));
+    assert!(work.is_ok(),"{work:?}");
+    assert_eq!(work.unwrap().points.len(),2);
+    let annual=RangeQuery{from:"2024-01-01".into(),to:"2024-12-31".into()};
+    let year=store.analysis_timeline_grouped(rev,&s,&annual,Some("year")).unwrap();
+    assert_eq!(year.points.len(),1);assert_eq!(year.points[0].periods,366);
+    assert!(store.analysis_timeline_grouped(rev,&s,&q,Some("nonsense")).is_err());
+}

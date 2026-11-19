@@ -15,7 +15,7 @@ function mount(options={}){
   const ids=['sourceFolderChoose','sourceFolderRefresh','sourceFolderLocation','sourceFolderStatus','sourceFolderRows','sourceFolderCount','sourceRuleFile','sourceRuleFormat','sourceRuleType','sourceRuleStart','sourceRuleSheet','sourceRuleYear','sourceRuleSave','sourceRuleStatus'];
   const nodes=Object.fromEntries(ids.map(id=>[id,new Node('div')]));
   let listing=options.listing===undefined?{folder:null,revision:12,files:[],rules:{}}:options.listing;
-  const calls=[];let onChanged=null;let unsubscribed=false;
+  const calls=[],confirmations=[];let onChanged=null;let unsubscribed=false;
   const api={
     list:async()=>{calls.push('list');if(options.failList)throw Error('disk unavailable');return listing;},
     nativeSetRuleChecked:async(name,rule,revision,folder,signature)=>{
@@ -33,7 +33,8 @@ function mount(options={}){
   };
   const window={
     desktopAPI:api,
-    confirm:()=>{calls.push('confirm');return options.consent!==false;},
+    confirm:message=>{calls.push('confirm');confirmations.push(message);return options.consent!==false;},
+    nativeFolderAutoImport:options.autoEnabled?{isEnabled:()=>true,updateSnapshot:()=>{}}:undefined,
     nativeWorkspaceRefresh:async()=>{
       calls.push('sql_refresh');
       if(options.refreshFails)throw Error('stale view');
@@ -43,7 +44,7 @@ function mount(options={}){
   };
   const document={getElementById:id=>nodes[id],createElement:tag=>new Node(tag)};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-folder-status.js'),'utf8'),{window,document});
-  return {nodes,window,calls,getListing:()=>listing,setListing:v=>listing=v,onChanged:()=>onChanged?.(),isUnsubscribed:()=>unsubscribed};
+  return {nodes,window,calls,confirmations,getListing:()=>listing,setListing:v=>listing=v,onChanged:()=>onChanged?.(),isUnsubscribed:()=>unsubscribed};
 }
 
 test('native Excel source overview is packaged only for Tauri SQL workspace',()=>{
@@ -65,7 +66,7 @@ test('native Excel source overview is packaged only for Tauri SQL workspace',()=
 test('metadata-only list is capped to 100 rendered names and escapes untrusted data',async()=>{
   const files=Array.from({length:140},(_,i)=>({
     name:i===0?'<img src=x onerror=alert(1)>.xlsx':'report-'+i+'.xlsx',
-    signature:'test-sig-'+i,
+    nativeSignature:'test-sig-'+i,
     size:i===0?100:1048576,
     tooLarge:i===2
   }));
@@ -132,7 +133,7 @@ test('failed SQL revision refresh after folder selection is not mistaken for a f
 });
 
 test('save Excel rule only after explicit source selection and valid date',async()=>{
- const file={name:'week-2026.xlsx',size:2048,signature:'2048:123:456',tooLarge:false};
+ const file={name:'week-2026.xlsx',size:2048,nativeSignature:'2048:123:456',tooLarge:false};
  const panel=mount({listing:{folder:'C:/Excel',revision:12,files:[file],rules:{}}});
  await panel.window.nativeFolderReady;
  const e=panel.nodes;
@@ -150,7 +151,7 @@ test('save Excel rule only after explicit source selection and valid date',async
  assert.equal(saved.name,'week-2026.xlsx');
  assert.equal(saved.revision,12);
  assert.equal(saved.folder,'C:/Excel');
- assert.equal(saved.signature,file.signature);
+ assert.equal(saved.signature,file.nativeSignature);
  assert.equal(saved.rule.type,'week');
  assert.equal(saved.rule.start,'2026-11-16');
  assert.equal(saved.rule.sheet,'Week');
@@ -162,7 +163,7 @@ test('save Excel rule only after explicit source selection and valid date',async
 });
 
 test('wide import rule accepts day only, optional year and no first period',async()=>{
- const file={name:'year.xlsx',size:10,signature:'10:1:1',tooLarge:false};
+ const file={name:'year.xlsx',size:10,nativeSignature:'10:1:1',tooLarge:false};
  const panel=mount({listing:{folder:'C:/Excel',revision:23,files:[file],rules:{}}});
  await panel.window.nativeFolderReady;
  const e=panel.nodes;
@@ -181,7 +182,7 @@ test('wide import rule accepts day only, optional year and no first period',asyn
 });
 
 test('advanced mapping is protected against accidental deletion',async()=>{
- const file={name:'complex.xlsx',size:20,signature:'20:1:1',tooLarge:false};
+ const file={name:'complex.xlsx',size:20,nativeSignature:'20:1:1',tooLarge:false};
  const panel=mount({listing:{folder:'C:/Excel',revision:12,files:[file],
    rules:{'complex.xlsx':{type:'day',start:'',format:'daily-wide',mappings:{Sheet1:{work_col:0}}}}}});
  await panel.window.nativeFolderReady;
@@ -191,7 +192,7 @@ test('advanced mapping is protected against accidental deletion',async()=>{
 });
 
 test('stale revision is rejected and never marked saved',async()=>{
- const file={name:'week.xlsx',size:10,signature:'10:1:1',tooLarge:false};
+ const file={name:'week.xlsx',size:10,nativeSignature:'10:1:1',tooLarge:false};
  const panel=mount({listing:{folder:'C:/Excel',revision:12,files:[file],rules:{}},failRule:true});
  await panel.window.nativeFolderReady;
  const e=panel.nodes;
@@ -212,8 +213,8 @@ test('missing source revision cannot authorize a rule change',async()=>{
 });
 
 test('SQL folder accepts 40-MiB files in native mode while classic 30-MiB indicator remains',async()=>{
- const small={name:'forty.xlsx',size:40*1024*1024,signature:'40m:1:2',tooLarge:true,nativeTooLarge:false};
- const tooBig={name:'hundred-one.xlsx',size:101*1024*1024,signature:'101m:1:2',tooLarge:true,nativeTooLarge:true};
+ const small={name:'forty.xlsx',size:40*1024*1024,nativeSignature:'40m:1:2',tooLarge:true,nativeTooLarge:false};
+ const tooBig={name:'hundred-one.xlsx',size:101*1024*1024,nativeSignature:'101m:1:2',tooLarge:true,nativeTooLarge:true};
  const panel=mount({listing:{folder:'C:/Excel',revision:12,files:[small,tooBig],rules:{}}});
  await panel.window.nativeFolderReady;
  const rows=panel.nodes.sourceFolderRows.children;
@@ -224,4 +225,16 @@ test('SQL folder accepts 40-MiB files in native mode while classic 30-MiB indica
  assert.equal(rows[1].children[3].children[0].disabled,true);
  assert.match(rows[1].children[2].textContent,/100 МиБ/);
  assert.equal(panel.calls.some(x=>x.kind==='rule'),false);
+});
+
+test('saving a rule discloses possible automatic writes when the session opt-in is active',async()=>{
+ const file={name:'one.xlsx',size:10,nativeSignature:'10:1:1',tooLarge:false};
+ const panel=mount({autoEnabled:true,listing:{folder:'C:/Excel',revision:12,files:[file],rules:{}}});
+ await panel.window.nativeFolderReady;
+ const e=panel.nodes;
+ e.sourceFolderRows.children[0].children[3].children[0].events.click();
+ e.sourceRuleStart.value='2026-11-16';
+ await e.sourceRuleSave.events.click();
+ assert.match(panel.confirmations[0],/Автоимпорт включён/);
+ assert.match(panel.confirmations[0],/могут быть добавлены автоматически/);
 });

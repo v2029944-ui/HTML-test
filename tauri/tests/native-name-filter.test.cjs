@@ -10,7 +10,7 @@ class E{
  addEventListener(type,fn){this.events[type]=fn;}
 }
 function mount(opt={}){
- const ids=['analysisNameSearch','analysisNameSearchRun','analysisName','analysisNameReset','analysisNameStatus'];
+ const ids=['analysisNameSearch','analysisNameSearchRun','analysisName','analysisNameReset','analysisNameStatus','analysisNameAdd','analysisNameSelected'];
  const e=Object.fromEntries(ids.map(k=>[k,new E(k)]));const requests=[],notify=[];
  const window={desktopAPI:{nativeAnalysisNameOptions:async(revision,search,limit)=>{
   requests.push({revision,search,limit});
@@ -30,7 +30,7 @@ test('native exact-name filter module is packaged and never included in the clas
   const html=fs.readFileSync(path.join(out,'native-workspace.html'),'utf8');
   assert.equal(fs.readFileSync(path.join(out,'tauri-native-name-filter.js'),'utf8'),script);
   assert.ok(html.indexOf('tauri-native-name-filter.js')<html.indexOf('tauri-native-workspace.js'));
-  for(const id of ['analysisNameSearch','analysisName','analysisNameSearchRun','analysisNameReset','analysisNameStatus'])
+  for(const id of ['analysisNameSearch','analysisName','analysisNameSearchRun','analysisNameReset','analysisNameStatus','analysisNameAdd','analysisNameSelected'])
    assert.match(html,new RegExp('id="'+id+'"'));
   assert.ok(!fs.readFileSync(path.join(root,'index.html'),'utf8').includes('tauri-native-name-filter.js'));
  }finally{fs.rmSync(out,{recursive:true,force:true});}
@@ -48,7 +48,7 @@ test('search uses bounded native SQLite results, explicit choice drives all filt
  assert.equal(e.analysisName.children.length,3);
  assert.equal(e.analysisName.children[1].textContent,'Группа: Group');
  assert.equal(e.analysisName.children[2].textContent,'Работа: Работа');
- e.analysisName.value='Group';e.analysisName.events.change();
+ e.analysisName.value='Group';e.analysisName.events.change();e.analysisNameAdd.events.click();
  assert.equal(window.nativeNameFilter.selectedName(),'Group');
  assert.equal(notify.length,1);
  assert.equal(e.analysisNameReset.disabled,false);
@@ -59,7 +59,7 @@ test('search uses bounded native SQLite results, explicit choice drives all filt
  e.analysisNameReset.events.click();
  assert.equal(window.nativeNameFilter.selectedName(),null);
  assert.equal(notify.length,2);
- assert.equal(e.analysisName.value,'*');
+ assert.equal(e.analysisName.value,'');
 });
 test('new search cannot erase an already applied group outside the result page',async()=>{
  let answer=0;
@@ -68,10 +68,10 @@ test('new search cannot erase an already applied group outside the result page',
   {rows:[{name:'Different',kind:'work'}],has_more:true}});
  window.nativeNameFilter.setRevision(17);
  await window.nativeNameFilter.search();
- e.analysisName.value='Group';e.analysisName.events.change();
+ e.analysisName.value='Group';e.analysisName.events.change();e.analysisNameAdd.events.click();
  await window.nativeNameFilter.search();
  assert.equal(window.nativeNameFilter.selectedName(),'Group');
- assert.equal(e.analysisName.children[1].textContent,'Выбрано: Group');
+ assert.equal(e.analysisNameSelected.children[0].children[0].textContent,'Group');
  assert.match(e.analysisNameStatus.textContent,/уточните запрос/);
  window.nativeNameFilter.setLocked(true);
  assert.equal(e.analysisName.disabled,true);
@@ -106,4 +106,48 @@ test('invalid, duplicated and oversized native options are rejected before a sel
   assert.equal(e.analysisName.children.length,1);
   assert.match(e.analysisNameStatus.textContent,/недоступен|недоступны/);
  }
+});
+
+test('selection spans searches and can remove one exact name without clearing the rest',async()=>{
+ let answer=0;
+ const {e,window,notify}=mount({response:()=>({rows:[
+  {name:++answer===1?'*':'Работа',kind:'work'}
+ ],has_more:false})});
+ window.nativeNameFilter.setRevision(11);
+ for(const name of ['*','Работа']){
+  await window.nativeNameFilter.search();
+  e.analysisName.value=name;
+  e.analysisName.events.change();
+  e.analysisNameAdd.events.click();
+ }
+ assert.deepEqual(Array.from(window.nativeNameFilter.selectedNames()),['*','Работа']);
+ const remove=e.analysisNameSelected.children[0].children[1];
+ window.nativeNameFilter.setLocked(true);
+ assert.equal(remove.disabled,true);
+ remove.events.click();
+ assert.equal(notify.length,2);
+ window.nativeNameFilter.setLocked(false);
+ remove.events.click();
+ assert.deepEqual(Array.from(window.nativeNameFilter.selectedNames()),['Работа']);
+ assert.equal(notify.length,3);
+});
+test('selection stops at 50 names and reports the limit',async()=>{
+ let page=0;
+ const {e,window,notify}=mount({response:()=>({
+  rows:Array.from({length:50},(_,i)=>({name:'work '+(page*50+i),kind:'work'})),has_more:++page===1
+ })});
+ window.nativeNameFilter.setRevision(12);
+ await window.nativeNameFilter.search();
+ for(let i=0;i<50;i++){
+  e.analysisName.value='work '+i;
+  e.analysisName.events.change();
+  e.analysisNameAdd.events.click();
+ }
+ await window.nativeNameFilter.search();
+ e.analysisName.value='work 50';
+ e.analysisName.events.change();
+ e.analysisNameAdd.events.click();
+ assert.equal(window.nativeNameFilter.selectedNames().length,50);
+ assert.equal(notify.length,50);
+ assert.match(e.analysisNameStatus.textContent,/50/);
 });

@@ -11,10 +11,10 @@ class Element {
  addEventListener(event,handler){this.events[event]=handler;}
 }
 function mount(){
- const ids=['timelineChart','timelineRows','timelineStatus','timelineMetric','timelineMode'];
+ const ids=['hideEmptyPeriods','timelineChart','timelineRows','timelineStatus','timelineMetric','timelineMode'];
  const elements=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  elements.timelineMetric.value='amount';elements.timelineMode.value='line';
- const window={},document={
+ const window={nativePeriodVisibility:require('../native-period-visibility.js')},document={
    getElementById:id=>elements[id],
    createElement:tag=>new Element(tag),
    createElementNS:(ns,tag)=>{assert.equal(ns,'http://www.w3.org/2000/svg');return new Element(tag);}
@@ -84,4 +84,30 @@ test('untrusted labels are added as text and oversized results are rejected',()=
  assert.equal(e.timelineChart.children.length,0);
  assert.equal(e.timelineRows.children.length,1);
  assert.match(e.timelineStatus.textContent,/не показаны нулями/);
+});
+
+test('empty-period checkbox rerenders graph and exact table without hiding missing data',()=>{
+ const {window,e}=mount();
+ const data={granularity:'period',points:[point('2024-01-01',0,0),point('2024-01-02',0,0,1),point('2024-01-03',5,1)]};
+ window.nativeTimeline.show(data);
+ assert.equal(e.timelineRows.children.length,3);
+ e.hideEmptyPeriods.checked=true;e.hideEmptyPeriods.events.change();
+ assert.equal(e.timelineRows.children.length,2);
+ assert.equal(e.timelineRows.children[0].children[4].textContent,'—');
+ assert.equal(all(e.timelineChart.children[0],'circle').length,1);
+ assert.equal(data.points.length,3);
+ e.hideEmptyPeriods.checked=false;e.hideEmptyPeriods.events.change();
+ assert.equal(e.timelineRows.children.length,3);
+});
+
+test('hiding all zero timeline points reports confirmed hidden periods',()=>{
+ const {window,e}=mount();e.hideEmptyPeriods.checked=true;
+ window.nativeTimeline.show({granularity:'period',points:[point('2024-01-01',0,0)]});
+ assert.match(e.timelineStatus.textContent,/нулевые и скрыты/);
+});
+
+test('annual timeline axis includes years instead of identical January labels',()=>{
+ const {window,e}=mount();window.nativeTimeline.show({granularity:'year',points:[point('2023-01-01',3,1),point('2024-01-01',4,1)]});
+ const labels=all(e.timelineChart.children[0],'text').map(n=>n.textContent);
+ assert.ok(labels.includes('2023'));assert.ok(labels.includes('2024'));
 });

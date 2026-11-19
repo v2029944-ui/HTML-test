@@ -23,20 +23,22 @@ function clear(message='Выберите работу или группу из �
  status(message);
 }
 function draw(){
+ const view=snapshot&&{...snapshot,points:window.nativePeriodVisibility?.visiblePoints(snapshot.points,Boolean($('hideEmptyPeriods')?.checked))||snapshot.points};
  const host=$('workTrendChart'),rows=$('workTrendRows');
  host.replaceChildren();rows.replaceChildren();
- if(!snapshot)return;
- if(typeof snapshot.key!=='string'||typeof snapshot.name!=='string'||
-    !['group','work'].includes(snapshot.kind)||
-    !['period','month'].includes(snapshot.granularity)||
-    !Array.isArray(snapshot.points)||snapshot.points.length>124)
+ if(!view)return;
+ if(snapshot.points?.length&&view.points?.length===0){status('Все периоды подтверждены как нулевые и скрыты. Итоги не изменены.');return;}
+ if(typeof view.key!=='string'||typeof view.name!=='string'||
+    !['group','work'].includes(view.kind)||
+    !['period','month','week','year'].includes(view.granularity)||
+    !Array.isArray(view.points)||view.points.length>124)
    throw Error('Некорректный ответ графика по работе');
- $('workTrendSelected').textContent=(snapshot.kind==='group'?'Группа: ':'Работа: ')+snapshot.name;
+ $('workTrendSelected').textContent=(view.kind==='group'?'Группа: ':'Работа: ')+view.name;
  const metric=$('workTrendMetric').value==='count'?'count':'amount';
  const title=metric==='count'?'Количество / объём':'Сумма';
  const valid=[];
  let missing=0;
- for(const point of snapshot.points){
+ for(const point of view.points){
    if(typeof point.start!=='string'||!/^\d{4}-\d{2}(?:-\d{2})?$/.test(point.start)||
       !Number.isSafeInteger(point.periods)||point.periods<1||
       !Number.isSafeInteger(point.missing)||point.missing<0||point.missing>point.periods*100)
@@ -54,7 +56,7 @@ function draw(){
    }
    rows.append(row);
  }
- if(!snapshot.points.length){
+ if(!view.points.length){
    status('Для этой позиции нет периодов выбранного диапазона.');return;
  }
  const numbers=valid.filter(finite);
@@ -77,8 +79,8 @@ function draw(){
  const x=i=>left+(i+.5)*w/valid.length;
  const y=v=>top+(axisMax-v)/(axisMax-axisMin)*h;
  const root=svg('svg',{viewBox:'0 0 960 300',role:'img',
-   'aria-label':title+' — '+snapshot.name+', по периодам'});
- root.append(svg('title',{},title+' — '+snapshot.name));
+   'aria-label':title+' — '+view.name+', по периодам'});
+ root.append(svg('title',{},title+' — '+view.name));
  const ticks=Math.round((axisMax-axisMin)/step);
  for(let i=0;i<=Math.min(12,ticks);i++){
    const v=axisMin+i*step,py=y(v);
@@ -103,7 +105,7 @@ function draw(){
      ?svg('rect',{x:px-barW/2,y:Math.min(baseline,py),width:barW,
        height:Math.max(1,Math.abs(py-baseline)),fill:v<0?'#926da1':'#347db2'})
      :svg('circle',{cx:px,cy:py,r:3.8,fill:'#24639a',stroke:'#fff','stroke-width':1});
-   mark.append(svg('title',{},snapshot.points[i].start+': '+format(v)));
+   mark.append(svg('title',{},view.points[i].start+': '+format(v)));
    root.append(mark);
    if(!useBars)segment.push([px,py]);
  }
@@ -112,7 +114,7 @@ function draw(){
  for(let i=0;i<valid.length;i++){
    if(i%labelEvery!==0&&i!==valid.length-1)continue;
    root.append(svg('text',{x:x(i),y:height-bottom+22,'text-anchor':'middle'},
-     snapshot.points[i].start.slice(5)));
+     (view.granularity==='year'?view.points[i].start.slice(0,4):view.granularity==='month'?view.points[i].start:view.points[i].start.slice(5))));
  }
  host.append(root);
  status(title+' · подтверждено '+numbers.length+' из '+valid.length+' точек'+
@@ -125,5 +127,6 @@ function show(data){
 }
 function error(message){clear(message);status(message,true);}
 $('workTrendMetric').addEventListener('change',()=>{if(snapshot)draw();});
+$('hideEmptyPeriods')?.addEventListener('change',()=>{if(snapshot)show(snapshot);});
 window.nativeWorkTrends=Object.freeze({show,clear,error});
 })();

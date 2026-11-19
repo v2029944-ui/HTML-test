@@ -16,7 +16,7 @@ const goodPreview={
   sampleSourceIssues:[]
 };
 function mount(options={}){
- const ids=['legacyChoose','legacyPreview','legacyApply','legacyType','legacyStart','legacySheet','legacyFile','legacyStatus','legacySummary','legacyIssues','legacyRows','legacyReplace','legacyOverlap','legacyQuality'];
+ const ids=['legacyMappingText','legacyChoose','legacyPreview','legacyApply','legacyType','legacyStart','legacySheet','legacyFile','legacyStatus','legacySummary','legacyIssues','legacyRows','legacyReplace','legacyOverlap','legacyQuality'];
  const e=Object.fromEntries(ids.map(id=>[id,new E('div')]));
  e.legacyType.value='week';
  const calls=[];
@@ -159,4 +159,17 @@ test('worksheet selector only offers bounded discovered physical sheets and hand
  await empty.e.legacyChoose.events.click();
  assert.equal(empty.e.legacyPreview.disabled,true);
  assert.match(empty.e.legacyStatus.textContent,/не найдены поддерживаемые листы/);
+});
+
+test('mapping edits are locked while native preview is pending and invalidate a completed review',async()=>{
+ let resolve;const pending=new Promise(r=>{resolve=r;});
+ const {e,calls}=mount({preview:pending});
+ await e.legacyChoose.events.click();e.legacySheet.value='xl/worksheets/sheet1.xml';e.legacyStart.value='2026-11-16';
+ const running=e.legacyPreview.events.click();
+ while(!calls.some(c=>c.kind==='preview'))await Promise.resolve();
+ assert.equal(e.legacyMappingText.disabled,true);
+ e.legacyMappingText.events.input();
+ resolve(goodPreview);await running;
+ assert.equal(e.legacyMappingText.disabled,false);assert.equal(e.legacyApply.disabled,false);
+ e.legacyMappingText.events.input();assert.equal(e.legacyApply.disabled,true);
 });

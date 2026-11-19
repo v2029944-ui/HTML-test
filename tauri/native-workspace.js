@@ -4,12 +4,15 @@
 const api=window.desktopAPI,$=id=>document.getElementById(id);
 const userError=window.analizUserError||(()=>'Операция не выполнена. Перезапустите программу и повторите действие.');
 const periodPicker=window.nativePeriodSelection;
-const selectedName=()=>window.nativeNameFilter?.selectedName()??null;
+const selectedNames=()=>window.nativeNameFilter?.selectedNames()??[];
+const nameArgs=(names,...grouping)=>[names.length===1?names[0]:null,...grouping,names.length>1?names:null];
+const describeNames=names=>names.length?names.join(', '):'все';
 const make=(tag,text)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text);return el;};
 function status(id,text,error=false){$(id).textContent=String(text);$(id).className='status '+(error?'error':'muted');}
 const reportSize=100,groupSize=50;
 let revision=null,reportAfter=null,reportBack=[],reportNext=null,groupAfter=null,groupBack=[],groupNext=null;
 let reportsBusy=false,groupsBusy=false,refreshBusy=false;
+let queuedRefresh=null,refreshScheduled=false;
 let analysisBusy=false,analysisReady=false,analysisCancelled=false,orgNames=[];
 let workBusy=false,workScope=null,workAfter=null,workBack=[],workNext=null;
 let exportBusy=false,backupBusy=false,restoreBusy=false,restoreSelection=null;
@@ -33,7 +36,7 @@ function invalidateComparison(message='Укажите базовые даты и
 function updateComparisonContext(){
  const scope=workScope;
  $('comparisonCurrentContext').textContent=scope
-  ?'Текущий: '+scope.from+' — '+scope.to+' · '+scope.type+' · подразделения: '+scope.organizations.join(', ')+(scope.selectedName?' · работа/группа: '+scope.selectedName:'')
+  ?'Текущий: '+scope.from+' — '+scope.to+' · '+scope.type+' · подразделения: '+scope.organizations.join(', ')+(scope.selectedNames.length?' · работы/группы: '+describeNames(scope.selectedNames):'')
   :'Текущий диапазон появится после расчёта аналитики.';
 }
 let rankingRequest=0;
@@ -68,7 +71,7 @@ function displayAnalysisCoverage(result,scope){
   (Number(result.overlap_issues)||0)+(Number(result.import_warning_reports)||0);
  const flagged=missing||invalid>0;
  coverageKey=flagged?'sql-coverage-ack-v1:'+JSON.stringify([
-  revision,scope.type,scope.from,scope.to,scope.organizations.slice().sort(),scope.selectedName??null,
+  revision,scope.type,scope.from,scope.to,scope.organizations.slice().sort(),scope.selectedNames,
   result.periods,result.missing,result.invalid_reports,result.duplicate_issues,
   result.overlap_issues,result.import_warning_reports,result.available_reports
  ]):null;
@@ -145,22 +148,43 @@ $('workTrendMetric').disabled=analysisBusy||refreshBusy||!workTrendSelection;
 $('workBack').disabled=workBusy||analysisBusy||refreshBusy||!workBack.length;
 $('workNext').disabled=workBusy||analysisBusy||refreshBusy||!workNext;
 $('analysisType').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
+$('analysisSource').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
 $('analysisOrganization').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
 $('analysisFrom').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
 $('analysisTo').disabled=analysisBusy||refreshBusy||workBusy||exportBusy;
 window.nativeNameFilter?.setLocked(analysisBusy||refreshBusy||workBusy||exportBusy||comparisonBusy);
+// Mutations may commit while an unrelated bounded read is still running.
+// Defer their refresh instead of losing the request and keeping old revisions.
+if(queuedRefresh&&!refreshScheduled&&refreshIdle()){
+ refreshScheduled=true;
+ void Promise.resolve().then(async()=>{
+  refreshScheduled=false;
+  if(!queuedRefresh||!refreshIdle())return;
+  const request=queuedRefresh;queuedRefresh=null;
+  try{request.resolve(await refresh());}catch(error){request.resolve(false);}
+ });
+}
+
 }
 async function reports(cursor,reset=false){
 if(reportsBusy||revision===null)return false;
 reportsBusy=true;controlState();
 try{
- const rows=await api.nativeReportPage(revision,{report_type:$('nativeReportType').value||null},cursor,reportSize);
+ const expected=revision;
+ const rows=await api.nativeReportPage(expected,{report_type:$('nativeReportType').value||null},cursor,reportSize);
  if(!Array.isArray(rows)||rows.length>reportSize)throw Error('Некорректная страница отчётов');
  if(reset)reportBack=[];
  reportAfter=cursor;
  reportNext=rows.length===reportSize?{start:rows.at(-1).period_start,id:rows.at(-1).id}:null;
  const tbody=$('reportRows');tbody.replaceChildren();
- for(const item of rows){const tr=make('tr');for(const value of [item.period_start,item.period_end,item.report_type,item.source_name||'—',item.id])tr.append(make('td',value??''));tbody.append(tr);}
+ for(const item of rows){
+  const tr=make('tr');
+  for(const value of [item.period_start,item.period_end,item.report_type,item.source_name||'—',item.id])
+   tr.append(make('td',value??''));
+  const action=make('td');
+  window.nativeManagement?.addReportAction(action,item,expected);
+  tr.append(action);tbody.append(tr);
+ }
  status('reportStatus','На странице: '+rows.length+' отчётов. Сортировка по дате и идентификатору.');
  return true;
 }catch(err){reportNext=null;reportBack=[];status('reportStatus','Ошибка SQLite: '+userError(err)+'. Нажмите «Обновить данные».',true);return false;}
@@ -170,7 +194,8 @@ async function groups(cursor,reset=false){
 if(groupsBusy||revision===null)return false;
 groupsBusy=true;controlState();
 try{
- const rows=await api.nativeGroupPage(revision,cursor,groupSize);
+ const expected=revision;
+ const rows=await api.nativeGroupPage(expected,cursor,groupSize);
  if(!Array.isArray(rows)||rows.length>groupSize)throw Error('Некорректная страница групп');
  if(reset)groupBack=[];
  groupAfter=cursor;groupNext=rows.length===groupSize?rows.at(-1).handle:null;
@@ -182,18 +207,32 @@ try{
   const save=make('button','Сохранить название');save.type='button';save.disabled=true;
   editor.addEventListener('input',()=>{save.disabled=editor.value===group.name||!editor.value.trim();});
   save.addEventListener('click',async()=>{
-   const name=editor.value;if(!name.trim()||name===group.name)return;
+   const name=editor.value;if(!name.trim()||name===group.name||expected!==revision||window.nativeManagement?.isBusy())return;
    if(!window.confirm('Переименовать группу «'+group.name+'» в «'+name+'»?'))return;
    save.disabled=true;
-   try{await api.nativeGroupRename(revision,group.handle,name);await refresh();status('workspaceStatus','Название группы изменено и сохранено в SQLite.');}
+   try{await api.nativeGroupRename(expected,group.handle,name);await requestRefresh();status('workspaceStatus','Название группы изменено и сохранено в SQLite.');}
    catch(err){status('groupStatus','Группа не изменена: '+userError(err),true);save.disabled=false;}
   });
-  const action=make('td');action.append(save);tr.append(action);tbody.append(tr);
+  const action=make('td');action.append(save);
+  window.nativeManagement?.addGroupActions(action,group,expected);
+  tr.append(action);tbody.append(tr);
  }
  status('groupStatus','На странице: '+rows.length+' групп. Данные отчётов не меняются.');
  return true;
 }catch(err){groupNext=null;groupBack=[];status('groupStatus','Ошибка групп: '+userError(err),true);return false;}
 finally{groupsBusy=false;controlState();}
+}
+function refreshIdle(){
+ return !(refreshBusy||reportsBusy||groupsBusy||analysisBusy||workBusy||exportBusy||backupBusy||restoreBusy);
+}
+function requestRefresh(){
+ if(queuedRefresh)return queuedRefresh.promise;
+ let resolve;
+ const promise=new Promise(done=>{resolve=done;});
+ queuedRefresh={promise,resolve};
+ status('workspaceStatus','База изменена. Обновление выполнится после завершения текущих операций.');
+ controlState();
+ return promise;
 }
 async function refresh(){
 if(refreshBusy||reportsBusy||groupsBusy||analysisBusy||workBusy||exportBusy||backupBusy||restoreBusy)return false;
@@ -202,6 +241,7 @@ try{
  const snapshot=await api.nativeSettingsBootstrap();
  if(!Number.isSafeInteger(snapshot.revision)||snapshot.revision<0)throw Error('Ревизия SQLite слишком велика для JavaScript');
  revision=snapshot.revision;
+ void window.nativeManagement?.setContext(snapshot);
  window.nativeNameFilter?.setRevision(revision);
  analysisReady=false;
  invalidateTimeline('Данные обновлены. Повторите расчёт графика.');
@@ -216,22 +256,22 @@ try{
  for(const name of orgNames){const opt=make('option',name);opt.value=name;orgSelect.append(opt);}
  orgSelect.value=orgNames.includes(previousOrganization)?previousOrganization:'*';
  updateFilterContext();
- window.nativeDailyCalendar?.setContext(revision,analysisOrganizations(),selectedName());
+ window.nativeDailyCalendar?.setContext(revision,analysisOrganizations(),selectedNames());
  $('analysisResultScope').textContent='Данные обновлены. Подготовьте индексы и повторите расчёт для выбранных фильтров.';
  for(const [id,value] of [['metricReports',snapshot.reports],['metricIndexed',snapshot.indexed_reports],['metricGroups',snapshot.groups],['metricCatalog',snapshot.catalog]])$(id).textContent=value;
  status('workspaceStatus','Ревизия SQLite: '+revision+' · подразделения: '+snapshot.org_names.join(', ')+'.');
  reportAfter=null;reportNext=null;reportBack=[];groupAfter=null;groupNext=null;groupBack=[];
+ const reportsLoaded=await reports(null,true);
+ const groupsLoaded=await groups(null,true);
+ return reportsLoaded&&groupsLoaded;
 }catch(err){
- revision=null;window.nativeNameFilter?.setRevision(null);$('reportRows').replaceChildren();$('groupRows').replaceChildren();
+ revision=null;void window.nativeManagement?.setContext(null);window.nativeNameFilter?.setRevision(null);$('reportRows').replaceChildren();$('groupRows').replaceChildren();
  reportNext=null;groupNext=null;reportBack=[];groupBack=[];
  window.nativeDailyCalendar?.setContext(null,[],null);
  status('workspaceStatus','Невозможно открыть SQLite: '+userError(err),true);
  $('analysisResultScope').textContent='Результаты недоступны до восстановления соединения с базой.';
  return false;
 }finally{refreshBusy=false;controlState();}
-const reportsLoaded=await reports(null,true);
-const groupsLoaded=await groups(null,true);
-return reportsLoaded&&groupsLoaded;
 }
 
 async function backupSqlite(){
@@ -347,7 +387,7 @@ function updateFilterContext(){
   ?'все из настроек ('+total+')'
   :orgNames.includes(choice)?choice+' (1 из '+total+')':'нет доступных';
  $('analysisFilterScope').textContent='Подразделения: '+orgText+
-  '. Работы и группы: '+(selectedName()??'все')+
+  '. Работы и группы: '+describeNames(selectedNames())+
   '. Итоги, графики, подразделения, рейтинг, сравнение, детализация и CSV используют этот отбор. Календарь — тоже.';
 }
 function updateResultContext(type,from,to,scope){
@@ -356,8 +396,8 @@ function updateResultContext(type,from,to,scope){
   ?'все подразделения из настроек ('+scope.length+')'
   :selected+' (1 из '+orgNames.length+')';
  $('analysisResultScope').textContent='Выборка: '+type+', '+from+' — '+to+
-   '; подразделения: '+label+
-   '. Работы и группы: '+(selectedName()??'все')+
+   '; источник: '+($('analysisSource').value==='daily'?'только дневные отчёты':'отчёты выбранного типа')+'; подразделения: '+label+
+   '. Работы и группы: '+describeNames(selectedNames())+
    '. CSV охватывает весь выбранный набор, а не только показанные 50 строк.';
 }
 async function prepareAnalysis(){
@@ -369,7 +409,7 @@ invalidateOrganizationTrends('Динамика подразделений ста
 $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
  status('divisionShareStatus','Доли появятся после полного подтверждённого расчёта.');
 controlState();
- const kind=$('analysisType').value;
+ const kind=$('analysisSource').value==='daily'?'day':$('analysisType').value;
  let processed=0,cursor=null;
  try{
    while(true){
@@ -477,7 +517,7 @@ async function selectWorkTrend(item){
  try{
    const data=await api.nativeWorkTimeline(
      revision,scope.type,scope.from,scope.to,scope.organizations,
-     scope.organization,item.key,scope.selectedName
+     scope.organization,item.key,...nameArgs(scope.selectedNames,scope.source==='daily'?scope.displayType:null)
    );
    if(ticket!==workTrendRequest||workTrendSelection!==chosen||workScope!==scope)return;
    if(!data||data.key!==item.key||data.kind!==item.kind)
@@ -501,7 +541,7 @@ async function workPage(cursor,reset=false){
   const scope=workScope;
   const rows=await api.nativeAnalysisRangePage(
     revision,scope.type,scope.from,scope.to,
-    scope.organizations,scope.organization,cursor,workSize,scope.selectedName
+    scope.organizations,scope.organization,cursor,workSize,...nameArgs(scope.selectedNames)
   );
   if(!Array.isArray(rows)||rows.length>workSize)throw Error('Некорректная страница групп и работ');
   if(reset)workBack=[];
@@ -535,41 +575,45 @@ async function workPage(cursor,reset=false){
 }
 async function calculateAnalysis(){
  if(!analysisReady||analysisBusy||revision===null)return;
- const kind=$('analysisType').value,
-   from=periodPicker.normalize(kind,$('analysisFrom').value),
-   to=periodPicker.normalize(kind,$('analysisTo').value);
- const organizations=analysisOrganizations();
+ const selection=periodPicker.range($('analysisType').value,$('analysisFrom').value,$('analysisTo').value,$('analysisSource').value||'imported');
+ const {type:kind,from,to}=selection||{};
+ const organizations=analysisOrganizations(),names=selectedNames(),rev=revision;
  if(!from||!to||from>to||organizations.some(x=>!x)||!organizations.length){
    status('analysisStatus','Укажите корректный диапазон дат и хотя бы одно подразделение.',true);return;
  }
  analysisBusy=true;invalidateOrganizationTrends('Считываем ряды подразделений из SQLite…');const expectedTrends=organizationTrendsRequest;invalidateRanking('Подготавливаем рейтинг SQLite…');invalidateTimeline('Строим график из агрегатов SQLite…');const expectedTimeline=timelineRequest;clearWork();controlState();
  try{
-   const result=await api.nativeAnalysisRange(revision,kind,from,to,organizations,selectedName());
-   const divisions=await api.nativeAnalysisOrganizations(revision,kind,from,to,organizations,selectedName());
-   displayAnalysisCoverage(result,{type:kind,from,to,organizations,selectedName:selectedName()});
+   const result=await api.nativeAnalysisRange(rev,kind,from,to,organizations,...nameArgs(names));
+   if(rev!==revision||expectedTimeline!==timelineRequest)return;
+   const divisions=await api.nativeAnalysisOrganizations(rev,kind,from,to,organizations,...nameArgs(names));
+   if(rev!==revision||expectedTimeline!==timelineRequest)return;
+   displayAnalysisCoverage(result,{type:kind,from,to,organizations,selectedNames:names});
    showDivisionComparison(divisions,result.total?.amount,result.complete);
    // A failed chart must not discard already verified KPIs or division results.
    try{
-     const timeline=await api.nativeAnalysisTimeline(revision,kind,from,to,organizations,selectedName());
+     const timeline=await api.nativeAnalysisTimeline(rev,kind,from,to,organizations,...nameArgs(names,selection.source==='daily'?selection.displayType:null));
      if(expectedTimeline===timelineRequest)window.nativeTimeline?.show(timeline);
    }catch(timelineError){
      if(expectedTimeline===timelineRequest)
        window.nativeTimeline?.error('График не построен: '+userError(timelineError));
    }
+   if(rev!==revision||expectedTimeline!==timelineRequest)return;
    try{
-     const trends=await api.nativeOrganizationTrends(revision,kind,from,to,organizations,selectedName());
+     const trends=await api.nativeOrganizationTrends(rev,kind,from,to,organizations,...nameArgs(names,selection.source==='daily'?selection.displayType:null));
      if(expectedTrends===organizationTrendsRequest)
        window.nativeOrganizationTrends?.show(trends);
    }catch(trendsError){
      if(expectedTrends===organizationTrendsRequest)
        window.nativeOrganizationTrends?.error('График подразделений не построен: '+userError(trendsError));
    }
-   workScope={type:kind,from,to,organizations,selectedName:selectedName(),organization:$('analysisOrganization').value==='*'?null:$('analysisOrganization').value};
+   if(rev!==revision||expectedTimeline!==timelineRequest)return;
+   workScope={type:kind,displayType:selection.displayType,source:selection.source,from,to,organizations,selectedNames:names,organization:$('analysisOrganization').value==='*'?null:$('analysisOrganization').value};
    updateComparisonContext();
    await reloadRanking();
    updateResultContext(kind,from,to,organizations);
    // Full and partial status is set by displayAnalysisCoverage().
  }catch(err){
+   if(rev!==revision||expectedTimeline!==timelineRequest)return;
    $('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearAnalysisCoverage();
    invalidateTimeline('График недоступен: расчёт не завершён.');
    invalidateRanking('Рейтинг недоступен: расчёт не завершён.');
@@ -594,7 +638,7 @@ async function reloadRanking(){
  try{
    const ranking=await api.nativeAnalysisRanking(
      revision,scope.type,scope.from,scope.to,scope.organizations,
-     scope.organization,metric,category,scope.selectedName
+     scope.organization,metric,category,...nameArgs(scope.selectedNames)
    );
    if(ticket===rankingRequest&&workScope===scope)
      window.nativeRanking?.show(ranking);
@@ -607,8 +651,8 @@ async function reloadRanking(){
 async function compareAnalysis(){
  const scope=workScope;
  if(comparisonBusy||analysisBusy||refreshBusy||!scope||revision===null)return;
- const beforeFrom=periodPicker.normalize(scope.type,$('comparisonBeforeFrom').value),
-   beforeTo=periodPicker.normalize(scope.type,$('comparisonBeforeTo').value);
+ const baseline=periodPicker.range(scope.displayType||scope.type,$('comparisonBeforeFrom').value,$('comparisonBeforeTo').value,scope.source||'imported');
+ const {from:beforeFrom,to:beforeTo}=baseline||{};
  if(!beforeFrom||!beforeTo||beforeFrom>beforeTo){
    window.nativeComparison?.error('Укажите корректные даты базового диапазона.');return;
  }
@@ -618,7 +662,7 @@ async function compareAnalysis(){
  controlState();
  try{
    const result=await api.nativeAnalysisCompare(
-     revision,scope.type,beforeFrom,beforeTo,scope.from,scope.to,scope.organizations,scope.selectedName
+     revision,scope.type,beforeFrom,beforeTo,scope.from,scope.to,scope.organizations,...nameArgs(scope.selectedNames)
    );
    if(ticket===comparisonRequest&&workScope===scope)
      window.nativeComparison?.show(result);
@@ -644,7 +688,7 @@ async function exportAnalysisCsv(){
   if(typeof destination!=='string')throw Error('Некорректный путь CSV');
   await api.nativeExportRangeCsv(
    revision,scope.type,scope.from,scope.to,
-   scope.organizations,scope.organization,destination,scope.selectedName
+   scope.organizations,scope.organization,destination,...nameArgs(scope.selectedNames)
   );
   status('exportStatus','CSV сохранён. Исходные отчёты не изменены.');
  }catch(err){
@@ -655,6 +699,12 @@ const year=String(new Date().getFullYear());
 $('analysisFrom').value=year+'-01-01';
 $('analysisTo').value=year+'-12-31';
 periodPicker.apply($('analysisType').value);
+$('analysisSource').addEventListener('change',()=>{
+ if($('analysisType').value==='year'&&$('analysisSource').value!=='daily')$('analysisType').value='month';
+ $('analysisYearOption').disabled=$('analysisSource').value!=='daily';
+ periodPicker.apply($('analysisType').value);analysisReady=false;analysisFiltersChanged();
+ status('analysisStatus','Источник изменён. Подготовьте индексы выбранного источника.');
+});
 $('analysisType').addEventListener('change',()=>{
  periodPicker.apply($('analysisType').value);
  analysisReady=false;clearAnalysisCoverage();invalidateRanking('Тип периода изменён. Повторите расчёт рейтинга.');invalidateOrganizationTrends('Тип периода изменён. Повторите расчёт динамики подразделений.');invalidateTimeline('Тип периода изменён. Подготовьте индексы и повторите расчёт.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork();
@@ -690,7 +740,7 @@ $('workBack').addEventListener('click',async()=>{
  controlState();
 });
 function analysisFiltersChanged(){
- window.nativeDailyCalendar?.setContext(revision,analysisOrganizations(),selectedName());
+ window.nativeDailyCalendar?.setContext(revision,analysisOrganizations(),selectedNames());
   clearAnalysisCoverage();invalidateRanking('Фильтры изменены. Повторите расчёт рейтинга.');invalidateOrganizationTrends('Фильтры изменены. Повторите расчёт динамики подразделений.');invalidateTimeline('Фильтры изменены. Повторите расчёт графика.');$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearWork('Параметры изменены. Повторите расчёт.');
   status('divisionShareStatus','Доли сброшены: фильтры изменены.');
   status('divisionStatus','Параметры изменены. Нажмите «Рассчитать» ещё раз.');
@@ -704,7 +754,7 @@ window.nativeWorkspaceFilterChanged=analysisFiltersChanged;
 
 controlState();
 // Called after a verified native SQLite commit; reads only bounded metadata/pages.
-window.nativeWorkspaceRefresh=refresh;
+window.nativeWorkspaceRefresh=requestRefresh;
 window.nativeWorkspaceReady=refresh();
 if(typeof api.nativeRestoreLaunchInfo==='function'){
  void api.nativeRestoreLaunchInfo().then(result=>{

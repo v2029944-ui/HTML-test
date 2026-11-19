@@ -70,6 +70,12 @@ def wait_for_app_state(page, expression, description, timeout_ms=30_000):
         if remaining<=0:raise RuntimeError(description+' did not complete within '+str(timeout_ms)+' ms')
         page.wait_for_timeout(min(100,remaining*1000))
 
+def reveal_table(page, selector):
+    """Read visible exact values only after opening their details disclosure."""
+    for details in page.locator('details').filter(has=page.locator(selector)).all():
+        if not details.evaluate('(el) => el.open'):
+            details.locator(':scope > summary').click()
+
 @contextmanager
 def windows_test_workspace():
     """Release only this test's WebView2 workers before deleting their temporary profile."""
@@ -441,6 +447,11 @@ def run():
                 wait_for_app_state(page,
                     'document.querySelectorAll("#dailySourceKpis .comparison-metric").length === 5 && document.querySelector("#dailySourceChart svg") !== null',
                     'KPI and monthly chart derived only from 366 daily reports')
+                # innerText is empty inside a closed details element in WebView2.
+                # Open the exact-values table as a user would before reading cells.
+                source_details=page.locator('details').filter(has=page.locator('#dailySourceRows'))
+                if not source_details.evaluate('(el) => el.open'):
+                    source_details.locator('summary').click()
                 assert page.locator('#dailySourceRows tr').count()==12
                 assert page.locator('#dailySourceRows tr').first.locator('td').first.inner_text()=='2024-01'
                 assert page.locator('#dailySourceKpis .comparison-metric').first.locator('strong').inner_text()!='—'
@@ -460,6 +471,7 @@ def run():
                     'Array.from(document.querySelector("#analysisName")?.options || []).some(o => o.value === "Альфа")',
                     'Bounded SQLite work-name search includes synthetic daily work')
                 page.locator('#analysisName').select_option('Альфа')
+                page.locator('#analysisNameAdd').click()
                 assert 'Альфа' in page.locator('#analysisFilterScope').inner_text()
                 page.locator('[data-nav-link="reports"]').click()
                 assert 'Альфа' in page.locator('#dailyRollupScope').inner_text()
@@ -523,6 +535,49 @@ def run():
                     'document.querySelector("#reportStatus")?.textContent.includes("На странице: 0")',
                     'Native SQLite filter without week reports')
                 assert page.locator('#reportRows tr').count()==0
+                # Exercise the new SQL settings UI on synthetic CI data only.
+                page.evaluate('window.confirm = () => true')
+                page.locator('[data-nav-link="groups"]').click()
+                page.locator('#managementGroupName').fill('CI SQL group')
+                page.locator('#managementGroupCreate').click()
+                group_open=page.get_by_role('button',name='Открыть состав группы CI SQL group',exact=True)
+                group_open.wait_for(state='visible')
+                wait_for_app_state(page,'!document.querySelector("#managementGroupCreate").disabled','SQL group publication finished')
+                group_open.click()
+                page.locator('#managementMemberName').fill('CI SQL work')
+                page.locator('#managementMemberAdd').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#managementMemberRows")?.textContent.includes("CI SQL work")',
+                    'SQL group member committed and reread through bounded IPC')
+                page.get_by_role('button',name='Исключить CI SQL work',exact=True).click()
+                wait_for_app_state(page,
+                    'document.querySelectorAll("#managementMemberRows tr").length === 0 && !document.querySelector("#managementMemberAdd").disabled',
+                    'SQL group member removal')
+                page.get_by_role('button',name='Удалить группу CI SQL group',exact=True).click()
+                wait_for_app_state(page,
+                    '!Array.from(document.querySelectorAll("#groupRows button")).some(b => b.getAttribute("aria-label") === "Открыть состав группы CI SQL group") && !document.querySelector("#managementGroupCreate").disabled',
+                    'SQL group removal')
+                report['checks'].append('Installed SQL group create/member add/member remove/group delete with confirmation')
+                page.locator('[data-nav-link="analysis"]').click()
+                page.locator('#analysisSource').select_option('daily')
+                page.locator('#analysisType').select_option('month')
+                page.locator('#analysisFrom').fill('2024-02')
+                page.locator('#analysisTo').fill('2024-02')
+                page.locator('#analysisPrepare').click()
+                wait_for_app_state(page,'!document.querySelector("#analysisRun").disabled','Daily-source month index')
+                page.locator('#analysisRun').click()
+                wait_for_app_state(page,
+                    'document.querySelectorAll("#timelineRows tr").length === 1 && document.querySelector("#timelineRows tr td")?.textContent === "2024-02" && !document.querySelector("#analysisRun").disabled && document.querySelector("#analysisResultScope")?.textContent.includes("только дневные")',
+                    'Daily-source selected month produces one SQL month bucket')
+                assert 'только дневные' in page.locator('#analysisResultScope').inner_text()
+                assert page.locator('#analysisValues').inner_text().find('Полная')>=0
+                assert page.locator('#timelineRows tr td').nth(1).text_content()=='29'
+                page.locator('#hideEmptyPeriods').check()
+                reveal_table(page, '#timelineRows')
+                assert page.locator('#timelineRows tr').count()==1
+                page.locator('#hideEmptyPeriods').uncheck()
+                report['checks'].append('Daily-source KPI and monthly SQL bucket cover all leap-February days')
+                page.locator('#analysisSource').select_option('imported')
                 # D4c: a type with no reports can be indexed without loading
                 # history, then its incomplete SQL range must have NULL totals.
                 page.locator('[data-nav-link="analysis"]').click()
@@ -578,6 +633,7 @@ def run():
                 wait_for_app_state(page,
                     'document.querySelector("#organizationTrendsStatus")?.textContent.includes("Нет подтверждённых точек")',
                     'Native division trends hide missing weekly values')
+                reveal_table(page, '#organizationTrendsRows')
                 assert page.locator('#organizationTrendsRows tr').count()>0
                 assert page.locator('#organizationTrendsRows tr').count()<=992
                 assert page.locator('#organizationTrendsChart svg').count()==0
@@ -598,6 +654,7 @@ def run():
                 assert page.locator('#sqlWorkTrends').is_visible()
                 assert page.locator('#workTrendMetric').is_disabled()
                 assert page.locator('#workTrendChart svg').count()==0
+                reveal_table(page, '#workTrendRows')
                 assert page.locator('#workTrendRows tr').count()==0
                 assert page.locator('#workTrendSelected').inner_text()=='Позиция не выбрана.'
                 report['checks'].append('SQL work/group trend controls start empty without fabricated data')

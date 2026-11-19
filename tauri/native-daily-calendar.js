@@ -9,12 +9,13 @@ const issue=window.analizUserError||(()=>'Операция не выполнен
 const make=(tag,value)=>{const e=document.createElement(tag);if(value!==undefined)e.textContent=String(value);return e;};
 const finite=n=>typeof n==='number'&&Number.isFinite(n);
 const number=n=>finite(n)?n.toLocaleString('ru-RU',{maximumFractionDigits:3}):'—';
-let revision=null,organizations=[],workName=null,ready=false,busy=false;
+let revision=null,organizations=[],workNames=[],ready=false,busy=false;
 let generation=0,previousKind='day',cursor=null,back=[],next=null;
 let selection=null;
 let detailScope=null,detailCursor=null,detailNext=null,detailBack=[],detailRequest=0,detailBusy=false;
 let sourceOverviewTicket=0;
 const pageSize=60;
+const nameArgs=(names,...grouping)=>[names.length===1?names[0]:null,...grouping,names.length>1?names:null];
 function status(message,bad=false){
  const e=$('dailyRollupStatus');e.textContent=message;
  e.className='status '+(bad?'error':'muted');
@@ -23,6 +24,8 @@ function controls(){
  const valid=Number.isSafeInteger(revision)&&organizations.length>0;
  const from=$('dailyRollupFrom').value,to=$('dailyRollupTo').value;
  $('dailyRollupPrepare').disabled=busy||!valid;
+ $('dailyRollupPeriodBack').disabled=busy||!valid;
+ $('dailyRollupPeriodNext').disabled=busy||!valid;
  $('dailyRollupRun').disabled=busy||!valid||!ready||!from||!to;
  $('dailyRollupBack').disabled=busy||back.length===0;
  $('dailyRollupNext').disabled=busy||!next;
@@ -78,23 +81,25 @@ function changeKind(){
  clear('Выбрана сводка по '+({day:'дням',week:'неделям',month:'месяцам',year:'годам'}[kind])+
   '. Рассчитываются только дневные отчёты SQLite.');
 }
-function setContext(rev,names,selectedName=null){
- const acceptedName=selectedName===null||(typeof selectedName==='string'&&selectedName.length>0&&selectedName.length<=512);
- const accepted=acceptedName&&Number.isSafeInteger(rev)&&rev>=0&&Array.isArray(names)&&
+function setContext(rev,names,nameFilter=[]){
+ const selectedNames=Array.isArray(nameFilter)?nameFilter:nameFilter===null?[]:[nameFilter];
+ const acceptedNames=selectedNames.length<=50&&selectedNames.every(name=>
+   typeof name==='string'&&name.length>0&&new TextEncoder().encode(name).length<=512);
+ const accepted=acceptedNames&&Number.isSafeInteger(rev)&&rev>=0&&Array.isArray(names)&&
    names.length>0&&names.length<=100&&names.every(n=>typeof n==='string'&&n.length>0);
- const changed=revision!==rev||JSON.stringify(organizations)!==JSON.stringify(names)||workName!==selectedName;
+ const changed=revision!==rev||JSON.stringify(organizations)!==JSON.stringify(names)||JSON.stringify(workNames)!==JSON.stringify(selectedNames);
  if(!changed)return;
  const revisionChanged=revision!==rev;
- revision=accepted?rev:null;organizations=accepted?names.slice():[];workName=accepted?selectedName:null;
+ revision=accepted?rev:null;organizations=accepted?names.slice():[];workNames=accepted?selectedNames.slice():[];
  if(revisionChanged)ready=false;
  $('dailyRollupScope').textContent=accepted?
    'Дневные отчёты SQLite · подразделения: '+organizations.join(', ')+
-   ' · работы/группы: '+(workName??'все')+
+   ' · работы/группы: '+(workNames.length?workNames.join(', '):'все')+
    '. Отдельные недельные и месячные отчёты не прибавляются.':
    'Нет доступной выбранной базы или подразделений.';
  clear(revisionChanged?
    'База обновлена. Подготовьте индексы дневных отчётов и повторите расчёт.':
-   'Подразделения изменены. Повторите расчёт календарной сводки.');
+   'Фильтры изменены. Повторите расчёт календарной сводки.');
 }
 function validate(page,kind){
  if(!page||page.granularity!==kind||!Array.isArray(page.points)||
@@ -160,7 +165,7 @@ async function detailPage(after,reset=false){
  const ticket=++detailRequest;
  try{
   const result=await api.nativeDailyRollup(scope.rev,scope.from,scope.to,
-   'day',scope.orgs,after,pageSize,scope.selectedName);
+   'day',scope.orgs,after,pageSize,...nameArgs(scope.selectedNames));
   if(ticket!==detailRequest||detailScope!==scope||selection!==scope.parent)return false;
   validate(result,'day');
   for(const point of result.points){
@@ -203,7 +208,7 @@ async function openDetails(point,kind){
  }
  closeDetails();
  detailScope={
-  from,to,rev:parent.rev,orgs:parent.orgs.slice(),selectedName:parent.selectedName,parent
+  from,to,rev:parent.rev,orgs:parent.orgs.slice(),selectedNames:parent.selectedNames,parent
  };
  $('dailyRollupDetailTitle').textContent='Дни периода '+(
   kind==='year'?from.slice(0,4):kind==='month'?from.slice(0,7):from+' — '+to);
@@ -249,7 +254,7 @@ function inputScope(){
  const from=canonical(kind,$('dailyRollupFrom').value);
  const to=canonical(kind,$('dailyRollupTo').value,true);
  if(!from||!to||from>to)return null;
- return {kind,from,to,rev:revision,orgs:organizations.slice(),selectedName:workName};
+ return {kind,from,to,rev:revision,orgs:organizations.slice(),selectedNames:workNames.slice()};
 }
 async function page(after,reset=false){
  if(busy||!ready||revision===null)return false;
@@ -260,7 +265,7 @@ async function page(after,reset=false){
  const ticket=++generation;
  try{
    const result=await api.nativeDailyRollup(scope.rev,scope.from,scope.to,
-     scope.kind,scope.orgs,after,pageSize,scope.selectedName);
+     scope.kind,scope.orgs,after,pageSize,...nameArgs(scope.selectedNames));
    if(ticket!==generation||!selection||scope!==selection)return false;
    validate(result,scope.kind);
    display(result);
@@ -276,11 +281,11 @@ async function sourceOverview(scope){
  const ticket=++sourceOverviewTicket;
  try{
   const summary=await api.nativeAnalysisRange(
-    scope.rev,'day',scope.from,scope.to,scope.orgs,scope.selectedName
+    scope.rev,'day',scope.from,scope.to,scope.orgs,...nameArgs(scope.selectedNames)
   );
   if(ticket!==sourceOverviewTicket||selection!==scope)return;
   const timeline=await api.nativeAnalysisTimeline(
-    scope.rev,'day',scope.from,scope.to,scope.orgs,scope.selectedName
+    scope.rev,'day',scope.from,scope.to,scope.orgs,...nameArgs(scope.selectedNames,null)
   );
   if(ticket!==sourceOverviewTicket||selection!==scope)return;
   window.nativeDailyOverview?.show(summary,timeline);
@@ -288,7 +293,7 @@ async function sourceOverview(scope){
   // A failed division query must not discard verified KPI/timeline results.
   try{
    const divisions=await api.nativeAnalysisOrganizations(
-    scope.rev,'day',scope.from,scope.to,scope.orgs,scope.selectedName
+    scope.rev,'day',scope.from,scope.to,scope.orgs,...nameArgs(scope.selectedNames)
    );
    if(ticket===sourceOverviewTicket&&selection===scope)
     window.nativeDailyOverview?.showOrganizations(divisions,scope.orgs);
@@ -349,6 +354,26 @@ $('dailyRollupDetailBack').addEventListener('click',async()=>{
 });
 $('dailyRollupPrepare').addEventListener('click',()=>{void prepare();});
 $('dailyRollupRun').addEventListener('click',()=>{void run();});
+function movePeriod(direction){
+ if(busy||detailBusy||revision===null)return;
+ const kind=$('dailyRollupGranularity').value;
+ const dates=['dailyRollupFrom','dailyRollupTo'].map(id=>canonical(kind,$(id).value));
+ if(dates.some(d=>!d))return;
+ const nextDates=dates.map(raw=>{
+   const d=new Date(raw+'T00:00:00Z');
+   if(kind==='year')d.setUTCFullYear(d.getUTCFullYear()+direction);
+   else if(kind==='month')d.setUTCMonth(d.getUTCMonth()+direction);
+   else d.setUTCDate(d.getUTCDate()+direction*(kind==='week'?7:1));
+   if(d.getUTCFullYear()<1||d.getUTCFullYear()>9999)return null;
+   const date=String(d.getUTCFullYear()).padStart(4,'0')+'-'+String(d.getUTCMonth()+1).padStart(2,'0')+'-'+String(d.getUTCDate()).padStart(2,'0');
+   return calendarValue(date,kind);
+ });
+ if(nextDates.some(d=>!d))return;
+ $('dailyRollupFrom').value=nextDates[0];$('dailyRollupTo').value=nextDates[1];
+ clear('Диапазон сдвинут на один период. Нажмите «Рассчитать сводку».');
+}
+$('dailyRollupPeriodBack').addEventListener('click',()=>movePeriod(-1));
+$('dailyRollupPeriodNext').addEventListener('click',()=>movePeriod(1));
 $('dailyRollupGranularity').addEventListener('change',changeKind);
 for(const id of ['dailyRollupFrom','dailyRollupTo'])
  $(id).addEventListener('change',()=>{clear('Выбран другой диапазон. Повторите расчёт календаря.');});

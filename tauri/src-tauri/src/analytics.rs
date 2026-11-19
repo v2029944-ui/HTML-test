@@ -857,6 +857,20 @@ impl<'de> DeserializeSeed<'de> for Settings<'_> {
     }
 }
 
+fn timeline_grouping(s: &AnalysisScope, q: &RangeQuery, grouping: Option<&str>, periods: i64) -> Result<(i64, &'static str), String> {
+    let Some(grouping)=grouping else { return Ok(if periods>120 {(1,"month")} else {(0,"period")}); };
+    if s.report_type!="day" {return Err("Calendar grouping requires daily sources".into());}
+    let (from,to)=range_bounds("day",q)?;
+    match grouping {
+        "day"=>Ok(if periods>120 {(1,"month")} else {(0,"period")}),
+        "week" if from.weekday()==chrono::Weekday::Mon && to.weekday()==chrono::Weekday::Sun =>
+            Ok(if periods/7>124 {(1,"month")} else {(2,"week")}),
+        "month" if from.day()==1 && to.succ_opt().is_some_and(|d| d.day()==1) =>Ok((1,"month")),
+        "year" if from.month()==1 && from.day()==1 && to.month()==12 && to.day()==31 =>Ok((3,"year")),
+        _=>Err("Select aligned full calendar periods for daily grouping".into()),
+    }
+}
+
 impl Storage {
     /// One report per call. Parsing stages in FILE temp tables, publishing by revision CAS.
     pub fn analysis_index_report(&self, id: &str, expected: i64) -> Result<(), String> {
@@ -1324,6 +1338,15 @@ impl Storage {
         s: &AnalysisScope,
         q: &RangeQuery,
     ) -> Result<TimelineSummary, String> {
+        self.analysis_timeline_grouped(expected, s, q, None)
+    }
+    pub fn analysis_timeline_grouped(
+        &self,
+        expected: i64,
+        s: &AnalysisScope,
+        q: &RangeQuery,
+        grouping: Option<&str>,
+    ) -> Result<TimelineSummary, String> {
         let mut c = self.connect()?;
         let tx = c.transaction().map_err(err)?;
         workspace(&tx, expected, s)?;
@@ -1332,20 +1355,20 @@ impl Storage {
             "SELECT COUNT(*) FROM temp.an_periods WHERE slot=1",
             [], |r| r.get(0),
         ).map_err(err)?;
-        let monthly = period_count > 120;
+        let (mode, granularity) = timeline_grouping(s,q,grouping,period_count)?;
         // Aggregate data and missing evidence in independent subqueries:
         // joining both to detail rows would multiply amounts.
         let sql = r#"
             WITH buckets AS (
-                SELECT CASE WHEN ?1=1 THEN substr(start,1,7) ELSE start END AS label,
+                SELECT CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
                        COUNT(*) AS periods
                 FROM temp.an_periods WHERE slot=1 GROUP BY label
             ), missing AS (
-                SELECT CASE WHEN ?1=1 THEN substr(start,1,7) ELSE start END AS label,
+                SELECT CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
                        COUNT(*) AS missing
                 FROM temp.an_missing WHERE slot=1 GROUP BY label
             ), values_by_bucket AS (
-                SELECT CASE WHEN ?1=1 THEN substr(p.start,1,7) ELSE p.start END AS label,
+                SELECT CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
                        SUM(x.count) AS count, SUM(x.amount) AS amount
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
@@ -1365,7 +1388,7 @@ impl Storage {
             ORDER BY b.label
         "#;
         let mut stmt = tx.prepare(sql).map_err(err)?;
-        let mut rows = stmt.query(params![i64::from(monthly), &s.organizations, &s.names]).map_err(err)?;
+        let mut rows = stmt.query(params![mode, &s.organizations, &s.names]).map_err(err)?;
         let mut points = Vec::new();
         while let Some(row) = rows.next().map_err(err)? {
             if points.len() >= 124 {
@@ -1380,7 +1403,7 @@ impl Storage {
             });
         }
         Ok(TimelineSummary {
-            granularity: if monthly { "month" } else { "period" }.into(),
+            granularity: granularity.into(),
             points,
         })
     }
@@ -1392,6 +1415,15 @@ impl Storage {
         expected: i64,
         s: &AnalysisScope,
         q: &RangeQuery,
+    ) -> Result<OrganizationTrends, String> {
+        self.analysis_organization_trends_grouped(expected, s, q, None)
+    }
+    pub fn analysis_organization_trends_grouped(
+        &self,
+        expected: i64,
+        s: &AnalysisScope,
+        q: &RangeQuery,
+        grouping: Option<&str>,
     ) -> Result<OrganizationTrends, String> {
         let mut c = self.connect()?;
         let tx = c.transaction().map_err(err)?;
@@ -1406,7 +1438,7 @@ impl Storage {
             "SELECT COUNT(*) FROM temp.an_periods WHERE slot=1",
             [], |r| r.get(0),
         ).map_err(err)?;
-        let monthly = periods > 120;
+        let (mode, granularity) = timeline_grouping(s,q,grouping,periods)?;
         // Missing evidence and values are aggregated separately, otherwise
         // a join on detail rows duplicates both missing counts and amounts.
         let sql = r#"
@@ -1414,18 +1446,18 @@ impl Storage {
                 SELECT item AS org,ordinal FROM analysis_filter_items
                 WHERE id=?2 ORDER BY ordinal LIMIT 8
             ), buckets AS (
-                SELECT CASE WHEN ?1=1 THEN substr(start,1,7) ELSE start END AS label,
+                SELECT CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
                        COUNT(*) AS periods
                 FROM temp.an_periods WHERE slot=1 GROUP BY label
             ), missing AS (
                 SELECT org,
-                       CASE WHEN ?1=1 THEN substr(start,1,7) ELSE start END AS label,
+                       CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
                        COUNT(*) AS missing
                 FROM temp.an_missing WHERE slot=1
                 GROUP BY org,label
             ), values_by_bucket AS (
                 SELECT v.org,
-                       CASE WHEN ?1=1 THEN substr(p.start,1,7) ELSE p.start END AS label,
+                       CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
                        SUM(x.count) AS count,SUM(x.amount) AS amount
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
@@ -1445,7 +1477,7 @@ impl Storage {
             ORDER BY s.ordinal,b.label
         "#;
         let mut stmt = tx.prepare(sql).map_err(err)?;
-        let mut rows = stmt.query(params![i64::from(monthly),&s.organizations,&s.names]).map_err(err)?;
+        let mut rows = stmt.query(params![mode,&s.organizations,&s.names]).map_err(err)?;
         let mut series: Vec<OrganizationTrendSeries> = Vec::new();
         let mut count = 0_usize;
         while let Some(row) = rows.next().map_err(err)? {
@@ -1469,7 +1501,7 @@ impl Storage {
             });
         }
         Ok(OrganizationTrends{
-            granularity: if monthly {"month"} else {"period"}.into(),
+            granularity: granularity.into(),
             selected_organizations,
             series,
         })
@@ -1594,6 +1626,17 @@ impl Storage {
         organization: Option<&str>,
         key: &str,
     ) -> Result<WorkTrendSummary, String> {
+        self.analysis_work_timeline_grouped(expected, s, q, organization, key, None)
+    }
+    pub fn analysis_work_timeline_grouped(
+        &self,
+        expected: i64,
+        s: &AnalysisScope,
+        q: &RangeQuery,
+        organization: Option<&str>,
+        key: &str,
+        grouping: Option<&str>,
+    ) -> Result<WorkTrendSummary, String> {
         key_bound(key)?;
         let mut c = self.connect()?;
         let tx = c.transaction().map_err(err)?;
@@ -1619,19 +1662,19 @@ impl Storage {
             "SELECT COUNT(*) FROM temp.an_periods WHERE slot=1",
             [], |row| row.get(0),
         ).map_err(err)?;
-        let monthly = count > 120;
+        let (mode, granularity) = timeline_grouping(s,q,grouping,count)?;
         let sql = r#"
             WITH buckets AS (
-                SELECT CASE WHEN ?1=1 THEN substr(start,1,7) ELSE start END AS label,
+                SELECT CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
                        COUNT(*) AS periods
                 FROM temp.an_periods WHERE slot=1 GROUP BY label
             ), missing AS (
-                SELECT CASE WHEN ?1=1 THEN substr(start,1,7) ELSE start END AS label,
+                SELECT CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
                        COUNT(*) AS missing
                 FROM temp.an_missing
                 WHERE slot=1 AND (?2 IS NULL OR org=?2) GROUP BY label
             ), aggregates AS (
-                SELECT CASE WHEN ?1=1 THEN substr(p.start,1,7) ELSE p.start END AS label,
+                SELECT CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
                        SUM(x.count) AS count,SUM(x.amount) AS amount
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
@@ -1649,7 +1692,7 @@ impl Storage {
             ORDER BY b.label
         "#;
         let mut stmt = tx.prepare(sql).map_err(err)?;
-        let mut rows = stmt.query(params![i64::from(monthly),organization,key]).map_err(err)?;
+        let mut rows = stmt.query(params![mode,organization,key]).map_err(err)?;
         let mut points=Vec::new();
         while let Some(row)=rows.next().map_err(err)? {
             if points.len()>=124 {return Err("Work timeline exceeds 124 points".into());}
@@ -1664,7 +1707,7 @@ impl Storage {
         Ok(WorkTrendSummary {
             key:key.to_string(),
             name,kind,
-            granularity:if monthly {"month"} else {"period"}.into(),
+            granularity:granularity.into(),
             points,
         })
     }
