@@ -14,6 +14,12 @@ on:
 permissions:
   contents: read
 
+# Multiple pushes while reviewing a PR should not consume parallel Windows
+# runners on obsolete commits. Main and manual release checks are not cancelled.
+concurrency:
+  group: tauri-windows-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   verify-and-build:
     runs-on: windows-latest
