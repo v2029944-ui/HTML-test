@@ -39,6 +39,7 @@ function mount(options={}){
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
  const calls=[];
+ const divisionAmounts=Array.isArray(options.divisionAmounts)?options.divisionAmounts:[1200,600];
  const report=n=>({id:'r'+n,period_start:'2024-02-'+String(n%28+1).padStart(2,'0'),period_end:'2024-02-29',report_type:'day',source_name:'<b>untrusted</b>'});
  const api={
    nativeSettingsBootstrap:async()=>({revision:12,reports:366,indexed_reports:366,groups:1,catalog:0,org_names:['СМУ16','АВТО']}),
@@ -67,7 +68,7 @@ function mount(options={}){
      calls.push({kind:'export_csv',rev,reportType:kind,from,to,organizations,organization,destination});
    },
    nativeAnalysisRange:async(rev,kind,from,to,organizations)=>{calls.push({kind:'range',rev,reportType:kind,from,to,organizations});return options.complete
-    ?{complete:true,periods:12,missing:0,total:{count:12,amount:options.mismatchedTotal?1900:1800,average:150},invalid_reports:0,duplicate_issues:0,overlap_issues:0}
+    ?{complete:true,periods:12,missing:0,total:{count:12,amount:options.mismatchedTotal?1900:divisionAmounts[0]+divisionAmounts[1],average:150},invalid_reports:0,duplicate_issues:0,overlap_issues:0}
     :{complete:false,periods:366,missing:1,total:{count:null,amount:null,average:null},invalid_reports:1,duplicate_issues:0,overlap_issues:0};},
    nativeAnalysisRangePage:async(rev,kind,from,to,organizations,organization,after,limit)=>{
      calls.push({kind:'work',rev,reportType:kind,from,to,organizations,organization,after,limit});
@@ -75,9 +76,9 @@ function mount(options={}){
      return after?[row(50)]:Array.from({length:50},(_,i)=>row(i));
    },
    nativeAnalysisOrganizations:async(rev,kind,from,to,organizations)=>{calls.push({kind:'divisions',rev,reportType:kind,from,to,organizations});return [
-     {org:'СМУ16',complete:true,missing:0,total:{count:8,amount:1200,average:150}},
+     {org:'СМУ16',complete:true,missing:0,total:{count:8,amount:divisionAmounts[0],average:divisionAmounts[0]/8}},
      options.complete
-      ?{org:'АВТО',complete:true,missing:0,total:{count:4,amount:600,average:150}}
+      ?{org:'АВТО',complete:true,missing:0,total:{count:4,amount:divisionAmounts[1],average:divisionAmounts[1]/4}}
       :{org:'АВТО',complete:false,missing:2,total:{count:null,amount:null,average:null}}
    ];}
  };
@@ -236,6 +237,24 @@ test('division shares use only complete matching SQL totals; incomplete periods 
  assert.equal(mismatch.e.divisionRows.children[1].children[6].textContent,'—');
  assert.match(mismatch.e.divisionShareStatus.textContent,/не совпадают/);
  assert.equal(mismatch.e.divisionRows.children[0].children[6].children.length,0);
+});
+
+test('zero and negative SQL totals never render misleading shares or mini-bars',async()=>{
+ for(const amounts of [[0,0],[-120,-60]]){
+  const {e,window}=mount({complete:true,divisionAmounts:amounts});
+  await window.nativeWorkspaceReady;
+  e.analysisFrom.value='2024-01-01';
+  e.analysisTo.value='2024-12-31';
+  await e.analysisPrepare.events.click();
+  await e.analysisRun.events.click();
+  assert.equal(e.divisionRows.children.length,2);
+  for(const row of e.divisionRows.children){
+   const share=row.children[6];
+   assert.equal(share.textContent,'—');
+   assert.equal(share.children.length,0);
+  }
+  assert.match(e.divisionShareStatus.textContent,/сумма не положительна/);
+ }
 });
 
 test('bounded work/group SQL pages preserve unknown totals, keyset cursors and selected scope',async()=>{
