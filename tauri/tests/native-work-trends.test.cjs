@@ -78,6 +78,9 @@ test('invalid or oversized data clears previous graph and cannot inject labels',
  window.nativeWorkTrends.show(result([point('2024-02-28',2,10)]));
  window.nativeWorkTrends.show(result([point('2024-02-28',2,10,1)]));
  assert.equal(e.workTrendChart.children.length,0);
+ assert.match(e.workTrendStatus.textContent,/неизвестные значения/i);
+ window.nativeWorkTrends.show(result([{start:'2024-02-28',periods:1,missing:0,total:{count:null,amount:null}}]));
+ assert.equal(e.workTrendChart.children.length,0);
  assert.match(e.workTrendStatus.textContent,/скрыта/);
  window.nativeWorkTrends.show(result(Array.from({length:125},(_,i)=>point('2024-02-28',i,i))));
  assert.equal(e.workTrendChart.children.length,0);
