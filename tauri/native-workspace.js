@@ -139,6 +139,7 @@ $('restoreCancel').disabled=restoreBusy||backupBusy||analysisBusy||exportBusy||r
 $('analysisPrepare').disabled=analysisBusy||refreshBusy||exportBusy||revision===null;
 $('analysisCancel').disabled=!analysisBusy;
 $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!analysisReady;
+$('analysisPrint').disabled=analysisBusy||refreshBusy||workBusy||comparisonBusy||exportBusy||!!queuedRefresh||!workScope;
 $('analysisExport').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!workScope;
 $('rankingMetric').disabled=analysisBusy||refreshBusy||!workScope;
 $('rankingCategory').disabled=analysisBusy||refreshBusy||!workScope;
@@ -675,6 +676,15 @@ async function compareAnalysis(){
  }
 }
 
+function printAnalysis(){
+ if(analysisBusy||refreshBusy||workBusy||comparisonBusy||exportBusy||queuedRefresh||!workScope)return;
+ const details=Array.from(document.querySelectorAll?.('#sqlAnalysis details')||[]);
+ const previous=details.map(node=>node.open);
+ try{
+  details.forEach(node=>{node.open=true;});
+  window.print();
+ }finally{details.forEach((node,i)=>{node.open=previous[i];});}
+}
 async function exportAnalysisCsv(){
  if(exportBusy||analysisBusy||workBusy||refreshBusy||!workScope||revision===null)return;
  exportBusy=true;controlState();
@@ -719,6 +729,7 @@ $('analysisCancel').addEventListener('click',()=>{analysisCancelled=true;status(
 $('analysisRun').addEventListener('click',calculateAnalysis);
 $('analysisAcknowledge').addEventListener('click',acknowledgeCoverage);
 $('analysisExport').addEventListener('click',exportAnalysisCsv);
+$('analysisPrint').addEventListener('click',printAnalysis);
 $('comparisonRun').addEventListener('click',compareAnalysis);
 for(const id of ['comparisonBeforeFrom','comparisonBeforeTo']){
  $(id).addEventListener('change',()=>{

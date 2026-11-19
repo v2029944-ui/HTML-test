@@ -819,3 +819,13 @@ test('queued refresh cannot bootstrap a newer snapshot before older report and g
  assert.equal(beforeRelease,1,'new bootstrap must wait until both old pages complete');
  assert.equal(e.metricReports.textContent,368);
 });
+
+test('printing requires a calculated current scope and does not save report data',async()=>{
+ const {e,window}=mount({complete:true});await window.nativeWorkspaceReady;
+ let prints=0;window.print=()=>{prints++;};
+ await e.analysisPrint.events.click();assert.equal(prints,0);
+ e.analysisFrom.value='2024-02-28';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ assert.equal(e.analysisPrint.disabled,false);e.analysisPrint.events.click();assert.equal(prints,1);
+ e.analysisFrom.events.change();assert.equal(e.analysisPrint.disabled,true);
+});
