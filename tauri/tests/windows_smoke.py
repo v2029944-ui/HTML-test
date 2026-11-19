@@ -13,12 +13,12 @@ from make_metric_xlsx import create_example
 def diagnostics(error):
     output=ROOT/'tauri/test-artifacts';output.mkdir(exist_ok=True)
     if (output/'windows-runtime.txt').exists():return
-    (output/'windows-error.txt').write_text(str(error),encoding='utf-8')
+    (output/'windows-error.txt').write_text(f'{type(error).__name__}: {error}',encoding='utf-8')
     # Record software/runtime facts only; never dump process environments or full command lines.
     script=r"""
     [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)
     $ErrorActionPreference='Continue'
-    Get-Process analiz-rabot-tauri,msedgewebview2 -ErrorAction SilentlyContinue | Select-Object ProcessName,Id,MainWindowTitle | ConvertTo-Json
+    Get-Process analiz-rabot-tauri,msedgewebview2 -ErrorAction SilentlyContinue | Select-Object ProcessName,Id,MainWindowTitle,MainWindowHandle,Responding | ConvertTo-Json
     Get-CimInstance Win32_Process -Filter "name='msedgewebview2.exe'" | ForEach-Object {
       $port='';if($_.CommandLine -match '--remote-debugging-port=(\d+)'){$port=$Matches[1]}
       [PSCustomObject]@{ProcessId=$_.ProcessId;RemoteDebuggingPort=$port}
@@ -36,6 +36,14 @@ def diagnostics(error):
     env=dict(os.environ,ANALIZ_SMOKE_SCREENSHOT=str(output/'windows-desktop-diagnostic.png'))
     result=subprocess.run(['powershell','-NoProfile','-Command',script],env=env,capture_output=True,encoding='utf-8',errors='replace',timeout=30)
     (output/'windows-runtime.txt').write_text((result.stdout or '')+'\n'+(result.stderr or ''),encoding='utf-8')
+
+def record_secondary_failure(error, description, action):
+    """Keep the original test failure when diagnostic capture or cleanup fails."""
+    try:
+        action()
+    except Exception as followup:
+        error.add_note(f'{description}: {type(followup).__name__}: {followup}')
+
 
 def wait_for_webview_page(browser, timeout_ms=60_000):
     """Wait for the installed WebView2 app page, not just the DevTools endpoint.
@@ -273,15 +281,23 @@ def check_analytics(page, temporary, output):
     dashboard_month(page)
     snapshot=api(page,'nativeSettingsBootstrap')
     revision,orgs=snapshot['revision'],snapshot['org_names']
-    year=api(page,'nativeDailyRollup',revision,'2024-01-01','2024-12-31','year',orgs,None,50)
-    assert len(year['points'])==1 and year['points'][0]['available_reports']==366
-    assert year['points'][0]['complete'] and year['points'][0]['total']['amount']==7320
-    february=api(page,'nativeDailyRollup',revision,'2024-02-01','2024-02-29','month',orgs,None,50)
-    assert len(february['points'])==1 and february['points'][0]['available_reports']==29
-    assert february['points'][0]['complete'] and february['points'][0]['total']['amount']==580
+    assert len(orgs)==4,snapshot
+    for start,end,unit,days,amount in (
+        ('2024-01-01','2024-12-31','year',366,7320),
+        ('2024-02-01','2024-02-29','month',29,580),
+    ):
+        rollup=api(page,'nativeDailyRollup',revision,start,end,unit,orgs,None,50)
+        assert rollup['granularity']==unit and rollup['next_cursor'] is None,rollup
+        assert len(rollup['points'])==1,rollup
+        point=rollup['points'][0]
+        # The observed CTE counts an_valid rows, keyed by (organization, day).
+        assert point['start']==start and point['days']==days and point['available_reports']==days*len(orgs),rollup
+        assert point['complete'] and point['missing']==0 and point['total']['amount']==amount,rollup
     absent=api(page,'nativeDailyRollup',revision,'2024-02-01','2024-02-29','month',orgs,None,50,'Отсутствующая работа')
-    assert absent['points'][0]['complete'] and absent['points'][0]['total']['amount']==0
-    assert february['points'][0]['missing']==absent['points'][0]['missing']==0
+    assert len(absent['points'])==1,absent
+    point=absent['points'][0]
+    assert point['days']==29 and point['available_reports']==29*len(orgs),absent
+    assert point['complete'] and point['missing']==0 and point['total']['amount']==0,absent
 
     page.locator('#advancedAnalytics > summary').click()
     page.locator('#chartBreakdown').select_option('organizations')
@@ -497,9 +513,7 @@ def check_folder_rule_and_revocation(page, workbook):
 def windows_test_workspace():
     """Release only this test's WebView2 workers before deleting their temporary profile."""
     workspace=Path(tempfile.mkdtemp(prefix='analiz-webview2-'))
-    try:
-        yield workspace
-    finally:
+    def cleanup_workspace():
         cleanup_script=r"""
         $token=$env:ANALIZ_SMOKE_PROFILE_TOKEN
         if(-not $token.StartsWith('analiz-webview2-')){throw 'Invalid test profile token'}
@@ -521,6 +535,15 @@ def windows_test_workspace():
             except PermissionError as error:
                 if getattr(error,'winerror',None) not in (5,32,33) or time.monotonic()>=deadline:raise
                 time.sleep(.2)
+
+    try:
+        yield workspace
+    except BaseException as error:
+        record_secondary_failure(error,'Temporary WebView2 workspace cleanup failed',cleanup_workspace)
+        raise
+    else:
+        cleanup_workspace()
+
 
 def run():
     if sys.platform!='win32' or os.environ.get('GITHUB_ACTIONS')!='true':raise RuntimeError('Run only on an isolated Windows GitHub Actions runner')
@@ -577,37 +600,60 @@ def run():
                     except (OSError,ValueError):time.sleep(.5)
                 raise RuntimeError('WebView2 DevTools endpoint did not become available')
             except BaseException as error:
-                try:diagnostics(error)
-                finally:
-                    if process.poll() is None:subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],check=True,capture_output=True)
+                record_secondary_failure(error,'Runtime diagnostics failed',lambda:diagnostics(error))
+                record_secondary_failure(error,'Installed process cleanup failed',lambda:force_stop(process))
                 raise
-        def stop(process):
+        def force_stop(process):
             if process.poll() is not None:return
-            # Simulate closing the application window, not crashing its WebView2 storage process.
-            close_script="$app=Get-Process -Id $env:ANALIZ_SMOKE_PID -ErrorAction Stop; if(-not $app.CloseMainWindow()){throw 'Application window refused a normal close request'}"
-            try:
-                subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command',close_script],
-                    env=dict(env,ANALIZ_SMOKE_PID=str(process.pid)),check=True,capture_output=True,timeout=15)
-                process.wait(timeout=30)
-            finally:
-                # This is failure cleanup only; an unsuccessful normal close still fails the test.
-                if process.poll() is None:subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],check=True,capture_output=True)
+            stopped=subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],capture_output=True,timeout=15)
+            if stopped.returncode!=0 and process.poll() is None:
+                stopped.check_returncode()
+            process.wait(timeout=15)
+        def stop(process):
+            if process.poll() is not None:
+                raise RuntimeError(f'Application exited before a normal close could be requested: {process.returncode}')
+            # Retry only a normal window close while Windows locates the main HWND.
+            close_script=r"""
+            [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)
+            $ErrorActionPreference='Stop'
+            $deadline=(Get-Date).AddSeconds(8)
+            do {
+              $app=Get-Process -Id $env:ANALIZ_SMOKE_PID
+              if($app.CloseMainWindow()){exit 0}
+              Start-Sleep -Milliseconds 250
+            } while((Get-Date) -lt $deadline)
+            throw ('Application refused a normal close request (HWND {0}, responding {1})' -f $app.MainWindowHandle,$app.Responding)
+            """
+            closed=subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command',close_script],
+                env=dict(env,ANALIZ_SMOKE_PID=str(process.pid)),capture_output=True,encoding='utf-8',errors='replace',timeout=15)
+            if closed.returncode:
+                raise RuntimeError(f'Application window close failed ({closed.returncode}): {closed.stderr.strip()}')
+            exit_code=process.wait(timeout=30)
+            if exit_code!=0:
+                raise RuntimeError(f'Application exited with status {exit_code} after the normal close request')
         with sync_playwright() as pw:
             @contextmanager
             def installed_page():
-                process,engine=start();browser=None
+                process,engine=start();browser=page=None
                 try:
                     browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227')
                     page=wait_for_webview_page(browser)
                     errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
                     yield page,engine
                     assert not errors,errors
+                    stop(process)
+                    if browser.is_connected():browser.close()
                 except BaseException as error:
-                    diagnostics(error);raise
-                finally:
-                    try:stop(process)
-                    finally:
-                        if browser and browser.is_connected():browser.close()
+                    if page and not page.is_closed():
+                        record_secondary_failure(error,'WebView2 screenshot failed',lambda:page.screenshot(
+                            path=str(output/'windows-webview2.png'),timeout=10_000))
+                    record_secondary_failure(error,'Build progress report failed',lambda:(output/'build-info.json').write_text(
+                        json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8'))
+                    record_secondary_failure(error,'Runtime diagnostics failed',lambda:diagnostics(error))
+                    record_secondary_failure(error,'Installed process cleanup failed',lambda:force_stop(process))
+                    if browser and browser.is_connected():
+                        record_secondary_failure(error,'DevTools disconnect failed',browser.close)
+                    raise
 
             source_folder=tmp/'excel-sources';source_folder.mkdir()
             workbook=source_folder/'synthetic-year.xlsx';workbook.write_bytes(wide_xlsx(2024))
@@ -704,5 +750,5 @@ def run():
 if __name__=='__main__':
     try:run()
     except BaseException as error:
-        diagnostics(error)
+        record_secondary_failure(error,'Runtime diagnostics failed',lambda:diagnostics(error))
         raise
