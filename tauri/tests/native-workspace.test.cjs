@@ -819,3 +819,32 @@ test('queued refresh cannot bootstrap a newer snapshot before older report and g
  assert.equal(beforeRelease,1,'new bootstrap must wait until both old pages complete');
  assert.equal(e.metricReports.textContent,368);
 });
+
+test('printing requires a calculated current scope and does not save report data',async()=>{
+ const {e,window}=mount({complete:true});await window.nativeWorkspaceReady;
+ let prints=0;window.print=()=>{prints++;};
+ await e.analysisPrint.events.click();assert.equal(prints,0);
+ e.analysisFrom.value='2024-02-28';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ assert.equal(e.analysisPrint.disabled,false);e.analysisPrint.events.click();assert.equal(prints,1);
+ e.analysisFrom.events.change();assert.equal(e.analysisPrint.disabled,true);
+});
+
+test('failed metadata refresh clears prior analysis and disables printing',async()=>{
+ const {e,window}=mount({complete:true});await window.nativeWorkspaceReady;
+ e.analysisFrom.value='2024-02-28';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ let prints=0;window.print=()=>{prints++;};
+ window.desktopAPI.nativeSettingsBootstrap=async()=>{throw Error('Unavailable');};
+ assert.equal(await window.nativeWorkspaceRefresh(),false);
+ assert.equal(e.analysisValues.children.length,0);assert.equal(e.analysisPrint.disabled,true);
+ e.analysisPrint.events.click();assert.equal(prints,0);
+});
+test('completed comparison context includes the baseline dates for print output',async()=>{
+ const {e,window}=mount({complete:true});await window.nativeWorkspaceReady;
+ e.analysisFrom.value='2024-02-28';e.analysisTo.value='2024-02-29';
+ await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+ e.comparisonBeforeFrom.value='2024-02-26';e.comparisonBeforeTo.value='2024-02-27';
+ await e.comparisonRun.events.click();
+ assert.match(e.comparisonCurrentContext.textContent,/2024-02-26.*2024-02-27/);
+});

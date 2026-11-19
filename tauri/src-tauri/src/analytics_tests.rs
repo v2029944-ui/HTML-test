@@ -1453,3 +1453,25 @@ fn daily_source_trends_respect_explicit_calendar_buckets() {
     assert_eq!(year.points.len(),1);assert_eq!(year.points[0].periods,366);
     assert!(store.analysis_timeline_grouped(rev,&s,&q,Some("nonsense")).is_err());
 }
+
+#[test]
+fn concurrent_sealed_analysis_filters_do_not_upgrade_stale_read_snapshots() {
+    let dir=tempdir().unwrap();let root=dir.path().to_path_buf();
+    let store=Storage::new(root.clone()).unwrap();let rev=prepare(&store,&fixture());
+    let barrier=std::sync::Arc::new(std::sync::Barrier::new(6));
+    let workers=(0..6).map(|_|{
+        let root=root.clone();let barrier=barrier.clone();
+        std::thread::spawn(move||{
+            let storage=Storage::new(root).unwrap();barrier.wait();
+            for _ in 0..10 {
+                let id=storage.analysis_filter_create(rev,"organizations").unwrap();
+                storage.analysis_filter_append(rev,&id,&["A".into()]).unwrap();
+                storage.analysis_filter_seal(rev,&id).unwrap();
+                storage.analysis_filter_delete(&id).unwrap();
+            }
+        })
+    }).collect::<Vec<_>>();
+    let results=workers.into_iter().map(|worker|worker.join()).collect::<Vec<_>>();
+    assert!(results.into_iter().all(|result|result.is_ok()));
+    assert_eq!(store.revision().unwrap(),rev);
+}

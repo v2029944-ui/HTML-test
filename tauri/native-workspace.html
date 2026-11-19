@@ -167,6 +167,12 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 @media(max-width:650px){.overview-head{align-items:stretch}.primary-action{width:100%;justify-content:center}.analytics-toolbar input:is([type=date],[type=week],[type=month]){width:100%}.analytics-toolbar .controls{align-items:stretch}.analytics-toolbar .controls>label{flex-basis:100%}.analytics-toolbar details{width:100%}.analytics-toolbar details summary{width:100%}.extra-filter-fields{flex-direction:column;align-items:stretch}.extra-filter-fields select{width:100%}}
 [data-nav-panel][hidden]{display:none!important}
 @media(max-width:650px){.workspace-nav{flex-wrap:nowrap;overflow-x:auto;padding:9px 10px;gap:4px}.workspace-nav a{font-size:13px;padding:10px}.nav-status{padding:0 5px}}
+@media print {
+ header,.native-navigation,.analytics-toolbar,.controls,.timeline-controls,button,input,select,summary,#workspaceRefresh{display:none!important}
+ [hidden]{display:none!important}main{max-width:none;padding:0}.panel{border:0;box-shadow:none;padding:8px 0;break-inside:auto}
+ .table-scroll{overflow:visible!important;max-height:none!important}table{min-width:0!important;font-size:10pt}
+ td,th{overflow-wrap:anywhere;white-space:normal}.timeline-chart{break-inside:avoid}.status,.filter-scope,.action-context{color:#000}
+}
 </style>
 </head>
 <body>
@@ -317,6 +323,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <h3 class="division-title">Группы и отдельные работы</h3>
 <p class="intro">Расшифровка: не более 50 строк на странице. CSV экспортирует весь выбранный диапазон, а не только видимые строки. Подразделение выбирается в «Ещё фильтры».</p>
 <div class="controls">
+<button id="analysisPrint" type="button" disabled>Печать / PDF текущего анализа</button>
 <button id="analysisExport" type="button" disabled>Скачать CSV по выбранному диапазону</button>
 <div class="joined-pager" aria-label="Страницы расшифровки"><button id="workBack" type="button" aria-label="Предыдущая страница работ" disabled>Назад</button><output id="workPageInfo" aria-live="polite">Страница 1</output><button id="workNext" type="button" aria-label="Следующая страница работ" disabled>Далее</button></div>
 </div>

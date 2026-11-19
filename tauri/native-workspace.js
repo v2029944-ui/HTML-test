@@ -28,15 +28,16 @@ function invalidateOrganizationTrends(message='Динамика подразде
  organizationTrendsRequest++;
  window.nativeOrganizationTrends?.clear(message);
 }
-let comparisonBusy=false,comparisonRequest=0;
+let comparisonBusy=false,comparisonRequest=0,comparisonBaseline=null;
 function invalidateComparison(message='Укажите базовые даты и сравните периоды.'){
- comparisonRequest++;
+ comparisonRequest++;comparisonBaseline=null;
+ updateComparisonContext();
  window.nativeComparison?.clear(message);
 }
 function updateComparisonContext(){
  const scope=workScope;
  $('comparisonCurrentContext').textContent=scope
-  ?'Текущий: '+scope.from+' — '+scope.to+' · '+scope.type+' · подразделения: '+scope.organizations.join(', ')+(scope.selectedNames.length?' · работы/группы: '+describeNames(scope.selectedNames):'')
+  ?(comparisonBaseline?'База: '+comparisonBaseline.from+' — '+comparisonBaseline.to+'; ':'')+'Текущий: '+scope.from+' — '+scope.to+' · '+scope.type+' · подразделения: '+scope.organizations.join(', ')+(scope.selectedNames.length?' · работы/группы: '+describeNames(scope.selectedNames):'')
   :'Текущий диапазон появится после расчёта аналитики.';
 }
 let rankingRequest=0;
@@ -139,6 +140,7 @@ $('restoreCancel').disabled=restoreBusy||backupBusy||analysisBusy||exportBusy||r
 $('analysisPrepare').disabled=analysisBusy||refreshBusy||exportBusy||revision===null;
 $('analysisCancel').disabled=!analysisBusy;
 $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!analysisReady;
+$('analysisPrint').disabled=revision===null||analysisBusy||refreshBusy||workBusy||comparisonBusy||exportBusy||!!queuedRefresh||!workScope;
 $('analysisExport').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!workScope;
 $('rankingMetric').disabled=analysisBusy||refreshBusy||!workScope;
 $('rankingCategory').disabled=analysisBusy||refreshBusy||!workScope;
@@ -268,6 +270,8 @@ try{
  return reportsLoaded&&groupsLoaded;
 }catch(err){
  revision=null;window.nativeReportQuality?.setRevision(null);void window.nativeManagement?.setContext(null);window.nativeNameFilter?.setRevision(null);$('reportRows').replaceChildren();$('groupRows').replaceChildren();
+ analysisReady=false;$('analysisValues').replaceChildren();$('divisionRows').replaceChildren();clearAnalysisCoverage();clearWork('Результаты недоступны. Обновите соединение с базой.');
+ invalidateTimeline('Результаты недоступны до обновления базы.');invalidateRanking('Результаты недоступны до обновления базы.');invalidateOrganizationTrends('Результаты недоступны до обновления базы.');
  reportNext=null;groupNext=null;reportBack=[];groupBack=[];
  window.nativeDailyCalendar?.setContext(null,[],null);
  status('workspaceStatus','Невозможно открыть SQLite: '+userError(err),true);
@@ -666,8 +670,10 @@ async function compareAnalysis(){
    const result=await api.nativeAnalysisCompare(
      revision,scope.type,beforeFrom,beforeTo,scope.from,scope.to,scope.organizations,...nameArgs(scope.selectedNames)
    );
-   if(ticket===comparisonRequest&&workScope===scope)
+   if(ticket===comparisonRequest&&workScope===scope){
+     comparisonBaseline={from:beforeFrom,to:beforeTo};updateComparisonContext();
      window.nativeComparison?.show(result);
+   }
  }catch(error){
    if(ticket===comparisonRequest&&workScope===scope)
      window.nativeComparison?.error('Не удалось сравнить диапазоны: '+userError(error));
@@ -677,6 +683,15 @@ async function compareAnalysis(){
  }
 }
 
+function printAnalysis(){
+ if(revision===null||analysisBusy||refreshBusy||workBusy||comparisonBusy||exportBusy||queuedRefresh||!workScope)return;
+ const details=Array.from(document.querySelectorAll?.('#sqlAnalysis details')||[]);
+ const previous=details.map(node=>node.open);
+ try{
+  details.forEach(node=>{node.open=true;});
+  window.print();
+ }finally{details.forEach((node,i)=>{node.open=previous[i];});}
+}
 async function exportAnalysisCsv(){
  if(exportBusy||analysisBusy||workBusy||refreshBusy||!workScope||revision===null)return;
  exportBusy=true;controlState();
@@ -721,6 +736,7 @@ $('analysisCancel').addEventListener('click',()=>{analysisCancelled=true;status(
 $('analysisRun').addEventListener('click',calculateAnalysis);
 $('analysisAcknowledge').addEventListener('click',acknowledgeCoverage);
 $('analysisExport').addEventListener('click',exportAnalysisCsv);
+$('analysisPrint').addEventListener('click',printAnalysis);
 $('comparisonRun').addEventListener('click',compareAnalysis);
 for(const id of ['comparisonBeforeFrom','comparisonBeforeTo']){
  $(id).addEventListener('change',()=>{
