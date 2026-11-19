@@ -31,9 +31,7 @@ pub(super) fn check_metadata_bounds(conn: &Connection) -> Result<(), String> {
 
 pub(super) fn initialize(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
-        "PRAGMA temp_store=FILE;
-        PRAGMA cache_size=-2048;
-        CREATE TABLE IF NOT EXISTS storage_revision (
+        "CREATE TABLE IF NOT EXISTS storage_revision (
           singleton INTEGER PRIMARY KEY CHECK(singleton=1),
           revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>=0));
         INSERT OR IGNORE INTO storage_revision VALUES(1,0);
@@ -75,17 +73,15 @@ pub(super) fn initialize(conn: &Connection) -> Result<(), String> {
     // missing index over oversized legacy keys during a supposedly bounded read.
     // Keep existing indexes and original definitions unchanged, and avoid adding
     // newer SQL functions to persisted schema needed by older external writers.
-    // Keep the size check and optional index build in one SQLite snapshot: an
-    // external write between them must cause an upgrade error, not a huge build.
-    let tx = conn.unchecked_transaction().map_err(err)?;
-    if !metadata_is_oversized(&tx)? {
-        tx.execute_batch(
+    // The caller holds the schema initialization writer transaction, keeping
+    // the size check and optional index build in the same protected snapshot.
+    if !metadata_is_oversized(conn)? {
+        conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS reports_by_period ON reports(report_type, period_start);
             CREATE INDEX IF NOT EXISTS reports_by_source ON reports(source_name);",
-        )
-        .map_err(err)?;
+        ).map_err(err)?;
     }
-    tx.commit().map_err(err)
+    Ok(())
 }
 
 /// All types/dates/organizations/works by default. Dates require full period containment.
