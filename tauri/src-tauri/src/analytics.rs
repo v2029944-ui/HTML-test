@@ -1042,18 +1042,24 @@ impl Storage {
         if !matches!(kind, "organizations" | "names") {
             return Err("Unknown analysis filter kind".into());
         }
-        let mut c = self.connect()?;
-        let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(err)?;
-        check_revision(&tx, expected)?;
+        let started = std::time::Instant::now();
+        let stage_error = |stage: &str, detail: String| format!("{detail} [analysis filter {stage}; elapsed {} ms]", started.elapsed().as_millis());
+        let sql_error = |stage: &str, failure: rusqlite::Error| {
+            let code = match &failure { rusqlite::Error::SqliteFailure(code, _) => code.extended_code, _ => 0 };
+            stage_error(stage, format!("{} [SQLite {code}]", failure))
+        };
+        let mut c = self.connect().map_err(|e| stage_error("connect", e))?;
+        let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| sql_error("begin", e))?;
+        check_revision(&tx, expected).map_err(|e| stage_error("revision", e))?;
         let id: String = tx
             .query_row("SELECT lower(hex(randomblob(16)))", [], |r| r.get(0))
-            .map_err(err)?;
+            .map_err(|e| sql_error("query/write", e))?;
         tx.execute(
             "INSERT INTO analysis_filters VALUES(?1,?2,?3,0)",
             params![id, expected, kind],
         )
-        .map_err(err)?;
-        tx.commit().map_err(err)?;
+        .map_err(|e| sql_error("query/write", e))?;
+        tx.commit().map_err(|e| sql_error("commit", e))?;
         Ok(id)
     }
     pub fn analysis_filter_append(

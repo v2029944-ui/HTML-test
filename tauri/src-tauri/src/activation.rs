@@ -420,8 +420,9 @@ mod tests {
         let digest=store.restore_preview(&backup).unwrap().verification;
         store.schedule_restore(&backup,&digest).unwrap();
         let req=load_request(&root).unwrap().unwrap();
-        fs::rename(root.join("reports.sqlite3"),root.join(&req.previous)).unwrap();
+        // Activation simulates an interrupted startup before Storage opens.
         drop(store);
+        fs::rename(root.join("reports.sqlite3"),root.join(&req.previous)).unwrap();
         let _lock=AppRestoreLock::acquire(&root).unwrap();
         let result=apply_pending_restore(&root).unwrap().unwrap();
         assert!(!result.restored);

@@ -848,3 +848,23 @@ test('completed comparison context includes the baseline dates for print output'
  await e.comparisonRun.events.click();
  assert.match(e.comparisonCurrentContext.textContent,/2024-02-26.*2024-02-27/);
 });
+
+test('print waits for the current ranking and selected-work trend requests',async()=>{
+ for(const kind of ['ranking','trend']){
+  const {e,window}=mount({complete:true});await window.nativeWorkspaceReady;
+  e.analysisFrom.value='2024-02-28';e.analysisTo.value='2024-02-29';
+  await e.analysisPrepare.events.click();await e.analysisRun.events.click();
+  let finish,prints=0;window.print=()=>{prints++;};
+  const name=kind==='ranking'?'nativeAnalysisRanking':'nativeWorkTimeline';
+  const original=window.desktopAPI[name];
+  window.desktopAPI[name]=(...args)=>new Promise(resolve=>{finish=()=>original(...args).then(resolve);});
+  if(kind==='ranking')e.rankingMetric.events.change();
+  else e.workRows.children[0].children[6].children[0].events.click();
+  assert.equal(typeof finish,'function');
+  assert.equal(e.analysisPrint.disabled,true,kind+' must block printing');
+  e.analysisPrint.events.click();assert.equal(prints,0);
+  await finish();await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(e.analysisPrint.disabled,false,kind+' completion releases print');
+  e.analysisPrint.events.click();assert.equal(prints,1);
+ }
+});
