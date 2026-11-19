@@ -29,6 +29,8 @@
       'native_analysis_timeline',{revision,reportType,from,to,organizations},'reads'),
     nativeOrganizationTrends:(revision,reportType,from,to,organizations)=>tracked(
       'native_analysis_organization_trends',{revision,reportType,from,to,organizations},'reads'),
+    nativeAnalysisCompare:(revision,reportType,beforeFrom,beforeTo,from,to,organizations)=>tracked(
+      'native_analysis_compare',{revision,reportType,beforeFrom,beforeTo,from,to,organizations},'reads'),
     nativeWorkTimeline:(revision,reportType,from,to,organizations,organization,key)=>tracked(
       'native_analysis_work_timeline',{revision,reportType,from,to,organizations,organization,key},'reads'),
     nativeAnalysisRanking:(revision,reportType,from,to,organizations,organization,metric,category)=>tracked(
