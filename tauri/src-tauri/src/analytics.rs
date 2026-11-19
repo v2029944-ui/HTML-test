@@ -70,6 +70,22 @@ pub struct RangeSummary {
     pub import_warning_reports: i64,
 }
 #[derive(Debug, Serialize)]
+pub struct DailyRollupPoint {
+    pub start: String,
+    pub days: i64,
+    pub missing: i64,
+    pub available_reports: i64,
+    pub complete: bool,
+    pub total: AnalysisTotals,
+    pub available_total: AnalysisTotals,
+}
+#[derive(Debug, Serialize)]
+pub struct DailyRollupPage {
+    pub granularity: String,
+    pub points: Vec<DailyRollupPoint>,
+    pub next_cursor: Option<String>,
+}
+#[derive(Debug, Serialize)]
 pub struct TimelinePoint {
     pub start: String,
     pub periods: i64,
@@ -1386,6 +1402,110 @@ impl Storage {
             series,
         })
     }
+    /// Day-source only calendar rollups. A report from a different source
+    /// type is never counted, so uploaded week/month sources cannot double
+    /// the same daily values. Keyset pagination bounds IPC to <=61 rows.
+    pub fn analysis_daily_rollup(
+        &self,
+        expected: i64,
+        s: &AnalysisScope,
+        q: &RangeQuery,
+        granularity: &str,
+        after: Option<&str>,
+        page_size: usize,
+    ) -> Result<DailyRollupPage, String> {
+        if s.report_type != "day" {
+            return Err("Daily rollup requires indexed day reports".into());
+        }
+        if !matches!(granularity, "day"|"week"|"month"|"year") {
+            return Err("Unknown daily rollup granularity".into());
+        }
+        if !(1..=60).contains(&page_size) {
+            return Err("Daily rollup page must contain 1..=60 periods".into());
+        }
+        let (from,to) = range_bounds("day",q)?;
+        match granularity {
+            "week" if from.weekday()!=chrono::Weekday::Mon || to.weekday()!=chrono::Weekday::Sun =>
+                return Err("Select complete Monday-through-Sunday weeks".into()),
+            "month" if from.day()!=1 ||
+                to.succ_opt().is_none_or(|d|d.day()!=1) =>
+                return Err("Select complete calendar months".into()),
+            "year" if from.month()!=1 || from.day()!=1 ||
+                to.month()!=12 || to.day()!=31 =>
+                return Err("Select complete calendar years".into()),
+            _ => {}
+        }
+        if let Some(cursor) = after {
+            if !date(cursor).is_ok() || cursor < q.from.as_str() || cursor > q.to.as_str() {
+                return Err("Invalid daily rollup cursor".into());
+            }
+        }
+        // The only dynamic SQL below is a fixed fragment selected by an enum.
+        let bucket = match granularity {
+            "day" => "start",
+            "week" => "date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days')",
+            "month" => "substr(start,1,7)||'-01'",
+            _ => "substr(start,1,4)||'-01-01'",
+        };
+        let mut c = self.connect()?;
+        let tx = c.transaction().map_err(err)?;
+        workspace(&tx, expected, s)?;
+        fill_range(&tx, s, q, 1)?;
+        let sql = format!(
+            "WITH buckets AS (
+                SELECT {bucket} AS label, COUNT(*) AS days
+                FROM temp.an_periods WHERE slot=1 GROUP BY label
+            ), missing AS (
+                SELECT {bucket} AS label, COUNT(*) AS absent
+                FROM temp.an_missing WHERE slot=1 GROUP BY label
+            ), observed AS (
+                SELECT {bucket} AS label, COUNT(*) AS reports
+                FROM temp.an_valid v JOIN temp.an_periods p ON p.slot=1 AND p.start=v.start
+                GROUP BY label
+            ), sums AS (
+                SELECT {bucket} AS label,
+                       COALESCE(SUM(x.count),0) AS total_count,
+                       COALESCE(SUM(x.amount),0) AS total_amount
+                FROM temp.an_valid v
+                JOIN temp.an_periods p ON p.slot=1 AND p.start=v.start
+                LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
+                GROUP BY label
+            )
+            SELECT b.label,b.days,COALESCE(m.absent,0),COALESCE(o.reports,0),
+                   COALESCE(t.total_count,0),COALESCE(t.total_amount,0)
+            FROM buckets b
+            LEFT JOIN missing m ON m.label=b.label
+            LEFT JOIN observed o ON o.label=b.label
+            LEFT JOIN sums t ON t.label=b.label
+            WHERE (?1 IS NULL OR b.label>?1)
+            ORDER BY b.label LIMIT ?2"
+        );
+        let mut stmt=tx.prepare(&sql).map_err(err)?;
+        let mut rows=stmt.query(params![after,(page_size+1) as i64]).map_err(err)?;
+        let mut points=Vec::new();
+        while let Some(row)=rows.next().map_err(err)? {
+            if points.len()>page_size {return Err("Daily rollup result exceeds page limit".into());}
+            let missing:i64=row.get(2).map_err(err)?;
+            let available_reports:i64=row.get(3).map_err(err)?;
+            let amount:f64=row.get(5).map_err(err)?;
+            let count:f64=row.get(4).map_err(err)?;
+            points.push(DailyRollupPoint {
+                start:row.get(0).map_err(err)?,
+                days:row.get(1).map_err(err)?,
+                missing,
+                available_reports,
+                complete:missing==0 && available_reports>0,
+                total:totals(count,amount,missing==0 && available_reports>0)?,
+                available_total:totals(count,amount,available_reports>0)?,
+            });
+        }
+        let next_cursor=if points.len()>page_size {
+            points.pop();
+            points.last().map(|p|p.start.clone())
+        } else {None};
+        Ok(DailyRollupPage{granularity:granularity.into(),points,next_cursor})
+    }
+
     /// One selected work/group from the SQL detail view. An absent work in
     /// an otherwise complete period is an actual zero; a missing report
     /// invalidates its entire bucket. No full report history leaves SQLite.
