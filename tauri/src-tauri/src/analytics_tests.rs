@@ -1275,3 +1275,96 @@ fn daily_rollup_does_not_add_independently_uploaded_week_or_month_reports() {
     assert_eq!(week.points[0].available_total.amount,Some(249.));
     assert_ne!(week.points[0].available_total.amount,Some(17249.));
 }
+
+
+#[test]
+fn work_group_filter_is_consistent_across_kpis_lines_orgs_and_calendar() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let selected=scope(&store,rev,"day",&["A","B"],Some(&["Group"]));
+    let q=query("2024-02-28","2024-02-29");
+
+    let kpis=store.analysis_range_summary(rev,&selected,&q).unwrap();
+    assert!(kpis.complete);
+    assert_eq!(kpis.total.count,Some(6.));
+    assert_eq!(kpis.total.amount,Some(100.));
+    assert_eq!(kpis.missing,0);
+
+    let timeline=store.analysis_timeline(rev,&selected,&q).unwrap();
+    assert_eq!(timeline.points.len(),2);
+    assert_eq!(timeline.points[0].total.amount,Some(20.));
+    assert_eq!(timeline.points[1].total.amount,Some(80.));
+    assert_eq!(timeline.points[0].total.count,Some(2.));
+    assert_eq!(timeline.points[1].total.count,Some(4.));
+
+    let divisions=store.analysis_organization_page(
+        rev,&selected,&q,None,10
+    ).unwrap();
+    assert_eq!(divisions.len(),2);
+    assert_eq!(divisions[0].org,"A");
+    assert_eq!(divisions[0].total.amount,Some(100.));
+    assert_eq!(divisions[1].total.amount,Some(0.));
+    let org_lines=store.analysis_organization_trends(rev,&selected,&q).unwrap();
+    assert_eq!(org_lines.series.len(),2);
+    assert_eq!(org_lines.series[0].points[0].total.amount,Some(20.));
+    assert_eq!(org_lines.series[0].points[1].total.amount,Some(80.));
+    assert_eq!(org_lines.series[1].points[0].total.amount,Some(0.));
+
+    let ranking=store.analysis_ranking(
+        rev,&selected,&q,None,"amount","all"
+    ).unwrap();
+    assert!(ranking.complete);
+    assert_eq!(ranking.rows.len(),1);
+    assert_eq!(ranking.rows[0].name,"Group");
+    assert_eq!(ranking.rows[0].amount,Some(100.));
+
+    let feb=store.analysis_daily_rollup(
+        rev,&selected,&query("2024-02-01","2024-02-29"),"month",None,60
+    ).unwrap();
+    assert_eq!(feb.points.len(),1);
+    assert_eq!(feb.points[0].available_reports,4);
+    assert_eq!(feb.points[0].missing,54);
+    assert_eq!(feb.points[0].total.amount,None);
+    assert_eq!(feb.points[0].available_total.amount,Some(100.));
+    assert_eq!(feb.points[0].available_total.count,Some(6.));
+
+    let missing=scope(&store,rev,"day",&["A"],Some(&["Never recorded"]));
+    let absent=store.analysis_range_summary(rev,&missing,&q).unwrap();
+    assert!(absent.complete);
+    assert_eq!(absent.total.amount,Some(0.));
+    let points=store.analysis_timeline(rev,&missing,&q).unwrap();
+    assert!(points.points.iter().all(|p|p.total.amount==Some(0.)));
+    let rolls=store.analysis_daily_rollup(
+        rev,&missing,&q,"day",None,60
+    ).unwrap();
+    assert!(rolls.points.iter().all(|p|p.complete&&p.total.amount==Some(0.)));
+}
+
+#[test]
+fn selected_work_filter_preserves_missing_reports_and_negative_amounts() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let selected=scope(&store,rev,"day",&["A","B"],Some(&["Ignored"]));
+    let q=query("2024-02-28","2024-03-01");
+    let kpis=store.analysis_range_summary(rev,&selected,&q).unwrap();
+    assert!(!kpis.complete);
+    assert_eq!(kpis.missing,1);
+    assert_eq!(kpis.total.amount,None);
+    assert_eq!(kpis.available_total.amount,Some(70.));
+    let chart=store.analysis_timeline(rev,&selected,&q).unwrap();
+    assert_eq!(chart.points[0].total.amount,Some(30.));
+    assert_eq!(chart.points[1].total.amount,Some(40.));
+    assert_eq!(chart.points[2].total.amount,None);
+    let org=store.analysis_organization_trends(rev,&selected,&q).unwrap();
+    assert_eq!(org.series[0].points[2].total.amount,Some(0.));
+    assert_eq!(org.series[1].points[2].total.amount,None);
+    let daily=store.analysis_daily_rollup(
+        rev,&selected,&q,"day",None,60
+    ).unwrap();
+    assert_eq!(daily.points[0].total.amount,Some(30.));
+    assert_eq!(daily.points[1].total.amount,Some(40.));
+    assert_eq!(daily.points[2].total.amount,None);
+    assert_eq!(daily.points[2].available_total.amount,Some(0.));
+}
