@@ -34,7 +34,7 @@ class Element{
  setAttribute(name,value){this[name]=value;}
 }
 function mount(options={}){
- const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisPeriodHelp','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisCoverageNotice','analysisCoverageText','analysisAcknowledge','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','rankingMetric','rankingCategory','workTrendMetric','sqlWorkTrends','comparisonBeforeFrom','comparisonBeforeTo','comparisonRun','comparisonCurrentContext','comparisonRankMetric','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
+ const ids=['workspaceRefresh','nativeReportType','reportBack','reportNext','groupBack','groupNext','workspaceStatus','reportStatus','groupStatus','reportPageInfo','groupPageInfo','workPageInfo','reportRows','groupRows','metricReports','metricIndexed','metricGroups','metricCatalog','analysisType','analysisFrom','analysisTo','analysisPeriodHelp','analysisOrganization','analysisPrepare','analysisCancel','analysisRun','analysisStatus','analysisCoverageNotice','analysisCoverageText','analysisAcknowledge','analysisValues','analysisFilterScope','analysisResultScope','divisionStatus','divisionShareStatus','divisionRows','rankingMetric','rankingCategory','workTrendMetric','sqlWorkTrends','comparisonBeforeFrom','comparisonBeforeTo','comparisonRun','comparisonCurrentContext','comparisonRankMetric','workRows','workStatus','workBack','workNext','analysisExport','exportStatus','backupSqlite','backupStatus','restoreChoose','restoreCopy','restoreSchedule','restoreCancel','restoreSelected','restoreStatus'];
  const e=Object.fromEntries(ids.map(id=>[id,new Element('div')]));
  e.analysisType.value='day';
  e.analysisOrganization.value='*';
@@ -169,16 +169,21 @@ test('native workspace displays only one keyset page and no HTML from source nam
  assert.equal(e.metricReports.textContent,366);
  assert.equal(e.metricGroups.textContent,1);
  assert.equal(e.reportRows.children.length,100);
+ assert.equal(e.reportPageInfo.textContent,'Страница 1');
  assert.equal(e.reportRows.children[0].children[3].textContent,'<b>untrusted</b>');
  assert.equal(e.groupRows.children.length,1);
+ assert.equal(e.groupPageInfo.textContent,'Страница 1');
+ assert.equal(e.workPageInfo.textContent,'Страница 1');
  assert.equal(calls[0].kind,'report');
  assert.equal(calls[0].limit,100);
  assert.equal(calls[1].kind,'group');
  assert.equal(calls[1].limit,50);
  await e.reportNext.events.click();
+ assert.equal(e.reportPageInfo.textContent,'Страница 2');
  assert.equal(e.reportRows.children.length,1);
  assert.equal(calls[2].after.id,'r99');
  await e.reportBack.events.click();
+ assert.equal(e.reportPageInfo.textContent,'Страница 1');
  assert.equal(e.reportRows.children.length,100);
 });
 test('renaming a group needs explicit action, uses a string handle, and refreshes revision',async()=>{
