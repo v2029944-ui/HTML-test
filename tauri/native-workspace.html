@@ -71,6 +71,10 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .comparison-rank-fill{height:100%;border-radius:8px;background:#24639a}
 .comparison-rank-fill.decrease{background:#775bab}
 @media(max-width:650px){.comparison-controls label{flex-basis:100%}.comparison-controls input,.comparison-controls select,.comparison-controls button{width:100%;max-width:none}}
+.coverage-notice{margin:9px 0;padding:10px 14px;border:1px solid #cda872;border-radius:8px;background:transparent}
+.coverage-notice[hidden]{display:none}
+.coverage-notice p{margin:0 0 9px;overflow-wrap:anywhere}
+.coverage-notice button{max-width:100%;white-space:normal}
 .division-title{font-size:17px;margin:22px 0 10px}
 .division-track{width:100%;min-width:110px;height:12px;border-radius:6px;background:#e7edf5;overflow:hidden}
 .division-fill{height:100%;background:#346d9d;border-radius:6px}
@@ -174,6 +178,10 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </div>
 
 <p id="analysisStatus" class="status muted" role="status" aria-live="polite">Подготовка не выполнена.</p>
+<div id="analysisCoverageNotice" class="coverage-notice" hidden aria-label="Неполные данные или замечания к отчётам">
+<p id="analysisCoverageText" role="status"></p>
+<button type="button" id="analysisAcknowledge">Подтвердить, предупреждение мне известно</button>
+</div>
 <div id="analysisValues" class="overview" aria-live="polite"></div>
 <div class="overview storage-overview" aria-label="Состояние базы данных">
 <div class="metric"><strong id="metricReports">—</strong><span>Отчётов в SQLite</span></div>
