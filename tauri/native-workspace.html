@@ -80,6 +80,12 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 .joined-pager button+output,.joined-pager output+button{border-left:1px solid #9eafc3}
 .joined-pager output{display:flex;align-items:center;justify-content:center;padding:4px 12px;white-space:nowrap;font-variant-numeric:tabular-nums;font-size:13px;min-width:91px}
 @media(max-width:500px){.joined-pager button{min-width:56px}.joined-pager output{min-width:77px;padding:4px 7px}}
+.daily-rollup-detail-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 0 5px}
+.daily-rollup-detail-heading h4{margin:0;font-size:15px}
+#dailyRollupDetailPanel{border-top:1px solid #dce2e9;padding-top:9px;margin-top:12px}
+#dailyRollupDetailRows td{font-variant-numeric:tabular-nums}
+#dailyRollupRows button{font-size:13px;padding:7px 10px}
+#dailyRollupDetailPanel[hidden]{display:none}
 .daily-rollup-controls{min-width:0}
 .daily-rollup-controls input{min-width:0;max-width:185px}
 #sqlDailyRollups{padding-top:8px;min-width:0}
@@ -377,9 +383,25 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <button id="dailyRollupNext" type="button" disabled>Далее</button>
 </div>
 <div class="table-scroll"><table>
-<thead><tr><th>Период</th><th>Календарных дней</th><th>Имеющихся отчётов</th><th>Пропусков</th><th>Количество / объём</th><th>Сумма</th><th>Охват</th></tr></thead>
+<thead><tr><th>Период</th><th>Календарных дней</th><th>Имеющихся отчётов</th><th>Пропусков</th><th>Количество / объём</th><th>Сумма</th><th>Охват</th><th>Дни</th></tr></thead>
 <tbody id="dailyRollupRows"></tbody>
 </table></div>
+<section id="dailyRollupDetailPanel" hidden aria-label="Дневная детализация календарного периода">
+<div class="daily-rollup-detail-heading">
+<h4 id="dailyRollupDetailTitle">Детализация по дням</h4>
+<button id="dailyRollupDetailClose" type="button">Закрыть детализацию</button>
+</div>
+<p id="dailyRollupDetailStatus" role="status" aria-live="polite" class="status muted"></p>
+<div class="joined-pager" aria-label="Страницы детализации по дням">
+<button id="dailyRollupDetailBack" type="button" disabled>Назад</button>
+<output id="dailyRollupDetailPage" aria-live="polite">Страница 1</output>
+<button id="dailyRollupDetailNext" type="button" disabled>Далее</button>
+</div>
+<div class="table-scroll"><table>
+<thead><tr><th>Дата</th><th>Дневных отчётов</th><th>Пропущено</th><th>Количество / объём</th><th>Сумма</th><th>Охват</th></tr></thead>
+<tbody id="dailyRollupDetailRows"></tbody>
+</table></div>
+</section>
 </section>
 </section>
 <section class="panel" id="sqlGroups" data-nav-panel="groups" aria-label="Группы SQL">
