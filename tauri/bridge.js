@@ -21,33 +21,35 @@
       'native_group_rename',{revision,handle,name},'saves'),
     nativeAnalysisIndexPage:(revision,reportType,after=null,limit=20)=>tracked(
       'native_analysis_index_page',{revision,reportType,after,limit},'reads'),
+    nativeAnalysisNameOptions:(revision,search='',limit=50)=>tracked(
+      'native_analysis_name_options',{revision,search,limit},'reads'),
     nativeAnalysisIndexSettings:revision=>tracked(
       'native_analysis_index_settings',{revision},'reads'),
-    nativeAnalysisRange:(revision,reportType,from,to,organizations)=>tracked(
-      'native_analysis_range',{revision,reportType,from,to,organizations},'reads'),
-    nativeAnalysisTimeline:(revision,reportType,from,to,organizations)=>tracked(
-      'native_analysis_timeline',{revision,reportType,from,to,organizations},'reads'),
-    nativeOrganizationTrends:(revision,reportType,from,to,organizations)=>tracked(
-      'native_analysis_organization_trends',{revision,reportType,from,to,organizations},'reads'),
-    nativeDailyRollup:(revision,from,to,granularity,organizations,after,limit)=>tracked(
-      'native_daily_rollup',{revision,from,to,granularity,organizations,after,limit},'reads'),
-    nativeAnalysisCompare:(revision,reportType,beforeFrom,beforeTo,from,to,organizations)=>tracked(
-      'native_analysis_compare',{revision,reportType,beforeFrom,beforeTo,from,to,organizations},'reads'),
-    nativeWorkTimeline:(revision,reportType,from,to,organizations,organization,key)=>tracked(
-      'native_analysis_work_timeline',{revision,reportType,from,to,organizations,organization,key},'reads'),
-    nativeAnalysisRanking:(revision,reportType,from,to,organizations,organization,metric,category)=>tracked(
-      'native_analysis_ranking',{revision,reportType,from,to,organizations,organization,metric,category},'reads'),
-    nativeAnalysisOrganizations:(revision,reportType,from,to,organizations)=>tracked(
-      'native_analysis_organizations',{revision,reportType,from,to,organizations},'reads'),
-    nativeAnalysisRangePage:(revision,reportType,from,to,organizations,organization=null,after=null,limit=50)=>tracked(
-      'native_analysis_range_page',{revision,reportType,from,to,organizations,organization,after,limit},'reads'),
+    nativeAnalysisRange:(revision,reportType,from,to,organizations,selectedName=null)=>tracked(
+      'native_analysis_range',{revision,reportType,from,to,organizations,selectedName},'reads'),
+    nativeAnalysisTimeline:(revision,reportType,from,to,organizations,selectedName=null)=>tracked(
+      'native_analysis_timeline',{revision,reportType,from,to,organizations,selectedName},'reads'),
+    nativeOrganizationTrends:(revision,reportType,from,to,organizations,selectedName=null)=>tracked(
+      'native_analysis_organization_trends',{revision,reportType,from,to,organizations,selectedName},'reads'),
+    nativeDailyRollup:(revision,from,to,granularity,organizations,after,limit,selectedName=null)=>tracked(
+      'native_daily_rollup',{revision,from,to,granularity,organizations,after,limit,selectedName},'reads'),
+    nativeAnalysisCompare:(revision,reportType,beforeFrom,beforeTo,from,to,organizations,selectedName=null)=>tracked(
+      'native_analysis_compare',{revision,reportType,beforeFrom,beforeTo,from,to,organizations,selectedName},'reads'),
+    nativeWorkTimeline:(revision,reportType,from,to,organizations,organization,key,selectedName=null)=>tracked(
+      'native_analysis_work_timeline',{revision,reportType,from,to,organizations,organization,key,selectedName},'reads'),
+    nativeAnalysisRanking:(revision,reportType,from,to,organizations,organization,metric,category,selectedName=null)=>tracked(
+      'native_analysis_ranking',{revision,reportType,from,to,organizations,organization,metric,category,selectedName},'reads'),
+    nativeAnalysisOrganizations:(revision,reportType,from,to,organizations,selectedName=null)=>tracked(
+      'native_analysis_organizations',{revision,reportType,from,to,organizations,selectedName},'reads'),
+    nativeAnalysisRangePage:(revision,reportType,from,to,organizations,organization=null,after=null,limit=50,selectedName=null)=>tracked(
+      'native_analysis_range_page',{revision,reportType,from,to,organizations,organization,after,limit,selectedName},'reads'),
     chooseCsvPath:async defaultPath=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
       if(typeof tauri.dialog.save!=='function')throw Error('Диалог сохранения CSV недоступен.');
       return tauri.dialog.save({title:'Сохранить результаты анализа',defaultPath,filters:[{name:'CSV',extensions:['csv']}]});
     },
-    nativeExportRangeCsv:(revision,reportType,from,to,organizations,organization,destination)=>tracked(
-      'native_export_range_csv',{revision,reportType,from,to,organizations,organization,destination},'saves'),
+    nativeExportRangeCsv:(revision,reportType,from,to,organizations,organization,destination,selectedName=null)=>tracked(
+      'native_export_range_csv',{revision,reportType,from,to,organizations,organization,destination,selectedName},'saves'),
     chooseWideXlsx:async()=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
       return tauri.dialog.open({multiple:false,directory:false,title:'Выберите XLSX для нативного импорта',filters:[{name:'Excel XLSX',extensions:['xlsx']}]});
