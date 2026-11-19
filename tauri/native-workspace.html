@@ -36,8 +36,18 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
   <label class="startup-label" for="sqlStartupPreference"><input id="sqlStartupPreference" type="checkbox"> Открывать SQL-режим при запуске программы</label>
   <span id="sqlStartupPreferenceStatus" class="intro" role="status" aria-live="polite"></span>
   <a id="legacyWorkspaceLink" href="index.html">Классический интерфейс и импорт Excel</a>
+  <div class="controls" aria-label="Онлайн-обновления Tauri">
+    <button type="button" id="sqlUpdateCheck">Проверить обновления</button>
+    <button type="button" id="sqlUpdateNotes" hidden>Что нового</button>
+    <button type="button" id="sqlUpdateInstall" hidden>Установить обновление</button>
+  </div>
+  <span id="sqlUpdateStatus" class="status muted" role="status" aria-live="polite">Проверка обновлений…</span>
 </div>
 </header>
+<dialog id="sqlUpdateDialog" aria-label="Изменения подписанного обновления" style="max-width:min(650px,95vw);border:1px solid #aab9cb;border-radius:12px;padding:20px">
+  <h2>Что изменилось</h2><div id="sqlUpdateNotesText" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:65vh;overflow:auto"></div>
+  <button type="button" id="sqlUpdateClose">Закрыть</button>
+</dialog>
 <main>
 <section class="panel" aria-label="Сводка SQLite">
 <h2>Состояние данных</h2>
@@ -239,7 +249,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p id="metricKindStatus" class="status muted" role="status" aria-live="polite">Загрузка каталога видов отчётов…</p>
 </section>
 </main>
-<script src="tauri-bridge.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-workspace.js"></script>
+<script src="tauri-bridge.js"></script><script src="tauri-native-updates.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-workspace.js"></script>
 <script src="tauri-native-legacy-import.js"></script>
 <script src="tauri-native-wide-import.js"></script>
 <script src="tauri-native-metric-kinds.js"></script>

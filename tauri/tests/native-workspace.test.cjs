@@ -12,6 +12,10 @@ test('SQL workspace is independently built without legacy app or full-history lo
    const js=fs.readFileSync(path.join(out,'tauri-native-workspace.js'),'utf8');
    assert.match(html,/id="legacyWorkspaceLink" href="index.html"/);
    assert.match(html,/tauri-native-workspace.js/);
+   assert.match(html,/tauri-native-updates.js/);
+   assert.match(html,/id="sqlUpdateCheck"/);
+   assert.match(html,/id="sqlUpdateInstall"/);
+   assert.match(html,/tauri-native-legacy-import.js/);
    assert.ok(!html.includes('tauri-folder-importer.js'));
    assert.ok(!html.includes('window.appReady=main()'));
    assert.ok(!js.includes('desktopAPI.load('));
