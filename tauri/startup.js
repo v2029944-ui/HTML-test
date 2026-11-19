@@ -2,10 +2,10 @@
 (function routeStartup(){
   'use strict';
   const preference='analiz-sql-startup-v1';
-  let target='index.html';
+  let target='native-workspace.html';
   try {
-    if(window.localStorage.getItem(preference)==='sql')target='native-workspace.html';
-  }catch{/* Storage may be disabled; retain the familiar interface. */}
+    if(window.localStorage.getItem(preference)==='classic')target='index.html';
+  }catch{/* Storage may be disabled; retain the primary SQL screen. */}
   try {
     window.location.replace(target);
   }catch{

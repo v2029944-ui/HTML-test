@@ -61,34 +61,48 @@ test('Tauri entry is a lightweight launcher, without booting the report history'
  }finally{fs.rmSync(output,{recursive:true,force:true});}
 });
 
-test('default remains classic and preference changes launch to SQL without loading classic first',()=>{
- const store=storage();
- assert.deepEqual(runStartup(store).routes,['index.html']);
- const ui=runPreference(store);
- assert.equal(ui.checkbox.checked,false);
- ui.checkbox.checked=true;ui.change();
- assert.equal(store.getItem('analiz-sql-startup-v1'),'sql');
+test('missing preference launches SQL even when classic Excel view is remembered',()=>{
+ const store=storage();store.setItem('work-reports-view-v1','upload');
  assert.deepEqual(runStartup(store).routes,['native-workspace.html']);
- const reopened=runPreference(store);
- assert.equal(reopened.checkbox.checked,true);
- reopened.checkbox.checked=false;reopened.change();
- assert.equal(store.getItem('analiz-sql-startup-v1'),null);
- assert.deepEqual(runStartup(store).routes,['index.html']);
+ assert.equal(runPreference(store).checkbox.checked,true);
 });
 
-test('storage rejection falls back to the classic UI and disables the unsafe preference',()=>{
- const forbidden={getItem(){throw Error('disabled')},setItem(){throw Error('disabled')},removeItem(){throw Error('disabled')}};
- assert.deepEqual(runStartup(forbidden).routes,['index.html']);
+test('explicit classic choice persists and SQL can be restored as the startup screen',()=>{
+ const store=storage(),ui=runPreference(store);
+ assert.equal(ui.checkbox.checked,true);
+ ui.checkbox.checked=false;ui.change();
+ assert.equal(store.getItem('analiz-sql-startup-v1'),'classic');
+ assert.deepEqual(runStartup(store).routes,['index.html']);
+ const reopened=runPreference(store);assert.equal(reopened.checkbox.checked,false);
+ reopened.checkbox.checked=true;reopened.change();
+ assert.equal(store.getItem('analiz-sql-startup-v1'),'sql');
+ assert.deepEqual(runStartup(store).routes,['native-workspace.html']);
+ assert.equal(runPreference(store).checkbox.checked,true);
+});
+
+test('existing SQL and unknown preferences select the primary SQL screen',()=>{
+ for(const value of ['sql','unexpected']){
+  const store=storage();store.setItem('analiz-sql-startup-v1',value);
+  assert.deepEqual(runStartup(store).routes,['native-workspace.html']);
+  assert.equal(runPreference(store).checkbox.checked,true);
+ }
+});
+
+test('storage rejection retains SQL startup and disables the unavailable preference',()=>{
+ const forbidden={getItem(){throw Error('disabled')},setItem(){throw Error('disabled')}};
+ assert.deepEqual(runStartup(forbidden).routes,['native-workspace.html']);
  const ui=runPreference(forbidden);
- assert.equal(ui.checkbox.disabled,true);
+ assert.equal(ui.checkbox.disabled,true);assert.equal(ui.checkbox.checked,true);
  assert.match(ui.status.textContent,/недоступна/);
 });
 
-test('failed preference write leaves the previous route and reports the error',()=>{
- const forbidden={getItem(){return null},setItem(){throw Error('no write')},removeItem(){throw Error('no write')}};
- const ui=runPreference(forbidden);
- ui.checkbox.checked=true;ui.change();
- assert.equal(ui.checkbox.checked,false);
- assert.match(ui.status.textContent,/Не удалось сохранить/);
- assert.deepEqual(runStartup(forbidden).routes,['index.html']);
+test('failed preference write restores the checkbox and keeps the previous route',()=>{
+ for(const previous of [null,'classic']){
+  const forbidden={getItem(){return previous},setItem(){throw Error('no write')}};
+  const ui=runPreference(forbidden),was=ui.checkbox.checked;
+  ui.checkbox.checked=!was;ui.change();
+  assert.equal(ui.checkbox.checked,was);
+  assert.match(ui.status.textContent,/Не удалось сохранить/);
+  assert.deepEqual(runStartup(forbidden).routes,[previous==='classic'?'index.html':'native-workspace.html']);
+ }
 });

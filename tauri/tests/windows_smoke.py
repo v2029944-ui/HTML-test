@@ -180,7 +180,19 @@ def run():
             try:
                 browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227')
                 page=wait_for_webview_page(browser);errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-                wait_for_app_state(page, 'Boolean(window.appReady)', 'Application initialization');page.evaluate('window.appReady')
+                wait_for_app_state(page,
+                    'Boolean(window.nativeWorkspaceReady) && window.nativeWorkspaceNavigation?.active() === "analysis"',
+                    'Default SQLite analysis startup')
+                assert page.evaluate('window.nativeWorkspaceReady')
+                assert page.evaluate("typeof window.appReady === 'undefined'")
+                assert page.locator('#metricReports').inner_text()=='0'
+                assert page.locator('#sqlStartupPreference').is_checked()
+                assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") is None
+                report['checks'].append('Default startup opens SQLite analysis without loading the classic Excel view or report history')
+                # Explicit classic navigation remains available for the existing
+                # Excel import fixture and compatibility checks below.
+                page.locator('#legacyWorkspaceLink').click()
+                wait_for_app_state(page, 'Boolean(window.appReady)', 'Explicit classic navigation');page.evaluate('window.appReady')
                 assert page.evaluate('!!window.__TAURI__.core.invoke')
                 data=page.evaluate('window.desktopAPI.load()')
                 if data['reports']:raise RuntimeError('CI data folder is not empty; refusing to overwrite reports')
@@ -340,7 +352,11 @@ def run():
                 assert legacy_preview['sampleReports']
                 assert page.evaluate("typeof window.appReady === 'undefined'")
                 report['checks'].append('read-only streamed Rust legacy XLSX preview with real cells')
-                # Opt in to SQL-first startup; the setting must survive closing WebView2.
+                # SQL is the default. Explicit classic opt-out and returning
+                # to SQL must still save the selected route.
+                assert page.locator('#sqlStartupPreference').is_checked()
+                page.locator('#sqlStartupPreference').uncheck()
+                assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") == 'classic'
                 page.locator('#sqlStartupPreference').check()
                 assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") == 'sql'
                 if page.evaluate("typeof window.appReady !== 'undefined'"):
@@ -854,6 +870,10 @@ def run():
                 report['navigation_before_restart']=before_restart
                 (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
                 assert before_restart=={'view':'upload','saved':'upload'},before_restart
+                # Reproduce an installed 1.6.0 profile: remembered classic Excel
+                # view, with no explicit startup preference. It must now use SQL.
+                page.evaluate("localStorage.removeItem('analiz-sql-startup-v1')")
+                assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") is None
             except BaseException as error:
                 diagnostics(error);raise
             finally:
@@ -871,10 +891,11 @@ def run():
                     raise RuntimeError('SQL-first startup loaded the classic history')
                 assert page.locator('#metricReports').inner_text()=='366'
                 assert page.locator('#sqlStartupPreference').is_checked()
-                report['checks'].append('opt-in SQL-first startup avoids full report history')
+                assert page.evaluate("window.nativeWorkspaceNavigation.active()")=='analysis'
+                report['checks'].append('Default SQL restart ignores a remembered classic Excel view without loading full report history')
                 # Switch the next launch back to classic; imports must remain accessible.
                 page.locator('#sqlStartupPreference').uncheck()
-                assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") is None
+                assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") == 'classic'
                 page.locator('#legacyWorkspaceLink').click()
                 wait_for_app_state(page, 'Boolean(window.appReady)', 'Classic interface after SQL-first restart')
                 page.evaluate('window.appReady')
