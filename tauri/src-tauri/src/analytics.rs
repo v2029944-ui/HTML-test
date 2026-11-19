@@ -77,6 +77,11 @@ pub struct TimelineSummary {
     pub points: Vec<TimelinePoint>,
 }
 #[derive(Debug, Serialize)]
+pub struct RankingSummary {
+    pub complete: bool,
+    pub rows: Vec<RangeValue>,
+}
+#[derive(Debug, Serialize)]
 pub struct RangeValue {
     pub key: String,
     pub name: String,
@@ -1254,6 +1259,61 @@ impl Storage {
             granularity: if monthly { "month" } else { "period" }.into(),
             points,
         })
+    }
+    /// A small, sorted ranking of groups and works computed wholly in SQLite.
+    /// Never show partial sums as a complete ranking; negative values remain
+    /// distinguishable and ties have deterministic order.
+    pub fn analysis_ranking(
+        &self,
+        expected: i64,
+        s: &AnalysisScope,
+        q: &RangeQuery,
+        org: Option<&str>,
+        metric: &str,
+        category: &str,
+    ) -> Result<RankingSummary, String> {
+        if !matches!(metric, "amount" | "count") {
+            return Err("Unknown ranking metric".into());
+        }
+        if !matches!(category, "all" | "work" | "group") {
+            return Err("Unknown ranking category".into());
+        }
+        let mut c = self.connect()?;
+        let tx = c.transaction().map_err(err)?;
+        workspace(&tx, expected, s)?;
+        org_check(&tx, s, org)?;
+        fill_range(&tx, s, q, 1)?;
+        if !complete(&tx, 1, org)? {
+            return Ok(RankingSummary { complete: false, rows: Vec::new() });
+        }
+        // Every predicate and sort expression is fixed SQL, not user input.
+        let sql = if org.is_some() {
+            "SELECT key,name,kind,count,amount,active FROM temp.an_values
+             WHERE slot=1 AND org=?3 AND (?1='all' OR kind=?1)
+             ORDER BY ABS(CASE WHEN ?2='count' THEN count ELSE amount END) DESC,
+                      key ASC LIMIT 12"
+        } else {
+            "SELECT key,name,kind,count,amount,active FROM temp.an_combined
+             WHERE slot=1 AND ?3 IS NULL AND (?1='all' OR kind=?1)
+             ORDER BY ABS(CASE WHEN ?2='count' THEN count ELSE amount END) DESC,
+                      key ASC LIMIT 12"
+        };
+        let mut stmt = tx.prepare(sql).map_err(err)?;
+        let mut cursor = stmt.query(params![category, metric, org]).map_err(err)?;
+        let mut rows = Vec::new();
+        while let Some(r) = cursor.next().map_err(err)? {
+            let t = totals(r.get(3).map_err(err)?, r.get(4).map_err(err)?, true)?;
+            rows.push(RangeValue {
+                key: r.get(0).map_err(err)?,
+                name: r.get(1).map_err(err)?,
+                kind: r.get(2).map_err(err)?,
+                count: t.count,
+                amount: t.amount,
+                average: t.average,
+                active: r.get(5).map_err(err)?,
+            });
+        }
+        Ok(RankingSummary { complete: true, rows })
     }
     pub fn analysis_range_summary(
         &self,
