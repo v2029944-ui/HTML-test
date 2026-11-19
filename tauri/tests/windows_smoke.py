@@ -262,6 +262,28 @@ def run():
                             raise RuntimeError(f'SQL phone viewport has page-level horizontal scrolling at {width}x{height}: {geometry}')
                         page.screenshot(path=str(output/f'windows-sql-{width}x{height}.png'),full_page=False)
                     report['checks'].append('Measured SQL first screen at 1280x720, 1366x768, 390x844, 320x568')
+                    # Issue #64: large UI scaling must not force the whole
+                    # SQL screen to scroll horizontally. Tables may scroll
+                    # internally by design, but the page itself must fit.
+                    page.set_viewport_size({'width':1280,'height':720})
+                    for scale in ('1.25','1.5'):
+                        zoom=page.evaluate('''scale => {
+                          const html=document.documentElement;
+                          const before=html.style.zoom;
+                          html.style.zoom=scale;
+                          const output={
+                            scale,
+                            viewport:innerWidth,
+                            page:html.scrollWidth,
+                            toolbar:document.querySelector('.analytics-toolbar').getBoundingClientRect().right,
+                            panel:document.querySelector('#sqlOverview').getBoundingClientRect().right
+                          };
+                          html.style.zoom=before;
+                          return output;
+                        }''',scale)
+                        if zoom['page']>zoom['viewport']+2:
+                            raise RuntimeError(f'SQL zoom {scale} produces page-level horizontal overflow: {zoom}')
+                    report['checks'].append('SQL zoomed cards and calendar controls remain within page width')
                 finally:
                     page.set_viewport_size(previous_viewport)
                 # The native SQL workspace is now one application with sections.
