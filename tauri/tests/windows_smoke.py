@@ -470,6 +470,11 @@ def run():
                 wait_for_app_state(page,
                     'document.querySelectorAll("#dailySourceKpis .comparison-metric").length === 5 && document.querySelector("#dailySourceChart svg") !== null',
                     'KPI and monthly chart derived only from 366 daily reports')
+                # innerText is empty inside a closed details element in WebView2.
+                # Open the exact-values table as a user would before reading cells.
+                source_details=page.locator('details').filter(has=page.locator('#dailySourceRows'))
+                if not source_details.evaluate('(el) => el.open'):
+                    source_details.locator('summary').click()
                 assert page.locator('#dailySourceRows tr').count()==12
                 assert page.locator('#dailySourceRows tr').first.locator('td').first.inner_text()=='2024-01'
                 assert page.locator('#dailySourceKpis .comparison-metric').first.locator('strong').inner_text()!='—'
