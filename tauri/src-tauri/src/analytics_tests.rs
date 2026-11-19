@@ -914,3 +914,64 @@ fn sql_ranking_is_sorted_bounded_and_complete() {
     assert!(store.analysis_ranking(rev, &selected, &days, None, "amount", "unknown").is_err());
     assert!(store.analysis_ranking(rev, &selected, &days, Some("B"), "amount", "all").is_err());
 }
+
+
+#[test]
+fn organization_trends_are_bounded_and_independently_complete() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let rev = prepare(&store, &fixture());
+    let selected = scope(&store, rev, "day", &["A", "B"], None);
+    let data = store.analysis_organization_trends(
+        rev, &selected, &query("2024-02-28", "2024-03-01"),
+    ).unwrap();
+    assert_eq!(data.granularity, "period");
+    assert_eq!(data.selected_organizations, 2);
+    assert_eq!(data.series.len(), 2);
+    assert_eq!(data.series[0].organization, "A");
+    assert_eq!(data.series[1].organization, "B");
+    assert_eq!(data.series[0].points.len(), 3);
+    assert_eq!(data.series[1].points.len(), 3);
+    assert_eq!(data.series[0].points[0].total.count, Some(0.));
+    assert_eq!(data.series[0].points[0].total.amount, Some(69.));
+    assert_eq!(data.series[0].points[1].total.amount, Some(170.));
+    assert_eq!(data.series[0].points[2].total.amount, Some(10.));
+    assert_eq!(data.series[0].points[2].missing, 0);
+    // An explicitly present organization with no rows is valid zero, not missing.
+    assert_eq!(data.series[1].points[0].total.amount, Some(0.));
+    assert_eq!(data.series[1].points[1].total.amount, Some(0.));
+    assert_eq!(data.series[1].points[2].missing, 1);
+    assert_eq!(data.series[1].points[2].total.amount, None);
+    // The missing B report never obscures confirmed data for A.
+    assert_eq!(data.series[0].points[2].total.amount, Some(10.));
+    let year = store.analysis_organization_trends(
+        rev, &selected, &query("2024-01-01", "2024-12-31"),
+    ).unwrap();
+    assert_eq!(year.granularity, "month");
+    assert_eq!(year.series.len(), 2);
+    assert_eq!(year.series[0].points.len(), 12);
+    assert_eq!(year.series[0].points[0].start, "2024-01");
+    assert!(year.series.iter().all(|series| series.points.iter().all(
+        |point| point.missing>0 && point.total.amount.is_none()
+    )));
+}
+
+#[test]
+fn organization_trends_explicitly_limits_organization_series() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    data["settings"]["orgNames"] = json!(["A","B","C","D","E","F","G","H","I"]);
+    let rev = prepare(&store, &data);
+    let selected = scope(
+        &store, rev, "day", &["A","B","C","D","E","F","G","H","I"], None,
+    );
+    let trends = store.analysis_organization_trends(
+        rev, &selected, &query("2024-02-28", "2024-02-29"),
+    ).unwrap();
+    assert_eq!(trends.selected_organizations, 9);
+    assert_eq!(trends.series.len(), 8);
+    assert_eq!(trends.series[0].organization, "A");
+    assert_eq!(trends.series[7].organization, "H");
+    assert!(trends.series.iter().all(|series| series.points.len()==2));
+}
