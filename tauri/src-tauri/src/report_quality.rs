@@ -1,0 +1,499 @@
+//! Stream only the selected report and, on request, its shared source diagnostics.
+use super::{err, read_model, Storage};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension, Statement};
+use serde::de::{DeserializeSeed, Error, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::{fmt, io::BufReader};
+
+const MAX_PAGE: usize = 50;
+
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QualityScope {
+    Report,
+    Source,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReportQualityPage {
+    issues: Vec<QualityIssue>,
+    next_offset: Option<u32>,
+    source_anchor: Option<String>,
+    warning_fallback: bool,
+    invalid_entries: u32,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct QualityIssue {
+    kind: Option<String>,
+    reason: String,
+    sheet: Option<String>,
+    organization: Option<String>,
+    date: Option<String>,
+    source_row: Option<u32>,
+    work_cell: Option<String>,
+    count_cell: Option<String>,
+    amount_cell: Option<String>,
+    cells: Vec<String>,
+    relevant: Option<bool>,
+}
+
+fn clip(mut text: String, max_bytes: usize) -> String {
+    if text.len() > max_bytes {
+        let mut end = max_bytes - '…'.len_utf8();
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        text.truncate(end);
+        text.push('…');
+    }
+    text
+}
+
+fn label(text: Option<String>) -> Option<String> {
+    text.map(|text| clip(text, 256))
+}
+
+// Discard unsupported JSON values without allocating their subtrees. This is
+// separate from document syntax errors, which still fail the read.
+#[derive(Default)]
+enum Field {
+    #[default]
+    Unsupported,
+    Text(String),
+    Number(u64),
+    Boolean(bool),
+    Cells(Vec<String>),
+}
+
+impl Field {
+    fn text(self) -> Option<String> {
+        if let Self::Text(text) = self { Some(text) } else { None }
+    }
+
+    fn number(self) -> Option<u64> {
+        if let Self::Number(number) = self { Some(number) } else { None }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ValueShape { Issue, Warning, Scalar, Cells }
+
+#[derive(Default)]
+struct Entry {
+    issue: Option<QualityIssue>,
+    mirrored: bool,
+}
+
+impl<'de> DeserializeSeed<'de> for ValueShape {
+    type Value = Field;
+
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Field, D::Error> {
+        d.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for ValueShape {
+    type Value = Field;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a saved diagnostic value")
+    }
+
+    fn visit_str<E: Error>(self, value: &str) -> Result<Field, E> {
+        Ok(Field::Text(value.to_owned()))
+    }
+
+    fn visit_u64<E: Error>(self, value: u64) -> Result<Field, E> { Ok(Field::Number(value)) }
+    fn visit_i64<E: Error>(self, value: i64) -> Result<Field, E> {
+        Ok(u64::try_from(value).map(Field::Number).unwrap_or_default())
+    }
+    fn visit_bool<E: Error>(self, value: bool) -> Result<Field, E> { Ok(Field::Boolean(value)) }
+    fn visit_unit<E: Error>(self) -> Result<Field, E> { Ok(Field::Unsupported) }
+    fn visit_f64<E: Error>(self, _: f64) -> Result<Field, E> { Ok(Field::Unsupported) }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Field, A::Error> {
+        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        Ok(Field::Unsupported)
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Field, A::Error> {
+        if !matches!(self, Self::Cells) {
+            while seq.next_element::<IgnoredAny>()?.is_some() {}
+            return Ok(Field::Unsupported);
+        }
+        let mut cells = Vec::new();
+        while cells.len() < 8 {
+            match seq.next_element_seed(Self::Scalar)? {
+                Some(Field::Text(cell)) => cells.push(clip(cell, 128)),
+                Some(_) => {}
+                None => return Ok(Field::Cells(cells)),
+            }
+        }
+        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        Ok(Field::Cells(cells))
+    }
+}
+
+struct EntryRead;
+
+impl<'de> DeserializeSeed<'de> for EntryRead {
+    type Value = Entry;
+
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Entry, D::Error> {
+        d.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for EntryRead {
+    type Value = Entry;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a saved diagnostic")
+    }
+
+    fn visit_str<E: Error>(self, _: &str) -> Result<Entry, E> { Ok(Entry::default()) }
+    fn visit_u64<E: Error>(self, _: u64) -> Result<Entry, E> { Ok(Entry::default()) }
+    fn visit_i64<E: Error>(self, _: i64) -> Result<Entry, E> { Ok(Entry::default()) }
+    fn visit_bool<E: Error>(self, _: bool) -> Result<Entry, E> { Ok(Entry::default()) }
+    fn visit_unit<E: Error>(self) -> Result<Entry, E> { Ok(Entry::default()) }
+    fn visit_f64<E: Error>(self, _: f64) -> Result<Entry, E> { Ok(Entry::default()) }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Entry, A::Error> {
+        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        Ok(Entry::default())
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Entry, A::Error> {
+        let mut issue = QualityIssue::default();
+        let mut reason = None;
+        let mut legacy_kind = None;
+        let mut legacy_row = None;
+        let mut mirrored = false;
+        while let Some(key) = map.next_key::<String>()? {
+            let scalar = ValueShape::Scalar;
+            match key.as_str() {
+                "reason" => reason = map.next_value_seed(scalar)?.text(),
+                "kind" => issue.kind = label(map.next_value_seed(scalar)?.text()),
+                "type" => legacy_kind = label(map.next_value_seed(scalar)?.text()),
+                "sheet" => issue.sheet = label(map.next_value_seed(scalar)?.text()),
+                "organization" => issue.organization = label(map.next_value_seed(scalar)?.text()),
+                "date" => issue.date = label(map.next_value_seed(scalar)?.text()),
+                "source_row" | "sourceRow" => {
+                    issue.source_row = map.next_value_seed(scalar)?.number().and_then(|n| u32::try_from(n).ok());
+                }
+                "row" => legacy_row = map.next_value_seed(scalar)?.number().and_then(|n| u32::try_from(n).ok()),
+                "work_cell" | "workCell" => issue.work_cell = label(map.next_value_seed(scalar)?.text()),
+                "count_cell" | "countCell" => issue.count_cell = label(map.next_value_seed(scalar)?.text()),
+                "amount_cell" | "amountCell" => issue.amount_cell = label(map.next_value_seed(scalar)?.text()),
+                "cells" => {
+                    if let Field::Cells(cells) = map.next_value_seed(ValueShape::Cells)? { issue.cells = cells; }
+                }
+                "relevant" => {
+                    if let Field::Boolean(value) = map.next_value_seed(scalar)? { issue.relevant = Some(value); }
+                }
+                "source_issue_sequence" => mirrored = map.next_value_seed(scalar)?.number().is_some(),
+                _ => { map.next_value::<IgnoredAny>()?; }
+            }
+        }
+        Ok(Entry {
+            mirrored,
+            issue: reason.map(|reason| {
+                issue.reason = reason;
+                issue.kind = issue.kind.or(legacy_kind);
+                issue.source_row = issue.source_row.or(legacy_row);
+                issue
+            }),
+        })
+    }
+}
+
+#[derive(Default)]
+struct Window {
+    total: u32,
+    invalid_entries: u32,
+    issues: Vec<QualityIssue>,
+}
+
+#[derive(Clone, Copy)]
+struct Page {
+    offset: u32,
+    limit: usize,
+    omit_mirrors: bool,
+}
+
+// SQLite's empty filename opens a private temporary database. Its bounded page
+// cache keeps the exact membership test on disk even for large reports.
+struct WarningIndex {
+    db: Connection,
+}
+
+impl WarningIndex {
+    fn new() -> Result<Self, String> {
+        let db = Connection::open("").map_err(err)?;
+        db.execute_batch(
+            "PRAGMA cache_size=-512;
+             PRAGMA temp_store=FILE;
+             PRAGMA journal_mode=OFF;
+             CREATE TABLE known(reason TEXT PRIMARY KEY) WITHOUT ROWID;
+             CREATE TABLE warnings(ordinal INTEGER PRIMARY KEY, reason TEXT NOT NULL UNIQUE);
+             BEGIN;",
+        ).map_err(err)?;
+        Ok(Self { db })
+    }
+
+    fn append(&self, window: &mut Window, page: Page) -> Result<bool, String> {
+        let offset = page.offset.saturating_sub(window.total);
+        let available = page.limit - window.issues.len();
+        let mut query = self.db.prepare(
+            "SELECT reason FROM warnings AS w
+             WHERE NOT EXISTS(SELECT 1 FROM known WHERE reason=w.reason)
+             ORDER BY ordinal LIMIT ?1 OFFSET ?2"
+        ).map_err(err)?;
+        let reasons = query.query_map(params![available as u32 + 1, offset], |row| row.get(0)).map_err(err)?;
+        for reason in reasons {
+            let reason = reason.map_err(err)?;
+            if window.issues.len() == page.limit { return Ok(true); }
+            window.issues.push(QualityIssue {
+                kind: Some("warning".into()),
+                reason: clip(reason, 4096),
+                ..Default::default()
+            });
+        }
+        Ok(false)
+    }
+}
+
+struct WindowRead<'a, 'conn> {
+    shape: ValueShape,
+    page: Page,
+    index: Option<&'a mut Statement<'conn>>,
+}
+
+impl<'de> DeserializeSeed<'de> for WindowRead<'_, '_> {
+    type Value = Window;
+
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Window, D::Error> {
+        d.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for WindowRead<'_, '_> {
+    type Value = Window;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("an array of saved diagnostics")
+    }
+
+    fn visit_str<E: Error>(self, _: &str) -> Result<Window, E> { self.visit_unit() }
+    fn visit_u64<E: Error>(self, _: u64) -> Result<Window, E> { self.visit_unit() }
+    fn visit_i64<E: Error>(self, _: i64) -> Result<Window, E> { self.visit_unit() }
+    fn visit_bool<E: Error>(self, _: bool) -> Result<Window, E> { self.visit_unit() }
+    fn visit_f64<E: Error>(self, _: f64) -> Result<Window, E> { self.visit_unit() }
+    fn visit_unit<E: Error>(self) -> Result<Window, E> {
+        Ok(Window { invalid_entries: 1, ..Default::default() })
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Window, A::Error> {
+        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        self.visit_unit()
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(mut self, mut seq: A) -> Result<Window, A::Error> {
+        let mut result = Window::default();
+        if matches!(self.shape, ValueShape::Warning) {
+            let index = self.index.as_mut().expect("warning index");
+            while let Some(field) = seq.next_element_seed(ValueShape::Scalar)? {
+                if let Some(reason) = field.text() {
+                    index.execute([reason]).map_err(A::Error::custom)?;
+                } else {
+                    result.invalid_entries += 1;
+                }
+            }
+            return Ok(result);
+        }
+        while let Some(entry) = seq.next_element_seed(EntryRead)? {
+            let Some(mut issue) = entry.issue else {
+                result.invalid_entries += 1;
+                continue;
+            };
+            if let Some(index) = self.index.as_mut() {
+                index.execute([&issue.reason]).map_err(A::Error::custom)?;
+            }
+            if self.page.omit_mirrors && entry.mirrored { continue; }
+            if result.total >= self.page.offset && result.issues.len() < self.page.limit {
+                issue.reason = clip(issue.reason, 4096);
+                result.issues.push(issue);
+            }
+            result.total += 1;
+        }
+        Ok(result)
+    }
+}
+
+#[derive(Default)]
+struct Document {
+    issues: Option<Window>,
+    warnings: Option<Window>,
+    source_issues: Option<Window>,
+    sheet: Option<String>,
+    anchor: Option<String>,
+}
+
+struct DocumentRead<'a> {
+    scope: QualityScope,
+    page: Page,
+    index: Option<&'a WarningIndex>,
+}
+
+impl<'de> DeserializeSeed<'de> for DocumentRead<'_> {
+    type Value = Document;
+
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Document, D::Error> {
+        d.deserialize_map(self)
+    }
+}
+
+impl<'de> Visitor<'de> for DocumentRead<'_> {
+    type Value = Document;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a saved report object")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Document, A::Error> {
+        let mut doc = Document::default();
+        let mut legacy_sheet = None;
+        while let Some(key) = map.next_key::<String>()? {
+            match key.as_str() {
+                "sourceSheet" => doc.sheet = label(map.next_value_seed(ValueShape::Scalar)?.text()),
+                "sheetName" => legacy_sheet = label(map.next_value_seed(ValueShape::Scalar)?.text()),
+                "sourceDiagnosticsReport" => doc.anchor = map.next_value_seed(ValueShape::Scalar)?.text(),
+                "issues" if self.scope == QualityScope::Report => {
+                    if doc.issues.is_some() { return Err(A::Error::duplicate_field("issues")); }
+                    let index = self.index.expect("report warning index");
+                    let mut put = index.db.prepare("INSERT OR IGNORE INTO known VALUES(?1)").map_err(A::Error::custom)?;
+                    doc.issues = Some(map.next_value_seed(WindowRead {
+                        shape: ValueShape::Issue, page: self.page, index: Some(&mut put),
+                    })?);
+                }
+                "warnings" if self.scope == QualityScope::Report => {
+                    if doc.warnings.is_some() { return Err(A::Error::duplicate_field("warnings")); }
+                    let index = self.index.expect("report warning index");
+                    let mut put = index.db.prepare("INSERT OR IGNORE INTO warnings(reason) VALUES(?1)").map_err(A::Error::custom)?;
+                    doc.warnings = Some(map.next_value_seed(WindowRead {
+                        shape: ValueShape::Warning, page: self.page, index: Some(&mut put),
+                    })?);
+                }
+                "sourceIssues" => {
+                    if doc.source_issues.is_some() { return Err(A::Error::duplicate_field("sourceIssues")); }
+                    doc.source_issues = Some(if self.scope == QualityScope::Source {
+                        map.next_value_seed(WindowRead {
+                            shape: ValueShape::Issue, page: self.page, index: None,
+                        })?
+                    } else {
+                        map.next_value::<IgnoredAny>()?;
+                        Window::default()
+                    });
+                }
+                _ => { map.next_value::<IgnoredAny>()?; }
+            }
+        }
+        doc.sheet = doc.sheet.or(legacy_sheet);
+        Ok(doc)
+    }
+}
+
+fn read_document(conn: &Connection, id: &str, scope: QualityScope, page: Page, index: Option<&WarningIndex>) -> Result<Document, String> {
+    let rowid = conn.query_row("SELECT rowid FROM reports WHERE id=?1", [id], |r| r.get(0))
+        .optional().map_err(err)?.ok_or("Сохранённый отчёт не найден.")?;
+    let blob = conn.blob_open("main", "reports", "json", rowid, true).map_err(err)?;
+    let bounded = read_model::TokenBounded::new(blob).limit_depth();
+    let mut deserializer = serde_json::Deserializer::from_reader(BufReader::with_capacity(8192, bounded));
+    let doc = DocumentRead { scope, page, index }.deserialize(&mut deserializer).map_err(err)?;
+    deserializer.end().map_err(err)?;
+    Ok(doc)
+}
+
+impl Storage {
+    pub fn report_quality_page(
+        &self, expected_revision: i64, id: &str, scope: QualityScope, offset: u32, limit: usize,
+    ) -> Result<ReportQualityPage, String> {
+        if id.is_empty() || id.len() > 65_536 || !(1..=MAX_PAGE).contains(&limit) {
+            return Err("Недопустимый идентификатор отчёта или размер страницы.".into());
+        }
+        let conn = Connection::open_with_flags(self.db_path(), OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(err)?;
+        let tx = conn.unchecked_transaction().map_err(err)?;
+        read_model::check_revision(&tx, expected_revision)?;
+        // The normalized link follows anchor replacements. The serialized
+        // pointer is only a fallback for reports without normalized links.
+        let live_anchor: Option<(String, bool)> = tx.query_row(
+            "SELECT CASE WHEN length(CAST(l.anchor_id AS BLOB)) BETWEEN 1 AND 65536
+                         THEN l.anchor_id ELSE '' END,
+                    EXISTS(SELECT 1 FROM reports AS anchor WHERE anchor.id=l.anchor_id)
+             FROM report_source_diagnostic_links AS l WHERE l.report_id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        ).optional().map_err(err)?;
+        if live_anchor.as_ref().is_some_and(|(id, _)| id.is_empty()) {
+            return Err("Недопустимая ссылка на общие замечания источника.".into());
+        }
+        let mut page = Page { offset, limit, omit_mirrors: false };
+        let index = (scope == QualityScope::Report).then(WarningIndex::new).transpose()?;
+        let (doc, source_anchor) = match (scope, live_anchor) {
+            (QualityScope::Source, Some((anchor, _))) => {
+                let doc = read_document(&tx, &anchor, scope, page, None)?;
+                (doc, Some(anchor))
+            }
+            (QualityScope::Report, live) => {
+                // If the stored anchor is missing, preserve any report copies.
+                page.omit_mirrors = live.as_ref().is_some_and(|(_, exists)| *exists);
+                let doc = read_document(&tx, id, scope, page, index.as_ref())?;
+                let anchor = live.map(|(anchor, _)| anchor).or_else(|| document_anchor(&doc, id));
+                (doc, anchor)
+            }
+            (QualityScope::Source, None) => {
+                let doc = read_document(&tx, id, scope, page, index.as_ref())?;
+                let anchor = document_anchor(&doc, id).ok_or("Общие замечания источника не сохранены.")?;
+                let doc = if anchor == id { doc } else { read_document(&tx, &anchor, scope, page, None)? };
+                (doc, Some(anchor))
+            }
+        };
+        let mut window = match scope {
+            QualityScope::Report => doc.issues.unwrap_or_default(),
+            QualityScope::Source => doc.source_issues.ok_or("Общие замечания источника не найдены в сохранённом отчёте.")?,
+        };
+        let after = offset.saturating_add(limit as u32);
+        let mut more = window.total > after;
+        let mut warning_fallback = false;
+        if let (Some(index), Some(warnings)) = (index, doc.warnings) {
+            window.invalid_entries += warnings.invalid_entries;
+            if !more {
+                more = index.append(&mut window, page)?;
+                warning_fallback = window.total == 0 && !window.issues.is_empty();
+            }
+        }
+        for issue in &mut window.issues {
+            if issue.sheet.is_none() {
+                issue.sheet.clone_from(&doc.sheet);
+            }
+        }
+        tx.commit().map_err(err)?;
+        Ok(ReportQualityPage {
+            issues: window.issues,
+            next_offset: more.then_some(after),
+            source_anchor,
+            warning_fallback,
+            invalid_entries: window.invalid_entries,
+        })
+    }
+}
+
+fn document_anchor(doc: &Document, id: &str) -> Option<String> {
+    doc.anchor.clone().filter(|anchor| !anchor.is_empty())
+        .or_else(|| doc.source_issues.as_ref().map(|_| id.to_owned()))
+}
+
+#[cfg(test)]
+#[path = "report_quality_tests.rs"]
+mod tests;

@@ -27,8 +27,26 @@ function prepare(options={}){
   fs.copyFileSync(path.join(__dirname,'native-reader.js'),path.join(output,'tauri-native-reader.js'));
   fs.copyFileSync(path.join(__dirname,'native-errors.js'),path.join(output,'tauri-native-errors.js'));
   fs.copyFileSync(path.join(__dirname,'native-workspace.js'),path.join(output,'tauri-native-workspace.js'))
+  fs.copyFileSync(path.join(__dirname,'native-management.js'),path.join(output,'tauri-native-management.js'));
+  fs.copyFileSync(path.join(__dirname,'native-report-quality.js'),path.join(output,'tauri-native-report-quality.js'));
+  fs.copyFileSync(path.join(__dirname,'native-period-visibility.js'),path.join(output,'tauri-native-period-visibility.js'));
+  fs.copyFileSync(path.join(__dirname,'native-timeline.js'),path.join(output,'tauri-native-timeline.js'));
+  fs.copyFileSync(path.join(__dirname,'native-ranking.js'),path.join(output,'tauri-native-ranking.js'));
+  fs.copyFileSync(path.join(__dirname,'native-organization-trends.js'),path.join(output,'tauri-native-organization-trends.js'));
+  fs.copyFileSync(path.join(__dirname,'native-period-selection.js'),path.join(output,'tauri-native-period-selection.js'));
+  fs.copyFileSync(path.join(__dirname,'native-daily-overview.js'),path.join(output,'tauri-native-daily-overview.js'));
+  fs.copyFileSync(path.join(__dirname,'native-name-filter.js'),path.join(output,'tauri-native-name-filter.js'));
+  fs.copyFileSync(path.join(__dirname,'native-organization-filter.js'),path.join(output,'tauri-native-organization-filter.js'));
+  fs.copyFileSync(path.join(__dirname,'native-daily-calendar.js'),path.join(output,'tauri-native-daily-calendar.js'));
+  fs.copyFileSync(path.join(__dirname,'native-work-trends.js'),path.join(output,'tauri-native-work-trends.js'));
+  fs.copyFileSync(path.join(__dirname,'native-advanced-analysis.js'),path.join(output,'tauri-native-advanced-analysis.js'));
+  fs.copyFileSync(path.join(__dirname,'native-comparison.js'),path.join(output,'tauri-native-comparison.js'));
+  fs.copyFileSync(path.join(__dirname,'native-navigation.js'),path.join(output,'tauri-native-navigation.js'));
+  fs.copyFileSync(path.join(__dirname,'native-folder-auto-import.js'),path.join(output,'tauri-native-folder-auto-import.js'));
   fs.copyFileSync(path.join(__dirname,'native-folder-status.js'),path.join(output,'tauri-native-folder-status.js'));
   fs.copyFileSync(path.join(__dirname,'native-legacy-import.js'),path.join(output,'tauri-native-legacy-import.js'));
+  fs.copyFileSync(path.join(__dirname,'native-import-mappings.js'),path.join(output,'tauri-native-import-mappings.js'));
+  fs.copyFileSync(path.join(__dirname,'native-import-wizard.js'),path.join(output,'tauri-native-import-wizard.js'));
   fs.copyFileSync(path.join(__dirname,'native-wide-import.js'),path.join(output,'tauri-native-wide-import.js'));
   fs.copyFileSync(path.join(__dirname,'native-metric-kinds.js'),path.join(output,'tauri-native-metric-kinds.js'));
   fs.copyFileSync(path.join(__dirname,'native-workspace.html'),path.join(output,'native-workspace.html'));

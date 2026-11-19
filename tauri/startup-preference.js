@@ -20,7 +20,7 @@
       if(window.localStorage.getItem(key)!==(requested?'sql':null))
         throw Error('Настройка не сохранена');
       status.textContent=requested
-        ? 'При следующем запуске откроется SQL-режим. Импорт Excel доступен через ссылку на классический интерфейс.'
+        ? 'При следующем запуске откроется SQL-режим. Импорт Excel доступен в разделе «Excel и импорт».'
         : 'При следующем запуске откроется классический интерфейс.';
     }catch{
       checkbox.checked=!requested;

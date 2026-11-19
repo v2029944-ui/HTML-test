@@ -27,7 +27,7 @@ fn golden(
     ranges: &[(&str, &str)],
     changes: &ChangeQuery,
 ) -> Value {
-    let input = json!({"reports":data["reports"],"settings":data["settings"],"scope":{"type":kind,"organizations":orgs,"names":names},"ranges":ranges.iter().map(|(from,to)|json!({"from":from,"to":to})).collect::<Vec<_>>(),"changes":{"method":changes.method,"from":changes.from,"to":changes.to,"percent":changes.percent,"minCount":changes.min_count,"minAmount":changes.min_amount}});
+    let input = json!({"advanced":data["advanced"],"reports":data["reports"],"settings":data["settings"],"scope":{"type":kind,"organizations":orgs,"names":names},"ranges":ranges.iter().map(|(from,to)|json!({"from":from,"to":to})).collect::<Vec<_>>(),"changes":{"method":changes.method,"from":changes.from,"to":changes.to,"percent":changes.percent,"minCount":changes.min_count,"minAmount":changes.min_amount}});
     let script =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/native_analytics_golden.cjs");
     let mut child = Command::new("node")
@@ -830,4 +830,1082 @@ fn export_uses_its_revision_snapshot_and_numeric_overflow_never_publishes() {
         .analysis_export_range(rev, &s, &q, None, &path)
         .is_err());
     assert!(!path.exists());
+}
+
+
+#[test]
+fn sql_timeline_preserves_missing_and_zero_amounts_without_loading_history() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let rev = prepare(&store, &fixture());
+    let selected = scope(&store, rev, "day", &["A", "B"], None);
+    let daily = store.analysis_timeline(
+        rev, &selected, &query("2024-02-28", "2024-03-01"),
+    ).unwrap();
+    assert_eq!(daily.granularity, "period");
+    assert_eq!(daily.points.len(), 3);
+    assert_eq!(daily.points[0].start, "2024-02-28");
+    assert_eq!(daily.points[0].total.count, Some(0.));
+    assert_eq!(daily.points[0].total.amount, Some(69.));
+    assert_eq!(daily.points[1].total.amount, Some(170.));
+    assert_eq!(daily.points[2].start, "2024-03-01");
+    assert_eq!(daily.points[2].missing, 1); // B is absent; do not render A's 10 as the full total.
+    assert_eq!(daily.points[2].total.amount, None);
+    assert_eq!(daily.points[2].total.count, None);
+
+    let only_a = scope(&store, rev, "day", &["A"], None);
+    let march = store.analysis_timeline(
+        rev, &only_a, &query("2024-03-01", "2024-03-01"),
+    ).unwrap();
+    assert_eq!(march.points.len(), 1);
+    assert_eq!(march.points[0].missing, 0);
+    assert_eq!(march.points[0].total.amount, Some(10.));
+
+    let year = store.analysis_timeline(
+        rev, &selected, &query("2024-01-01", "2024-12-31"),
+    ).unwrap();
+    assert_eq!(year.granularity, "month");
+    assert_eq!(year.points.len(), 12);
+    assert_eq!(year.points[0].start, "2024-01");
+    assert_eq!(year.points[1].start, "2024-02");
+    assert!(year.points.iter().all(|point| point.total.amount.is_none()));
+    assert!(year.points.iter().all(|point| point.missing>0));
+}
+
+
+#[test]
+fn sql_ranking_is_sorted_bounded_and_complete() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let rev = prepare(&store, &fixture());
+    let selected = scope(&store, rev, "day", &["A"], None);
+    let days = query("2024-02-28", "2024-02-29");
+    let top = store.analysis_ranking(rev, &selected, &days, None, "amount", "all").unwrap();
+    assert!(top.complete);
+    assert!(!top.rows.is_empty());
+    assert!(top.rows.len() <= 12);
+    assert_eq!(top.rows[0].kind, "group");
+    assert_eq!(top.rows[0].name, "Group");
+    assert_eq!(top.rows[0].amount, Some(100.));
+    assert_eq!(top.rows[1].name, "Ignored");
+    assert_eq!(top.rows[1].amount, Some(70.));
+
+    let counts = store.analysis_ranking(rev, &selected, &days, None, "count", "work").unwrap();
+    assert!(counts.complete);
+    assert!(counts.rows.iter().all(|r| r.kind == "work"));
+    assert_eq!(counts.rows[0].name, "new");
+    assert_eq!(counts.rows[0].count, Some(2.));
+    assert_eq!(counts.rows[1].name, "gone");
+    assert_eq!(counts.rows[1].count, Some(1.));
+    let only_groups = store.analysis_ranking(rev, &selected, &days, None, "amount", "group").unwrap();
+    assert_eq!(only_groups.rows.len(), 2);
+    assert_eq!(only_groups.rows[0].name, "Group");
+    assert_eq!(only_groups.rows[1].name, "Ignored");
+    assert_eq!(only_groups.rows[1].count, Some(-5.));
+
+    let combined = scope(&store, rev, "day", &["A", "B"], None);
+    let incomplete = store.analysis_ranking(
+        rev, &combined, &query("2024-02-28", "2024-03-01"), None, "amount", "all"
+    ).unwrap();
+    assert!(!incomplete.complete);
+    assert!(incomplete.rows.is_empty());
+
+    assert!(store.analysis_ranking(rev, &selected, &days, None, "percent", "all").is_err());
+    assert!(store.analysis_ranking(rev, &selected, &days, None, "amount", "unknown").is_err());
+    assert!(store.analysis_ranking(rev, &selected, &days, Some("B"), "amount", "all").is_err());
+}
+
+
+#[test]
+fn organization_trends_are_bounded_and_independently_complete() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let rev = prepare(&store, &fixture());
+    let selected = scope(&store, rev, "day", &["A", "B"], None);
+    let data = store.analysis_organization_trends(
+        rev, &selected, &query("2024-02-28", "2024-03-01"),
+    ).unwrap();
+    assert_eq!(data.granularity, "period");
+    assert_eq!(data.selected_organizations, 2);
+    assert_eq!(data.series.len(), 2);
+    assert_eq!(data.series[0].organization, "A");
+    assert_eq!(data.series[1].organization, "B");
+    assert_eq!(data.series[0].points.len(), 3);
+    assert_eq!(data.series[1].points.len(), 3);
+    assert_eq!(data.series[0].points[0].total.count, Some(0.));
+    assert_eq!(data.series[0].points[0].total.amount, Some(69.));
+    assert_eq!(data.series[0].points[1].total.amount, Some(170.));
+    assert_eq!(data.series[0].points[2].total.amount, Some(10.));
+    assert_eq!(data.series[0].points[2].missing, 0);
+    // An explicitly present organization with no rows is valid zero, not missing.
+    assert_eq!(data.series[1].points[0].total.amount, Some(0.));
+    assert_eq!(data.series[1].points[1].total.amount, Some(0.));
+    assert_eq!(data.series[1].points[2].missing, 1);
+    assert_eq!(data.series[1].points[2].total.amount, None);
+    // The missing B report never obscures confirmed data for A.
+    assert_eq!(data.series[0].points[2].total.amount, Some(10.));
+    let year = store.analysis_organization_trends(
+        rev, &selected, &query("2024-01-01", "2024-12-31"),
+    ).unwrap();
+    assert_eq!(year.granularity, "month");
+    assert_eq!(year.series.len(), 2);
+    assert_eq!(year.series[0].points.len(), 12);
+    assert_eq!(year.series[0].points[0].start, "2024-01");
+    assert!(year.series.iter().all(|series| series.points.iter().all(
+        |point| point.missing>0 && point.total.amount.is_none()
+    )));
+}
+
+#[test]
+fn organization_trends_explicitly_limits_organization_series() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    // The imported legacy settings schema requires exactly four organization names.
+    // Create a synthetic nine-item read-only filter to verify the transport cap,
+    // without changing or weakening legacy settings validation.
+    let rev = prepare(&store, &fixture());
+    let selected = scope(
+        &store, rev, "day", &["A","B","C","D","E","F","G","H","I"], None,
+    );
+    let trends = store.analysis_organization_trends(
+        rev, &selected, &query("2024-02-28", "2024-02-29"),
+    ).unwrap();
+    assert_eq!(trends.selected_organizations, 9);
+    assert_eq!(trends.series.len(), 8);
+    assert_eq!(trends.series[0].organization, "A");
+    assert_eq!(trends.series[7].organization, "H");
+    assert!(trends.series.iter().all(|series| series.points.len()==2));
+}
+
+
+#[test]
+fn work_timeline_distinguishes_confirmed_absence_from_missing_reports() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let days=query("2024-02-28","2024-03-01");
+    let only_a=scope(&store,rev,"day",&["A"],None);
+    let zero=store.analysis_work_timeline(
+        rev,&only_a,&days,None,"work:zero",
+    ).unwrap();
+    assert_eq!(zero.kind,"work");
+    assert_eq!(zero.name,"zero");
+    assert_eq!(zero.granularity,"period");
+    assert_eq!(zero.points.len(),3);
+    assert_eq!(zero.points[0].total.count,Some(0.));
+    assert_eq!(zero.points[0].total.amount,Some(9.));
+    assert_eq!(zero.points[1].total.amount,Some(0.));
+    // The A report exists on March 1, but contains no row for work 'zero'.
+    assert_eq!(zero.points[2].missing,0);
+    assert_eq!(zero.points[2].total.amount,Some(0.));
+
+    let group=store.analysis_work_timeline(
+        rev,&only_a,&days,None,"group:g",
+    ).unwrap();
+    assert_eq!(group.kind,"group");
+    assert_eq!(group.name,"Group");
+    assert_eq!(group.points[0].total.amount,Some(20.));
+    assert_eq!(group.points[1].total.amount,Some(80.));
+    assert_eq!(group.points[2].total.amount,Some(10.));
+
+    let all=scope(&store,rev,"day",&["A","B"],None);
+    let incomplete=store.analysis_work_timeline(
+        rev,&all,&days,None,"group:g",
+    ).unwrap();
+    assert_eq!(incomplete.points[0].missing,0);
+    assert_eq!(incomplete.points[0].total.amount,Some(20.));
+    assert_eq!(incomplete.points[2].missing,1);
+    assert_eq!(incomplete.points[2].total.amount,None);
+    assert_eq!(incomplete.points[2].total.count,None);
+
+    let a_only_from_two=store.analysis_work_timeline(
+        rev,&all,&days,Some("A"),"group:g",
+    ).unwrap();
+    assert_eq!(a_only_from_two.points[2].total.amount,Some(10.));
+    assert!(store.analysis_work_timeline(
+        rev,&only_a,&days,Some("B"),"group:g",
+    ).is_err());
+    assert!(store.analysis_work_timeline(
+        rev,&only_a,&days,None,"work:absent",
+    ).is_err());
+
+    let annual=store.analysis_work_timeline(
+        rev,&all,&query("2024-01-01","2024-12-31"),None,"group:g",
+    ).unwrap();
+    assert_eq!(annual.granularity,"month");
+    assert_eq!(annual.points.len(),12);
+    assert!(annual.points.iter().all(|p| p.missing>0&&p.total.amount.is_none()));
+}
+
+
+#[test]
+fn comparison_dashboard_complete_partial_and_signed_changes() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let selected=scope(&store,rev,"day",&["A","B"],None);
+    let mut q=ComparisonQuery {
+        before:query("2024-02-28","2024-02-28"),
+        after:query("2024-02-29","2024-02-29"),
+        percent:0.,min_count:0.,min_amount:0.,
+    };
+    let dash=store.analysis_comparison_dashboard(rev,&selected,&q).unwrap();
+    assert!(dash.summary.before.complete);
+    assert!(dash.summary.after.complete);
+    assert_eq!(dash.summary.values,5);
+    assert_eq!(dash.summary.amount.as_ref().unwrap().delta,101.);
+    assert_eq!(dash.summary.count.as_ref().unwrap().delta,4.);
+    assert_eq!(dash.summary.amount.as_ref().unwrap().percent,Some(101./69.*100.));
+    assert_eq!(dash.divisions.len(),2);
+    assert_eq!(dash.divisions[0].organization,"A");
+    assert_eq!(dash.divisions[0].amount.as_ref().unwrap().delta,101.);
+    assert_eq!(dash.divisions[1].organization,"B");
+    assert_eq!(dash.divisions[1].amount.as_ref().unwrap().delta,0.);
+    assert_eq!(dash.top_amount[0].name,"Group");
+    assert_eq!(dash.top_amount[0].amount.as_ref().unwrap().delta,60.);
+    assert_eq!(dash.top_amount[1].name,"new");
+    assert_eq!(dash.top_amount[1].amount.as_ref().unwrap().delta,50.);
+    assert!(dash.top_amount.iter().any(|r|r.name=="zero"
+        && r.amount.as_ref().unwrap().delta<0.));
+    assert!(dash.top_count.len()<=12);
+    q.after=query("2024-03-01","2024-03-01");
+    let partial=store.analysis_comparison_dashboard(rev,&selected,&q).unwrap();
+    assert!(partial.summary.before.complete);
+    assert!(!partial.summary.after.complete);
+    assert!(partial.summary.amount.is_none());
+    assert!(partial.summary.count.is_none());
+    assert!(partial.top_amount.is_empty());
+    assert!(partial.top_count.is_empty());
+    let a=&partial.divisions[0];
+    assert_eq!(a.organization,"A");
+    assert_eq!(a.amount.as_ref().unwrap().delta,-59.);
+    let b=&partial.divisions[1];
+    assert_eq!(b.organization,"B");
+    assert_eq!(b.before.amount,Some(0.));
+    assert_eq!(b.after.amount,None);
+    assert!(b.amount.is_none());
+    assert!(b.count.is_none());
+    q.after=query("2024-02-30","2024-02-30");
+    assert!(store.analysis_comparison_dashboard(rev,&selected,&q).is_err());
+}
+
+#[test]
+fn comparison_dashboard_ranking_has_fixed_size_and_zero_base_no_percent() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let mut data=fixture();
+    for i in 0..30 {
+        let name=format!("many-{i:02}");
+        data["reports"][1]["rows"].as_array_mut().unwrap().push(
+            json!({"organization":"A","work":name,"count":1.,"amount":(i+1) as f64}),
+        );
+    }
+    let rev=prepare(&store,&data);
+    let selected=scope(&store,rev,"day",&["A"],None);
+    let q=ComparisonQuery {
+        before:query("2024-02-28","2024-02-28"),
+        after:query("2024-02-29","2024-02-29"),
+        percent:0.,min_count:0.,min_amount:0.,
+    };
+    let result=store.analysis_comparison_dashboard(rev,&selected,&q).unwrap();
+    assert_eq!(result.top_amount.len(),12);
+    assert_eq!(result.top_count.len(),12);
+    assert_eq!(result.top_amount[0].name,"Group");
+    assert!(result.top_amount.iter().any(|r|r.name=="many-29"
+        && r.amount.as_ref().unwrap().percent.is_none()));
+    // Keys from the old and new range are reconciled by canonical group/work key.
+    let new=result.top_amount.iter().find(|r|r.name=="many-29").unwrap();
+    assert_eq!(new.amount.as_ref().unwrap().base,0.);
+    assert_eq!(new.amount.as_ref().unwrap().current,30.);
+}
+
+
+#[test]
+fn available_range_totals_do_not_falsify_completeness() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let selected=scope(&store,rev,"day",&["A","B"],None);
+    let partial=store.analysis_range_summary(
+        rev,&selected,&query("2024-02-28","2024-03-01")
+    ).unwrap();
+    assert!(!partial.complete);
+    assert_eq!(partial.periods,3);
+    assert_eq!(partial.organizations,2);
+    assert_eq!(partial.missing,1);
+    assert_eq!(partial.available_reports,5);
+    assert_eq!(partial.total.amount,None);
+    assert_eq!(partial.total.count,None);
+    assert_eq!(partial.available_total.amount,Some(249.));
+    assert_eq!(partial.available_total.count,Some(5.));
+    assert_eq!(partial.available_total.average,Some(249./5.));
+    let a_only=scope(&store,rev,"day",&["A"],None);
+    let full=store.analysis_range_summary(
+        rev,&a_only,&query("2024-02-28","2024-03-01")
+    ).unwrap();
+    assert!(full.complete);
+    assert_eq!(full.available_reports,3);
+    assert_eq!(full.available_total.amount,full.total.amount);
+    assert_eq!(full.available_total.count,full.total.count);
+    let none=store.analysis_range_summary(
+        rev,&a_only,&query("2024-04-01","2024-04-01")
+    ).unwrap();
+    assert!(!none.complete);
+    assert_eq!(none.available_reports,0);
+    assert_eq!(none.available_total.amount,None);
+    assert_eq!(none.available_total.count,None);
+    assert_eq!(none.total.amount,None);
+}
+
+
+#[test]
+fn daily_report_rollups_are_calendar_aligned_and_never_double_count_source_types() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let all=scope(&store,rev,"day",&["A","B"],None);
+    let day=store.analysis_daily_rollup(
+        rev,&all,&query("2024-02-28","2024-03-01"),"day",None,2,
+    ).unwrap();
+    assert_eq!(day.points.len(),2);
+    assert_eq!(day.next_cursor,Some("2024-02-29".into()));
+    assert_eq!(day.points[0].start,"2024-02-28");
+    assert_eq!(day.points[0].days,1);
+    assert_eq!(day.points[0].available_reports,2);
+    assert_eq!(day.points[0].total.amount,Some(69.));
+    assert_eq!(day.points[1].total.amount,Some(170.));
+    let last=store.analysis_daily_rollup(
+        rev,&all,&query("2024-02-28","2024-03-01"),
+        "day",day.next_cursor.as_deref(),2,
+    ).unwrap();
+    assert_eq!(last.points.len(),1);
+    assert_eq!(last.next_cursor,None);
+    assert_eq!(last.points[0].start,"2024-03-01");
+    assert_eq!(last.points[0].available_reports,1);
+    assert_eq!(last.points[0].missing,1);
+    assert!(!last.points[0].complete);
+    assert_eq!(last.points[0].total.amount,None);
+    assert_eq!(last.points[0].available_total.amount,Some(10.));
+
+    let week=store.analysis_daily_rollup(
+        rev,&all,&query("2024-02-26","2024-03-03"),"week",None,60,
+    ).unwrap();
+    assert_eq!(week.points.len(),1);
+    assert_eq!(week.points[0].start,"2024-02-26");
+    assert_eq!(week.points[0].days,7);
+    assert_eq!(week.points[0].available_reports,5);
+    assert_eq!(week.points[0].missing,9);
+    assert_eq!(week.points[0].total.amount,None);
+    assert_eq!(week.points[0].available_total.amount,Some(249.));
+
+    let months=store.analysis_daily_rollup(
+        rev,&all,&query("2024-02-01","2024-03-31"),"month",None,60,
+    ).unwrap();
+    assert_eq!(months.points.len(),2);
+    assert_eq!(months.points[0].start,"2024-02-01");
+    assert_eq!(months.points[0].days,29);
+    assert_eq!(months.points[0].available_total.amount,Some(239.));
+    assert_eq!(months.points[1].start,"2024-03-01");
+    assert_eq!(months.points[1].days,31);
+    assert_eq!(months.points[1].available_total.amount,Some(10.));
+
+    let year=store.analysis_daily_rollup(
+        rev,&all,&query("2024-01-01","2024-12-31"),"year",None,60,
+    ).unwrap();
+    assert_eq!(year.points.len(),1);
+    assert_eq!(year.points[0].days,366);
+    assert_eq!(year.points[0].available_total.amount,Some(249.));
+    assert_eq!(year.points[0].total.amount,None);
+    let only_a=scope(&store,rev,"day",&["A"],None);
+    let a=store.analysis_daily_rollup(
+        rev,&only_a,&query("2024-02-28","2024-03-01"),"day",None,60,
+    ).unwrap();
+    assert!(a.points.iter().all(|p|p.complete));
+    assert_eq!(a.points.iter().map(|p|p.total.amount.unwrap()).sum::<f64>(),249.);
+
+    assert!(store.analysis_daily_rollup(
+        rev,&all,&query("2024-02-28","2024-03-01"),"week",None,60,
+    ).is_err());
+    assert!(store.analysis_daily_rollup(
+        rev,&all,&query("2024-02-02","2024-02-29"),"month",None,60,
+    ).is_err());
+    assert!(store.analysis_daily_rollup(
+        rev,&all,&query("2024-01-01","2024-12-30"),"year",None,60,
+    ).is_err());
+    assert!(store.analysis_daily_rollup(
+        rev,&all,&query("2024-01-01","2024-12-31"),"year",None,61,
+    ).is_err());
+}
+
+
+#[test]
+fn daily_rollup_does_not_add_independently_uploaded_week_or_month_reports() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let mut data=fixture();
+    let reports=data["reports"].as_array_mut().unwrap();
+    reports.push(json!({
+        "id":"uploaded_week","type":"week",
+        "start":"2024-02-26","end":"2024-03-03",
+        "organizations":["A","B"],
+        "rows":[{"organization":"A","work":"one","count":100.,"amount":8000.}]
+    }));
+    reports.push(json!({
+        "id":"uploaded_month","type":"month",
+        "start":"2024-02-01","end":"2024-02-29",
+        "organizations":["A","B"],
+        "rows":[{"organization":"A","work":"one","count":100.,"amount":9000.}]
+    }));
+    let revision=prepare(&store,&data);
+    let scope=scope(&store,revision,"day",&["A","B"],None);
+    let feb=store.analysis_daily_rollup(
+        revision,&scope,&query("2024-02-01","2024-02-29"),
+        "month",None,60,
+    ).unwrap();
+    assert_eq!(feb.points.len(),1);
+    assert_eq!(feb.points[0].available_reports,4);
+    assert_eq!(feb.points[0].available_total.amount,Some(239.));
+    assert_eq!(feb.points[0].available_total.count,Some(4.));
+    let week=store.analysis_daily_rollup(
+        revision,&scope,&query("2024-02-26","2024-03-03"),
+        "week",None,60,
+    ).unwrap();
+    assert_eq!(week.points.len(),1);
+    assert_eq!(week.points[0].available_reports,5);
+    assert_eq!(week.points[0].available_total.amount,Some(249.));
+    assert_ne!(week.points[0].available_total.amount,Some(17249.));
+}
+
+
+#[test]
+fn work_group_filter_is_consistent_across_kpis_lines_orgs_and_calendar() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let selected=scope(&store,rev,"day",&["A","B"],Some(&["Group"]));
+    let q=query("2024-02-28","2024-02-29");
+
+    let kpis=store.analysis_range_summary(rev,&selected,&q).unwrap();
+    assert!(kpis.complete);
+    assert_eq!(kpis.total.count,Some(6.));
+    assert_eq!(kpis.total.amount,Some(100.));
+    assert_eq!(kpis.missing,0);
+
+    let timeline=store.analysis_timeline(rev,&selected,&q).unwrap();
+    assert_eq!(timeline.points.len(),2);
+    assert_eq!(timeline.points[0].total.amount,Some(20.));
+    assert_eq!(timeline.points[1].total.amount,Some(80.));
+    assert_eq!(timeline.points[0].total.count,Some(2.));
+    assert_eq!(timeline.points[1].total.count,Some(4.));
+
+    let divisions=store.analysis_organization_page(
+        rev,&selected,&q,None,10
+    ).unwrap();
+    assert_eq!(divisions.len(),2);
+    assert_eq!(divisions[0].org,"A");
+    assert_eq!(divisions[0].total.amount,Some(100.));
+    assert_eq!(divisions[1].total.amount,Some(0.));
+    let org_lines=store.analysis_organization_trends(rev,&selected,&q).unwrap();
+    assert_eq!(org_lines.series.len(),2);
+    assert_eq!(org_lines.series[0].points[0].total.amount,Some(20.));
+    assert_eq!(org_lines.series[0].points[1].total.amount,Some(80.));
+    assert_eq!(org_lines.series[1].points[0].total.amount,Some(0.));
+
+    let ranking=store.analysis_ranking(
+        rev,&selected,&q,None,"amount","all"
+    ).unwrap();
+    assert!(ranking.complete);
+    assert_eq!(ranking.rows.len(),1);
+    assert_eq!(ranking.rows[0].name,"Group");
+    assert_eq!(ranking.rows[0].amount,Some(100.));
+
+    let feb=store.analysis_daily_rollup(
+        rev,&selected,&query("2024-02-01","2024-02-29"),"month",None,60
+    ).unwrap();
+    assert_eq!(feb.points.len(),1);
+    assert_eq!(feb.points[0].available_reports,4);
+    assert_eq!(feb.points[0].missing,54);
+    assert_eq!(feb.points[0].total.amount,None);
+    assert_eq!(feb.points[0].available_total.amount,Some(100.));
+    assert_eq!(feb.points[0].available_total.count,Some(6.));
+
+    let missing=scope(&store,rev,"day",&["A"],Some(&["Never recorded"]));
+    let absent=store.analysis_range_summary(rev,&missing,&q).unwrap();
+    assert!(absent.complete);
+    assert_eq!(absent.total.amount,Some(0.));
+    let points=store.analysis_timeline(rev,&missing,&q).unwrap();
+    assert!(points.points.iter().all(|p|p.total.amount==Some(0.)));
+    let rolls=store.analysis_daily_rollup(
+        rev,&missing,&q,"day",None,60
+    ).unwrap();
+    assert!(rolls.points.iter().all(|p|p.complete&&p.total.amount==Some(0.)));
+}
+
+#[test]
+fn selected_work_filter_preserves_missing_reports_and_negative_amounts() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let selected=scope(&store,rev,"day",&["A","B"],Some(&["Ignored"]));
+    let q=query("2024-02-28","2024-03-01");
+    let kpis=store.analysis_range_summary(rev,&selected,&q).unwrap();
+    assert!(!kpis.complete);
+    assert_eq!(kpis.missing,1);
+    assert_eq!(kpis.total.amount,None);
+    assert_eq!(kpis.available_total.amount,Some(70.));
+    let chart=store.analysis_timeline(rev,&selected,&q).unwrap();
+    assert_eq!(chart.points[0].total.amount,Some(30.));
+    assert_eq!(chart.points[1].total.amount,Some(40.));
+    assert_eq!(chart.points[2].total.amount,None);
+    let org=store.analysis_organization_trends(rev,&selected,&q).unwrap();
+    assert_eq!(org.series[0].points[2].total.amount,Some(0.));
+    assert_eq!(org.series[1].points[2].total.amount,None);
+    let daily=store.analysis_daily_rollup(
+        rev,&selected,&q,"day",None,60
+    ).unwrap();
+    assert_eq!(daily.points[0].total.amount,Some(30.));
+    assert_eq!(daily.points[1].total.amount,Some(40.));
+    assert_eq!(daily.points[2].total.amount,None);
+    assert_eq!(daily.points[2].available_total.amount,Some(0.));
+}
+
+
+#[test]
+fn work_group_name_search_is_bounded_and_excludes_ambiguous_labels() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let list=store.analysis_name_options(rev,"",50).unwrap();
+    assert!(!list.has_more);
+    let names=list.rows.iter().map(|x|x.name.as_str()).collect::<Vec<_>>();
+    assert!(names.contains(&"Group"));
+    assert!(names.contains(&"Ignored"));
+    assert!(names.contains(&"gone"));
+    assert!(names.contains(&"zero"));
+    assert!(!names.contains(&"one")); // grouped work has a group identity
+    assert!(!names.contains(&"two"));
+    assert_eq!(list.rows.iter().find(|x|x.name=="Group").unwrap().kind,"group");
+    assert_eq!(list.rows.iter().find(|x|x.name=="gone").unwrap().kind,"work");
+    let filtered=store.analysis_name_options(rev,"gro",50).unwrap();
+    assert!(filtered.rows.is_empty()); // exact-case Cyrillic/Latin display search
+    let filtered=store.analysis_name_options(rev,"Gro",50).unwrap();
+    assert_eq!(filtered.rows.len(),1);
+    assert_eq!(filtered.rows[0].name,"Group");
+    let page=store.analysis_name_options(rev,"",2).unwrap();
+    assert_eq!(page.rows.len(),2);
+    assert!(page.has_more);
+    assert!(store.analysis_name_options(rev,"",0).is_err());
+    assert!(store.analysis_name_options(rev,"",81).is_err());
+    assert!(store.analysis_name_options(rev,&"a".repeat(129),50).is_err());
+    assert!(store.analysis_name_options(rev+1,"",50).is_err());
+    let mut modified=fixture();
+    modified["reports"][0]["rows"].as_array_mut().unwrap()
+        .push(json!({"organization":"A","work":"Group","count":1.,"amount":2.}));
+    let newer=prepare(&store,&modified);
+    let collision=store.analysis_name_options(newer,"Group",50).unwrap();
+    assert!(collision.rows.is_empty(),
+        "a raw work and a group with identical names cannot be selected safely");
+}
+
+
+#[test]
+fn name_search_rejects_multibyte_labels_over_utf8_limit() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let mut data=fixture();
+    // 300 Cyrillic letters fit in SQLite length()<=512 characters, but
+    // require 600 UTF-8 bytes and must not enter a <=512-byte native filter.
+    let oversized="К".repeat(300);
+    data["reports"][0]["rows"].as_array_mut().unwrap().push(json!({
+        "organization":"A","work":oversized,
+        "count":1.,"amount":1.
+    }));
+    let revision=prepare(&store,&data);
+    let options=store.analysis_name_options(revision,"К",50).unwrap();
+    assert!(options.rows.is_empty(),"UTF-8 byte bound must agree with the native UI");
+    let baseline=store.analysis_name_options(revision,"Group",50).unwrap();
+    assert_eq!(baseline.rows.len(),1);
+    assert_eq!(baseline.rows[0].name,"Group");
+}
+
+#[test]
+fn daily_source_trends_respect_explicit_calendar_buckets() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let s=scope(&store,rev,"day",&["A"],None);
+    let q=RangeQuery{from:"2024-02-26".into(),to:"2024-03-10".into()};
+    let timeline=store.analysis_timeline_grouped(rev,&s,&q,Some("week")).unwrap();
+    assert_eq!(timeline.granularity,"week");
+    assert_eq!(timeline.points.len(),2);
+    assert_eq!(timeline.points[0].start,"2024-02-26");
+    assert_eq!(timeline.points[0].periods,7);
+    assert_eq!(timeline.points[0].missing,4);
+    assert!(timeline.points[0].total.amount.is_none());
+    let orgs=store.analysis_organization_trends_grouped(rev,&s,&q,Some("week")).unwrap();
+    assert_eq!(orgs.series[0].points.len(),2);
+    assert_eq!(orgs.series[0].points[0].missing,4);
+    let work=store.analysis_work_timeline_grouped(rev,&s,&q,None,"group:g",Some("week"));
+    assert!(work.is_ok(),"{work:?}");
+    assert_eq!(work.unwrap().points.len(),2);
+    let annual=RangeQuery{from:"2024-01-01".into(),to:"2024-12-31".into()};
+    let year=store.analysis_timeline_grouped(rev,&s,&annual,Some("year")).unwrap();
+    assert_eq!(year.points.len(),1);assert_eq!(year.points[0].periods,366);
+    assert!(store.analysis_timeline_grouped(rev,&s,&q,Some("nonsense")).is_err());
+}
+
+#[test]
+fn concurrent_sealed_analysis_filters_do_not_upgrade_stale_read_snapshots() {
+    let dir=tempdir().unwrap();let root=dir.path().to_path_buf();
+    let store=Storage::new(root.clone()).unwrap();let rev=prepare(&store,&fixture());
+    let barrier=std::sync::Arc::new(std::sync::Barrier::new(6));
+    let workers=(0..6).map(|_|{
+        let root=root.clone();let barrier=barrier.clone();
+        std::thread::spawn(move||{
+            let storage=Storage::new(root).unwrap();barrier.wait();
+            for _ in 0..10 {
+                let id=storage.analysis_filter_create(rev,"organizations").unwrap();
+                storage.analysis_filter_append(rev,&id,&["A".into()]).unwrap();
+                storage.analysis_filter_seal(rev,&id).unwrap();
+                storage.analysis_filter_delete(&id).unwrap();
+            }
+        })
+    }).collect::<Vec<_>>();
+    let results=workers.into_iter().map(|worker|worker.join()).collect::<Vec<_>>();
+    assert!(results.into_iter().all(|result|result.is_ok()));
+    assert_eq!(store.revision().unwrap(),rev);
+}
+
+#[test]
+fn daily_week_changes_use_complete_weeks_and_ignore_imported_totals() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    let reports = data["reports"].as_array_mut().unwrap();
+    reports.clear();
+    for day in 1..=21 {
+        if day == 17 {
+            continue;
+        }
+        let start = format!("2024-01-{day:02}");
+        let count = if day <= 7 { 0 } else { -1 };
+        reports.push(json!({"id":start,"type":"day","start":start,"end":start,"organizations":["A"],"rows":[{"organization":"A","work":"item","count":count,"amount":day}]}));
+    }
+    reports.push(json!({"id":"imported","type":"week","start":"2024-01-08","end":"2024-01-14","organizations":["A"],"rows":[{"organization":"A","work":"item","count":99,"amount":999}]}));
+    let rev = prepare(&store, &data);
+    let s = scope(&store, rev, "day", &["A"], None);
+    let q = ChangeQuery {
+        method: "range".into(),
+        from: "2024-01-01".into(),
+        to: "2024-01-21".into(),
+        percent: 20.,
+        min_count: 1.,
+        min_amount: 1.,
+    };
+    let page = store
+        .advanced_changes_page(rev, &s, &q, Some("week"), None)
+        .unwrap();
+    assert_eq!(page.summary.missing_pairs, 1);
+    assert_eq!(page.rows.len(), 1);
+    let item = &page.rows[0];
+    assert_eq!(
+        (&item.base_start, &item.current_start),
+        (&"2024-01-01".into(), &"2024-01-08".into())
+    );
+    assert_eq!(
+        (item.count.base, item.count.current, item.amount.current),
+        (0., -7., 77.)
+    );
+    assert_eq!(item.count.percent, None);
+}
+
+#[test]
+fn advanced_frequency_and_usual_match_classic() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    data["advanced"] = json!(true);
+    let rev = prepare(&store, &data);
+    let q = ChangeQuery {
+        method: "range".into(),
+        from: "2024-02-28".into(),
+        to: "2024-03-01".into(),
+        percent: 20.,
+        min_count: 1.,
+        min_amount: 1.,
+    };
+    for orgs in [&["A"][..], &["A", "B"][..]] {
+        let names = ["Group", "zero", "gone", "missing"];
+        let old = golden(&data, "day", orgs, Some(&names), &[], &q);
+        let scope = scope(&store, rev, "day", orgs, Some(&names));
+        for mode in ["usual", "regularity"] {
+            let page = store
+                .advanced_patterns(rev, &scope, &q, None, mode, 4, None)
+                .unwrap();
+            assert_eq!(normalized(json!(page.used)), old[mode]["used"]);
+            let mut actual = page.rows;
+            let mut expected = old[mode]["rows"].as_array().unwrap().clone();
+            for rows in [&mut actual, &mut expected] {
+                rows.sort_by_key(|v| v["key"].to_string());
+            }
+            assert_eq!(normalized(json!(actual)), normalized(json!(expected)));
+        }
+    }
+}
+
+#[test]
+fn structure_and_contributions_match_standalone_calculations() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    data["advanced"] = json!(true);
+    let rev = prepare(&store, &data);
+    let q = ChangeQuery {
+        method: "range".into(),
+        from: "2024-02-29".into(),
+        to: "2024-02-29".into(),
+        percent: 30.,
+        min_count: 0.,
+        min_amount: 0.,
+    };
+    let before = RangeQuery {
+        from: "2024-02-28".into(),
+        to: "2024-02-28".into(),
+    };
+    let s = scope(&store, rev, "day", &["A", "B"], None);
+    let old = golden(
+        &data,
+        "day",
+        &["A", "B"],
+        None,
+        &[(&before.from, &before.to), (&q.from, &q.to)],
+        &q,
+    );
+    let structure = store
+        .advanced_composition(rev, &s, &q, None, &before, "structure", "amount", None)
+        .unwrap();
+    let mut rows = structure["rows"].as_array().unwrap().clone();
+    let mut expected = old["structure"]["rows"].as_array().unwrap().clone();
+    for list in [&mut rows, &mut expected] {
+        list.sort_by_key(|row| row["key"].to_string());
+    }
+    for (row, want) in rows.iter_mut().zip(expected.iter_mut()) {
+        for field in [
+            "base",
+            "current",
+            "baseShare",
+            "share",
+            "cumulative",
+            "shareChange",
+        ] {
+            let a = row[field].as_f64().unwrap();
+            let b = want[field].as_f64().unwrap();
+            assert!((a - b).abs() < 1e-10, "{field}: {a} vs {b}");
+            row.as_object_mut().unwrap().remove(field);
+            want.as_object_mut().unwrap().remove(field);
+        }
+    }
+    assert_eq!(rows, expected);
+    let result = store
+        .advanced_composition(rev, &s, &q, None, &before, "contributions", "amount", None)
+        .unwrap();
+    assert_eq!(
+        normalized(result["check"].clone()),
+        old["contributions"]["amount"]
+    );
+    for row in result["rows"].as_array().unwrap() {
+        let original = old["contributions"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["key"] == row["key"])
+            .unwrap();
+        assert_eq!(
+            normalized(row["delta"].clone()),
+            original["amount"]["delta"]
+        );
+    }
+}
+
+#[test]
+fn complete_daily_months_match_independent_classic_month_reports() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    data["advanced"] = json!(true);
+    let reports = data["reports"].as_array_mut().unwrap();
+    reports.clear();
+    for (month, days, volume) in [(1, 31, 1), (2, 29, 3), (3, 31, 0)] {
+        for day in 1..=days {
+            let start = format!("2024-{month:02}-{day:02}");
+            reports.push(json!({"id":start,"type":"day","start":start,"end":start,"organizations":["A"],"rows":[{"organization":"A","work":"one","count":volume,"amount":10}]}));
+        }
+        reports.push(json!({"id":format!("m{month}"),"type":"month","start":format!("2024-{month:02}-01"),"end":format!("2024-{month:02}-{days:02}"),"organizations":["A"],"rows":[{"organization":"A","work":"one","count":volume*days,"amount":10*days}]}));
+    }
+    let rev = prepare(&store, &data);
+    let scope = scope(&store, rev, "day", &["A"], None);
+    let mut q = ChangeQuery {
+        method: "range".into(),
+        from: "2024-01-01".into(),
+        to: "2024-03-01".into(),
+        percent: 30.,
+        min_count: 0.,
+        min_amount: 0.,
+    };
+    let expected = golden(&data, "month", &["A"], None, &[], &q);
+    q.to = "2024-03-31".into();
+    for mode in ["usual", "regularity"] {
+        let page = store
+            .advanced_patterns(rev, &scope, &q, Some("month"), mode, 4, None)
+            .unwrap();
+        assert_eq!(normalized(json!(page.rows)), expected[mode]["rows"]);
+    }
+    let page = store
+        .advanced_changes_page(rev, &scope, &q, Some("month"), None)
+        .unwrap();
+    assert_eq!(normalized(json!(page.rows)), expected["changes"]);
+    let file = dir.path().join("changes.csv");
+    store
+        .advanced_changes_csv(rev, &scope, &q, Some("month"), &file)
+        .unwrap();
+    let csv=fs::read_to_string(file).unwrap();
+    assert!(csv.ends_with(expected["changesCsv"].as_str().unwrap().trim_start_matches('\u{feff}')));
+    q.from = "2024-01-01".into();
+    q.to = "2024-12-31".into();
+    let year = store
+        .advanced_patterns(rev, &scope, &q, Some("year"), "regularity", 8, None)
+        .unwrap();
+    assert_eq!((year.used, year.expected), (0, 1));
+    assert_eq!(year.rows[0]["frequency"], Value::Null);
+}
+
+#[test]
+fn advanced_keyset_pages_and_csv_cover_every_selected_descriptor() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    for (i, r) in data["reports"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .enumerate()
+    {
+        r["rows"]=json!((0..63).map(|k|json!({"organization":"A","work":format!("work-{k:02}"),"count":1,"amount":(i+1)*k})).collect::<Vec<_>>());
+    }
+    let rev = prepare(&store, &data);
+    let s = scope(&store, rev, "day", &["A"], None);
+    let q = ChangeQuery {
+        method: "previous".into(),
+        from: "2024-02-29".into(),
+        to: "2024-02-29".into(),
+        percent: 30.,
+        min_count: 0.,
+        min_amount: 0.,
+    };
+    let first = store
+        .advanced_changes_page(rev, &s, &q, None, None)
+        .unwrap();
+    let next = store
+        .advanced_changes_page(rev, &s, &q, None, first.next.as_ref())
+        .unwrap();
+    assert_eq!((first.rows.len(), next.rows.len()), (50, 13));
+    assert!(next.next.is_none());
+    assert!(first.rows.last().unwrap().key < next.rows[0].key);
+    let file = dir.path().join("all.csv");
+    store
+        .advanced_changes_csv(rev, &s, &q, None, &file)
+        .unwrap();
+    assert_eq!(fs::read_to_string(file).unwrap().lines().skip_while(|line| !line.starts_with("\"key\";")).count(), 64);
+    let p = store
+        .advanced_patterns(rev, &s, &q, None, "usual", 8, None)
+        .unwrap();
+    let n = store
+        .advanced_patterns(rev, &s, &q, None, "usual", 8, p.next.as_deref())
+        .unwrap();
+    assert_eq!((p.rows.len(), n.rows.len()), (50, 14));
+    assert_eq!((p.total_rows,n.total_rows),(64,64));
+    assert!(n.next.is_none());
+    let before = RangeQuery {
+        from: "2024-02-28".into(),
+        to: "2024-02-28".into(),
+    };
+    let first = store
+        .advanced_composition(rev, &s, &q, None, &before, "contributions", "amount", None)
+        .unwrap();
+    let cursor: ContributionCursor = serde_json::from_value(first["next"].clone()).unwrap();
+    let last = store
+        .advanced_composition(
+            rev,
+            &s,
+            &q,
+            None,
+            &before,
+            "contributions",
+            "amount",
+            Some(&cursor),
+        )
+        .unwrap();
+    assert_eq!(first["rows"].as_array().unwrap().len(), 50);
+    assert_eq!(last["rows"].as_array().unwrap().len(), 12);
+    assert_eq!(last["total_rows"],62);
+    assert!(last["next"].is_null());
+}
+
+#[test]
+fn russian_collation_selects_classic_structure_remainder_at_cutoff() {
+    for (left, right) in [("Ёж", "Ева"), ("Ёж", "Е\u{308}ж")] {
+        let dir = tempdir().unwrap();
+        let store = Storage::new(dir.path().into()).unwrap();
+        let mut data = fixture();
+        data["advanced"] = json!(true);
+        let reports = data["reports"].as_array_mut().unwrap();
+        reports.truncate(2);
+        for (i, report) in reports.iter_mut().enumerate() {
+            let mut rows:Vec<_>=(0..11).map(|k|json!({"organization":"A","work":format!("Крупная {k}"),"count":1,"amount":100+k})).collect();
+            for (name, base, current) in [(left, 90, 1), (right, 10, -1)] {
+                rows.push(json!({"organization":"A","work":name,"count":1,"amount":if i==0 {base}else{current}}));
+            }
+            report["rows"] = json!(rows);
+        }
+        let rev = prepare(&store, &data);
+        let scope = scope(&store, rev, "day", &["A"], None);
+        let q = ChangeQuery {
+            method: "previous".into(),
+            from: "2024-02-29".into(),
+            to: "2024-02-29".into(),
+            percent: 0.,
+            min_count: 0.,
+            min_amount: 0.,
+        };
+        let before = RangeQuery {
+            from: "2024-02-28".into(),
+            to: "2024-02-28".into(),
+        };
+        let old = golden(
+            &data,
+            "day",
+            &["A"],
+            None,
+            &[(&before.from, &before.to), (&q.from, &q.to)],
+            &q,
+        );
+        let actual = store
+            .advanced_composition(rev, &scope, &q, None, &before, "structure", "amount", None)
+            .unwrap();
+        assert_eq!(
+            actual["rows"][11]["name"],
+            old["structure"]["rows"][11]["name"]
+        );
+        for field in ["base", "current", "baseShare", "share", "shareChange"] {
+            assert_eq!(
+                normalized(actual["rows"][12][field].clone()),
+                old["structure"]["rows"][12][field]
+            );
+        }
+    }
+}
+
+#[test]
+fn missing_changes_export_captures_scope_and_source_even_without_data_rows() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let rev = prepare(&store, &fixture());
+    for (source, kind, grouping, to) in [
+        ("daily", "day", Some("month"), "2024-05-31"),
+        ("imported", "month", None, "2024-05-01"),
+    ] {
+        let s = scope(
+            &store,
+            rev,
+            kind,
+            &["A", "B"],
+            Some(&["=untrusted", "zero"]),
+        );
+        let q = ChangeQuery {
+            method: "previous".into(),
+            from: "2024-05-01".into(),
+            to: to.into(),
+            percent: 37.,
+            min_count: 2.,
+            min_amount: 15.,
+        };
+        let file = dir.path().join(format!("{source}.csv"));
+        store
+            .advanced_changes_csv(rev, &s, &q, grouping, &file)
+            .unwrap();
+        let text = fs::read_to_string(&file).unwrap();
+        for cell in [
+            format!("\"source\";\"{source}\""),
+            "\"displayPeriod\";\"month\"".into(),
+            "\"method\";\"previous\"".into(),
+            "\"percentThreshold\";\"37\"".into(),
+            "\"minCount\";\"2\"".into(),
+            "\"minAmount\";\"15\"".into(),
+            "\"organization\";\"B\"".into(),
+            "\"selectedName\";\"'=untrusted\"".into(),
+            "\"missingPairs\";\"2\"".into(),
+            "\"comparableRows\";\"0\"".into(),
+            format!("\"to\";\"{to}\""),
+        ] {
+            assert!(text.contains(&cell), "{cell}");
+        }
+        assert!(store
+            .advanced_changes_csv(rev, &s, &q, grouping, &file)
+            .is_err());
+    }
+}
+
+#[test]
+fn initialized_wal_reads_do_not_require_the_writer_lock() {
+    let dir=tempdir().unwrap();
+    let store=Storage::new(dir.path().into()).unwrap();
+    let rev=prepare(&store,&fixture());
+    let writer=rusqlite::Connection::open(dir.path().join("reports.sqlite3")).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let read=store.revision();
+    writer.execute_batch("ROLLBACK").unwrap();
+    assert_eq!(read.unwrap(),rev,"opening a ready WAL database must not perform schema writes");
+}
+
+#[test]
+fn schema_initialization_is_atomic_and_reopens_restore_delete_mode() {
+    let dir=tempdir().unwrap();let path=dir.path().join("reports.sqlite3");
+    let c=rusqlite::Connection::open(&path).unwrap();
+    // A deliberately incompatible unversioned table must not leave a stamped,
+    // partially initialized schema. Repairing that fixture must allow retry.
+    c.execute_batch("CREATE TABLE report_rows(broken INTEGER)").unwrap();
+    assert!(super::new_connection(&path).is_err());
+    assert_eq!(c.query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    assert_eq!(c.query_row("SELECT count(*) FROM sqlite_schema WHERE name='reports'",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    c.execute_batch("DROP TABLE report_rows").unwrap();drop(c);
+    let c=super::new_connection(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version",[],|r|r.get::<_,i64>(0)).unwrap(),super::STORAGE_SCHEMA_VERSION);
+    c.execute_batch("PRAGMA journal_mode=DELETE").unwrap();drop(c);
+    let c=super::new_connection(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA journal_mode",[],|r|r.get::<_,String>(0)).unwrap(),"wal");
+    c.pragma_update(None,"user_version",super::STORAGE_SCHEMA_VERSION+1).unwrap();
+    c.execute_batch("PRAGMA journal_mode=DELETE").unwrap();drop(c);
+    assert!(super::new_connection(&path).unwrap_err().contains("новее"));
+    let c=rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(c.query_row("PRAGMA journal_mode",[],|r|r.get::<_,String>(0)).unwrap(),"delete");
+}
+
+#[test]
+fn analysis_filter_writers_share_only_their_database_queue() {
+    let dir=tempdir().unwrap();let root=dir.path().join("one");
+    let first=Storage::new(root.clone()).unwrap();let rev=prepare(&first,&fixture());
+    let second=Storage::new(root.join(".")).unwrap();
+    assert!(std::sync::Arc::ptr_eq(&first.analysis_filter_gate,&second.analysis_filter_gate));
+    let guard=first.analysis_filter_gate.lock().unwrap();
+    assert!(matches!(second.analysis_filter_gate.try_lock(),Err(std::sync::TryLockError::WouldBlock)));
+    let (send,receive)=std::sync::mpsc::channel();
+    let worker=std::thread::spawn(move||{send.send(second.analysis_filter_create(rev,"organizations")).unwrap();});
+    let other=Storage::new(dir.path().join("two")).unwrap();let other_rev=prepare(&other,&fixture());
+    assert!(!std::sync::Arc::ptr_eq(&first.analysis_filter_gate,&other.analysis_filter_gate));
+    let other_id=other.analysis_filter_create(other_rev,"organizations").unwrap();
+    other.analysis_filter_delete(&other_id).unwrap();
+    assert!(matches!(receive.try_recv(),Err(std::sync::mpsc::TryRecvError::Empty)));
+    drop(guard);
+    let id=receive.recv_timeout(std::time::Duration::from_secs(15)).unwrap().unwrap();
+    worker.join().unwrap();first.analysis_filter_delete(&id).unwrap();
 }

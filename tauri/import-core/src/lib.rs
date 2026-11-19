@@ -92,6 +92,7 @@ pub struct Stage<'a> {
     pub stats: Stats,
     pub source_hash: String,
     source_path: PathBuf,
+    opened_source: Option<File>,
     bound_hash: String,
     limits: Limits,
 }
@@ -131,11 +132,46 @@ impl StageArea {
         source: &Path,
         limits: Limits,
         cancel: &AtomicBool,
-        mut progress: impl FnMut(&Stats),
+        progress: impl FnMut(&Stats),
     ) -> Result<Stage<'_>> {
         check_cancel(cancel)?;
         let source_path = fs::canonicalize(source)?;
-        let mut file = File::open(&source_path)?;
+        let file = File::open(&source_path)?;
+        let stage = self.ingest_file(source_path, file, None, limits, cancel, progress)?;
+        if fingerprint(source, cancel, limits.archive_bytes)? != stage.source_hash {
+            return Err(fail("source changed during ingestion"));
+        }
+        Ok(stage)
+    }
+
+    /// Ingest from an already checked regular file. The caller validates the
+    /// handle's provenance and checks that the directory entry remains current.
+    pub fn ingest_opened(
+        &self,
+        source_path: PathBuf,
+        file: File,
+        limits: Limits,
+        cancel: &AtomicBool,
+        progress: impl FnMut(&Stats),
+    ) -> Result<Stage<'_>> {
+        if !source_path.is_absolute() || !file.metadata()?.is_file() {
+            return Err(fail("expected an absolute path to a regular XLSX"));
+        }
+        let retained = file.try_clone()?;
+        self.ingest_file(source_path, file, Some(retained), limits, cancel, progress)
+    }
+
+    fn ingest_file(
+        &self,
+        source_path: PathBuf,
+        mut file: File,
+        opened_source: Option<File>,
+        limits: Limits,
+        cancel: &AtomicBool,
+        mut progress: impl FnMut(&Stats),
+    ) -> Result<Stage<'_>> {
+        check_cancel(cancel)?;
+        file.seek(SeekFrom::Start(0))?;
         if file.metadata()?.len() > limits.archive_bytes {
             return Err(fail("XLSX archive byte limit"));
         }
@@ -170,6 +206,7 @@ impl StageArea {
             source_hash: hash.clone(),
             bound_hash: hash,
             source_path,
+            opened_source,
             limits,
         };
         for info in &zip.entries {
@@ -212,7 +249,7 @@ impl StageArea {
             progress(&stage.stats);
         }
         check_cancel(cancel)?;
-        if fingerprint(source, cancel, limits.archive_bytes)? != stage.source_hash {
+        if stage.opened_source.is_some() && stage.current_source_hash(cancel)? != stage.source_hash {
             return Err(fail("source changed during ingestion"));
         }
         let missing:i64=stage.db.query_row("SELECT COUNT(*) FROM cells c LEFT JOIN strings s ON s.id=CAST(c.value AS INTEGER) WHERE c.kind='s' AND (s.id IS NULL OR CAST(c.value AS INTEGER)<0)",[],|r|r.get(0))?;
@@ -231,6 +268,17 @@ impl StageArea {
     }
 }
 impl Stage<'_> {
+    fn current_source_hash(&self, cancel: &AtomicBool) -> Result<String> {
+        match &self.opened_source {
+            Some(file) => {
+                let mut file = file.try_clone()?;
+                file.seek(SeekFrom::Start(0))?;
+                hash_reader(&mut file, cancel, self.limits.archive_bytes)
+            }
+            None => fingerprint(&self.source_path, cancel, self.limits.archive_bytes),
+        }
+    }
+
     /// Bounded physical worksheet components discovered in the staged workbook.
     /// Empty worksheets without cells are deliberately not offered for report import.
     pub fn worksheet_components(&self) -> Result<Vec<String>> {

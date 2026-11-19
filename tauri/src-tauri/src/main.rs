@@ -2,9 +2,18 @@
 
 mod storage;
 mod native_import;
+mod native_management;
+mod native_advanced_analysis;
+use native_advanced_analysis::{native_changes_page,native_changes_csv,native_pattern_page,native_composition_page};
+mod native_report_quality;
+mod native_name_selection;
+
+use native_report_quality::native_report_quality_page;
+use native_management::{native_catalog_page, native_delete_report, native_member_page, native_settings_edit};
 
 use native_import::{
     native_wide_import_preview, native_wide_import_apply,
+    native_folder_import_session, native_folder_import_preview, native_folder_import_apply,
     native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
 };
 
@@ -153,6 +162,7 @@ async fn native_group_page(
     limit: usize,
 ) -> Result<Vec<NativeGroup>, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        native_management::page_limit(limit)?;
         let after = after_handle
             .as_deref()
             .map(|value| value.parse::<i64>().map_err(|_| "Invalid group cursor".to_string()))
@@ -254,6 +264,53 @@ async fn native_analysis_index_settings(
     .map_err(|error| error.to_string())?
 }
 
+// The existing SQL analysis API already supports exact group/work display
+// name filters. Native callers create a short-lived sealed SQLite selection,
+// never a WebView-side scan of historic report JSON. Cleanup also runs after
+// an error, so stale names cannot leak into subsequent queries.
+fn with_selected_work_names<T>(
+    store: &Storage,
+    revision: i64,
+    name: Option<String>,
+    names: Option<Vec<String>>,
+    mut scope: AnalysisScope,
+    action: impl FnOnce(&AnalysisScope) -> Result<T, String>,
+) -> Result<T, String> {
+    let names = native_name_selection::normalize(name, names)?;
+    if names.is_empty() {
+        return action(&scope);
+    }
+    let id=store.analysis_filter_create(revision,"names")?;
+    let result=(|| {
+        store.analysis_filter_append(revision,&id,&names)?;
+        store.analysis_filter_seal(revision,&id)?;
+        scope.names=Some(id.clone());
+        action(&scope)
+    })();
+    let cleanup=store.analysis_filter_delete(&id);
+    match (result,cleanup) {
+        (Err(error),_)=>Err(error),
+        (Ok(value),Ok(()))=>Ok(value),
+        (Ok(_),Err(error))=>Err(error),
+    }
+}
+
+
+#[tauri::command]
+async fn native_analysis_name_options(
+    app: tauri::AppHandle,
+    revision: i64,
+    search: String,
+    limit: usize,
+) -> Result<storage::AnalysisNameOptions, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Storage>().analysis_name_options(revision,&search,limit)
+    })
+    .await
+    .map_err(|error|error.to_string())?
+}
+
+
 #[tauri::command]
 async fn native_analysis_range(
     app: tauri::AppHandle,
@@ -262,6 +319,8 @@ async fn native_analysis_range(
     from: String,
     to: String,
     organizations: Vec<String>,
+    selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
 ) -> Result<RangeSummary, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<RangeSummary, String> {
         if !matches!(report_type.as_str(), "day" | "week" | "month") {
@@ -292,14 +351,358 @@ async fn native_analysis_range(
                 organizations: id.clone(),
                 names: None,
             };
-            store.analysis_range_summary(
-                revision, &scope, &RangeQuery { from, to },
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
+                store.analysis_range_summary(
+                revision, scope, &RangeQuery { from, to },
             )
+            })
         })();
         let cleanup = store.analysis_filter_delete(&id);
         match (result, cleanup) {
             (Err(error), _) => Err(error),
             (Ok(summary), Ok(())) => Ok(summary),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+
+#[tauri::command]
+async fn native_analysis_timeline(
+    app: tauri::AppHandle,
+    revision: i64,
+    report_type: String,
+    from: String,
+    to: String,
+    organizations: Vec<String>,
+    selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
+    grouping: Option<String>,
+) -> Result<storage::TimelineSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !matches!(report_type.as_str(), "day" | "week" | "month") {
+            return Err("Unknown analysis report type".into());
+        }
+        if organizations.is_empty() || organizations.len() > 100 {
+            return Err("Select 1..=100 organizations for analysis".into());
+        }
+        let first = chrono::NaiveDate::parse_from_str(&from, "%Y-%m-%d")
+            .map_err(|_| "Invalid analysis start date".to_string())?;
+        let last = chrono::NaiveDate::parse_from_str(&to, "%Y-%m-%d")
+            .map_err(|_| "Invalid analysis end date".to_string())?;
+        if last < first || (last - first).num_days() > 3660 {
+            return Err("Analysis range must not exceed ten years".into());
+        }
+        let store = app.state::<Storage>();
+        let id = store.analysis_filter_create(revision, "organizations")?;
+        let result = (|| {
+            store.analysis_filter_append(revision, &id, &organizations)?;
+            store.analysis_filter_seal(revision, &id)?;
+            let scope = AnalysisScope {
+                report_type,
+                organizations: id.clone(),
+                names: None,
+            };
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
+                store.analysis_timeline_grouped(revision, scope, &RangeQuery { from, to },grouping.as_deref())
+            })
+        })();
+        let cleanup = store.analysis_filter_delete(&id);
+        match (result, cleanup) {
+            (Err(error), _) => Err(error),
+            (Ok(summary), Ok(())) => Ok(summary),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+
+#[tauri::command]
+async fn native_analysis_organization_trends(
+    app: tauri::AppHandle,
+    revision: i64,
+    report_type: String,
+    from: String,
+    to: String,
+    organizations: Vec<String>,
+    selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
+    grouping: Option<String>,
+) -> Result<storage::OrganizationTrends, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !matches!(report_type.as_str(), "day" | "week" | "month") {
+            return Err("Unknown analysis report type".into());
+        }
+        if organizations.is_empty() || organizations.len() > 100 {
+            return Err("Select 1..=100 organizations for analysis".into());
+        }
+        let first = chrono::NaiveDate::parse_from_str(&from, "%Y-%m-%d")
+            .map_err(|_| "Invalid analysis start date".to_string())?;
+        let last = chrono::NaiveDate::parse_from_str(&to, "%Y-%m-%d")
+            .map_err(|_| "Invalid analysis end date".to_string())?;
+        if last < first || (last - first).num_days() > 3660 {
+            return Err("Analysis range must not exceed ten years".into());
+        }
+        let store = app.state::<Storage>();
+        let id = store.analysis_filter_create(revision, "organizations")?;
+        let result = (|| {
+            store.analysis_filter_append(revision, &id, &organizations)?;
+            store.analysis_filter_seal(revision, &id)?;
+            let scope = AnalysisScope {
+                report_type,
+                organizations: id.clone(),
+                names: None,
+            };
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
+                store.analysis_organization_trends_grouped(
+                revision, scope, &RangeQuery { from, to },grouping.as_deref(),
+            )
+            })
+        })();
+        let cleanup = store.analysis_filter_delete(&id);
+        match (result, cleanup) {
+            (Err(error), _) => Err(error),
+            (Ok(summary), Ok(())) => Ok(summary),
+            (Ok(_), Err(error)) => Err(error),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+
+#[tauri::command]
+async fn native_daily_rollup(
+    app: tauri::AppHandle,
+    revision: i64,
+    from: String,
+    to: String,
+    granularity: String,
+    organizations: Vec<String>,
+    after: Option<String>,
+    limit: usize,
+    selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
+) -> Result<storage::DailyRollupPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if organizations.is_empty() || organizations.len()>100 {
+            return Err("Select 1..=100 organizations for daily rollups".into());
+        }
+        if !matches!(granularity.as_str(),"day"|"week"|"month"|"year") {
+            return Err("Unknown calendar period type".into());
+        }
+        if !(1..=60).contains(&limit) {
+            return Err("Calendar page size must be 1..=60".into());
+        }
+        let first=chrono::NaiveDate::parse_from_str(&from,"%Y-%m-%d")
+            .map_err(|_| "Invalid calendar start date".to_string())?;
+        let last=chrono::NaiveDate::parse_from_str(&to,"%Y-%m-%d")
+            .map_err(|_| "Invalid calendar end date".to_string())?;
+        if last<first || (last-first).num_days()>3660 {
+            return Err("Calendar date range must not exceed ten years".into());
+        }
+        let store=app.state::<Storage>();
+        let filter=store.analysis_filter_create(revision,"organizations")?;
+        let result=(|| {
+            store.analysis_filter_append(revision,&filter,&organizations)?;
+            store.analysis_filter_seal(revision,&filter)?;
+            let scope=AnalysisScope{
+                report_type:"day".into(),
+                organizations:filter.clone(),
+                names:None,
+            };
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
+                store.analysis_daily_rollup(
+                revision, scope,
+                &RangeQuery{from,to},&granularity,after.as_deref(),limit,
+            )
+            })
+        })();
+        let cleanup=store.analysis_filter_delete(&filter);
+        match (result,cleanup) {
+            (Err(error),_)=>Err(error),
+            (Ok(page),Ok(()))=>Ok(page),
+            (Ok(_),Err(error))=>Err(error),
+        }
+    })
+    .await
+    .map_err(|error|error.to_string())?
+}
+
+
+#[tauri::command]
+async fn native_analysis_compare(
+    app: tauri::AppHandle,
+    revision: i64,
+    report_type: String,
+    before_from: String,
+    before_to: String,
+    from: String,
+    to: String,
+    organizations: Vec<String>,
+    selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
+) -> Result<storage::ComparisonDashboard, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !matches!(report_type.as_str(), "day" | "week" | "month") {
+            return Err("Unknown analysis report type".into());
+        }
+        if organizations.is_empty() || organizations.len()>100 {
+            return Err("Select 1..=100 organizations for analysis".into());
+        }
+        for (start,end) in [(&before_from,&before_to),(&from,&to)] {
+            let first=chrono::NaiveDate::parse_from_str(start,"%Y-%m-%d")
+                .map_err(|_| "Invalid comparison start date".to_string())?;
+            let last=chrono::NaiveDate::parse_from_str(end,"%Y-%m-%d")
+                .map_err(|_| "Invalid comparison end date".to_string())?;
+            if last<first || (last-first).num_days()>3660 {
+                return Err("Comparison range must not exceed ten years".into());
+            }
+        }
+        let store=app.state::<Storage>();
+        let filter=store.analysis_filter_create(revision,"organizations")?;
+        let result=(|| {
+            store.analysis_filter_append(revision,&filter,&organizations)?;
+            store.analysis_filter_seal(revision,&filter)?;
+            let scope=AnalysisScope{report_type,organizations:filter.clone(),names:None};
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
+                store.analysis_comparison_dashboard(
+                revision, scope,
+                &storage::ComparisonQuery{
+                    before:RangeQuery{from:before_from,to:before_to},
+                    after:RangeQuery{from,to},
+                    percent:0.,min_count:0.,min_amount:0.,
+                },
+            )
+            })
+        })();
+        let cleanup=store.analysis_filter_delete(&filter);
+        match (result,cleanup) {
+            (Err(error),_)=>Err(error),
+            (Ok(response),Ok(()))=>Ok(response),
+            (Ok(_),Err(error))=>Err(error),
+        }
+    })
+    .await
+    .map_err(|error|error.to_string())?
+}
+
+
+#[tauri::command]
+async fn native_analysis_work_timeline(
+    app: tauri::AppHandle,
+    revision: i64,
+    report_type: String,
+    from: String,
+    to: String,
+    organizations: Vec<String>,
+    organization: Option<String>,
+    key: String,
+    selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
+    grouping: Option<String>,
+) -> Result<storage::WorkTrendSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !matches!(report_type.as_str(), "day" | "week" | "month") {
+            return Err("Unknown analysis report type".into());
+        }
+        if organizations.is_empty() || organizations.len() > 100 {
+            return Err("Select 1..=100 organizations for analysis".into());
+        }
+        if organization.as_deref().is_some_and(|org| !organizations.iter().any(|o| o==org)) {
+            return Err("Selected organization is outside the analysis scope".into());
+        }
+        let first = chrono::NaiveDate::parse_from_str(&from, "%Y-%m-%d")
+            .map_err(|_| "Invalid analysis start date".to_string())?;
+        let last = chrono::NaiveDate::parse_from_str(&to, "%Y-%m-%d")
+            .map_err(|_| "Invalid analysis end date".to_string())?;
+        if last < first || (last-first).num_days()>3660 {
+            return Err("Analysis range must not exceed ten years".into());
+        }
+        let store = app.state::<Storage>();
+        let id = store.analysis_filter_create(revision, "organizations")?;
+        let result=(|| {
+            store.analysis_filter_append(revision,&id,&organizations)?;
+            store.analysis_filter_seal(revision,&id)?;
+            let scope=AnalysisScope {
+                report_type,
+                organizations:id.clone(),
+                names:None,
+            };
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
+                store.analysis_work_timeline_grouped(
+                revision,scope,&RangeQuery{from,to},organization.as_deref(),&key,grouping.as_deref(),
+            )
+            })
+        })();
+        let cleanup=store.analysis_filter_delete(&id);
+        match (result,cleanup) {
+            (Err(error),_)=>Err(error),
+            (Ok(rows),Ok(()))=>Ok(rows),
+            (Ok(_),Err(error))=>Err(error),
+        }
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+
+#[tauri::command]
+async fn native_analysis_ranking(
+    app: tauri::AppHandle,
+    revision: i64,
+    report_type: String,
+    from: String,
+    to: String,
+    organizations: Vec<String>,
+    organization: Option<String>,
+    metric: String,
+    category: String,
+    selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
+) -> Result<storage::RankingSummary, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !matches!(report_type.as_str(), "day" | "week" | "month") {
+            return Err("Unknown analysis report type".into());
+        }
+        if organizations.is_empty() || organizations.len() > 100 {
+            return Err("Select 1..=100 organizations for analysis".into());
+        }
+        if organization.as_deref().is_some_and(|o| !organizations.iter().any(|name| name == o)) {
+            return Err("Selected organization is outside the analysis scope".into());
+        }
+        let first = chrono::NaiveDate::parse_from_str(&from, "%Y-%m-%d")
+            .map_err(|_| "Invalid analysis start date".to_string())?;
+        let last = chrono::NaiveDate::parse_from_str(&to, "%Y-%m-%d")
+            .map_err(|_| "Invalid analysis end date".to_string())?;
+        if last < first || (last - first).num_days() > 3660 {
+            return Err("Analysis range must not exceed ten years".into());
+        }
+        let store = app.state::<Storage>();
+        let id = store.analysis_filter_create(revision, "organizations")?;
+        let result = (|| {
+            store.analysis_filter_append(revision, &id, &organizations)?;
+            store.analysis_filter_seal(revision, &id)?;
+            let scope = AnalysisScope {
+                report_type,
+                organizations: id.clone(),
+                names: None,
+            };
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
+                store.analysis_ranking(
+                revision, scope, &RangeQuery { from, to },
+                organization.as_deref(), &metric, &category,
+            )
+            })
+        })();
+        let cleanup = store.analysis_filter_delete(&id);
+        match (result, cleanup) {
+            (Err(error), _) => Err(error),
+            (Ok(rows), Ok(())) => Ok(rows),
             (Ok(_), Err(error)) => Err(error),
         }
     })
@@ -316,6 +719,8 @@ async fn native_analysis_organizations(
     from: String,
     to: String,
     organizations: Vec<String>,
+    selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
 ) -> Result<Vec<storage::OrganizationSummary>, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<storage::OrganizationSummary>, String> {
         if !matches!(report_type.as_str(), "day" | "week" | "month") {
@@ -343,9 +748,11 @@ async fn native_analysis_organizations(
             };
             // The exact selection contains at most 100 organizations.
             // SQL aggregation never materializes historical report JSON in JS.
-            store.analysis_organization_page(
-                revision, &scope, &RangeQuery { from, to }, None, 100,
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
+                store.analysis_organization_page(
+                revision, scope, &RangeQuery { from, to }, None, 100,
             )
+            })
         })();
         let cleanup = store.analysis_filter_delete(&filter_id);
         match (result, cleanup) {
@@ -370,6 +777,8 @@ async fn native_analysis_range_page(
     organization: Option<String>,
     after: Option<String>,
     limit: usize,
+    selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
 ) -> Result<Vec<storage::RangeValue>, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<Vec<storage::RangeValue>, String> {
         if !matches!(report_type.as_str(), "day" | "week" | "month") {
@@ -401,10 +810,12 @@ async fn native_analysis_range_page(
                 organizations: id.clone(),
                 names: None,
             };
-            store.analysis_range_page(
-                revision, &scope, &RangeQuery { from, to },
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
+                store.analysis_range_page(
+                revision, scope, &RangeQuery { from, to },
                 organization.as_deref(), after.as_deref(), limit,
             )
+            })
         })();
         let cleanup = store.analysis_filter_delete(&id);
         match (result, cleanup) {
@@ -428,6 +839,8 @@ async fn native_export_range_csv(
     organizations: Vec<String>,
     organization: Option<String>,
     destination: String,
+    selected_name: Option<String>,
+    selected_names: Option<Vec<String>>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         if !matches!(report_type.as_str(), "day" | "week" | "month") {
@@ -467,9 +880,11 @@ async fn native_export_range_csv(
                 organizations: id.clone(),
                 names: None,
             };
-            store.analysis_export_range(
-                revision, &scope, &RangeQuery { from, to }, organization.as_deref(), path,
+            with_selected_work_names(&*store,revision,selected_name,selected_names,scope,|scope| {
+                store.analysis_export_range(
+                revision, scope, &RangeQuery { from, to }, organization.as_deref(), path,
             )
+            })
         })();
         let cleanup = store.analysis_filter_delete(&id);
         match (result, cleanup) {
@@ -608,6 +1023,13 @@ fn updater_configured() -> bool {
 
 fn main() {
     tauri::Builder::default()
+        .on_window_event(|window,event| {
+            if matches!(event,tauri::WindowEvent::Destroyed) {
+                if let Some(store)=window.try_state::<Storage>() {
+                    let _=store.set_folder_import_session(window.label(),false);
+                }
+            }
+        })
         .plugin(tauri_plugin_updater::Builder::new()
             .pubkey(option_env!("ANALIZ_UPDATER_PUBLIC_KEY").unwrap_or(""))
             .build())
@@ -630,11 +1052,16 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             updater_configured, load_data, save_data, native_read_revision, native_report_page,
-            native_settings_bootstrap, native_group_page, native_group_rename,
-            native_analysis_index_page, native_analysis_index_settings, native_analysis_range,
+            native_report_quality_page, native_settings_bootstrap, native_group_page, native_group_rename,
+            native_catalog_page, native_delete_report, native_member_page, native_settings_edit,
+            native_analysis_index_page, native_analysis_index_settings, native_analysis_name_options, native_analysis_range,
+            native_analysis_timeline, native_analysis_ranking, native_analysis_organization_trends, native_analysis_work_timeline, native_analysis_compare, native_daily_rollup, native_changes_page, native_changes_csv, native_pattern_page, native_composition_page,
             native_analysis_organizations, native_analysis_range_page,
             native_export_range_csv, native_backup_sqlite, native_restore_preview, native_restore_copy,
             native_restore_schedule, native_restore_launch_info, native_restore_cancel,
+            native_folder_import_session,
+            native_folder_import_preview,
+            native_folder_import_apply,
             native_wide_import_preview, native_wide_import_apply,
             native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
             native_metric_kinds, native_metric_preview, native_metric_apply, native_metric_summary,

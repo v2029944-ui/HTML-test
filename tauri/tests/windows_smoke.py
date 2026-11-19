@@ -70,6 +70,12 @@ def wait_for_app_state(page, expression, description, timeout_ms=30_000):
         if remaining<=0:raise RuntimeError(description+' did not complete within '+str(timeout_ms)+' ms')
         page.wait_for_timeout(min(100,remaining*1000))
 
+def reveal_table(page, selector):
+    """Read visible exact values only after opening their details disclosure."""
+    for details in page.locator('details').filter(has=page.locator(selector)).all():
+        if not details.evaluate('(el) => el.open'):
+            details.locator(':scope > summary').click()
+
 @contextmanager
 def windows_test_workspace():
     """Release only this test's WebView2 workers before deleting their temporary profile."""
@@ -232,6 +238,77 @@ def run():
                 page.locator('#openNativeWorkspace').click()
                 wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)','Native SQLite workspace startup')
                 page.evaluate('window.nativeWorkspaceReady')
+                # P1.6: measure the first screen, including real SQL KPI
+                # and filter layout, at desktop and phone CSS viewport sizes.
+                # This is an isolated test WebView, not the released installer.
+                previous_viewport=page.evaluate('({width:innerWidth,height:innerHeight})')
+                try:
+                    for width,height in ((1280,720),(1366,768),(390,844),(320,568)):
+                        page.set_viewport_size({'width':width,'height':height})
+                        geometry=page.evaluate('''() => {
+                          const rect = id => {
+                            const box = document.getElementById(id).getBoundingClientRect();
+                            return {top:box.top,bottom:box.bottom,width:box.width};
+                          };
+                          return {
+                            viewport:innerWidth,
+                            scrollWidth:document.documentElement.scrollWidth,
+                            filters:rect('analysisType'),
+                            kpi:rect('metricReports'),
+                            nextBlock:rect('sqlAnalysis'),
+                            active:document.querySelector('[data-nav-link="analysis"]')?.getAttribute('aria-current')
+                          };
+                        }''')
+                        if width>=1280:
+                            if not (geometry['filters']['bottom']<height and
+                                    geometry['kpi']['bottom']<height and
+                                    geometry['nextBlock']['top']<height):
+                                raise RuntimeError(f'SQL first viewport {width}x{height} hides filters, KPI or the next result panel: {geometry}')
+                        elif geometry['scrollWidth']>width+1:
+                            raise RuntimeError(f'SQL phone viewport has page-level horizontal scrolling at {width}x{height}: {geometry}')
+                        page.screenshot(path=str(output/f'windows-sql-{width}x{height}.png'),full_page=False)
+                    report['checks'].append('Measured SQL first screen at 1280x720, 1366x768, 390x844, 320x568')
+                    # Issue #64: large UI scaling must not force the whole
+                    # SQL screen to scroll horizontally. Tables may scroll
+                    # internally by design, but the page itself must fit.
+                    page.set_viewport_size({'width':1280,'height':720})
+                    for scale in ('1.25','1.5','2'):
+                        zoom=page.evaluate('''scale => {
+                          const html=document.documentElement;
+                          const before=html.style.zoom;
+                          html.style.zoom=scale;
+                          const output={
+                            scale,
+                            viewport:innerWidth,
+                            page:html.scrollWidth,
+                            toolbar:document.querySelector('.analytics-toolbar').getBoundingClientRect().right,
+                            panel:document.querySelector('#sqlOverview').getBoundingClientRect().right,
+                            chart:document.querySelector('#timelineChart').getBoundingClientRect().right,
+                            controls:document.querySelector('.analytics-toolbar .controls').getBoundingClientRect().right
+                          };
+                          html.style.zoom=before;
+                          return output;
+                        }''',scale)
+                        if zoom['page']>zoom['viewport']+2 or zoom['panel']>zoom['viewport']+2 or zoom['controls']>zoom['viewport']+2:
+                            raise RuntimeError(f'SQL zoom {scale} produces horizontal overflow: {zoom}')
+                        if scale=='2':
+                            page.screenshot(path=str(output/'windows-sql-zoom-200.png'),full_page=False)
+                    report['checks'].append('SQL zoomed cards and calendar controls remain within page width at 125, 150 and 200 percent')
+                finally:
+                    page.set_viewport_size(previous_viewport)
+                # The native SQL workspace is now one application with sections.
+                # Switching sections must not initialize the full-history UI.
+                wait_for_app_state(page,'Boolean(window.nativeWorkspaceNavigation)',
+                    'Native workspace navigation startup')
+                assert page.locator('[data-nav-link="analysis"]').get_attribute('aria-current') == 'page'
+                page.locator('[data-nav-link="excel"]').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#sqlSources")?.offsetParent !== null && document.querySelector("#sqlAnalysis")?.offsetParent === null',
+                    'SQL source section after tab navigation')
+                assert page.locator('#sqlSources').is_visible()
+                assert not page.locator('#sqlAnalysis').is_visible()
+                assert page.evaluate("typeof window.appReady === 'undefined'")
+                report['checks'].append('Unified SQL navigation preserves bounded loading and Excel controls')
                 # SQL source panel must only enumerate Excel metadata via Rust.
                 wait_for_app_state(page, 'Boolean(window.nativeFolderReady)', 'SQL source folder startup')
                 page.evaluate('window.nativeFolderReady')
@@ -285,6 +362,8 @@ def run():
                     'async data => window.__TAURI__.core.invoke("native_metric_apply",data)',
                     {'source':str(example),'reviewToken':metric_preview['reviewToken']})
                 assert metric_receipt['rowCount']==2
+                page.locator('[data-nav-link="metrics"]').click()
+                assert page.locator('#sqlMetricKinds').is_visible()
                 page.locator('#metricKindCalculate').click()
                 wait_for_app_state(page,
                     'document.querySelector("#metricKindCount")?.textContent.includes("Отчётов: 1")',
@@ -336,25 +415,218 @@ def run():
                 assert page.locator('#reportRows tr').count()==100
                 assert page.locator('#metricGroups').inner_text()=='0'
                 first_native=page.locator('#reportRows tr').first.locator('td').nth(4).inner_text()
+                page.locator('[data-nav-link="reports"]').click()
+                assert page.locator('#sqlReports').is_visible()
                 page.locator('#reportNext').click()
                 wait_for_app_state(page,
-                    'document.querySelector("#reportRows tr td:last-child")?.textContent !== '+json.dumps(first_native),
+                    'document.querySelector("#reportRows tr td:nth-child(5)")?.textContent !== '+json.dumps(first_native),
                     'Native SQL next page')
                 assert page.locator('#reportRows tr').count()==100
+                assert page.locator('#reportPageInfo').inner_text()=='Страница 2'
                 page.locator('#reportBack').click()
                 wait_for_app_state(page,
-                    'document.querySelector("#reportRows tr td:last-child")?.textContent === '+json.dumps(first_native),
+                    'document.querySelector("#reportRows tr td:nth-child(5)")?.textContent === '+json.dumps(first_native),
                     'Native SQL previous page')
+                assert page.locator('#reportPageInfo').inner_text()=='Страница 1'
+                assert page.locator('#sqlDailyRollups').is_visible()
+                page.locator('#dailyRollupGranularity').select_option('year')
+                assert page.locator('#dailyRollupFrom').get_attribute('type')=='number'
+                page.locator('#dailyRollupFrom').fill('2024')
+                page.locator('#dailyRollupTo').fill('2024')
+                page.locator('#dailyRollupPrepare').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#dailyRollupRun")?.disabled === false',
+                    'Daily report index preparation for calendar rollup')
+                page.locator('#dailyRollupRun').click()
+                wait_for_app_state(page,
+                    'document.querySelectorAll("#dailyRollupRows tr").length === 1',
+                    '2024 calendar rollup from indexed day sources')
+                assert page.locator('#dailyRollupRows tr').first.locator('td').first.inner_text()=='2024'
+                assert page.locator('#dailyRollupRows tr').first.locator('td').nth(1).inner_text()=='366'
+                assert page.locator('#dailyRollupRows tr').count()<=60
+                wait_for_app_state(page,
+                    'document.querySelectorAll("#dailySourceKpis .comparison-metric").length === 5 && document.querySelector("#dailySourceChart svg") !== null',
+                    'KPI and monthly chart derived only from 366 daily reports')
+                # innerText is empty inside a closed details element in WebView2.
+                # Open the exact-values table as a user would before reading cells.
+                source_details=page.locator('details').filter(has=page.locator('#dailySourceRows'))
+                if not source_details.evaluate('(el) => el.open'):
+                    source_details.locator('summary').click()
+                assert page.locator('#dailySourceRows tr').count()==12
+                assert page.locator('#dailySourceRows tr').first.locator('td').first.inner_text()=='2024-01'
+                assert page.locator('#dailySourceKpis .comparison-metric').first.locator('strong').inner_text()!='—'
+                assert 'календарные месяцы' in page.locator('#dailySourceStatus').inner_text()
+                assert 'дневные' in page.locator('#dailyRollupScope').inner_text().lower()
+                report['checks'].append('SQL day-source KPIs and chart match the calendar scope, without weekly or monthly imports')
+                # Issue #64: the same exact work-name filter must affect the
+                # SQL calendar, KPI cards and graph, then restore the baseline.
+                baseline_amount=page.locator('#dailySourceKpis .comparison-metric').nth(1).locator('strong').inner_text()
+                page.locator('[data-nav-link="analysis"]').click()
+                assert page.locator('#sqlAnalysis').is_visible()
+                if not page.locator('#analysisMoreFilters').evaluate('(el) => el.open'):
+                    page.locator('#analysisMoreFilters summary').click()
+                page.locator('#analysisNameSearch').fill('Альфа')
+                page.locator('#analysisNameSearchRun').click()
+                wait_for_app_state(page,
+                    'Array.from(document.querySelector("#analysisName")?.options || []).some(o => o.value === "Альфа")',
+                    'Bounded SQLite work-name search includes synthetic daily work')
+                page.locator('#analysisName').select_option('Альфа')
+                page.locator('#analysisNameAdd').click()
+                assert 'Альфа' in page.locator('#analysisFilterScope').inner_text()
+                page.locator('[data-nav-link="reports"]').click()
+                assert 'Альфа' in page.locator('#dailyRollupScope').inner_text()
+                page.locator('#dailyRollupRun').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#dailySourceStatus")?.textContent.includes("календарные месяцы") && document.querySelectorAll("#dailySourceKpis .comparison-metric").length === 5',
+                    'Day-source KPI and graph recomputed for the chosen work')
+                filtered_amount=page.locator('#dailySourceKpis .comparison-metric').nth(1).locator('strong').inner_text()
+                if filtered_amount == '—':
+                    raise RuntimeError('Exact work filter lost the valid daily-source amount')
+                # This workbook can contain only one raw work name. The true
+                # coverage distinction is a selected *absent* work, which must
+                # produce verified zero instead of a fabricated missing day.
+                absent_work=page.evaluate('''async () => {
+                  const metadata=await window.desktopAPI.nativeSettingsBootstrap();
+                  return window.desktopAPI.nativeAnalysisRange(
+                    metadata.revision,'day','2024-01-01','2024-12-31',
+                    metadata.org_names,'__sql_smoke_absent_work__');
+                }''')
+                assert absent_work['complete'] is True
+                assert absent_work['missing']==0
+                assert absent_work['total']['amount']==0
+                assert absent_work['total']['count']==0
+                assert page.locator('#dailySourceRows tr').count()==12
+                assert page.locator('#dailySourceChart svg').count()==1
+                page.locator('[data-nav-link="analysis"]').click()
+                page.locator('#analysisNameReset').click()
+                assert 'все' in page.locator('#analysisFilterScope').inner_text()
+                page.locator('[data-nav-link="reports"]').click()
+                page.locator('#dailyRollupRun').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#dailySourceStatus")?.textContent.includes("календарные месяцы") && document.querySelectorAll("#dailySourceKpis .comparison-metric").length === 5',
+                    'Day-source KPI restores original scope after filter reset')
+                assert page.locator('#dailySourceKpis .comparison-metric').nth(1).locator('strong').inner_text()==baseline_amount
+                report['checks'].append('SQL exact work-name selection preserves coverage and resets cleanly')
+
+                assert page.evaluate("typeof window.appReady === 'undefined'")
+                report['checks'].append('SQL 2024 annual calendar is computed from daily reports only')
+                page.locator('#dailyRollupRows tr').first.locator('button').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#dailyRollupDetailPanel")?.hidden === false && document.querySelectorAll("#dailyRollupDetailRows tr").length === 60',
+                    'SQL annual calendar shows first 60 real daily periods')
+                assert page.locator('#dailyRollupDetailRows tr').first.locator('td').first.inner_text()=='2024-01-01'
+                assert page.locator('#dailyRollupDetailNext').is_enabled()
+                page.locator('#dailyRollupDetailNext').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#dailyRollupDetailPage")?.textContent === "Страница 2"',
+                    'SQL daily calendar details next keyset page')
+                assert page.locator('#dailyRollupDetailRows tr').first.locator('td').first.inner_text()=='2024-03-01'
+                page.locator('#dailyRollupDetailBack').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#dailyRollupDetailPage")?.textContent === "Страница 1"',
+                    'SQL daily calendar details previous keyset page')
+                assert page.locator('#dailyRollupDetailRows tr').first.locator('td').first.inner_text()=='2024-01-01'
+                page.locator('#dailyRollupDetailClose').click()
+                assert page.locator('#dailyRollupDetailPanel').is_hidden()
+                assert page.locator('#dailyRollupRows tr').count()==1
+                report['checks'].append('SQL annual-to-day detail pages bound to exact SQLite dates with explicit close')
                 page.locator('#nativeReportType').select_option('week')
                 wait_for_app_state(page,
                     'document.querySelector("#reportStatus")?.textContent.includes("На странице: 0")',
                     'Native SQLite filter without week reports')
                 assert page.locator('#reportRows tr').count()==0
+                # Exercise the new SQL settings UI on synthetic CI data only.
+                page.evaluate('window.confirm = () => true')
+                page.locator('[data-nav-link="groups"]').click()
+                page.locator('#managementGroupName').fill('CI SQL group')
+                page.locator('#managementGroupCreate').click()
+                group_open=page.get_by_role('button',name='Открыть состав группы CI SQL group',exact=True)
+                group_open.wait_for(state='visible')
+                wait_for_app_state(page,'!document.querySelector("#managementGroupCreate").disabled','SQL group publication finished')
+                group_open.click()
+                page.locator('#managementMemberName').fill('CI SQL work')
+                page.locator('#managementMemberAdd').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#managementMemberRows")?.textContent.includes("CI SQL work")',
+                    'SQL group member committed and reread through bounded IPC')
+                page.get_by_role('button',name='Исключить CI SQL work',exact=True).click()
+                wait_for_app_state(page,
+                    'document.querySelectorAll("#managementMemberRows tr").length === 0 && !document.querySelector("#managementMemberAdd").disabled',
+                    'SQL group member removal')
+                page.get_by_role('button',name='Удалить группу CI SQL group',exact=True).click()
+                wait_for_app_state(page,
+                    '!Array.from(document.querySelectorAll("#groupRows button")).some(b => b.getAttribute("aria-label") === "Открыть состав группы CI SQL group") && !document.querySelector("#managementGroupCreate").disabled',
+                    'SQL group removal')
+                report['checks'].append('Installed SQL group create/member add/member remove/group delete with confirmation')
+                page.locator('[data-nav-link="analysis"]').click()
+                page.locator('#analysisSource').select_option('daily')
+                page.locator('#analysisType').select_option('month')
+                page.locator('#analysisFrom').fill('2024-02')
+                page.locator('#analysisTo').fill('2024-02')
+                page.locator('#analysisPrepare').click()
+                wait_for_app_state(page,'!document.querySelector("#analysisRun").disabled','Daily-source month index')
+                page.locator('#analysisRun').click()
+                wait_for_app_state(page,
+                    'document.querySelectorAll("#timelineRows tr").length === 1 && document.querySelector("#timelineRows tr td")?.textContent === "2024-02" && !document.querySelector("#analysisRun").disabled && document.querySelector("#analysisResultScope")?.textContent.includes("только дневные")',
+                    'Daily-source selected month produces one SQL month bucket')
+                assert 'только дневные' in page.locator('#analysisResultScope').inner_text()
+                assert page.locator('#analysisValues').inner_text().find('Полная')>=0
+                assert page.locator('#timelineRows tr td').nth(1).text_content()=='29'
+                page.locator('#hideEmptyPeriods').check()
+                reveal_table(page, '#timelineRows')
+                assert page.locator('#timelineRows tr').count()==1
+                page.locator('#hideEmptyPeriods').uncheck()
+                report['checks'].append('Daily-source KPI and monthly SQL bucket cover all leap-February days')
+                # Exercise the real native commands for every specialized view
+                # against one captured complete daily-source calendar month.
+                page.locator('#comparisonBeforeFrom').fill('2024-01')
+                page.locator('#comparisonBeforeTo').fill('2024-01')
+                for mode in ['changes', 'usual', 'regularity', 'structure', 'contributions']:
+                    page.locator('#advancedMode').select_option(mode)
+                    wait_for_app_state(page,
+                        '!document.querySelector("#advancedRun").disabled',
+                        'Advanced SQL view is ready: '+mode)
+                    page.locator('#advancedRun').click()
+                    wait_for_app_state(page,
+                        '!document.querySelector("#advancedRun").disabled && document.querySelectorAll("#advancedRows tr").length > 0',
+                        'Advanced native SQL result: '+mode)
+                    assert 'Ошибка' not in page.locator('#advancedStatus').inner_text()
+                    assert 'дневные отчёты' in page.locator('#advancedContext').inner_text()
+                    assert '2024-02-01' in page.locator('#advancedContext').inner_text()
+                    assert 'из ' in page.locator('#advancedPage').inner_text()
+                page.emulate_media(media='print')
+                assert page.locator('#advancedPage').is_visible()
+                assert page.locator('#advancedContext').is_visible()
+                assert page.locator('#advancedRows').is_visible()
+                page.emulate_media(media='screen')
+                report['checks'].append('All five advanced SQL analyses use the daily-source scope; printed page retains row bounds and context')
+                if not page.locator('#analysisMoreFilters').evaluate('(el) => el.open'):
+                    page.locator('#analysisMoreFilters summary').click()
+                organization_choices=page.locator('#analysisOrganizationChoices label')
+                assert organization_choices.count()==4
+                chosen_orgs=[organization_choices.nth(i).locator('span').text_content() for i in (0,2)]
+                for i in (1,3):
+                    organization_choices.nth(i).locator('input').uncheck()
+                assert page.locator('#analysisOrganization').input_value()=='__custom__'
+                assert ', '.join(chosen_orgs) in page.locator('#analysisFilterScope').inner_text()
+                page.locator('#analysisRun').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#analysisResultScope")?.textContent.includes("(2 из 4)") && document.querySelectorAll("#divisionRows tr").length === 2',
+                    'SQLite analysis and division totals are scoped to two of four organizations')
+                assert set(page.locator('#divisionRows tr td:first-child').all_text_contents())==set(chosen_orgs)
+                page.locator('#analysisOrganization').select_option('*')
+                assert 'все из настроек (4)' in page.locator('#analysisFilterScope').inner_text()
+                report['checks'].append('SQL organization subset narrows division results and resets to all')
+                page.locator('#analysisSource').select_option('imported')
                 # D4c: a type with no reports can be indexed without loading
                 # history, then its incomplete SQL range must have NULL totals.
+                page.locator('[data-nav-link="analysis"]').click()
+                assert page.locator('#sqlAnalysis').is_visible()
                 page.locator('#analysisType').select_option('week')
-                page.locator('#analysisFrom').fill('2026-11-02')
-                page.locator('#analysisTo').fill('2026-11-09')
+                assert page.locator('#analysisFrom').get_attribute('type')=='week'
+                assert page.locator('#analysisTo').get_attribute('type')=='week'
+                page.locator('#analysisFrom').fill('2026-W45')
+                page.locator('#analysisTo').fill('2026-W46')
                 page.locator('#analysisPrepare').click()
                 wait_for_app_state(page,
                     'document.querySelector("#analysisRun")?.disabled === false',
@@ -366,6 +638,14 @@ def run():
                 assert page.locator('#analysisValues .metric').count()==9
                 assert page.locator('#analysisValues .metric').nth(3).locator('strong').inner_text()=='—'
                 assert page.locator('#analysisValues .metric').nth(4).locator('strong').inner_text()=='—'
+                assert page.locator('#analysisCoverageNotice').is_visible()
+                assert 'Подтверждение скрывает' in page.locator('#analysisCoverageText').inner_text()
+                page.locator('#analysisAcknowledge').click()
+                assert page.locator('#analysisCoverageNotice').is_hidden()
+                assert 'Замечание подтверждено' in page.locator('#analysisStatus').inner_text()
+                # Acknowledging the warning must not materialize missing values.
+                assert page.locator('#analysisValues .metric').nth(4).locator('strong').inner_text()=='—'
+                report['checks'].append('SQL acknowledgement suppresses only the known warning, not absent totals')
                 # D4d comparison derives complete/incomplete per-division rows
                 # through bounded D2 SQL, not through JS history data.
                 wait_for_app_state(page,
@@ -375,6 +655,34 @@ def run():
                     for row in page.locator('#divisionRows tr').all())
                 assert all(row.locator('td').nth(2).inner_text()!='0'
                     for row in page.locator('#divisionRows tr').all())
+                # The graphical SQL layer must use the same missing-period evidence.
+                wait_for_app_state(page,
+                    'document.querySelector("#timelineStatus")?.textContent.includes("Ни одной полной точки")',
+                    'SQL timeline has no fabricated zero observations')
+                reveal_table(page, '#timelineRows')
+                assert page.locator('#timelineRows tr').count()==2
+                assert page.locator('#timelineChart svg').count()==0
+                assert all(row.locator('td').nth(4).inner_text()=='—'
+                    for row in page.locator('#timelineRows tr').all())
+                report['checks'].append('Native timeline preserves missing weekly periods')
+                wait_for_app_state(page,
+                    'document.querySelector("#rankingStatus")?.textContent.includes("Рейтинг скрыт")',
+                    'Native ranking excludes incomplete week ranges')
+                assert page.locator('#rankingBars li').count()==0
+                assert page.locator('#rankingMetric').is_enabled()
+                report['checks'].append('SQL ranking excludes incomplete weekly ranges')
+                wait_for_app_state(page,
+                    'document.querySelector("#organizationTrendsStatus")?.textContent.includes("Нет подтверждённых точек")',
+                    'Native division trends hide missing weekly values')
+                reveal_table(page, '#organizationTrendsRows')
+                assert page.locator('#organizationTrendsRows tr').count()>0
+                assert page.locator('#organizationTrendsRows tr').count()<=992
+                assert page.locator('#organizationTrendsChart svg').count()==0
+                assert all(row.locator('td').nth(5).inner_text()=='—'
+                    for row in page.locator('#organizationTrendsRows tr').all())
+                report['checks'].append('Division trend lines are missing when selected weeks are absent')
+
+
                 report['checks'].append('D2 incomplete SQL range keeps missing totals null')
                 report['checks'].append('Native division comparison preserves unknown incomplete amounts')
                 # D4e: the group/work keyset API must also run on the real
@@ -384,6 +692,30 @@ def run():
                     'Native SQL group/work breakdown for absent weekly reports')
                 assert page.locator('#workRows tr').count()==0
                 assert page.locator('#workNext').is_disabled()
+                assert page.locator('#sqlWorkTrends').is_visible()
+                assert page.locator('#workTrendMetric').is_disabled()
+                assert page.locator('#workTrendChart svg').count()==0
+                reveal_table(page, '#workTrendRows')
+                assert page.locator('#workTrendRows tr').count()==0
+                assert page.locator('#workTrendSelected').inner_text()=='Позиция не выбрана.'
+                report['checks'].append('SQL work/group trend controls start empty without fabricated data')
+                page.locator('#comparisonBeforeFrom').fill('2026-W45')
+                page.locator('#comparisonBeforeTo').fill('2026-W46')
+                wait_for_app_state(page,
+                    'document.querySelector("#comparisonRun")?.disabled === false',
+                    'Native comparison becomes available after choosing baseline dates')
+                page.locator('#comparisonRun').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#comparisonStatus")?.textContent.includes("есть пропуски")',
+                    'Both incomplete SQL ranges keep comparison changes unknown')
+                assert page.locator('#comparisonMetrics .comparison-metric').count()==2
+                assert page.locator('#comparisonDivisionRows tr').count()==4
+                assert all(row.locator('td').nth(3).inner_text()=='—'
+                    for row in page.locator('#comparisonDivisionRows tr').all())
+                assert page.locator('#comparisonRankRows li').count()==0
+                assert 'скрыта' in page.locator('#comparisonRankStatus').inner_text()
+                report['checks'].append('SQL comparison refuses fabricated deltas for incomplete baseline')
+
                 report['checks'].append('Native work/group keyset breakdown is empty for missing weekly data')
                 # D4f: export uses an on-disk CSV from SQLite, not report JSON,
                 # and must reject an existing output path without replacement.
@@ -483,6 +815,33 @@ def run():
                 assert len(updated['reports'])==366
                 assert all(r.get('sourceFormat')=='daily-wide' for r in updated['reports'])
                 report['checks'].append('reviewed native wide XLSX preview and atomic 366-report replacement')
+                assert page.evaluate('window.nativeWorkspaceRefresh()')
+                page.locator('[data-nav-link="reports"]').click()
+                source_anchor=next(row for row in updated['reports'] if 'sourceIssues' in row)
+                # The earlier empty-week scenario intentionally left this filter
+                # on week. The replacement above contains daily reports only.
+                page.locator('#nativeReportType').select_option('day')
+                wait_for_app_state(page,
+                    'document.querySelectorAll("#reportRows tr").length > 1 && document.querySelector("#reportRows tr td:nth-child(3)")?.textContent === "day"',
+                    'Daily report rows after replacing the wide source')
+                row=page.locator('#reportRows tr').filter(has_not_text=source_anchor['id']).first
+                quality=row.get_by_role('button',name='Замечания к отчёту',exact=False)
+                quality.click()
+                wait_for_app_state(page,
+                    '!document.querySelector("#reportQualitySource")?.hidden',
+                    'Saved report issues load the native source link')
+                assert page.locator('#reportQualityDialog').is_visible()
+                page.locator('#reportQualitySource').click()
+                wait_for_app_state(page,
+                    'document.querySelector("#reportQualityStatus")?.textContent.startsWith("На странице:") || '
+                    'document.querySelector("#reportQualityStatus")?.textContent.startsWith("Сохранённых замечаний нет")',
+                    'Saved shared source issues through Tauri IPC')
+                assert source_anchor['id'] in page.locator('#reportQualityAnchor').inner_text()
+                assert page.locator('#reportQualityRows tr').count()==min(50,len(source_anchor['sourceIssues']))
+                page.keyboard.press('Escape')
+                assert not page.locator('#reportQualityDialog').is_visible()
+                assert quality.evaluate('(button) => document.activeElement === button')
+                report['checks'].append('Saved report quality, shared SQLite anchor, bounded rows and keyboard focus')
                 report['checks'].append('SQL-only native page, bounded report navigation, settings bootstrap')
                 page.locator('#legacyWorkspaceLink').click()
                 wait_for_app_state(page,'Boolean(window.appReady)','Legacy workspace after native route')
@@ -536,6 +895,8 @@ def run():
                 page.evaluate('window.nativeWorkspaceReady')
                 wait_for_app_state(page,'Boolean(window.nativeFolderReady)', 'SQL folder rule editor startup')
                 page.evaluate('window.nativeFolderReady')
+                page.locator('[data-nav-link="excel"]').click()
+                assert page.locator('#sqlSources').is_visible()
                 # Re-establish the isolated test folder after the classic UI
                 # round-trip, then await metadata instead of assuming it survived.
                 page.evaluate('async folder => window.__TAURI__.core.invoke("set_folder", {folder})', str(tmp))
@@ -569,6 +930,39 @@ def run():
                     'SQL report count after editing rule')
                 assert page.evaluate("typeof window.appReady === 'undefined'")
                 report['checks'].append('SQL-only Excel rule write with native revision and file validation')
+                # Validate Windows handle/path authorization without committing
+                # any extra reports into the 366-report recovery fixture.
+                auto_probe=tmp/'auto-probe.xlsx'
+                auto_probe.write_bytes(daily_workbook_bytes())
+                auto_request=page.evaluate('''async () => {
+                  const listing=await window.desktopAPI.list();
+                  const file=listing.files.find(f => f.name==='auto-probe.xlsx');
+                  if(!file?.nativeSignature)throw Error('Native file signature is missing');
+                  await window.desktopAPI.nativeSetRuleChecked(file.name,
+                    {type:'day',start:'2025-01-01',sheet:'',format:'legacy'},
+                    listing.revision,listing.folder,file.nativeSignature);
+                  const current=await window.desktopAPI.list();
+                  const source=current.files.find(f => f.name==='auto-probe.xlsx');
+                  const session=await window.desktopAPI.nativeFolderImportSession(true);
+                  return {session,folder:current.folder,revision:current.revision,
+                    name:source.name,signature:source.nativeSignature};
+                }''')
+                try:
+                    auto_review=page.evaluate('request => window.desktopAPI.nativeFolderImportPreview(request)',auto_request)
+                    assert auto_review['reportCount']==6,auto_review
+                    assert auto_review['conflicts']['new_reports']==6,auto_review
+                finally:
+                    page.evaluate('window.desktopAPI.nativeFolderImportSession(false)')
+                try:
+                    page.evaluate('''args => window.desktopAPI.nativeFolderImportApply(args.request,args.token)''',
+                        {'request':auto_request,'token':auto_review['reviewToken']})
+                except Exception as error:
+                    assert 'выключен' in str(error) or 'сеанс' in str(error),str(error)
+                else:
+                    raise RuntimeError('Revoked folder session allowed a native commit')
+                assert page.evaluate('window.desktopAPI.nativeSettingsBootstrap()')['reports']==366
+                report['checks'].append('Checked native folder preview follows Windows handles; revoked session cannot commit')
+
                 # P0.3: schedule recovery from a real Online Backup while the
                 # installed app is running. It must not change the active DB.
                 reviewed=page.evaluate(
@@ -614,6 +1008,8 @@ def run():
                 page.locator('#openNativeWorkspace').click()
                 wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)',
                     'SQL workspace after recovered startup')
+                page.locator('[data-nav-link="backup"]').click()
+                assert page.locator('#sqlBackup').is_visible()
                 wait_for_app_state(page,
                     "() => document.getElementById('restoreStatus')?.textContent.includes('Восстановление выполнено')",
                     'User-facing recovery confirmation')

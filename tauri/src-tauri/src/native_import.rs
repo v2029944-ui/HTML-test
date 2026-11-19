@@ -324,3 +324,113 @@ pub async fn native_legacy_import_apply(
         })
     }).await.map_err(|e|e.to_string())?
 }
+
+/// A lease belongs to the window that opted in and expires on stop or process exit.
+#[tauri::command]
+pub async fn native_folder_import_session(
+    window: tauri::WebviewWindow,
+    enabled: bool,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = window.state::<Storage>();
+        let lease = store.set_folder_import_session(window.label(), enabled)?;
+        if enabled && window.app_handle().get_webview_window(window.label()).is_none() {
+            store.set_folder_import_session(window.label(), false)?;
+            return Err("Окно автоимпорта закрыто.".into());
+        }
+        Ok(lease)
+    }).await.map_err(|e|e.to_string())?
+}
+
+fn with_folder_prepared<T>(
+    store: &Storage,
+    window: &str,
+    request: &crate::storage::FolderImportRequest,
+    action: impl FnOnce(&PreparedImport<'_>, &ImportPreview, &ImportJob, &crate::storage::Rule) -> Result<T,String>,
+) -> Result<T,String> {
+    let operation = store.begin_folder_import(window, request)?;
+    let cancel = operation.job.cancellation();
+    let (rule, source, file) = store.checked_folder_import(request)?;
+    // Persisted sheet names are workbook display names and mapping coordinates
+    // are zero-based. Require manual review until the two representations can
+    // be converted without guessing which sheet or cells were selected.
+    if !rule.sheet.is_empty()
+        || rule.sheets.as_ref().is_some_and(|items| !items.is_empty())
+        || rule.mappings.as_ref().is_some_and(|items| !items.is_empty())
+        || !matches!(rule.format.as_deref(), Some("legacy" | "daily-wide"))
+        || rule.format.as_deref() == Some("daily-wide") && !rule.start.is_empty()
+    {
+        return Err("Настройки листа, столбцов или формата требуют ручной проверки.".into());
+    }
+    let organizations = store.folder_import_organizations(request.revision)?;
+    let area = StageArea::open(store.root().join("native-import-stages")).map_err(|e|e.to_string())?;
+    let mut stage = area.ingest_opened(source, file, Limits::default(), cancel, |_|{})
+        .map_err(|e|e.to_string())?;
+    if rule.format.as_deref() == Some("daily-wide") {
+        let options = WideOptions {
+            year: rule.year.map(i32::from), organizations, ..WideOptions::default()
+        };
+        // Wide conversion takes a shared cancellation flag.
+        stage.convert_wide(&options, operation.job.cancellation_handle(), |_|{}).map_err(|e|e.to_string())?;
+    } else {
+        let sheets = stage.worksheet_components().map_err(|e|e.to_string())?;
+        let [sheet] = sheets.as_slice() else {
+            return Err("Несколько листов Excel требуют ручного выбора.".into());
+        };
+        let options = LegacyOptions {
+            sheet: sheet.clone(), kind:rule.kind.clone(), start:rule.start.clone(),
+            organizations, mappings:None,
+        };
+        stage.convert_legacy(&options, cancel, |_|{}).map_err(|e|e.to_string())?;
+    }
+    let prepared = stage.prepare_with_mode(analiz_import_core::ImportMode::Folder, cancel, |_|{})
+        .map_err(|e|e.to_string())?;
+    let preview = store.preview_import_with_cancel(&prepared, cancel)?;
+    if preview.revision() != request.revision {
+        return Err("Stale storage revision; refresh the selection.".into());
+    }
+    action(&prepared, &preview, &operation.job, &rule)
+}
+
+fn is_clean_new_folder_review(review: &NativeWideReview) -> bool {
+    let (c, q) = (&review.conflicts, &review.quality);
+    review.report_count > 0 && c.new_reports == review.report_count
+        && c.replacements == 0 && c.cross_type_overlaps == 0
+        && [q.issues, q.invalid, q.skipped, q.mismatches, q.other_notices, q.mismatch_reports,
+            q.source_issues, q.relevant_source_issues, q.deferred_source_issues]
+            .into_iter().all(|count| count == 0)
+}
+
+#[tauri::command]
+pub async fn native_folder_import_preview(
+    window: tauri::WebviewWindow,
+    request: crate::storage::FolderImportRequest,
+) -> Result<NativeWideReview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = window.state::<Storage>();
+        with_folder_prepared(&store, window.label(), &request, |prepared, preview, _, rule| {
+            review(prepared, preview, &(&request, rule), b"folder-auto-review-v1\0")
+        })
+    }).await.map_err(|e|e.to_string())?
+}
+
+#[tauri::command]
+pub async fn native_folder_import_apply(
+    window: tauri::WebviewWindow,
+    request: crate::storage::FolderImportRequest,
+    review_token: String,
+) -> Result<ImportReceipt, String> {
+    if review_token.len() != 64 || !review_token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid import review token.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = window.state::<Storage>();
+        with_folder_prepared(&store, window.label(), &request, |prepared, preview, job, rule| {
+            let current = review(prepared, preview, &(&request, rule), b"folder-auto-review-v1\0")?;
+            if current.review_token != review_token || !is_clean_new_folder_review(&current) {
+                return Err("Изменения, пересечения, замены и замечания требуют ручной проверки.".into());
+            }
+            store.apply_import(prepared, preview, ImportConfirmation::default(), job, |_|{})
+        })
+    }).await.map_err(|e|e.to_string())?
+}

@@ -24,6 +24,7 @@ function status(message,error=false){
 }
 function lock(){
   for(const key of ['choose','type','start'])nodes[key].disabled=busy;
+  const mappings=$('legacyMappingText');if(mappings)mappings.disabled=busy;
   nodes.sheet.disabled=busy||!source||!sheets.length;
   nodes.preview.disabled=busy||!source||!sheets.length;
   nodes.apply.disabled=busy||!review;
@@ -53,15 +54,18 @@ function getOptions(organizations){
   if(!Array.isArray(organizations)||organizations.length!==4||
       organizations.some(s=>typeof s!=='string'||!s.trim()))
     throw Error('В настройках должны быть четыре подразделения.');
-  return {kind,start,sheet,organizations:organizations.slice()};
+  const text=$('legacyMappingText')?.value||'';
+  const mappings=window.nativeImportMappings?.parseMappings(text);
+  if(text.trim()&&!mappings)throw Error('Настройка столбцов недоступна. Перезапустите приложение.');
+  return {kind,start,sheet,organizations:organizations.slice(),...(mappings?{mappings}:{})};
 }
-nodes.choose.addEventListener('click',async()=>{
-  if(busy)return;
+async function selectSource(chosenPath){
+  if(busy)return false;
   source=null;sheets=[];nodes.sheet.replaceChildren();nodes.sheet.value='';
   nodes.file.textContent='Файл не выбран.';
   busy=true;reset();lock();
   try{
-    const path=await api.chooseWideXlsx();
+    const path=chosenPath??await api.chooseWideXlsx();
     if(typeof path==='string'&&path){
       source=path;
       nodes.file.textContent='Выбран XLSX: '+path.split(/[\\/]/).pop();
@@ -78,12 +82,16 @@ nodes.choose.addEventListener('click',async()=>{
       }
       nodes.sheet.value=sheets[0];
       status('XLSX проверен. Выберите лист и первую дату, затем проверьте периоды.');
-    }else status('Выбор файла отменён.');
+      return true;
+    }else {status('Выбор файла отменён.');return false;}
   }catch(error){
     source=null;sheets=[];nodes.sheet.replaceChildren();nodes.sheet.value='';
-    reset();status('Не удалось выбрать XLSX: '+String(error?.message||error),true);
+    reset();status('Не удалось выбрать XLSX: '+String(error?.message||error),true);return false;
   }finally{busy=false;lock();}
-});
+}
+nodes.choose.addEventListener('click',()=>selectSource());
+window.nativeLegacyImporter=Object.freeze({selectSource,busy:()=>busy,invalidate:()=>{if(!busy){source=null;reset('Выбран другой сценарий импорта.');}}});
+$('legacyMappingText')?.addEventListener('input',()=>{if(!busy)reset('Столбцы изменены. Выполните проверку заново.');});
 for(const key of ['type','start','sheet']){
   nodes[key].addEventListener('change',()=>reset('Параметры изменены. Проверьте файл заново.'));
 }

@@ -2,40 +2,188 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light">
-<title>Анализ работ — SQL-режим</title>
+<title>Анализ работ — аналитика</title>
 <style>
 :root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#223048;background:#f5f7fa}*{box-sizing:border-box}
-body{margin:0}header{padding:22px max(24px,5vw);background:#fff;border-bottom:1px solid #dbe1ea;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
-main{margin:0 auto;max-width:1250px;padding:28px 22px 48px}h1{font-size:24px;margin:0}h2{font-size:19px;margin:0 0 14px}
-.panel{background:#fff;border:1px solid #dce2e9;border-radius:12px;margin-bottom:18px;padding:22px;box-shadow:0 2px 9px #21334a0a}
+body{margin:0}header{padding:12px max(20px,4vw);background:#fff;border-bottom:1px solid #dbe1ea;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+main{margin:0 auto;max-width:1250px;padding:16px 22px 48px}h1{font-size:24px;margin:0}h2{font-size:19px;margin:0 0 14px}
+.panel{background:#fff;border:1px solid #dce2e9;border-radius:12px;margin-bottom:14px;padding:18px 22px;box-shadow:0 2px 9px #21334a0a}
+#reportQualityDialog{width:min(1080px,calc(100% - 24px));max-height:calc(100% - 24px);border:1px solid #aab9cb;border-radius:12px;padding:clamp(12px,3vw,24px);color:inherit}
+#reportQualityDialog [hidden]{display:none}
+#reportQualityDialog::backdrop{background:#17294066}
+#reportQualityContext,#reportQualityAnchor{overflow-wrap:anywhere}
+#reportQualityDialog button[aria-pressed="true"]{background:#e5edf6;border-color:#476685;font-weight:650}
+#reportQualityDialog button[aria-disabled="true"]{opacity:.55;cursor:not-allowed}
+.report-quality-action{margin:0 5px 5px 0}
 .intro{color:#55657a;font-size:14px;line-height:1.6}a{color:#1f5588}
 button,select,input{font:inherit;border:1px solid #aab9cb;border-radius:8px;padding:8px 12px;background:#fff;max-width:100%}
 button{cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}
 button:focus-visible,input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid #74a8d5;outline-offset:2px}
 .controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:14px 0}.muted{color:#53647a}.error{color:#a12228}.status{min-height:24px;font-size:14px}
-.overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:12px}
-.metric{background:#eff4f9;border-radius:9px;padding:14px}.metric strong{display:block;font-size:24px;font-variant-numeric:tabular-nums}.metric span{color:#53647a;font-size:13px}
-.table-scroll{overflow:auto;max-width:100%}table{width:100%;border-collapse:collapse;min-width:650px}
+.overview{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,155px),1fr));gap:12px}
+.metric{background:#eff4f9;border-radius:9px;padding:10px 12px}.metric strong{display:block;font-size:22px;font-variant-numeric:tabular-nums}.metric span{color:#53647a;font-size:13px}
+.table-scroll{overflow:auto;max-width:100%;max-height:none} .table-scroll:focus-visible{outline:2px solid #24639a;outline-offset:2px} .period-visibility{display:flex;align-items:center;gap:8px;flex-wrap:wrap}table{width:100%;border-collapse:collapse;min-width:650px}
 th,td{text-align:left;border-bottom:1px solid #e4e9ef;padding:10px 9px;vertical-align:middle;font-size:13px;overflow-wrap:anywhere}
 th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 @media(max-width:650px){header{padding:16px}main{padding:16px 10px}.panel{padding:15px}h1{font-size:20px}}
 
+.timeline-chart{width:100%;overflow:hidden;margin:12px 0}
+.timeline-chart svg{display:block;width:100%;height:auto;max-height:330px;background:#fbfcfe;border:1px solid #dce2e9;border-radius:10px}
+.timeline-chart svg text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:12px;fill:#435872}
+.timeline-chart svg .timeline-grid{stroke:#e5eaf0;stroke-width:1}
+.timeline-chart svg .timeline-zero{stroke:#8595a8;stroke-width:1.5}
+.timeline-chart svg .timeline-line{fill:none;stroke:#24639a;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+.timeline-chart svg .timeline-point{fill:#24639a;stroke:#fff;stroke-width:1.5}
+.timeline-chart svg .timeline-bar{fill:#347db2}
+.timeline-chart svg .timeline-bar.negative{fill:#926da1}
+.timeline-controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:10px 0}
+.timeline-controls label{font-size:13px;font-weight:600}
+.timeline-table summary{cursor:pointer;font-size:14px;color:#275d88;padding:8px 0}
+.ranking-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0}
+.ranking-controls label{font-size:13px;font-weight:600}
+.ranking-list{list-style:decimal;padding:0 0 0 28px;margin:10px 0;max-width:100%}
+.ranking-list li{padding:7px 0;border-bottom:1px solid #e4e9ef;min-width:0}
+.ranking-heading{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.ranking-name{font-weight:600;min-width:0;overflow-wrap:anywhere;flex:1}
+.ranking-value{font-variant-numeric:tabular-nums;white-space:nowrap}
+.ranking-track{height:12px;background:#e7edf5;border-radius:8px;overflow:hidden;margin-top:6px}
+.ranking-fill{height:100%;background:#347db2;border-radius:8px}
+.ranking-fill.negative{background:#926da1}
+@media(max-width:650px){.ranking-controls{align-items:stretch}.ranking-controls label{flex-basis:100%}.ranking-controls select{width:100%}}
+.organization-trends-legend{display:flex;flex-wrap:wrap;gap:8px 16px;margin:9px 0;font-size:13px}
+.organization-trends-legend span{display:inline-flex;align-items:center;gap:6px;overflow-wrap:anywhere}
+.organization-trends-swatch{width:12px;height:12px;border-radius:3px;flex:none}
+#organizationTrendsChart{margin:12px 0}
+#organizationTrendsChart svg{display:block;width:100%;height:auto;max-height:340px;border:1px solid #dce2e9;border-radius:10px;background:#fbfcfe}
+#organizationTrendsChart svg text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:12px;fill:#435872}
+.organization-trends-details summary{cursor:pointer;color:#275d88;padding:9px 0}
+.work-trend-chart{margin:12px 0;min-width:0}
+.work-trend-chart svg{display:block;width:100%;height:auto;max-height:340px;border-radius:10px;border:1px solid #dce2e9;background:#fbfcfe}
+.work-trend-chart svg text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:12px;fill:#435872}
+.work-trend-details summary{cursor:pointer;color:#275d88;padding:9px 0}
+.work-trend-heading{font-size:14px;font-weight:600;color:#344c64;overflow-wrap:anywhere}
+.comparison-controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0}
+.comparison-controls label{font-weight:600;font-size:13px}
+.comparison-controls input,.comparison-controls select{max-width:190px}
+.comparison-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));gap:12px;margin:12px 0}
+.comparison-metric{border:1px solid #dce2e9;border-radius:9px;padding:12px;min-width:0;background:#fbfcfe}
+.comparison-metric strong{display:block;margin-bottom:4px}
+.comparison-metric p{margin:3px 0;font-size:13px;overflow-wrap:anywhere}
+.comparison-ranks{list-style:decimal;padding-left:26px;margin:9px 0}
+.comparison-ranks li{margin:0;padding:9px 0;border-bottom:1px solid #e4e9ef}
+.comparison-rank-row{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;justify-content:space-between}
+.comparison-rank-name{font-weight:600;overflow-wrap:anywhere}
+.comparison-rank-value{white-space:nowrap;font-variant-numeric:tabular-nums}
+.comparison-rank-track{height:9px;background:#e7edf5;border-radius:8px;overflow:hidden;margin-top:6px}
+.comparison-rank-fill{height:100%;border-radius:8px;background:#24639a}
+.comparison-rank-fill.decrease{background:#775bab}
+@media(max-width:650px){.comparison-controls label{flex-basis:100%}.comparison-controls input,.comparison-controls select,.comparison-controls button{width:100%;max-width:none}}
+.coverage-notice{margin:9px 0;padding:10px 14px;border:1px solid #cda872;border-radius:8px;background:transparent}
+.coverage-notice[hidden]{display:none}
+.coverage-notice p{margin:0 0 9px;overflow-wrap:anywhere}
+.coverage-notice button{max-width:100%;white-space:normal}
+.joined-pager{display:inline-flex;align-items:stretch;max-width:100%;border:1px solid #9eafc3;border-radius:8px;overflow:hidden;min-height:36px}
+.joined-pager button{border:0;border-radius:0;min-width:68px}
+.joined-pager button+output,.joined-pager output+button{border-left:1px solid #9eafc3}
+.joined-pager output{display:flex;align-items:center;justify-content:center;padding:4px 12px;white-space:nowrap;font-variant-numeric:tabular-nums;font-size:13px;min-width:91px}
+@media(max-width:500px){.joined-pager button{min-width:56px}.joined-pager output{min-width:77px;padding:4px 7px}}
+.daily-rollup-detail-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:12px 0 5px}
+.daily-rollup-detail-heading h4{margin:0;font-size:15px}
+#dailyRollupDetailPanel{border-top:1px solid #dce2e9;padding-top:9px;margin-top:12px}
+#dailyRollupDetailRows td{font-variant-numeric:tabular-nums}
+#dailyRollupRows button{font-size:13px;padding:7px 10px}
+#dailyRollupDetailPanel[hidden]{display:none}
+#dailySourceOverview{min-width:0;margin:14px 0 18px}
+#dailySourceOverview h4{font-size:15px;margin:12px 0 6px}
+#dailySourceOverview .timeline-chart svg{display:block;width:100%;height:auto;max-height:340px;border:1px solid #dce2e9;border-radius:8px;background:#fbfcfe}
+#dailySourceOverview .metric{min-width:0}
+#dailySourceDivisions{min-width:0;margin:15px 0}
+#dailySourceDivisions .table-scroll{max-width:100%}
+.daily-rollup-controls{min-width:0}
+.daily-rollup-controls input{min-width:0;max-width:185px}
+#sqlDailyRollups{padding-top:8px;min-width:0}
+#dailyRollupStatus{overflow-wrap:anywhere}
+#dailyRollupRows td{font-variant-numeric:tabular-nums}
+@media(max-width:650px){.daily-rollup-controls input,.daily-rollup-controls select{width:100%;max-width:none}.daily-rollup-controls label{flex-basis:100%}}
 .division-title{font-size:17px;margin:22px 0 10px}
 .division-track{width:100%;min-width:110px;height:12px;border-radius:6px;background:#e7edf5;overflow:hidden}
 .division-fill{height:100%;background:#346d9d;border-radius:6px}
 .division-fill.negative{background:#846d9d}
-.startup-controls{display:flex;flex-direction:column;align-items:flex-start;gap:7px;max-width:440px}
-.startup-label{display:flex;align-items:center;gap:9px;line-height:1.4}
+.division-share-track{height:6px;max-width:132px;min-width:82px;background:#e7edf5;border-radius:6px;overflow:hidden;margin-top:5px}
+.division-share-fill{height:100%;background:#346d9d;border-radius:6px}
+.division-share{white-space:nowrap;min-width:100px}
+.startup-controls{display:flex;flex-direction:row;align-items:center;justify-content:flex-end;gap:8px 12px;flex-wrap:wrap;max-width:none;flex:1}
+.startup-label{display:flex;align-items:center;gap:7px;line-height:1.35;font-size:13px}
 .startup-label input{margin:0;flex-shrink:0}
+.startup-controls .controls{margin:0;gap:6px}
+.startup-controls button{font-size:13px;padding:7px 10px}
+.startup-controls .status{font-size:12px;min-height:0}
+.startup-controls .intro{font-size:12px}
+#sqlStartupPreferenceStatus:empty{display:none}
+@media(max-width:780px){header{align-items:flex-start}.startup-controls{justify-content:flex-start;flex-basis:100%}}
+.workspace-nav{position:sticky;top:0;z-index:5;display:flex;gap:6px;flex-wrap:wrap;padding:10px max(22px,5vw);background:#fff;border-bottom:1px solid #dce2e9;box-shadow:0 2px 6px #21334a12}
+.workspace-nav a{padding:10px 14px;border-radius:9px;text-decoration:none;font-weight:600;color:#344c64;white-space:nowrap}
+.workspace-nav a[aria-current="page"]{color:#fff;background:#275d88}
+.workspace-nav a:focus-visible{outline:3px solid #74a8d5;outline-offset:2px}
+.nav-status{margin:0 0 6px;color:#53647a;font-size:12px}
+.panel,.overview-head,.storage-summary,.analytics-toolbar,.timeline-controls,.ranking-controls,.comparison-controls,[data-nav-panel]{min-width:0}
+.panel>section,.panel>.table-scroll,.analytics-toolbar>.controls{max-width:100%;min-width:0}
+.metric,.metric strong,.metric span,.status,.filter-scope,.action-context{min-width:0;overflow-wrap:anywhere}
+.controls>label,.analytics-toolbar .controls>details{min-width:0}
+#sqlDailyRollups .daily-rollup-controls input:is([type=date],[type=week],[type=month],[type=number]){max-width:min(185px,100%)}
+@media(max-width:600px){.startup-controls{min-width:0}.startup-controls a,.primary-action{overflow-wrap:anywhere}.daily-rollup-controls button{max-width:100%;white-space:normal}}
+
+
+.overview-head{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.overview-head h2{margin-bottom:4px}
+.overview-head .intro{margin:0 0 8px;max-width:750px}
+.primary-action{display:inline-flex;align-items:center;padding:10px 16px;border-radius:9px;background:#275d88;color:#fff;text-decoration:none;font-weight:650}
+.primary-action:hover{background:#1e4c70}
+.analytics-toolbar{padding:12px;border-radius:10px;background:#f3f6fa;border:1px solid #dde5ed;margin:8px 0 10px}
+.analytics-toolbar .controls{margin:3px 0}
+.analytics-toolbar label{font-size:13px;font-weight:600}
+.analytics-toolbar input:is([type=date],[type=week],[type=month]){width:157px;min-width:0}
+.analytics-toolbar details{position:relative}
+.analytics-toolbar summary{cursor:pointer;list-style-position:inside;border:1px solid #aab9cb;border-radius:8px;padding:8px 12px;background:#fff}
+.analytics-toolbar details[open] summary{background:#e6eef7}
+#analysisOrganizationChoices{display:flex;flex-wrap:wrap;gap:6px 14px;border:0;padding:4px 2px;margin:0;min-width:0}
+#analysisOrganizationChoices label{display:inline-flex;align-items:center;gap:5px;overflow-wrap:anywhere}
+.extra-filter-fields{display:flex;align-items:center;gap:10px;padding:10px 2px 3px}
+.work-filter-search{flex-wrap:wrap;max-width:min(100%,940px)}
+.work-filter-search input{flex:1 1 210px;min-width:0}
+.work-filter-search select{flex:1 1 220px;min-width:0}
+#analysisNameSelected{margin:8px 0;max-width:850px;overflow-wrap:anywhere}
+#analysisNameSelected li+li{margin-top:4px}
+#analysisNameSelected button{margin-inline-start:8px}
+#analysisNameStatus{max-width:850px;overflow-wrap:anywhere}
+
+.filter-scope{margin:4px 0 0;font-size:12px;line-height:1.5;color:#455d78}
+.action-context{margin:6px 0;font-size:13px;color:#455d78}
+.storage-overview .metric{background:#f6f8fb}
+.storage-overview .metric strong{font-size:20px}
+.storage-overview{margin:4px 0 8px}
+.storage-summary{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.storage-summary .status{flex:1;min-width:180px;margin:0}
+#analysisValues:empty{display:none}
+@media(min-width:1280px){.analytics-toolbar{position:sticky;top:60px;z-index:4;box-shadow:0 2px 8px #1c324a12}.analytics-toolbar:has(details[open]){position:static}}
+@media(max-width:650px){.overview-head{align-items:stretch}.primary-action{width:100%;justify-content:center}.analytics-toolbar input:is([type=date],[type=week],[type=month]){width:100%}.analytics-toolbar .controls{align-items:stretch}.analytics-toolbar .controls>label{flex-basis:100%}.analytics-toolbar details{width:100%}.analytics-toolbar details summary{width:100%}.extra-filter-fields{flex-direction:column;align-items:stretch}.extra-filter-fields select{width:100%}}
+[data-nav-panel][hidden]{display:none!important}
+@media(max-width:650px){.workspace-nav{flex-wrap:nowrap;overflow-x:auto;padding:9px 10px;gap:4px}.workspace-nav a{font-size:13px;padding:10px}.nav-status{padding:0 5px}}
+@media print {
+ header,.native-navigation,.analytics-toolbar,.controls,.timeline-controls,button,input,select,summary,#workspaceRefresh{display:none!important}
+ [hidden]{display:none!important}main{max-width:none;padding:0}.panel{border:0;box-shadow:none;padding:8px 0;break-inside:auto}
+ .table-scroll{overflow:visible!important;max-height:none!important}table{min-width:0!important;font-size:10pt}
+ td,th{overflow-wrap:anywhere;white-space:normal}.timeline-chart{break-inside:avoid}.status,.filter-scope,.action-context{color:#000}
+}
 </style>
 </head>
 <body>
 <header>
-<div><h1>Анализ работ · SQL-режим</h1><div class="intro">SQLite без загрузки полной истории в JavaScript</div></div>
+<div><h1>Анализ работ</h1><div class="intro">Аналитика, отчёты и Excel · локальные данные SQLite</div></div>
 <div class="startup-controls">
   <label class="startup-label" for="sqlStartupPreference"><input id="sqlStartupPreference" type="checkbox"> Открывать SQL-режим при запуске программы</label>
   <span id="sqlStartupPreferenceStatus" class="intro" role="status" aria-live="polite"></span>
-  <a id="legacyWorkspaceLink" href="index.html">Классический интерфейс и импорт Excel</a>
+  <a id="legacyWorkspaceLink" href="index.html">Дополнительные возможности классического интерфейса</a>
   <div class="controls" aria-label="Онлайн-обновления Tauri">
     <button type="button" id="sqlUpdateCheck">Проверить обновления</button>
     <button type="button" id="sqlUpdateNotes" hidden>Что нового</button>
@@ -48,17 +196,219 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
   <h2>Что изменилось</h2><div id="sqlUpdateNotesText" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:65vh;overflow:auto"></div>
   <button type="button" id="sqlUpdateClose">Закрыть</button>
 </dialog>
+<nav class="workspace-nav" aria-label="Разделы программы">
+  <a href="#analysis" data-nav-link="analysis">Аналитика</a>
+  <a href="#reports" data-nav-link="reports">Отчёты</a>
+  <a href="#groups" data-nav-link="groups">Группы работ</a>
+  <a href="#excel" data-nav-link="excel">Excel и импорт</a>
+  <a href="#metrics" data-nav-link="metrics">Другие показатели</a>
+  <a href="#backup" data-nav-link="backup">База и резервные копии</a>
+</nav>
 <main>
-<section class="panel" aria-label="Сводка SQLite">
-<h2>Состояние данных</h2>
-<p class="intro">SQL-режим: постраничный просмотр отчётов и групп, аналитика по периодам и подразделениям, CSV и резервная копия SQLite. Некоторые варианты импорта, графики и настройки пока доступны в классическом интерфейсе.</p>
-<div class="overview">
+<p class="nav-status" id="nativeViewStatus" role="status" aria-live="polite"></p>
+<div id="sqlMain" data-nav-panel="analysis">
+<div class="analytics-toolbar" aria-label="Фильтры и расчёт аналитики">
+<div class="controls">
+<label for="analysisSource">Источник расчёта</label>
+<select id="analysisSource"><option value="imported">Отчёты выбранного типа</option><option value="daily">Только дневные отчёты</option></select>
+<label for="analysisType">Период</label>
+<select id="analysisType"><option value="day">Дни</option><option value="week">Недели</option><option value="month">Месяцы</option><option value="year" id="analysisYearOption" disabled>Год</option></select>
+<label for="analysisFrom">С</label><input type="date" id="analysisFrom">
+<label for="analysisTo">По</label><input type="date" id="analysisTo">
+<span id="analysisPeriodHelp" class="intro">Выбирайте даты в календаре.</span>
+<details id="analysisMoreFilters">
+<summary>Ещё фильтры</summary>
+<div class="extra-filter-fields"><label for="analysisOrganization">Подразделение</label>
+<select id="analysisOrganization"><option value="*">Все из настроек</option></select></div>
+<fieldset id="analysisOrganizationChoices" disabled><legend>Выбрать несколько подразделений</legend></fieldset>
+<div class="extra-filter-fields work-filter-search">
+<label for="analysisNameSearch">Найти работу / группу</label>
+<input id="analysisNameSearch" type="search" maxlength="128" placeholder="Часть точного названия" autocomplete="off">
+<button type="button" id="analysisNameSearchRun">Найти</button>
+<label for="analysisName">Результаты поиска работ и групп</label>
+<select id="analysisName"><option value="">Выберите название</option></select>
+<button type="button" id="analysisNameAdd">Добавить</button>
+<button type="button" id="analysisNameReset">Очистить выбор</button>
+</div>
+<ul id="analysisNameSelected" aria-label="Выбранные работы и группы" hidden></ul>
+<p id="analysisNameStatus" class="filter-scope" role="status" aria-live="polite">Найдите нужную работу или группу. До выбора применяются все позиции.</p>
+</details>
+<button id="analysisPrepare" type="button">Подготовить индексы</button>
+<button id="analysisCancel" type="button" disabled>Остановить</button>
+<button id="analysisRun" type="button" disabled>Рассчитать</button>
+</div>
+<p id="analysisFilterScope" class="filter-scope" role="status" aria-live="polite">Фильтры: все подразделения. Работы и группы: весь набор.</p>
+</div>
+<section class="panel" id="sqlOverview" aria-label="Сводка SQLite">
+<div class="overview-head">
+<div><h2>Аналитика</h2><p class="intro">Выберите период и рассчитайте показатели SQLite. Никакой полной загрузки истории в WebView.</p></div>
+<a class="primary-action" href="#excel">Выбрать Excel</a>
+</div>
+
+<p id="analysisStatus" class="status muted" role="status" aria-live="polite">Подготовка не выполнена.</p>
+<div id="analysisCoverageNotice" class="coverage-notice" hidden aria-label="Неполные данные или замечания к отчётам">
+<p id="analysisCoverageText" role="status"></p>
+<button type="button" id="analysisAcknowledge">Подтвердить, предупреждение мне известно</button>
+</div>
+<div id="analysisValues" class="overview" aria-live="polite"></div>
+<div class="overview storage-overview" aria-label="Состояние базы данных">
 <div class="metric"><strong id="metricReports">—</strong><span>Отчётов в SQLite</span></div>
 <div class="metric"><strong id="metricIndexed">—</strong><span>Индексированных отчётов</span></div>
 <div class="metric"><strong id="metricGroups">—</strong><span>Групп</span></div>
-<div class="metric"><strong id="metricCatalog">—</strong><span>Позиций справочника</span></div></div>
-<p id="workspaceStatus" class="status muted" role="status" aria-live="polite">Открытие SQL-режима…</p>
+<div class="metric"><strong id="metricCatalog">—</strong><span>Позиций справочника</span></div>
+</div>
+<div class="storage-summary">
+<p id="workspaceStatus" class="status muted" role="status" aria-live="polite">Открытие данных…</p>
 <button id="workspaceRefresh" type="button">Обновить данные</button>
+</div>
+</section>
+<section class="panel" id="sqlAnalysis" aria-label="Аналитика SQL">
+<h2>Анализ периодов через SQLite</h2>
+<p class="intro">Нативный расчёт с проверкой полноты. Сначала подготовьте индексы выбранного типа (не более 20 отчётов за запрос). Обрабатываются только исходные отчёты в SQLite, полная история не загружается в браузер. Подготовку можно остановить после текущей порции.</p>
+<p id="analysisResultScope" class="action-context">После расчёта здесь появятся подтверждённые данные. Действующие фильтры будут указаны отдельно.</p>
+<label class="period-visibility"><input type="checkbox" id="hideEmptyPeriods"> Скрывать пустые периоды на графиках и в их таблицах</label>
+<p class="intro">Скрываются только периоды с подтверждёнными нулевыми количеством и суммой. Пропуски остаются видимыми. Итоги и CSV не меняются.</p>
+<section id="sqlTimeline" aria-label="График динамики">
+<h3 class="division-title">Динамика по периодам</h3>
+<p class="intro">График использует агрегаты SQLite для выбранных дат и подразделений. Пропуски не заменяются нулём; длинные диапазоны объединяются по календарным месяцам.</p>
+<div class="timeline-controls">
+<label for="timelineMetric">Показатель</label>
+<select id="timelineMetric"><option value="amount">Сумма</option><option value="count">Количество / объём</option></select>
+<label for="timelineMode">Вид</label>
+<select id="timelineMode"><option value="line">Линия</option><option value="bar">Столбцы</option></select>
+</div>
+<p id="timelineStatus" class="status muted" role="status" aria-live="polite">График появится после расчёта.</p>
+<div id="timelineChart" class="timeline-chart"></div>
+<details class="timeline-table"><summary>Точные значения графика</summary>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
+<thead><tr><th>Период</th><th>Исходных периодов</th><th>Пропусков</th><th>Количество / объём</th><th>Сумма</th></tr></thead>
+<tbody id="timelineRows"></tbody>
+</table></div>
+</details>
+</section>
+<section id="sqlOrganizationTrends" aria-label="Динамика подразделений">
+<h3 class="division-title">Динамика по подразделениям</h3>
+<p class="intro">До восьми подразделений на одном графике, в порядке настроек. Полнота проверяется для каждого подразделения и периода отдельно; пропуски разрывают соответствующую линию. Если подразделений больше восьми, ограничение показывается явно.</p>
+<div class="timeline-controls">
+<label for="organizationTrendsMetric">Показатель</label>
+<select id="organizationTrendsMetric"><option value="amount">Сумма</option><option value="count">Количество / объём</option></select>
+</div>
+<p id="organizationTrendsStatus" class="status muted" role="status" aria-live="polite">Динамика появится после расчёта.</p>
+<div id="organizationTrendsLegend" class="organization-trends-legend" aria-label="Условные обозначения подразделений"></div>
+<div id="organizationTrendsChart"></div>
+<details class="organization-trends-details"><summary>Точные значения по подразделениям и периодам</summary>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
+<thead><tr><th>Подразделение</th><th>Период</th><th>Исходных периодов</th><th>Пропусков</th><th>Количество / объём</th><th>Сумма</th></tr></thead>
+<tbody id="organizationTrendsRows"></tbody>
+</table></div>
+</details>
+</section>
+<h3 class="division-title">Сравнение подразделений</h3>
+<p class="intro">Сравнение использует выбранные тип, диапазон и подразделения. Неполные данные не превращаются в ноль.</p>
+<p id="divisionStatus" class="status muted" role="status" aria-live="polite">После расчёта здесь появятся результаты по подразделениям.</p>
+<p id="divisionShareStatus" class="filter-scope" role="status" aria-live="polite">Доли появятся только при полном подтверждённом ряде с положительной общей суммой.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
+<thead><tr><th>Подразделение</th><th>Полнота</th><th>Пропусков</th><th>Количество / объём</th><th>Сумма</th><th>Относительная сумма</th><th>Доля выбранной суммы</th></tr></thead>
+<tbody id="divisionRows"></tbody>
+</table></div>
+<section id="sqlRanking" aria-label="Рейтинг работ и групп">
+<h3 class="division-title">Крупнейшие работы и группы</h3>
+<p class="intro">До 12 позиций с наибольшим по модулю значением. Отрицательные значения не скрываются. Рейтинг доступен только для полностью подтверждённого диапазона и вычисляется в SQLite по всем работам, а не по текущей странице таблицы.</p>
+<div class="ranking-controls">
+<label for="rankingMetric">Показатель</label>
+<select id="rankingMetric"><option value="amount">Сумма</option><option value="count">Количество / объём</option></select>
+<label for="rankingCategory">Позиции</label>
+<select id="rankingCategory"><option value="all">Все</option><option value="work">Работы</option><option value="group">Группы</option></select>
+</div>
+<p id="rankingStatus" class="status muted" role="status" aria-live="polite">Рейтинг появится после расчёта.</p>
+<ol id="rankingBars" class="ranking-list"></ol>
+</section>
+<h3 class="division-title">Группы и отдельные работы</h3>
+<p class="intro">Расшифровка: не более 50 строк на странице. CSV экспортирует весь выбранный диапазон, а не только видимые строки. Подразделение выбирается в «Ещё фильтры».</p>
+<div class="controls">
+<button id="analysisPrint" type="button" disabled>Печать / PDF текущего анализа</button>
+<button id="analysisExport" type="button" disabled>Скачать CSV по выбранному диапазону</button>
+<div class="joined-pager" aria-label="Страницы расшифровки"><button id="workBack" type="button" aria-label="Предыдущая страница работ" disabled>Назад</button><output id="workPageInfo" aria-live="polite">Страница 1</output><button id="workNext" type="button" aria-label="Следующая страница работ" disabled>Далее</button></div>
+</div>
+<p id="exportStatus" class="status muted" role="status" aria-live="polite">Экспорт доступен после расчёта. CSV сохраняется в новый файл.</p>
+<p id="workStatus" class="status muted" role="status" aria-live="polite">Расшифровка появится после расчёта.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
+<thead><tr><th>Группа / работа</th><th>Тип</th><th>Количество / объём</th><th>Сумма</th><th>Среднее</th><th>Активна</th><th>Динамика</th></tr></thead>
+<tbody id="workRows"></tbody>
+</table></div>
+<section id="sqlWorkTrends" aria-label="Динамика выбранной работы или группы">
+<h3 class="division-title">Динамика выбранной работы или группы</h3>
+<p class="intro">Нажмите «График» у любой позиции в расшифровке. Показаны все периоды выбранного диапазона, а не только видимые строки таблицы. Отсутствие позиции в подтверждённом отчёте — ноль; пропуск самого отчёта — неизвестное значение.</p>
+<p id="workTrendSelected" class="work-trend-heading">Позиция не выбрана.</p>
+<div class="timeline-controls">
+<label for="workTrendMetric">Показатель</label>
+<select id="workTrendMetric" disabled><option value="amount">Сумма</option><option value="count">Количество / объём</option></select>
+</div>
+<p id="workTrendStatus" class="status muted" role="status" aria-live="polite">Выберите работу или группу из таблицы выше.</p>
+<div id="workTrendChart" class="work-trend-chart"></div>
+<details class="work-trend-details"><summary>Точные значения выбранной позиции</summary>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
+<thead><tr><th>Период</th><th>Исходных периодов</th><th>Пропусков отчётов</th><th>Количество / объём</th><th>Сумма</th></tr></thead>
+<tbody id="workTrendRows"></tbody>
+</table></div>
+</details>
+</section>
+
+
+
+<section id="sqlComparison" aria-label="Изменения между периодами">
+<h3 class="division-title">Изменения между двумя диапазонами</h3>
+<p class="intro">Укажите базовый период. Для сравнения используется текущий рассчитанный диапазон, его тип периода и подразделения. Проценты при нулевой базе не вычисляются. Повышение и снижение — направления изменения, не оценка качества.</p>
+<div class="comparison-controls">
+<label for="comparisonBeforeFrom">Базовый: с</label><input type="date" id="comparisonBeforeFrom">
+<label for="comparisonBeforeTo">По</label><input type="date" id="comparisonBeforeTo">
+<button id="comparisonRun" type="button" disabled>Сравнить периоды</button>
+</div>
+<p id="comparisonCurrentContext" class="filter-scope">Текущий диапазон появится после расчёта аналитики.</p>
+<p id="comparisonStatus" class="status muted" role="status" aria-live="polite">Укажите базовые даты, затем рассчитайте и сравните периоды.</p>
+<div id="comparisonMetrics" class="comparison-metrics" aria-label="Итоговые изменения"></div>
+<h4>Изменения по подразделениям</h4>
+<p class="intro">Если данные подразделения неполные хотя бы в одном диапазоне, изменения для него показываются как «—».</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
+<thead><tr><th>Подразделение</th><th>Сумма: было</th><th>Стало</th><th>Изменение суммы</th><th>Изменение количества / объёма</th></tr></thead>
+<tbody id="comparisonDivisionRows"></tbody>
+</table></div>
+<h4>Крупнейшие изменения работ и групп</h4>
+<div class="comparison-controls">
+<label for="comparisonRankMetric">Показатель</label>
+<select id="comparisonRankMetric"><option value="amount">Сумма</option><option value="count">Количество / объём</option></select>
+</div>
+<p id="comparisonRankStatus" class="status muted" role="status" aria-live="polite">Подборка появится после подтверждения обоих диапазонов.</p>
+<ol id="comparisonRankRows" class="comparison-ranks"></ol>
+</section>
+
+<section aria-labelledby="advancedTitle">
+<h3 id="advancedTitle" class="division-title">Анализ работ по периодам</h3>
+<div class="controls">
+<label>Анализ <select id="advancedMode"><option value="changes">Изменения по подразделениям</option><option value="usual">Сравнение с обычным уровнем</option><option value="regularity">Регулярность выполнения</option><option value="structure">Структура работ и групп</option><option value="contributions">Вклад работ в общее изменение</option></select></label>
+<label id="advancedMethodLabel">Пары периодов <select id="advancedMethod"><option value="previous">Последний и предыдущий</option><option value="range">Соседние в диапазоне</option></select></label>
+<label id="advancedWindowLabel" hidden><span id="advancedWindowTitle">Базовых периодов</span> <select id="advancedWindow"><option>4</option><option>8</option></select></label>
+<label id="advancedPercentLabel">Порог, % <input type="number" min="0" step="any" id="advancedPercent" value="30"></label>
+<label id="advancedCountLabel">Мин. изменение количества / объёма <input type="number" min="0" step="any" id="advancedCount" value="1"></label>
+<label id="advancedAmountLabel">Мин. изменение суммы <input type="number" min="0" step="any" id="advancedAmount" value="1"></label>
+<label id="advancedMetricLabel">Показатель <select id="advancedMetric"><option value="amount">Сумма</option><option value="count">Количество / объём</option><option value="average">Средняя сумма на единицу</option></select></label>
+<button type="button" id="advancedRun" disabled>Рассчитать анализ</button>
+<button type="button" id="advancedExport" disabled>Сохранить все изменения в CSV</button>
+</div>
+<p id="advancedBaselineHelp" hidden>Базовые даты задаются выше в разделе «Изменения между двумя диапазонами». Используются тот же источник и те же подразделения.</p>
+<p id="advancedContext" class="filter-scope"></p>
+<p id="advancedStatus" role="status" class="status muted">Сначала рассчитайте диапазон.</p>
+<div class="table-scroll" role="region" aria-label="Результат анализа по периодам" tabindex="0"><table><thead id="advancedHead"></thead><tbody id="advancedRows"></tbody></table></div>
+<p id="advancedPage" class="filter-scope"></p>
+<div class="controls"><button id="advancedPrev" type="button" disabled>Назад</button><button id="advancedNext" type="button" disabled>Далее</button></div>
+</section>
+<p class="intro" id="analysisUnitsNote">Единицы измерения не определяются по названиям столбцов: дробное «количество» может означать объём, а «сумма» не обязательно указана в рублях. Сравнивайте средние только при сопоставимых единицах исходных отчётов.</p>
+<p class="intro">Когда отсутствуют периоды, итоговые сумма и количество не показываются как ноль. Группы, совпадающие даты и ошибки проверяются по правилам D2; это не простая сумма всех строк.</p>
+</section>
+
+</div>
+<section class="panel" id="sqlBackup" data-nav-panel="backup" aria-label="Резервное копирование SQLite">
+<h2>База данных и резервные копии</h2>
 <div class="controls">
 <button id="backupSqlite" type="button">Сохранить резервную копию SQLite</button>
 </div>
@@ -75,67 +425,160 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p id="restoreStatus" class="status muted" role="status" aria-live="polite">Рабочая база не изменяется.</p>
 <p class="intro">Переключение рабочей базы доступно только после явного подтверждения. Приложение сохранит две защитные копии прежних данных и выполнит замену до открытия SQLite при следующем запуске. После подтверждения полностью закройте программу и откройте снова. Если проверка или безопасное переключение не удастся, приложение не начнёт работать с сомнительными данными.</p>
 </section>
-<section class="panel" aria-label="Отчёты SQL">
+<section class="panel" id="sqlReports" data-nav-panel="reports" aria-label="Отчёты SQL">
 <h2>Отчёты</h2><div class="controls"><label for="nativeReportType">Периоды</label>
 <select id="nativeReportType"><option value="">Все</option><option value="day">Дни</option><option value="week">Недели</option><option value="month">Месяцы</option></select>
-<button id="reportBack" type="button" disabled>Назад</button><button id="reportNext" type="button" disabled>Далее</button></div>
+<div class="joined-pager" aria-label="Страницы отчётов"><button id="reportBack" type="button" aria-label="Предыдущая страница отчётов" disabled>Назад</button><output id="reportPageInfo" aria-live="polite">Страница 1</output><button id="reportNext" type="button" aria-label="Следующая страница отчётов" disabled>Далее</button></div></div>
 <p id="reportStatus" class="status muted" role="status" aria-live="polite"></p>
-<div class="table-scroll"><table><thead><tr><th>Начало</th><th>Конец</th><th>Тип</th><th>Источник</th><th>Идентификатор</th></tr></thead><tbody id="reportRows"></tbody></table></div>
+<p id="managementReportStatus" class="status muted" role="status" aria-live="polite"></p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table><thead><tr><th>Начало</th><th>Конец</th><th>Тип</th><th>Источник</th><th>Идентификатор</th><th>Действия</th></tr></thead><tbody id="reportRows"></tbody></table></div>
+<dialog id="reportQualityDialog" aria-labelledby="reportQualityTitle">
+<h2 id="reportQualityTitle">Сохранённые замечания</h2>
+<p id="reportQualityContext" class="intro"></p>
+<div class="controls">
+<button id="reportQualityClose" type="button" autofocus>Закрыть</button>
+<button id="reportQualityLocal" type="button" aria-pressed="true" hidden>Отчёт</button>
+<button id="reportQualitySource" type="button" aria-pressed="false" hidden>Общие замечания источника</button>
+</div>
+<p id="reportQualityAnchor" class="intro" hidden></p>
+<p id="reportQualityStatus" class="status muted" role="status" aria-live="polite"></p>
+<div id="reportQualityTable" class="table-scroll" tabindex="0" role="region" aria-label="Сохранённые замечания с ячейками Excel" hidden>
+<table><thead><tr><th scope="col">Тип</th><th scope="col">Причина</th><th scope="col">Лист</th><th scope="col">Подразделение</th><th scope="col">Строка</th><th scope="col">Дата</th><th scope="col">Ячейки Excel</th></tr></thead><tbody id="reportQualityRows"></tbody></table>
+</div>
+<div id="reportQualityPager" class="controls" hidden>
+<button id="reportQualityBack" type="button" aria-label="Предыдущая страница замечаний">Назад</button>
+<output id="reportQualityPage" aria-live="polite"></output>
+<button id="reportQualityNext" type="button" aria-label="Следующая страница замечаний">Далее</button>
+</div>
+</dialog>
+<section id="sqlDailyRollups" aria-label="Календарные сводки из дневных отчётов">
+<h3 class="division-title">Календарные сводки из дневных отчётов</h3>
+<p class="intro">Дни, недели, месяцы и годы рассчитываются из исходных дневных отчётов SQLite. Отдельно загруженные недельные и месячные источники сюда не прибавляются. Пропущенные дни показываются отдельно; суммы неполных периодов относятся только к имеющимся данным.</p>
+<div class="daily-rollup-controls controls">
+<label for="dailyRollupGranularity">Сводка по</label>
+<select id="dailyRollupGranularity"><option value="day">Дням</option><option value="week">Неделям</option><option value="month">Месяцам</option><option value="year">Годам</option></select>
+<label for="dailyRollupFrom">С</label><input type="date" id="dailyRollupFrom">
+<label for="dailyRollupTo">По</label><input type="date" id="dailyRollupTo">
+<button id="dailyRollupPeriodBack" type="button" disabled>← Предыдущий период</button>
+<button id="dailyRollupPeriodNext" type="button" disabled>Следующий период →</button>
+<button id="dailyRollupPrepare" type="button" disabled>Подготовить дневные индексы</button>
+<button id="dailyRollupRun" type="button" disabled>Рассчитать сводку</button>
+</div>
+<p id="dailyRollupScope" class="filter-scope">Используются подразделения из фильтра аналитики.</p>
+<p id="dailyRollupStatus" class="status muted" role="status" aria-live="polite">Выберите даты и подготовьте индексы дневных отчётов.</p>
+<section id="dailySourceOverview" aria-label="KPI и динамика из дневных отчётов">
+<h4>Показатели и динамика по дневным отчётам</h4>
+<p class="intro">Итоги и график используют одни даты, подразделения и только дневной источник SQLite. Отдельно загруженные недельные и месячные отчёты не прибавляются. При неполном охвате видимые суммы относятся только к имеющимся данным.</p>
+<div id="dailySourceKpis" class="comparison-metrics" aria-live="polite"></div>
+<div class="timeline-controls">
+<label for="dailySourceMetric">Показатель графика</label>
+<select id="dailySourceMetric"><option value="amount">Сумма</option><option value="count">Количество / объём</option></select>
+</div>
+<p id="dailySourceStatus" class="status muted" role="status" aria-live="polite">Показатели появятся после расчёта календаря.</p>
+<div id="dailySourceChart" class="timeline-chart"></div>
+<section id="dailySourceDivisions" aria-label="Подразделения из дневных отчётов">
+<h4>Подразделения по дневному источнику</h4>
+<p class="intro">Сумма и количество каждого подразделения показываются только при полном наличии его дневных отчётов. Неполный период не превращается в ноль.</p>
+<p id="dailySourceDivisionStatus" class="status muted" role="status" aria-live="polite">Сравнение подразделений появится после расчёта календаря.</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
+<thead><tr><th>Подразделение</th><th>Пропущенных дней</th><th>Количество / объём</th><th>Сумма</th><th>Полнота</th></tr></thead>
+<tbody id="dailySourceDivisionRows"></tbody>
+</table></div>
 </section>
-<section class="panel" aria-label="Группы SQL">
-<h2>Сохранённые группы</h2>
-<p class="intro">Название можно изменить без перезаписи отчётов. Изменение сохраняется транзакционно с проверкой версии базы. Содержимое групп пока доступно в полном интерфейсе.</p>
-<div class="controls"><button id="groupBack" type="button" disabled>Назад</button><button id="groupNext" type="button" disabled>Далее</button></div>
+<details><summary>Точные значения динамики из дневного источника</summary>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
+<thead><tr><th>Период</th><th>Календарных дней</th><th>Пропусков по подразделениям</th><th>Количество / объём</th><th>Сумма</th></tr></thead>
+<tbody id="dailySourceRows"></tbody>
+</table></div>
+</details>
+</section>
+<div class="joined-pager" aria-label="Страницы календарной сводки">
+<button id="dailyRollupBack" type="button" disabled>Назад</button>
+<output id="dailyRollupPageInfo" aria-live="polite">Страница 1</output>
+<button id="dailyRollupNext" type="button" disabled>Далее</button>
+</div>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
+<thead><tr><th>Период</th><th>Календарных дней</th><th>Имеющихся отчётов</th><th>Пропусков</th><th>Количество / объём</th><th>Сумма</th><th>Охват</th><th>Дни</th></tr></thead>
+<tbody id="dailyRollupRows"></tbody>
+</table></div>
+<section id="dailyRollupDetailPanel" hidden aria-label="Дневная детализация календарного периода">
+<div class="daily-rollup-detail-heading">
+<h4 id="dailyRollupDetailTitle">Детализация по дням</h4>
+<button id="dailyRollupDetailClose" type="button">Закрыть детализацию</button>
+</div>
+<p id="dailyRollupDetailStatus" role="status" aria-live="polite" class="status muted"></p>
+<div class="joined-pager" aria-label="Страницы детализации по дням">
+<button id="dailyRollupDetailBack" type="button" disabled>Назад</button>
+<output id="dailyRollupDetailPage" aria-live="polite">Страница 1</output>
+<button id="dailyRollupDetailNext" type="button" disabled>Далее</button>
+</div>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
+<thead><tr><th>Дата</th><th>Дневных отчётов</th><th>Пропущено</th><th>Количество / объём</th><th>Сумма</th><th>Охват</th></tr></thead>
+<tbody id="dailyRollupDetailRows"></tbody>
+</table></div>
+</section>
+</section>
+</section>
+<section class="panel" id="sqlGroups" data-nav-panel="groups" aria-label="Группы SQL">
+<h2>Группы работ и справочник</h2>
+<p class="intro">Группы, их состав и справочник сохраняются в SQLite с проверкой ревизии.</p>
+<form id="managementGroupForm" class="controls">
+<label for="managementGroupName">Название новой группы</label>
+<input id="managementGroupName" type="text" maxlength="1024" required>
+<button id="managementGroupCreate" type="submit" disabled>Создать группу</button>
+</form>
+<p id="managementStatus" role="status" aria-live="polite" class="status muted"></p>
+<div class="controls"><div class="joined-pager" aria-label="Страницы групп"><button id="groupBack" type="button" aria-label="Предыдущая страница групп" disabled>Назад</button><output id="groupPageInfo" aria-live="polite">Страница 1</output><button id="groupNext" type="button" aria-label="Следующая страница групп" disabled>Далее</button></div></div>
 <p id="groupStatus" class="status muted" role="status" aria-live="polite"></p>
-<div class="table-scroll"><table><thead><tr><th>ID группы</th><th>Название</th><th>Работ</th><th>Действие</th></tr></thead><tbody id="groupRows"></tbody></table></div>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table><thead><tr><th>ID группы</th><th>Название</th><th>Работ</th><th>Действие</th></tr></thead><tbody id="groupRows"></tbody></table></div>
+<section id="managementMembers" aria-labelledby="managementMemberTitle" hidden>
+<div class="controls">
+<h3 id="managementMemberTitle" tabindex="-1">Состав группы</h3>
+<button id="managementMemberClose" type="button">Закрыть состав</button>
+</div>
+<form id="managementMemberForm" class="controls">
+<label for="managementMemberName">Точное название работы</label>
+<input id="managementMemberName" type="text" maxlength="65536" required>
+<button id="managementMemberAdd" type="submit" disabled>Добавить работу</button>
+</form>
+<p id="managementMemberStatus" role="status" aria-live="polite" class="status muted"></p>
+<div class="joined-pager" aria-label="Страницы состава группы">
+<button id="managementMemberBack" type="button" disabled>Назад</button>
+<output id="managementMemberPage" aria-live="polite">Страница 1</output>
+<button id="managementMemberNext" type="button" disabled>Далее</button>
+</div>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Состав группы">
+<table><thead><tr><th scope="col">Работа</th><th scope="col">Действия</th></tr></thead><tbody id="managementMemberRows"></tbody></table>
+</div>
 </section>
 
-<section class="panel" aria-label="Аналитика SQL">
-<h2>Анализ периодов через SQLite</h2>
-<p class="intro">Нативный расчёт с проверкой полноты. Сначала подготовьте индексы выбранного типа (не более 20 отчётов за запрос). Обрабатываются только исходные отчёты в SQLite, полная история не загружается в браузер. Подготовку можно остановить после текущей порции.</p>
-<div class="controls">
-<label for="analysisType">Тип периода</label>
-<select id="analysisType"><option value="day">Дни</option><option value="week">Недели</option><option value="month">Месяцы</option></select>
-<label for="analysisFrom">С</label><input type="date" id="analysisFrom">
-<label for="analysisTo">По</label><input type="date" id="analysisTo">
-<label for="analysisOrganization">Подразделение</label>
-<select id="analysisOrganization"><option value="*">Все из настроек</option></select>
+<details id="managementCatalog">
+<summary>Справочник услуг</summary>
+<form id="managementCatalogForm" class="controls">
+<label for="managementCatalogWork">Название работы</label>
+<input id="managementCatalogWork" type="text" maxlength="65536" required>
+<label for="managementCatalogOrganization">Подразделение (необязательно)</label>
+<input id="managementCatalogOrganization" type="text" maxlength="65536">
+<button id="managementCatalogSave" type="submit" disabled>Добавить в справочник</button>
+<button id="managementCatalogCancel" type="button" hidden>Отменить редактирование</button>
+</form>
+<p id="managementCatalogStatus" role="status" aria-live="polite" class="status muted"></p>
+<div class="joined-pager" aria-label="Страницы справочника">
+<button id="managementCatalogBack" type="button" disabled>Назад</button>
+<output id="managementCatalogPage" aria-live="polite">Страница 1</output>
+<button id="managementCatalogNext" type="button" disabled>Далее</button>
 </div>
-<div class="controls">
-<button id="analysisPrepare" type="button">Подготовить индексы</button>
-<button id="analysisCancel" type="button" disabled>Остановить</button>
-<button id="analysisRun" type="button" disabled>Рассчитать</button>
-<button id="analysisExport" type="button" disabled>Экспорт CSV</button>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Справочник услуг">
+<table><thead><tr><th scope="col">Работа</th><th scope="col">Подразделение</th><th scope="col">Действия</th></tr></thead><tbody id="managementCatalogRows"></tbody></table>
 </div>
-<p id="analysisStatus" class="status muted" role="status" aria-live="polite">Подготовка не выполнена.</p>
-<p id="exportStatus" class="status muted" role="status" aria-live="polite">Экспорт доступен после расчёта. CSV сохраняется в новый файл без замены существующего.</p>
-<div id="analysisValues" class="overview" aria-live="polite"></div>
-<h3 class="division-title">Сравнение подразделений</h3>
-<p class="intro">Положительные суммы показаны синим, отрицательные — фиолетовым. При отсутствии полного ряда сумма и количество скрываются, а пропуски остаются видимыми.</p>
-<p id="divisionStatus" class="status muted" role="status" aria-live="polite">После расчёта здесь появятся результаты по подразделениям.</p>
-<div class="table-scroll"><table>
-<thead><tr><th>Подразделение</th><th>Полнота</th><th>Пропусков</th><th>Количество</th><th>Сумма</th><th>Относительная сумма</th></tr></thead>
-<tbody id="divisionRows"></tbody>
-</table></div>
-<h3 class="division-title">Группы и отдельные работы</h3>
-<p class="intro">Расшифровка выбранного периода: не более 50 строк за запрос в порядке ключей SQLite. Чтобы показать только одно подразделение, выберите его выше и повторите расчёт.</p>
-<div class="controls">
-<button id="workBack" type="button" disabled>Назад</button>
-<button id="workNext" type="button" disabled>Далее</button>
-</div>
-<p id="workStatus" class="status muted" role="status" aria-live="polite">Расшифровка появится после расчёта.</p>
-<div class="table-scroll"><table>
-<thead><tr><th>Группа / работа</th><th>Тип</th><th>Количество</th><th>Сумма</th><th>Среднее</th><th>Активна</th></tr></thead>
-<tbody id="workRows"></tbody>
-</table></div>
-
-
-<p class="intro">Когда отсутствуют периоды, итоговые сумма и количество не показываются как ноль. Группы, совпадающие даты и ошибки проверяются по правилам D2; это не простая сумма всех строк.</p>
+</details>
 </section>
 
-<section class="panel" aria-label="Источники Excel в SQL">
+<section class="panel" id="sqlSources" data-nav-panel="excel" aria-label="Источники Excel в SQL">
 <h2>Папка Excel</h2>
-<p class="intro">Просмотр метаданных XLSX без чтения самих книг и загрузки истории отчётов в JavaScript. Обнаружение изменений в этой панели не означает импорт. Настройка простых правил доступна здесь, а автоматический импорт и расширенные сопоставления Excel пока остаются в классическом интерфейсе.</p>
+<label><input type="checkbox" id="sourceAutoImport"> Автоматически добавлять новые проверенные отчёты в этом сеансе</label>
+<p id="sourceAutoStatus" class="status muted" role="status" aria-live="polite">По умолчанию выключено. Замены, неоднозначные файлы и замечания требуют ручной проверки.</p>
+<p class="intro">Просмотр метаданных XLSX без чтения самих книг и загрузки истории отчётов в JavaScript. Обнаружение изменений в этой панели не означает импорт. Настройка простых правил доступна здесь, автоматическое добавление новых проверенных отчётов включается отдельно на текущий сеанс.</p>
 <div class="controls">
 <button id="sourceFolderChoose" type="button">Выбрать папку Excel</button>
 <button id="sourceFolderRefresh" type="button">Проверить файлы</button>
@@ -165,15 +608,23 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
   <button id="sourceRuleSave" type="button" disabled>Сохранить правило</button>
 </div>
 <p id="sourceRuleStatus" class="status muted" role="status" aria-live="polite">
-  Выберите файл и настройте его формат. Импорт данных выполняется отдельно с предпросмотром.
+  Выберите файл и настройте его формат.
 </p>
-<div class="table-scroll"><table><thead><tr><th>Файл</th><th>Размер</th><th>Правило импорта</th><th>Действие</th></tr></thead>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table><thead><tr><th>Файл</th><th>Размер</th><th>Правило импорта</th><th>Действие</th></tr></thead>
 <tbody id="sourceFolderRows"></tbody></table></div>
-<p class="intro">Правила сохраняются в SQLite с проверкой ревизии, имени исходной папки и состояния файла. Сохранение правила само по себе не импортирует Excel. Изменение правил может повлиять на автоматический импорт, если одновременно открыт классический интерфейс. Расширенные сопоставления столбцов пока редактируются там же.</p>
+<p class="intro">Правила сохраняются в SQLite с проверкой ревизии, имени исходной папки и состояния файла. Если автоимпорт включён, после сохранения правила новые отчёты без замечаний и пересечений могут добавиться автоматически. Правила также применяются в классическом интерфейсе. Расширенные сопоставления столбцов пока редактируются там же.</p>
 <p class="intro">При выборе другой папки существующие правила файлов могут быть сброшены; перед сменой программа запрашивает подтверждение. Уже сохранённые отчёты остаются в SQLite.</p>
 </section>
 
-<section class="panel" aria-label="Импорт обычных XLSX через Rust">
+<section class="panel" id="sqlImportWizard" data-nav-panel="excel" aria-label="Загрузка Excel">
+<h2>Загрузить Excel</h2>
+<p class="intro">Выберите структуру книги. Ниже проверьте распознанные периоды, суммы и замечания перед сохранением.</p>
+<div class="controls"><label for="importWizardFormat">Структура таблицы</label>
+<select id="importWizardFormat"><option value="legacy">Повторяющиеся столбцы «Работа / Количество / Сумма»</option><option value="wide">Общий список работ и пары столбцов по дням</option></select>
+<button id="importWizardChoose" type="button">Выбрать Excel</button></div>
+<p id="importWizardStatus" class="status muted" role="status" aria-live="polite">Выбор файла не изменяет отчёты в базе.</p>
+</section>
+<section class="panel" id="sqlLegacyImport" data-nav-panel="excel" aria-label="Импорт обычных XLSX через Rust">
 <h2>Обычный Excel — импорт через SQLite</h2>
 <p class="intro">Нативный импорт таблицы с повторяющимися тройками «Работа / Количество / Сумма». Выберите найденный в XLSX лист, тип периода и дату первого периода. Rust читает книгу ограниченными порциями через временную базу на диске. Полная история не загружается в WebView.</p>
 <div class="controls">
@@ -182,22 +633,27 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <label for="legacyType">Тип отчётов</label>
 <select id="legacyType"><option value="week">Недели</option><option value="day">Дни</option><option value="month">Месяцы</option></select>
 <label for="legacyStart">Первый период</label><input id="legacyStart" type="date">
+<details><summary>Исправить столбцы вручную</summary>
+<label for="legacyMappingText">Блоки отчётов: строка заголовка; столбец работы; количества; суммы</label>
+<textarea id="legacyMappingText" rows="3" maxlength="8192" placeholder="1; A; B; C&#10;1; D; E; F"></textarea>
+<p class="intro">Одна строка на каждый последовательный отчётный период. Номера строк начинаются с 1, столбцы — латинские буквы Excel. Пустое поле включает автоматическое распознавание. Не более 64 блоков за импорт. После изменения повторите проверку.</p>
+</details>
 <button id="legacyPreview" type="button" disabled>Проверить XLSX в Rust</button>
 </div>
 <p id="legacyFile" class="intro">Файл не выбран.</p>
 <p id="legacyStatus" class="status muted" role="status" aria-live="polite">Данные SQLite не изменены.</p>
 <div id="legacySummary" class="overview"></div><p id="legacyIssues" class="intro"></p>
-<div class="table-scroll"><table><thead><tr><th>Начало</th><th>Конец</th><th>Тип</th><th>Строк</th><th>Замечаний</th></tr></thead><tbody id="legacyRows"></tbody></table></div>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table><thead><tr><th>Начало</th><th>Конец</th><th>Тип</th><th>Строк</th><th>Замечаний</th></tr></thead><tbody id="legacyRows"></tbody></table></div>
 <div class="controls">
 <label><input type="checkbox" id="legacyReplace"> Разрешаю замену существующих периодов</label>
 <label><input type="checkbox" id="legacyOverlap"> Подтверждаю пересечения типов отчётов</label>
 <label><input type="checkbox" id="legacyQuality"> Ознакомился с замечаниями по качеству</label>
 <button id="legacyApply" type="button" disabled>Подтвердить и сохранить</button>
 </div>
-<p class="intro">Перед заменой существующих отчётов обязательна отдельная проверенная резервная копия SQLite. Вся книга повторно проверяется в Rust перед записью. Для расширенных ручных сопоставлений столбцов по-прежнему используйте классический импорт; здесь поддерживается автоматическое обнаружение троек по заголовкам выбранного листа.</p>
+<p class="intro">Перед заменой существующих отчётов обязательна отдельная проверенная резервная копия SQLite. Вся книга повторно проверяется в Rust перед записью. Доступны автоматическое обнаружение троек по заголовкам и ручные блоки столбцов выбранного листа. Для сложных схем, которые нельзя описать этими блоками, используйте классический импорт.</p>
 </section>
 
-<section class="panel" aria-label="Нативный импорт XLSX">
+<section class="panel" id="sqlWideImport" data-nav-panel="excel" aria-label="Нативный импорт XLSX">
 <h2>Импорт Excel в SQLite</h2>
 <p class="intro">Нативный импорт ежедневной широкой таблицы XLSX. Сначала выберите файл, укажите год при необходимости и просмотрите даты, ошибки и конфликты. Исходная книга не изменяется. Сохранение возможно только после подтверждения.</p>
 <p class="intro" id="wideImportLimits"><strong>До выбора файла, для нативного Rust-импорта:</strong> XLSX до <strong>100 МиБ</strong>, не более <strong>100 000 строк на лист</strong>, <strong>2 048 столбцов</strong> и <strong>15 000 000 ячеек</strong> на книгу. В классическом HTML-импорте сохраняется отдельный предел 30 МиБ. Могут действовать дополнительные ограничения распаковки и временной SQLite. Если книга превышает лимит, уменьшите файл или разделите данные и повторите проверку. Исходный файл не изменяется.</p>
@@ -211,7 +667,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p id="wideStatus" class="status muted" role="status" aria-live="polite">Изменения в SQLite пока не выполняются.</p>
 <div id="wideSummary" class="overview" aria-live="polite"></div>
 <p id="wideIssues" class="intro" aria-live="polite"></p>
-<div class="table-scroll"><table>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Таблица с горизонтальной прокруткой"><table>
 <thead><tr><th>Источник</th><th>Тип</th><th>Начало</th><th>Окончание</th><th>Строк</th><th>Замечаний</th></tr></thead>
 <tbody id="wideReportRows"></tbody>
 </table></div>
@@ -225,7 +681,7 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 </div>
 <p class="intro">При замене существующих отчётов перед записью обязательно создаётся отдельная проверенная резервная копия SQLite. Если её создание отменено или не удалось, отчёты не заменяются. Импорт выполняется в служебной базе на диске и повторно проверяет источник перед атомарной записью. Замена других источников целиком этим режимом не выполняется.</p>
 </section>
-<section class="panel" aria-label="Расширяемые виды отчётов">
+<section class="panel" id="sqlMetricKinds" data-nav-panel="metrics" aria-label="Расширяемые виды отчётов">
 <h2>Дополнительные виды отчётов</h2>
 <p class="intro">Отдельная система показателей: каждый вид задаёт собственные поля и правила вычислений. Трудозатраты, план/факт и будущие виды не смешиваются с существующими отчётами по работам. Новые определения добавляются в каталог без изменения SQL-аналитики.</p>
 <div class="controls">
@@ -249,8 +705,18 @@ th{background:#f7f9fc;font-weight:650}td input{width:100%;min-width:150px}
 <p id="metricKindStatus" class="status muted" role="status" aria-live="polite">Загрузка каталога видов отчётов…</p>
 </section>
 </main>
-<script src="tauri-bridge.js"></script><script src="tauri-native-updates.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-workspace.js"></script>
-<script src="tauri-native-legacy-import.js"></script>
+<script src="tauri-bridge.js"></script><script src="tauri-native-updates.js"></script><script src="tauri-native-errors.js"></script><script src="tauri-startup-preference.js"></script><script src="tauri-native-folder-auto-import.js"></script><script src="tauri-native-folder-status.js"></script><script src="tauri-native-period-visibility.js"></script><script src="tauri-native-timeline.js"></script><script src="tauri-native-ranking.js"></script><script src="tauri-native-organization-trends.js"></script><script src="tauri-native-period-selection.js"></script>
+<script src="tauri-native-work-trends.js"></script><script src="tauri-native-advanced-analysis.js"></script>
+<script src="tauri-native-comparison.js"></script><script src="tauri-native-daily-overview.js"></script>
+<script src="tauri-native-daily-calendar.js"></script>
+<script src="tauri-native-name-filter.js"></script>
+<script src="tauri-native-organization-filter.js"></script>
+<script src="tauri-native-management.js"></script>
+<script src="tauri-native-report-quality.js"></script>
+<script src="tauri-native-workspace.js"></script>
+<script src="tauri-native-import-mappings.js"></script><script src="tauri-native-legacy-import.js"></script>
+<script src="tauri-native-navigation.js"></script>
 <script src="tauri-native-wide-import.js"></script>
 <script src="tauri-native-metric-kinds.js"></script>
+<script src="tauri-native-import-wizard.js"></script>
 </body></html>
