@@ -41,6 +41,12 @@ function mount(options={}){
    calls.push({op:'timeline',rev,kind,from,to,orgs});
    return {granularity:'period',points:[]};
   },
+  nativeAnalysisOrganizations:async(rev,kind,from,to,orgs)=>{
+   calls.push({op:'divisions',rev,kind,from,to,orgs});
+   if(options.failDivisions)throw Error('Division data unavailable');
+   return orgs.map(org=>({org,complete:true,missing:0,
+    total:{count:0,amount:0,average:null}}));
+  },
   nativeDailyRollup:async(rev,from,to,kind,orgs,after,limit)=>{
    calls.push({op:'page',rev,from,to,kind,orgs,after,limit});
    if(options.fail)throw Error('Synthetic index failure');
@@ -55,6 +61,8 @@ function mount(options={}){
  const window={desktopAPI:api,analizUserError:e=>String(e.message||e),
  nativeDailyOverview:{
   show:(summary,timeline)=>overview.push({op:'show',summary,timeline}),
+  showOrganizations:(divisions,organizations)=>overview.push({op:'divisions',divisions,organizations}),
+  organizationsError:message=>overview.push({op:'divisionsError',message}),
   clear:message=>overview.push({op:'clear',message}),
   error:message=>overview.push({op:'error',message})
  }};
@@ -263,8 +271,14 @@ test('daily source KPIs and graph use exactly the same source, dates and organiz
  assert.equal(timeline.to,pageCall.to);
  assert.equal(summary.orgs.join(','),'A,B');
  assert.equal(timeline.orgs.join(','),'A,B');
- assert.equal(overview.at(-1).op,'show');
- assert.equal(overview.at(-1).summary.available_total.amount,11);
+ assert.equal(overview.find(x=>x.op==='show').summary.available_total.amount,11);
+ assert.equal(overview.at(-1).op,'divisions');
+ assert.equal(overview.at(-1).organizations.join(','),'A,B');
+ const divisionCall=calls.find(x=>x.op==='divisions');
+ assert.equal(divisionCall.kind,'day');
+ assert.equal(divisionCall.from,pageCall.from);
+ assert.equal(divisionCall.to,pageCall.to);
+ assert.equal(divisionCall.rev,pageCall.rev);
  assert.equal(nodes.dailyRollupRows.children.length,1);
 });
 test('late day-source KPI response cannot restore results after changing organizations',async()=>{
@@ -283,4 +297,15 @@ test('late day-source KPI response cannot restore results after changing organiz
  assert.ok(!overview.some(x=>x.op==='show'));
  assert.equal(overview.at(-1).op,'clear');
  assert.equal(calls.filter(x=>x.op==='timeline').length,0);
+});
+
+test('division query failure preserves verified day KPI and chart',async()=>{
+ const {nodes,window,overview}=mount({failDivisions:true});
+ window.nativeDailyCalendar.setContext(20,['A']);
+ nodes.dailyRollupPrepare.events.click();await settle();
+ nodes.dailyRollupFrom.value='2024-02-28';nodes.dailyRollupTo.value='2024-02-28';
+ nodes.dailyRollupRun.events.click();await settle();await settle();
+ assert.ok(overview.some(x=>x.op==='show'));
+ assert.equal(overview.at(-1).op,'divisionsError');
+ assert.match(overview.at(-1).message,/недоступны/);
 });
