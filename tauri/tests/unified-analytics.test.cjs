@@ -325,3 +325,33 @@ test('reference trend CSV captures all selected names and cancelling activity re
  f.window.referenceDetail.active='regularityPanel';
  await assert.rejects(table.options.csvContext.export(),/изменились/);assert.equal(saved.length,1);
 });
+
+test('reference details receive exact selected dates while overview SQL is pending and discard them on failure',async()=>{
+ const overview=deferred(),organizations=deferred();
+ const f=fixture({nativeAnalysisCompare:()=>overview.promise,nativeAnalysisOrganizations:()=>organizations.promise});
+ const shared={revision:1,displayType:'week',source:'daily',type:'day',overviewMode:'single',from:'2026-11-16',to:'2026-11-22',
+  baseFrom:'2026-11-09',baseTo:'2026-11-15',organizations:['A'],metric:'amount',allNames:false,nameRows:[{key:'work:W',name:'W',kind:'work'}]};
+ const pending=f.window.unifiedAnalytics.applyReferenceScope(shared);
+ const immediate=f.published.at(-1);
+ assert.ok(immediate);
+ assert.deepEqual([immediate.from,immediate.to,immediate.baseFrom,immediate.baseTo],[shared.from,shared.to,shared.baseFrom,shared.baseTo]);
+ assert.deepEqual([...immediate.selectedKeys],['work:W']);
+ assert.deepEqual([...immediate.organizations],['A']);
+ const count=f.published.length;
+ organizations.resolve([]);overview.reject(Error('overview unavailable'));
+ await pending;
+ assert.equal(f.published.length,count+1);
+ assert.equal(f.published.at(-1),null);
+ assert.match(f.nodes.get('overviewAlerts').textContent,/overview unavailable/);
+});
+test('successful reference overview publishes its validated detail scope once',async()=>{
+ const f=fixture(),shared={revision:1,displayType:'day',source:'daily',type:'day',overviewMode:'single',
+  from:'2024-01-02',to:'2024-01-02',baseFrom:'2024-01-01',baseTo:'2024-01-01',
+  organizations:['A'],metric:'amount',allNames:true,nameRows:[]};
+ const pending=f.window.unifiedAnalytics.applyReferenceScope(shared);
+ const initial=f.published.at(-1);
+ assert.equal(initial?.allNames,true);
+ await pending;
+ assert.deepEqual(f.published.filter(Boolean),[initial]);
+ assert.equal(f.calls.filter(call=>call.key==='nativeAnalysisCompare').length,1);
+});

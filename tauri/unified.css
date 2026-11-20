@@ -82,3 +82,21 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
 .coverage-report{padding:12px 0;border-bottom:1px solid var(--border)}.coverage-report details{margin-top:10px}
 .coverage-issue{padding:6px 10px;border-left:3px solid var(--border);margin:9px 0}.coverage-unassigned{margin:12px 0}
 .coverage-inspection button{margin:5px 6px 5px 0}
+
+#groupRenameDialog {
+  box-sizing:border-box;
+  width:min(28rem,calc(100vw - 2rem));
+  max-height:calc(100vh - 2rem);
+  margin:auto;
+  padding:1.25rem;
+  overflow:auto;
+  color:var(--text,#e8edf3);
+  background:var(--surface,#1b222c);
+  border:1px solid var(--border,#3a4656);
+  border-radius:var(--radius-panel,14px);
+}
+#groupRenameDialog::backdrop {background:#080b10b8}
+#groupRenameDialog form {display:grid;gap:.75rem}
+#groupRenameDialog h2 {margin:0;font-size:1.25rem}
+#groupRenameDialog input {min-width:0;width:100%;box-sizing:border-box}
+#groupRenameDialog .actions {display:flex;justify-content:flex-end;flex-wrap:wrap;gap:.5rem}

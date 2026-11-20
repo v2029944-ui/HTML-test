@@ -12,7 +12,8 @@ from make_metric_xlsx import create_example
 from reference_smoke import check_reference
 from reference_data_smoke import check_reference_data
 from reference_gallery import write_reference_gallery
-from reference_file_dialogs import check_reference_file_dialogs
+from reference_print_probe import probe_reference_print
+from reference_file_dialogs import OwnedFileDialogs, check_reference_file_dialogs, check_reference_data_file_dialogs
 
 def diagnostics(error):
     output=ROOT/'tauri/test-artifacts';output.mkdir(exist_ok=True)
@@ -191,13 +192,22 @@ class NativeConfirmations:
 
     def cancel_then_accept(self, trigger, prompt):
         revision=self.revision()
-        for button_id in (2,1):  # IDCANCEL then IDOK
+        for action in ('cancel','escape','accept'):
             trigger.click()
             dialog,owner=self.find_dialog(prompt)
             assert self.revision()==revision,('Storage changed before native confirmation',prompt)
-            self.answer(dialog,owner,prompt,button_id)
-            if button_id==2:
+            if action=='escape':
+                OwnedFileDialogs(self).escape(dialog)
+                deadline=time.monotonic()+10
+                while self.user32.IsWindowVisible(dialog) or not self.user32.IsWindowEnabled(owner):
+                    if time.monotonic()>=deadline:
+                        raise AssertionError('Native confirmation stayed open after Escape: '+prompt)
+                    time.sleep(.05)
+            else:
+                self.answer(dialog,owner,prompt,2 if action=='cancel' else 1)
+            if action!='accept':
                 expect(trigger).to_be_enabled(timeout=30_000)
+                expect(trigger).to_be_focused(timeout=30_000)
                 assert self.revision()==revision,('Cancelled native confirmation changed storage',prompt)
 
 
@@ -867,6 +877,34 @@ def check_groups(page, confirmations):
         assert api(page,'nativeSettingsBootstrap')['memberships']==1
         return group
     group=create()
+    rename=group.locator('button[data-group-rename]')
+    initial_revision=confirmations.revision()
+    for how in ('button','escape'):
+        rename.click()
+        dialog=page.locator('#groupRenameDialog')
+        expect(dialog).to_be_visible()
+        assert dialog.evaluate("node=>node.matches(':modal')")
+        expect(page.locator('#refWorkspaceDialog')).to_be_visible()
+        name=dialog.locator('#groupRenameName')
+        expect(name).to_be_focused()
+        expect(name).to_have_value('Группа CI')
+        name.fill('Несохранённое имя')
+        if how=='button':
+            dialog.locator('#groupRenameCancel').click()
+        else:
+            name.press('Escape')
+        expect(dialog).not_to_be_visible()
+        expect(page.locator('#refWorkspaceDialog')).to_be_visible()
+        expect(rename).to_be_focused()
+        assert confirmations.revision()==initial_revision
+    rename.click()
+    page.locator('#groupRenameName').fill('Переименованная группа CI')
+    page.locator('#groupRenameName').press('Enter')
+    group=page.locator('#groupList details').filter(has_text='Переименованная группа CI')
+    expect(group.locator('summary')).to_be_visible(timeout=90_000)
+    if not group.evaluate('node=>node.open'):
+        group.locator('summary').click()
+    assert confirmations.revision()>initial_revision
     member=group.locator('.group-member').filter(has_text='Альфа')
     member.locator('select').select_option('',timeout=90_000)
     wait_for_text(page,'#flash','Работа перенесена.',90_000)
@@ -1089,7 +1127,7 @@ def run():
                 raise RuntimeError(f'Application exited with status {exit_code} after the normal close request')
         with sync_playwright() as pw:
             @contextmanager
-            def installed_page():
+            def installed_page(*, print_probe_phase=False):
                 process,engine=start();browser=page=None
                 try:
                     browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227')
@@ -1097,7 +1135,15 @@ def run():
                     errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
                     yield page,engine,process.pid
                     assert not errors,errors
-                    stop(process)
+                    try:
+                        stop(process)
+                    except (RuntimeError,subprocess.SubprocessError) as close_error:
+                        # A system print preview can block a normal window close.
+                        # Only this last read-only fixture process is disposable.
+                        if not print_probe_phase or not report.get('printProbeStatus','').startswith('unavailable-'):
+                            raise
+                        report['printProbeTeardown']=type(close_error).__name__+': '+str(close_error)
+                        force_stop(process)
                     if browser.is_connected():browser.close()
                 except BaseException as error:
                     if page and not page.is_closed():
@@ -1153,6 +1199,7 @@ def run():
                 page.locator('#refWorkspaceClose').click()
                 page.locator('#sheet').get_by_role('button',name='Закрыть',exact=True).click()
                 check_reference_data(page,output)
+                check_reference_data_file_dialogs(page,confirmations,output)
                 open_full_workspace(page)
                 report['checks'].append('Native Excel confirmation blocks writes, Cancel preserves SQLite, and OK imports 366 reports with 50-card pagination and a 29-day calendar')
                 check_analytics(page,tmp,output)
@@ -1220,6 +1267,16 @@ def run():
                 report['checks'].append('Saved source evidence distinguishes zero provenance, source-day gaps, unknown organization and acknowledgment without changing source XLSX or read-only revision')
                 check_omitted_detail_evidence(page,tmp,output)
                 report['checks'].append('Native omitted-detail tags distinguish invalid data, unknown organizations, invalid controls and included unnamed rows; persisted totals remain 3 and 8 with explicit acknowledgment')
+            with installed_page(print_probe_phase=True) as (page,_,pid):
+                wait_for_app_state(page,'Boolean(window.appReady && window.unifiedUI?.snapshot?.reports)',
+                                   'Print probe on the isolated populated SQLite database',90_000)
+                expect(page.locator('#s1')).to_be_visible()
+                page.wait_for_function("""() => document.querySelector('#s1').getAttribute('aria-busy')!=='true'
+                  && !document.querySelector('#s1 .data-card button').disabled""",timeout=90_000)
+                probe=probe_reference_print(page,output,pid)
+                report['printProbeStatus']=probe['status']
+                if probe['status']=='probe-error' or probe['status'].startswith('targeted-') or probe['status'].endswith('focus-not-restored'):
+                    raise AssertionError('Installed print preview: '+probe['status'])
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     write_reference_gallery(output, os.environ.get('REFERENCE_HEAD_SHA', ''), report['webview2'])
     print(json.dumps(report,ensure_ascii=False),flush=True)

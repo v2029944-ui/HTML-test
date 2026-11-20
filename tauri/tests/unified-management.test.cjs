@@ -7,7 +7,13 @@ class Node{
  replaceChildren(...nodes){this.children=[];this.append(...nodes);}
  addEventListener(type,fn){this.events[type]=fn;}
  querySelectorAll(tag){return this.children.flatMap(n=>[...(n.tagName===tag?[n]:[]),...n.querySelectorAll(tag)]);}
- focus(){}
+ setAttribute(key,value){this[key]=value;}
+ closest(selector){let node=this;while(node){if(selector==='dialog[open]'&&node.tagName==='dialog'&&node.open||selector==='details'&&node.tagName==='details')return node;node=node.parentNode;}return null;}
+ showModal(){this.open=true;}
+ close(){this.open=false;this.fire('close');}
+ remove(){if(this.parentNode)this.parentNode.children=this.parentNode.children.filter(n=>n!==this);this.parentNode=null;this.isConnected=false;}
+ focus(){this.focused=true;}
+ select(){this.selected=true;}
  fire(type='click'){return this.events[type]?.({preventDefault(){}});}
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
@@ -21,8 +27,8 @@ function mount(){
  const UI={api,$:id=>nodes[id],el:(tag,text)=>new Node(tag,text),revision:null,state:{reports:[],settings:{orgNames:['А','Б','В','Г']}},notice:(...x)=>messages.push(x),onSnapshot:fn=>snapshots.push(fn),onView:(view,fn)=>views[view]=fn,onScope:fn=>scopes.push(fn),setPeriodInput:(id,kind,date)=>{nodes[id].value=date;},range:(kind,from,to,source)=>({displayType:kind,from,to,source}),scope:{revision:7,displayType:'day',source:'daily',organizations:['А'],selectedNames:['Only selected'],from:'2024-01-01',to:'2024-01-31'},request:scope=>scope,refresh:async()=>snapshot(8)};
  const window={unifiedUI:UI,confirm:text=>{questions.push(text);return confirm;},prompt:(...args)=>{questions.push(args[0]);return prompt;},crypto:{randomUUID:()=> 'new-id'}};
  function snapshot(revision){UI.revision=revision;for(const fn of snapshots)fn({revision});}
- vm.runInNewContext(fs.readFileSync(path.resolve(__dirname,'../unified-management.js'),'utf8'),{window,document:{}});window.unifiedManagement.init();window.unifiedManagement.init();
- return {nodes,backupPanel,UI,api,reads,writes,messages,questions,pickers,snapshot,views,scopes,setConfirm:v=>confirm=v,setPrompt:v=>prompt=v,setBackup:v=>backup=v,setSource:v=>source=v,setHandler:fn=>handler=fn};
+ vm.runInNewContext(fs.readFileSync(path.resolve(__dirname,'../unified-management.js'),'utf8'),{window,document:{body}});window.unifiedManagement.init();window.unifiedManagement.init();
+ return {nodes,body,backupPanel,UI,api,reads,writes,messages,questions,pickers,snapshot,views,scopes,setConfirm:v=>confirm=v,setPrompt:v=>prompt=v,setBackup:v=>backup=v,setSource:v=>source=v,setHandler:fn=>handler=fn};
 }
 test('no snapshot causes no reads or writes, and search/pagination stay on server',async()=>{const m=mount();await m.nodes.saveGroup.fire();assert.equal(m.writes.length,0);assert.equal(m.reads.length,0);m.snapshot(7);m.views.groups();await tick();m.nodes.workSearch.value='вся база';await m.nodes.workSearch.fire('input');assert.deepEqual(m.reads.at(-1),[7,'works','вся база',null,0,50]);await m.nodes.workNext.fire();assert.deepEqual(m.reads.at(-1),[7,'works','вся база',null,50,50]);});
 test('selected works survive pages and search and save through one atomic API',async()=>{const m=mount();m.snapshot(7);m.views.groups();await tick();const check=m.nodes.worksList.children[1].children[0];check.checked=true;await check.fire('change');await m.nodes.workNext.fire();const other=m.nodes.worksList.children[1].children[0];other.checked=true;await other.fire('change');m.nodes.workSearch.value='unknown';await m.nodes.workSearch.fire('input');m.nodes.groupName.value='Новая';await m.nodes.saveGroup.fire();assert.deepEqual(JSON.parse(JSON.stringify(m.writes)),[['save',7,null,'new-id','Новая',['Работа 0','Работа 50']]]);});
@@ -51,10 +57,33 @@ test('confirmation rechecks revision after native modal and rejected dialogs sur
  const m=mount();m.snapshot(7);m.setBackup('/safe.sqlite3');const stale=deferred();m.setConfirm(stale.promise);const pending=m.nodes.clearReports.fire();await tick();m.snapshot(8);stale.resolve(true);await pending;assert.equal(m.pickers.length,0);assert.equal(m.writes.length,0);assert.match(m.messages.at(-1)[0],/База изменилась/);
  const failed=deferred();m.setConfirm(failed.promise);const rejection=m.nodes.clearReports.fire();await tick();failed.reject(Error('native dialog rejected'));await rejection;assert.equal(m.pickers.length,0);assert.equal(m.writes.length,0);assert.match(m.messages.at(-1)[0],/native dialog rejected/);assert.equal(m.messages.at(-1)[1],true);assert.equal(m.nodes.clearReports.disabled,false);
 });
-test('native prompt waits for text, cancellation never renames and stale answers cannot mutate a newer revision',async()=>{
- const m=mount();m.snapshot(7);m.views.groups();await tick();let rename=actionByText(m.nodes.groupList,'Переименовать');const cancelled=deferred();m.setPrompt(cancelled.promise);const first=rename.fire();await tick();assert.equal(m.writes.length,0);cancelled.resolve(null);await first;assert.equal(m.writes.length,0);
- const stale=deferred();m.setPrompt(stale.promise);const second=rename.fire();await tick();m.snapshot(8);stale.resolve('Stale name');await second;assert.equal(m.writes.length,0);assert.match(m.messages.at(-1)[0],/База изменилась/);await tick();rename=actionByText(m.nodes.groupList,'Переименовать');
- const accepted=deferred();m.setPrompt(accepted.promise);const third=rename.fire();await tick();assert.equal(m.writes.length,0);accepted.resolve(' New name ');await third;assert.deepEqual(m.writes,[['rename',8,'g1','New name']]);
+test('group rename inside an open workspace discards Cancel and Escape, restores the trigger and reopens',async()=>{
+ const m=mount();m.snapshot(7);m.views.groups();await tick();
+ const workspace=new Node('dialog');workspace.open=true;m.body.append(workspace);workspace.append(m.nodes.groupList.parentNode);
+ const rename=actionByText(m.nodes.groupList,'Переименовать');
+ assert.equal(rename.dataset.groupRename,'group-1');
+ for(const method of ['cancel','escape']){
+  rename.focused=false;const action=rename.fire();await tick();
+  const dialog=workspace.querySelectorAll('dialog').find(n=>n.id==='groupRenameDialog');
+  assert.equal(dialog.open,true);const input=dialog.querySelectorAll('input')[0];
+  assert.equal(input.value,'Группа');assert.equal(input.focused,true);input.value='Черновик';
+  if(method==='cancel')await actionByText(dialog,'Отмена').fire();else await dialog.fire('cancel');
+  await action;assert.equal(dialog.isConnected,false);assert.equal(workspace.open,true);
+  assert.equal(rename.focused,true);assert.equal(rename.disabled,false);assert.equal(m.writes.length,0);
+ }
+});
+test('group rename submits a trimmed name once and rejects a stale revision before writing',async()=>{
+ const m=mount();m.snapshot(7);m.views.groups();await tick();
+ let rename=actionByText(m.nodes.groupList,'Переименовать');const stale=rename.fire();await tick();
+ let dialog=m.body.querySelectorAll('dialog')[0];dialog.querySelectorAll('input')[0].value='Устарело';
+ m.snapshot(8);dialog.querySelectorAll('form')[0].fire('submit');await stale;
+ assert.equal(m.writes.length,0);assert.match(m.messages.at(-1)[0],/База изменилась/);
+ await tick();rename=actionByText(m.nodes.groupList,'Переименовать');const accepted=rename.fire();await tick();
+ dialog=m.body.querySelectorAll('dialog')[0];const input=dialog.querySelectorAll('input')[0],form=dialog.querySelectorAll('form')[0];
+ assert.equal(actionByText(dialog,'Сохранить').type,'submit');
+ input.value='   ';form.fire('submit');assert.equal(dialog.open,true);assert.equal(m.writes.length,0);
+ input.value=' New name ';form.fire('submit');await accepted;
+ assert.deepEqual(m.writes,[['rename',8,'g1','New name']]);assert.equal(m.body.querySelectorAll('dialog').length,0);
 });
 test('all management destructive confirmations await native false promises',async()=>{
  for(const name of ['delete group','save catalog','delete catalog','import groups','import catalog','rename organizations','restore copy','restore schedule','restore cancel']){

@@ -25,6 +25,8 @@ function setPeriodInput(id,kind,date){
  input.min=kind==='year'?'1':'';input.max=kind==='year'?'9999':'';
  if(date!==undefined&&date!==null)input.value=window.nativePeriodSelection.fromIsoDate(date,kind);
  else if(oldType&&oldType!==kind){const iso=window.nativePeriodSelection.normalize(oldType,previous);input.value=iso?window.nativePeriodSelection.fromIsoDate(iso,kind):'';}
+ // Programmatic value changes neither emit input events nor notify attribute observers.
+ window.referenceCalendar?.syncField?.(input);
 }
 function activate(name){
  if(!['dashboard','changes','upload','groups','storage'].includes(name))name='dashboard';

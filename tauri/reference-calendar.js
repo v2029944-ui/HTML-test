@@ -108,6 +108,17 @@ function openCalendar({anchor, title, initial, unit='day', allowed, variants, al
 const nativeFields='input[type="date"],input[type="week"],input[type="month"],input[data-period-type="year"],#dailyYear,#qualityPeriod';
 const controls=new WeakMap();
 const sourceFields=new WeakMap();
+function syncField(field){
+ const trigger=controls.get(field);
+ if(!trigger)return;
+ const text=fieldText(field);
+ if(trigger.textContent!==text)trigger.textContent=text;
+ if(trigger.hidden!==field.hidden)trigger.hidden=field.hidden;
+ const disabled=field.disabled||field.readOnly;if(trigger.disabled!==Boolean(disabled))trigger.disabled=Boolean(disabled);
+ const label=field.getAttribute('aria-label')||[...(field.closest('label')?.childNodes||[])].filter(n=>n!==field&&n!==trigger).map(n=>n.textContent.trim()).filter(Boolean).join(' ');
+ const caption=(label||'Выбрать период')+' · '+text;
+ if(trigger.getAttribute('aria-label')!==caption)trigger.setAttribute('aria-label',caption);
+}
 function enhance(panel){
  function sync(){
   for(const field of panel.querySelectorAll(nativeFields)){
@@ -118,13 +129,7 @@ function enhance(panel){
     controls.set(field,trigger);sourceFields.set(trigger,field);
     field.classList.add('ref-calendar-source');field.after(trigger);
    }
-   const text=fieldText(field);
-   if(trigger.textContent!==text)trigger.textContent=text;
-   if(trigger.hidden!==field.hidden)trigger.hidden=field.hidden;
-   const disabled=field.disabled||field.readOnly;if(trigger.disabled!==Boolean(disabled))trigger.disabled=Boolean(disabled);
-   const label=field.getAttribute('aria-label')||[...(field.closest('label')?.childNodes||[])].filter(n=>n!==field&&n!==trigger).map(n=>n.textContent.trim()).filter(Boolean).join(' ');
-   const caption=(label||'Выбрать период')+' · '+text;
-   if(trigger.getAttribute('aria-label')!==caption)trigger.setAttribute('aria-label',caption);
+   syncField(field);
   }
  }
  const observer=new MutationObserver(sync);
@@ -168,5 +173,5 @@ function openField(field,anchor){
  openCalendar({anchor,title,initial,unit,allowed,allLabel:optional?(field.id==='dailyYear'?'Определить по Excel':'Очистить дату'):null,allSelected:optional&&!field.value,
   apply:value=>commit(value?selection.fromIsoDate(value,unit):'')});
 }
-window.referenceCalendar=Object.freeze({open:openCalendar,enhance,period,day,dateAt,dateOf,stamp,valid});
+window.referenceCalendar=Object.freeze({open:openCalendar,enhance,syncField,period,day,dateAt,dateOf,stamp,valid});
 })();

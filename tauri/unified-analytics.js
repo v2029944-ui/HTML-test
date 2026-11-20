@@ -139,12 +139,15 @@ function drawOverview(result,organizations,s,before){
 async function calculate(shared=null){
  const mine=++ticket,revision=UI.revision;invalidateScope();$('printSummary').disabled=true;for(const id of ['overviewKpis','overviewInsights','overviewOrganizations','overviewAlerts'])clear(id,'Загрузка…');
  try{if(!Number.isSafeInteger(revision))throw Error('Дождитесь подготовки данных.');layout();const displayType=value('periodType'),source=value('unifiedSource'),range=shared?{displayType,source,type:shared.type,from:shared.from,to:shared.to}:UI.range(displayType,value('rangeStart'),value('rangeEnd'),source);if(!range||!orgs().length)throw Error('Выберите корректный период и подразделения.');const s={...range,revision,organizations:orgs(),selectedNames:[],selectedKeys:[],allNames:false,nameRows:[]},before=shared?{...range,from:shared.baseFrom,to:shared.baseTo}:chosenBaseRange(s);if(!before)throw Error('Базовый период выходит за допустимые календарные границы.');s.baseFrom=before.from;s.baseTo=before.to;s.overviewMode=value('overviewMode');scope=s;
+  // Reference selections already include the work filters and exact period bounds.
+  if(shared)publish();
   const [overview,organizations]=await Promise.all([api.nativeAnalysisCompare(revision,s.type,before.from,before.to,s.from,s.to,s.organizations,null,null),api.nativeAnalysisOrganizations(revision,s.type,s.from,s.to,s.organizations,null,null)]);
   if(!valid(mine,revision))return;drawOverview(overview,organizations,s,before);
    if(!overview.summary.after.complete)void suggestWeeklyReports(s);
   if(!selectionReady){const ranked=await top(true);if(!valid(mine,revision))return;if(!ranked){const page=await api.unifiedNameOptions(revision,'',null,8);if(!valid(mine,revision))return;selectedRows=new Map(page.rows.map(r=>[r.key,r]));}selectionReady=true;}
-  publish();selectionCount();void names(namePositions);if($('advancedAnalytics').open)await renderCharts();
- }catch(error){if(valid(mine,revision)){scope=null;for(const id of ['overviewKpis','overviewInsights','overviewOrganizations'])clear(id);clear('overviewAlerts','Не удалось загрузить обзор. '+errorText(error));for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id);}}
+  if(!shared)publish();
+  selectionCount();void names(namePositions);if($('advancedAnalytics').open)await renderCharts();
+ }catch(error){if(valid(mine,revision)){if(shared&&scope)invalidateScope();else scope=null;for(const id of ['overviewKpis','overviewInsights','overviewOrganizations'])clear(id);clear('overviewAlerts','Не удалось загрузить обзор. '+errorText(error));for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id);}}
 }
 function descriptors(points,granularity,s){const kind=granularity==='period'?s.displayType:granularity;return points.map(p=>{const start=p.start.length===7?p.start+'-01':p.start;return {type:kind,start,end:O.periodEnd(start,kind)};});}
 function confirmedZero(point){return point&&point.missing===0&&point.has_activity!==true&&point.total?.count===0&&point.total?.amount===0;}

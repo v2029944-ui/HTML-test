@@ -153,7 +153,7 @@ jobs:
             tauri/test-artifacts/reference-*.png
             tauri/test-artifacts/reference-*.json
             tauri/test-artifacts/native-file-*.png
-            tauri/test-artifacts/native-file-dialogs.json
+            tauri/test-artifacts/native-file-dialogs*.json
           if-no-files-found: warn
           retention-days: 14
       - name: Upload installed interface gallery

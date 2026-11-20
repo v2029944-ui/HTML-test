@@ -9,7 +9,24 @@ function init(){
  const controls=new Set(),pages=new Set(),memberPages=new Set();
  const valid=r=>Number.isSafeInteger(r)&&r===revision&&r===U.revision;
  async function confirmAction(expected,message){const accepted=await window.confirm(message);if(!valid(expected))throw Error('База изменилась. Повторите действие.');return accepted===true;}
- async function promptAction(expected,message,value){const answer=await window.prompt(message,value);if(!valid(expected))throw Error('База изменилась. Повторите действие.');if(answer!==null&&typeof answer!=='string')throw Error('Получен некорректный ответ диалога.');return answer;}
+ function requestGroupName(anchor,group){
+  const dialog=el('dialog'),form=el('form'),heading=el('h2','Переименовать группу');
+  dialog.id='groupRenameDialog';heading.id='groupRenameTitle';dialog.setAttribute('aria-labelledby',heading.id);
+  const label=el('label','Новое название группы'),input=el('input');
+  input.id='groupRenameName';input.type='text';input.required=true;input.value=group.name;label.htmlFor=input.id;
+  const actions=el('div',null,'actions'),cancel=el('button','Отмена','button secondary'),save=el('button','Сохранить','button');
+  cancel.id='groupRenameCancel';cancel.type='button';save.id='groupRenameSubmit';save.type='submit';
+  actions.append(cancel,save);form.append(heading,label,input,actions);dialog.append(form);
+  const host=anchor.closest('dialog[open]')||anchor.closest('#refNative')||document.body;
+  return new Promise(resolve=>{
+   let answer=null;
+   form.addEventListener('submit',event=>{event.preventDefault();const name=input.value.trim();if(!name){input.focus();return;}answer=name;dialog.close();});
+   cancel.addEventListener('click',()=>dialog.close());
+   dialog.addEventListener('cancel',event=>{event.preventDefault();dialog.close();});
+   dialog.addEventListener('close',()=>{dialog.remove();resolve(answer);},{once:true});
+   host.append(dialog);dialog.showModal();input.focus();input.select();
+  });
+ }
  const fail=e=>U.notice(window.analizUserError?window.analizUserError(e):(e?.message||String(e)),true);
  function button(text,run){const n=el('button',text,'button secondary');n.type='button';n.addEventListener('click',run);controls.add(n);return n;}
  function lock(){for(const n of controls){if(n.isConnected===false){controls.delete(n);continue;}n.disabled=busy||revision===null;}for(const p of pages){p.prev.disabled=busy||revision===null||p.loading||!p.offset;p.next.disabled=busy||revision===null||p.loading||p.offset+LIMIT>=p.total;}}
@@ -41,7 +58,21 @@ function init(){
   const find=button('Найти',()=>targets()),prev=button('←',()=>targets(offset-LIMIT)),nextButton=button('→',()=>targets(offset+LIMIT));controls.add(select);select.addEventListener('change',guard(async r=>{if(r!==expected)return;await mutate(expected,()=>api.unifiedWorkAssign(expected,row.name,select.value||null),'Работа перенесена.');}));label.append(select);box.append(el('span',row.name),search,find,prev,nextButton,label,status);void targets();return box;
  }
  groups.render=(result,expected)=>{for(const p of memberPages){clear(p);pages.delete(p);}memberPages.clear(); $('groupSearchCount').textContent='Найдено групп: '+result.total;for(const group of result.rows){const details=el('details',null,'group-details'),summary=el('summary',group.name),actions=el('div',null,'actions'),memberRoot=el('div',null,'group-members');summary.append(el('small','Работ: '+group.members));details.append(summary,actions,memberRoot);
-  actions.append(button('Изменить группу',()=>editGroup(group,expected)),button('Переименовать',guard(async()=>{if(!valid(expected))return;const name=await promptAction(expected,'Новое название группы',group.name);if(name===null||!name.trim())return;await mutate(expected,()=>api.nativeGroupRename(expected,group.handle,name.trim()),'Группа переименована.');})),button('Удалить группу',guard(async()=>{if(!valid(expected)||!await confirmAction(expected,'Удалить группу «'+group.name+'»? Исходные работы останутся.'))return;await mutate(expected,()=>api.nativeSettingsEdit(expected,{kind:'delete_group',handle:group.handle}),'Группа удалена.');})));
+  const rename=button('Переименовать',async()=>{
+   if(busy||!valid(expected))return;
+   await guard(async()=>{
+    const name=await requestGroupName(rename,group);
+    if(name===null)return;
+    if(!valid(expected))throw Error('База изменилась. Повторите действие.');
+    await mutate(expected,()=>api.nativeGroupRename(expected,group.handle,name),'Группа переименована.');
+    if(active&&valid(revision))await load(groups,groups.offset);
+   })();
+   if(rename.isConnected!==false&&!rename.disabled){rename.focus({preventScroll:true});return;}
+   const current=Array.from(groups.root.querySelectorAll('button')).find(item=>item.dataset.groupRename===group.id);
+   if(current){current.closest('details').open=true;current.focus({preventScroll:true});}else $('groupSearch').focus({preventScroll:true});
+  });
+  rename.dataset.groupRename=group.id;
+  actions.append(button('Изменить группу',()=>editGroup(group,expected)),rename,button('Удалить группу',guard(async()=>{if(!valid(expected)||!await confirmAction(expected,'Удалить группу «'+group.name+'»? Исходные работы останутся.'))return;await mutate(expected,()=>api.nativeSettingsEdit(expected,{kind:'delete_group',handle:group.handle}),'Группа удалена.');})));
   let members=null;details.addEventListener('toggle',()=>{if(!details.open||!valid(expected))return;if(!members){members=pager(memberRoot,'members');memberPages.add(members);members.root=el('div');memberRoot.append(members.root);members.kind='members';members.group=()=>group.handle;members.render=r=>{for(const row of r.rows)members.root.append(moveControl(row,expected));};}void load(members,members.offset);});groups.root.append(details);
  }};
  bind('createGroup',()=>{if(busy)return;resetEditor();$('groupEditor').open=true;$('groupName').focus();});bind('resetGroup',()=>{if(!busy)resetEditor();});bind('saveGroup',guard(async expected=>{const name=$('groupName').value.trim();if(!name||!selected.size||selected.size>5000)throw Error('Введите название и выберите от 1 до 5000 работ.');const id=editing?.id||window.crypto.randomUUID();await mutate(expected,()=>api.unifiedGroupSave(expected,editing?.handle||null,id,name,[...selected]),'Группа сохранена.');}));

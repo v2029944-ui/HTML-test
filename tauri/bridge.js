@@ -41,6 +41,29 @@
     event.preventDefault();
     if(!pickerOpen)opener.click();
   },true);
+  function restoreOpener(opener){
+    if(!opener)return;
+    setTimeout(()=>{
+      if(!opener.isConnected||opener.disabled||opener.control?.disabled||!opener.getClientRects().length)return;
+      if(opener.tagName==='LABEL'){
+        restoredLabels.add(opener);
+        if(!opener.hasAttribute('tabindex')){
+          opener.setAttribute('tabindex','0');
+          opener.addEventListener('blur',()=>opener.removeAttribute('tabindex'),{once:true});
+        }
+      }
+      opener.focus({preventScroll:true});
+    },0);
+  }
+  // The dialog plugin supplies an asynchronous confirmation. Controllers may
+  // temporarily disable their opener while the native owner window is blocked.
+  const originalConfirm=window.confirm;
+  if(typeof originalConfirm==='function')window.confirm=function(...args){
+    const opener=visibleOpener(document?.activeElement)||(activation?.isConnected?activation:null);
+    const answer=originalConfirm.apply(this,args);
+    const finish=accepted=>{if(accepted===false)restoreOpener(opener);return accepted;};
+    return answer&&typeof answer.then==='function'?answer.then(finish):finish(answer);
+  };
   async function nativePicker(kind,options){
     if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
     if(pickerOpen)throw Error('Закройте открытый диалог выбора файла.');
@@ -60,18 +83,7 @@
         if(oldBusy===null)opener.removeAttribute('aria-busy');else opener.setAttribute('aria-busy',oldBusy);
         if(oldDisabled===null)opener.removeAttribute('aria-disabled');else opener.setAttribute('aria-disabled',oldDisabled);
       }
-      if(cancelled&&opener)setTimeout(()=>{
-        // Controller finally blocks re-enable their own controls first.
-        if(!opener.isConnected||opener.disabled||!opener.getClientRects().length)return;
-        if(opener.tagName==='LABEL'){
-          restoredLabels.add(opener);
-          if(!opener.hasAttribute('tabindex')){
-            opener.setAttribute('tabindex','0');
-            opener.addEventListener('blur',()=>opener.removeAttribute('tabindex'),{once:true});
-          }
-        }
-        opener.focus({preventScroll:true});
-      },0);
+      if(cancelled)restoreOpener(opener);
     }
   }
   window.desktopAPI=Object.freeze({
