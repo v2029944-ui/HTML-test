@@ -397,9 +397,9 @@ def check_report_views(page):
 def check_metrics(page, temporary):
     navigate(page,'upload')
     page.locator('#additionalMetrics > summary').click()
-    page.locator('#metricKindSelect option').first.wait_for()
+    page.locator('#metricKindSelect option').first.wait_for(state='attached')
     assert page.locator('#metricKindSelect option').count()==2
-    assert page.locator('#metricKindChooseXlsx').is_enabled()
+    expect(page.locator('#metricKindChooseXlsx')).to_be_enabled()
     assert len(api(page,'nativeMetricKinds'))==2
     example=ROOT/'tauri/examples/labor-report.json'
     metric=api(page,'nativeMetricPreview',str(example))
