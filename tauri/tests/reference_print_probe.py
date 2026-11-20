@@ -7,7 +7,6 @@ Only a newly discovered, strictly attributed print target may receive Cancel/Esc
 """
 import json
 import os
-import re
 from pathlib import Path
 import subprocess
 import time
@@ -25,6 +24,12 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 public static class PrintProbeNative {
+ [StructLayout(LayoutKind.Sequential)] public struct Rect { public int left,top,right,bottom; }
+ [StructLayout(LayoutKind.Sequential)] public struct GuiThreadInfo {
+  public uint cbSize,flags;
+  public IntPtr hwndActive,hwndFocus,hwndCapture,hwndMenuOwner,hwndMoveSize,hwndCaret;
+  public Rect rcCaret;
+ }
  public delegate bool Callback(IntPtr hwnd, IntPtr arg);
  [DllImport("user32.dll")] public static extern bool EnumWindows(Callback callback,IntPtr arg);
  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
@@ -36,6 +41,9 @@ public static class PrintProbeNative {
  [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr hwnd);
  [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hwnd);
  [DllImport("user32.dll")] public static extern int GetDlgCtrlID(IntPtr hwnd);
+ [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd,uint flags);
+ [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+ [DllImport("user32.dll")] public static extern bool GetGUIThreadInfo(uint thread,ref GuiThreadInfo info);
  [DllImport("user32.dll",SetLastError=true)] public static extern bool PostMessage(IntPtr hwnd,uint message,UIntPtr wp,IntPtr lp);
 }
 '@
@@ -80,6 +88,65 @@ function OwnerChain([IntPtr]$handle) {
  return ,$chain
 }
 $action=$env:ANALIZ_PRINT_ACTION
+if ($action -in @('embedded-inspect','embedded-cancel','embedded-escape')) {
+ $handle=[IntPtr][long]$env:ANALIZ_PRINT_MAIN_HWND
+ $browserId=[int]$env:ANALIZ_PRINT_BROWSER_PID
+ $browser=@($all | Where-Object {$_.ProcessId -eq $browserId -and $_.ParentProcessId -eq $appId -and $_.Name -eq 'msedgewebview2.exe'})
+ if ($browser.Count -ne 1 -or -not $ids.Contains($browserId) -or
+     (ProcessOf $handle) -ne $appId -or (ClassOf $handle) -ne 'Tauri Window' -or
+     -not [PrintProbeNative]::IsWindowVisible($handle) -or
+     -not [PrintProbeNative]::IsWindowEnabled($handle)) {throw 'Embedded preview owner identity changed'}
+ $rootElement=[System.Windows.Automation.AutomationElement]::FromHandle($handle)
+ $windowCondition=[System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Window)
+ $virtual=@($rootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,$windowCondition) | Where-Object {
+   $_.Current.Name -in @('Print','Печать') -and $_.Current.ProcessId -eq $browserId -and
+   $_.Current.IsEnabled -and -not $_.Current.IsOffscreen
+ })
+ if ($virtual.Count -ne 1) {throw 'Unique embedded Print UIA window not confirmed'}
+ $buttonCondition=[System.Windows.Automation.PropertyCondition]::new(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::Button)
+ $buttons=@($virtual[0].FindAll([System.Windows.Automation.TreeScope]::Descendants,$buttonCondition))
+ $cancel=@($buttons | Where-Object {$_.Current.Name -in @('Cancel','Отмена') -and
+   $_.Current.ProcessId -eq $browserId -and $_.Current.IsEnabled -and -not $_.Current.IsOffscreen})
+ $submit=@($buttons | Where-Object {$_.Current.Name -in @('Print','Печать') -and
+   $_.Current.ProcessId -eq $browserId -and $_.Current.IsEnabled -and -not $_.Current.IsOffscreen})
+ if ($cancel.Count -ne 1 -or $submit.Count -ne 1) {throw 'Unique actual embedded Cancel/Print controls not confirmed'}
+ $facts=[ordered]@{action=$action;main=$handle.ToInt64();browser_pid=$browserId;
+   virtual_runtime_id=($virtual[0].GetRuntimeId() -join '.');cancel_name=$cancel[0].Current.Name;
+   cancel_runtime_id=($cancel[0].GetRuntimeId() -join '.');dispatched=$false}
+ if ($action -eq 'embedded-cancel') {
+  $pattern=$cancel[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+  ([System.Windows.Automation.InvokePattern]$pattern).Invoke()
+  $facts.dispatched=$true
+ } elseif ($action -eq 'embedded-escape') {
+  $focus=[System.Windows.Automation.AutomationElement]::FocusedElement
+  $walker=[System.Windows.Automation.TreeWalker]::RawViewWalker
+  $within=$false;$node=$focus
+  for($n=0;$n -lt 64 -and $null -ne $node;$n++) {
+   if (($node.GetRuntimeId() -join '.') -eq $facts.virtual_runtime_id) {$within=$true;break}
+   $node=$walker.GetParent($node)
+  }
+  $gui=[PrintProbeNative+GuiThreadInfo]::new()
+  $gui.cbSize=[System.Runtime.InteropServices.Marshal]::SizeOf([type][PrintProbeNative+GuiThreadInfo])
+  # GA_ROOTOWNER=3 includes both native parents and popup ownership.
+  if (-not $within -or $focus.Current.ProcessId -ne $browserId -or
+      -not [PrintProbeNative]::GetGUIThreadInfo(0,[ref]$gui) -or
+      [PrintProbeNative]::GetAncestor([PrintProbeNative]::GetForegroundWindow(),3) -ne $handle -or
+      [PrintProbeNative]::GetAncestor($gui.hwndFocus,3) -ne $handle -or
+      (ProcessOf $gui.hwndFocus) -ne $browserId) {throw 'Embedded Escape focus is not proven inside the same Print UI and Tauri root'}
+  $facts['focus_hwnd']=$gui.hwndFocus.ToInt64()
+  $facts['focus_name']=$focus.Current.Name
+  if (-not [PrintProbeNative]::PostMessage($gui.hwndFocus,0x100,[UIntPtr]27,[IntPtr]0x00010001)) {throw 'Addressed embedded Escape keydown failed'}
+  $facts['keyup_posted']=$false
+  if ([PrintProbeNative]::IsWindow($gui.hwndFocus)) {
+   $facts['keyup_posted']=[PrintProbeNative]::PostMessage($gui.hwndFocus,0x101,[UIntPtr]27,[IntPtr]0xC0010001)
+  }
+  $facts.dispatched=$true
+ }
+ [PSCustomObject]$facts | ConvertTo-Json -Depth 4 -Compress
+ exit
+}
 if ($action) {
  $handle=[IntPtr][long]$env:ANALIZ_PRINT_HWND
  $main=[long]$env:ANALIZ_PRINT_MAIN_HWND
@@ -173,14 +240,16 @@ $processes=@($all | Where-Object {$ids.Contains([int]$_.ProcessId)} | ForEach-Ob
 """
 
 
-def _native(app_pid, screenshot, action=None, hwnd=None, main_hwnd=None):
+def _native(app_pid, screenshot, action=None, hwnd=None, main_hwnd=None, browser_pid=None):
     env = dict(os.environ, ANALIZ_PRINT_APP_PID=str(app_pid),
                ANALIZ_PRINT_SCREENSHOT=str(screenshot))
-    for key in ['ANALIZ_PRINT_ACTION', 'ANALIZ_PRINT_HWND', 'ANALIZ_PRINT_MAIN_HWND']:
+    for key in ['ANALIZ_PRINT_ACTION', 'ANALIZ_PRINT_HWND', 'ANALIZ_PRINT_MAIN_HWND', 'ANALIZ_PRINT_BROWSER_PID']:
         env.pop(key, None)
     if action:
         env.update(ANALIZ_PRINT_ACTION=action, ANALIZ_PRINT_HWND=str(hwnd),
                    ANALIZ_PRINT_MAIN_HWND=str(main_hwnd))
+        if browser_pid is not None:
+            env['ANALIZ_PRINT_BROWSER_PID'] = str(browser_pid)
     result = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', _NATIVE],
                             env=env, capture_output=True, encoding='utf-8', errors='replace',
                             timeout=30)
@@ -193,6 +262,195 @@ def _targets(endpoint):
     direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     with direct.open(endpoint.rstrip('/') + '/json/list', timeout=3) as response:
         return json.load(response)
+
+
+_PRINT_URLS = ('edge://print/', 'chrome://print/',
+               'edge-untrusted://print/', 'chrome-untrusted://print/')
+
+
+def _attribute_preview(snapshot, before, source, app_pid):
+    """Attribute an actual preview, including WebView2's HWND-less embedded UI."""
+    source_id = source['targetId']
+    old_targets = before.get('targets', [])
+    old_ids = {target['id'] for target in old_targets}
+    roots = [window for window in before.get('native', {}).get('windows', [])
+             if window['pid'] == app_pid and window['class'] == 'Tauri Window'
+             and window['visible'] and not window['owner']]
+    if len(roots) != 1:
+        return None
+    current_source = [item for item in snapshot.get('targets', []) if item['id'] == source_id]
+    if (len(current_source) != 1 or current_source[0].get('type') != 'page'
+            or current_source[0].get('pid') != source.get('pid')
+            or current_source[0].get('browserContextId') != source.get('browserContextId')):
+        return None
+    main = roots[0]['hwnd']
+    native = snapshot.get('native', {})
+    processes = {item['pid']: item for item in native.get('processes', [])}
+
+    def browser_parent(pid):
+        seen = set()
+        while pid != app_pid:
+            if pid in seen or pid not in processes:
+                return None
+            seen.add(pid)
+            item = processes[pid]
+            if item['name'] != 'msedgewebview2.exe':
+                return None
+            if item['parent'] == app_pid:
+                return pid
+            pid = item['parent']
+        return None
+
+    def visible_control(window, control_type, name=None):
+        return [node for node in window.get('controls', [])
+                if node['type'] == control_type and node['enabled'] and not node['offscreen']
+                and (name is None or node['name'] in name)]
+
+    main_after = [window for window in native.get('windows', [])
+                  if window['hwnd'] == main and window['pid'] == app_pid
+                  and window['class'] == 'Tauri Window' and window['visible']
+                  and not window.get('uia_error') and not window['uia_truncated']]
+    source_browser = browser_parent(source.get('pid'))
+    context = source.get('browserContextId')
+    original_page = [item for item in old_targets if item.get('type') == 'page']
+    embedded = None
+    if (len(main_after) == 1 and context and source_browser
+            and len(original_page) == 1 and original_page[0]['id'] == source_id
+            and original_page[0].get('pid') == source.get('pid')
+            and original_page[0].get('browserContextId') == context
+            and not visible_control(roots[0], 'ControlType.Window', ('Print', 'Печать'))):
+        window = main_after[0]
+        print_windows = visible_control(window, 'ControlType.Window', ('Print', 'Печать'))
+        cancel = visible_control(window, 'ControlType.Button', ('Cancel', 'Отмена'))
+        submit = visible_control(window, 'ControlType.Button', ('Print', 'Печать'))
+        if (len(print_windows) == len(cancel) == len(submit) == 1
+                and all(node['pid'] == source_browser for node in print_windows + cancel + submit)):
+            embedded = {'main': main, 'browser_pid': source_browser,
+                        'browser_context': context, 'uia_window': print_windows[0],
+                        'uia_cancel': cancel[0]}
+
+    candidates = []
+    for target in snapshot.get('targets', []):
+        if (target['id'] in old_ids or target.get('type') != 'page'
+                or target.get('url', '').split('?', 1)[0] not in _PRINT_URLS):
+            continue
+        opener = target.get('openerId')
+        if opener == source_id:
+            candidates.append({'kind': 'html', 'id': target['id'], 'url': target['url'],
+                               'attribution': {'source_opener': source_id}})
+            continue
+        if opener or not embedded or target.get('browserContextId') != context:
+            continue
+        if browser_parent(target.get('pid')) != source_browser:
+            continue
+        pdf = [item for item in snapshot.get('targets', [])
+               if item.get('parentId') == target['id'] and item.get('type') == 'iframe'
+               and item.get('browserContextId') == context
+               and item.get('url', '').startswith('chrome-untrusted://print/')
+               and item.get('url', '').endswith('/print.pdf')
+               and browser_parent(item.get('pid')) == source_browser]
+        if len(pdf) == 1:
+            candidates.append({'kind': 'html', 'id': target['id'], 'url': target['url'],
+                               'attribution': dict(embedded, pdf_target=pdf[0]['id'],
+                                                   source_target=source_id)})
+
+    old_windows = {window['hwnd'] for window in before.get('native', {}).get('windows', [])}
+    for window in native.get('windows', []):
+        cancel = [node for node in visible_control(window, 'ControlType.Button', ('Cancel', 'Отмена'))
+                  if node['control_id'] == 2]
+        if (window['hwnd'] not in old_windows and window['class'] == '#32770'
+                and window['title'] in ('Print', 'Печать', 'Print Preview', 'Предварительный просмотр')
+                and main in window['owners'] and window['visible'] and window['enabled']
+                and not window.get('uia_error') and not window['uia_truncated'] and len(cancel) == 1):
+            candidates.append({'kind': 'native', 'hwnd': window['hwnd'], 'main': main})
+    return candidates[0] if len(candidates) == 1 else None
+
+
+class _PreviewProtocolError(RuntimeError):
+    pass
+
+
+class _PreviewSession:
+    """Public CDP routing to one attributed target, not the source or global input."""
+
+    def __init__(self, browser_session, target):
+        self.browser = browser_session
+        self.target = target
+        self.sequence = 0
+        self.replies = {}
+        self.detached = False
+        self.last_command_dispatched = False
+        self.session = None
+        browser_session.on('Target.receivedMessageFromTarget', self._received)
+        browser_session.on('Target.detachedFromTarget', self._detached)
+        try:
+            self.session = browser_session.send('Target.attachToTarget', {
+                'targetId': target['id'], 'flatten': False})['sessionId']
+        except Exception:
+            self.close()
+            raise
+
+    def _received(self, event):
+        if event.get('sessionId') == self.session:
+            message = json.loads(event['message'])
+            if 'id' in message:
+                self.replies[message['id']] = message
+
+    def _detached(self, event):
+        if event.get('sessionId') == self.session:
+            self.detached = True
+
+    def send(self, method, params=None, allow_detach=False):
+        self.last_command_dispatched = False
+        self.sequence += 1
+        sequence = self.sequence
+        self.browser.send('Target.sendMessageToTarget', {
+            'sessionId': self.session,
+            'message': json.dumps({'id': sequence, 'method': method, 'params': params or {}})})
+        self.last_command_dispatched = True
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if sequence in self.replies:
+                message = self.replies.pop(sequence)
+                if 'error' in message:
+                    raise _PreviewProtocolError('Preview CDP ' + method + ': ' + str(message['error']))
+                return message.get('result', {})
+            if self.detached:
+                if allow_detach:
+                    return {'target_detached_after_dispatch': True}
+                raise RuntimeError('Attributed print target detached during ' + method)
+            # A browser-level round trip pumps CDP replies without evaluating
+            # the source page, which is blocked while its print UI is open.
+            self.browser.send('Target.getTargets')
+            time.sleep(.02)
+        raise RuntimeError('No response from attributed preview to ' + method)
+
+    def close(self):
+        self.browser.remove_listener('Target.receivedMessageFromTarget', self._received)
+        self.browser.remove_listener('Target.detachedFromTarget', self._detached)
+        if self.session and not self.detached:
+            self.browser.send('Target.detachFromTarget', {'sessionId': self.session})
+
+
+_CANCEL_CONTROL = r"""() => {
+ const urls=['edge://print/','chrome://print/','edge-untrusted://print/','chrome-untrusted://print/'];
+ if(!urls.includes(location.href.split('?')[0])) throw Error('Unexpected preview document');
+ const nodes=[];
+ const walk=root=>{for(const node of root.querySelectorAll('*')){
+   if(node.matches('cr-button,button,[role="button"]')) nodes.push(node);
+   if(node.shadowRoot) walk(node.shadowRoot);
+ }};
+ walk(document);
+ const visible=node=>node.getClientRects().length && getComputedStyle(node).visibility!=='hidden' &&
+   !node.disabled && node.getAttribute('aria-disabled')!=='true';
+ const text=node=>(node.innerText || node.textContent || '').trim();
+ const matches=nodes.filter(node=>visible(node) && /^(Cancel|Отмена)$/.test(text(node)));
+ const outer=matches.filter(node=>node.tagName==='CR-BUTTON');
+ const found=outer.length?outer:matches;
+ if(found.length!==1) throw Error('Unique actual visible Cancel control not found: '+JSON.stringify(
+   nodes.filter(visible).map(n=>({tag:n.tagName,id:n.id,text:text(n)}))));
+ return found[0];
+}"""
 
 
 def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227'):
@@ -244,32 +502,10 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
         save()
 
     def target_for(snapshot, before, source_id):
-        old_ids = {target['id'] for target in before.get('targets', [])}
-        html = [target for target in snapshot.get('targets', [])
-                if target.get('id') not in old_ids and target.get('openerId') == source_id
-                and target.get('url', '').split('?', 1)[0] in
-                ('edge://print/', 'chrome://print/', 'edge-untrusted://print/', 'chrome-untrusted://print/')]
-        roots = [window for window in before.get('native', {}).get('windows', [])
-                 if window['pid'] == app_pid and window['visible'] and not window['owner']]
-        old_windows = {window['hwnd'] for window in before.get('native', {}).get('windows', [])}
-        native = []
-        if len(roots) == 1:
-            main = roots[0]['hwnd']
-            for window in snapshot.get('native', {}).get('windows', []):
-                cancel = [node for node in window['controls']
-                          if node['type'] == 'ControlType.Button' and node['name'] in ('Cancel', 'Отмена')
-                          and node['control_id'] == 2 and node['enabled'] and not node['offscreen']]
-                if (window['hwnd'] not in old_windows and window['class'] == '#32770'
-                        and window['title'] in ('Print', 'Печать', 'Print Preview', 'Предварительный просмотр')
-                        and main in window['owners'] and window['visible'] and window['enabled']
-                        and not window['uia_truncated'] and len(cancel) == 1):
-                    native.append({'kind': 'native', 'hwnd': window['hwnd'], 'main': main})
-        candidates = [{'kind': 'html', 'id': target['id'], 'url': target['url']} for target in html] + native
-        if len(candidates) != 1:
-            report['unavailable_reason'] = 'No unique new print target with proven source opener/owner and Cancel control'
-            report['candidate_count'] = len(candidates)
-            return None
-        return candidates[0]
+        target = _attribute_preview(snapshot, before, source, app_pid)
+        if target is None:
+            report['unavailable_reason'] = 'No unique new print target with proven source opener or embedded WebView ownership'
+        return target
 
     def present(target, snapshot):
         if target['kind'] == 'html':
@@ -277,35 +513,96 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
         return any(item['hwnd'] == target['hwnd'] and item['visible']
                    for item in snapshot.get('native', {}).get('windows', []))
 
-    def html_page(target):
-        matches = []
-        for context in page.context.browser.contexts:
-            for candidate in context.pages:
-                if candidate == page or candidate.url != target['url']:
-                    continue
-                session = context.new_cdp_session(candidate)
-                try:
-                    actual = session.send('Target.getTargetInfo')['targetInfo']
-                    if actual['targetId'] == target['id']:
-                        matches.append(candidate)
-                finally:
-                    session.detach()
-        if len(matches) != 1:
-            raise RuntimeError('Attributed print target is not a unique accessible Playwright page')
-        return matches[0]
-
     def close_target(target, action):
         if target['kind'] == 'native':
             return _native(app_pid, output / 'unused.png', action, target['hwnd'], target['main'])
-        candidate = html_page(target)
-        cancel = candidate.get_by_role('button', name=re.compile(r'^(Cancel|Отмена)$'))
-        if cancel.count() != 1 or not cancel.is_visible() or not cancel.is_enabled():
-            raise RuntimeError('Attributed HTML preview has no unique visible enabled Cancel button')
-        if action == 'cancel':
-            cancel.click(timeout=5000, no_wait_after=True)
-        else:
-            candidate.keyboard.press('Escape')
-        return {'action': action, 'target_id': target['id'], 'dispatched': True}
+        result = {'action': action, 'target_id': target['id']}
+        proof = target.get('attribution', {})
+
+        def embedded(mode):
+            if 'main' not in proof or 'browser_pid' not in proof:
+                raise RuntimeError('No embedded UIA ownership proof for fallback')
+            facts = _native(app_pid, output / 'unused.png', 'embedded-' + mode,
+                            main_hwnd=proof['main'], browser_pid=proof['browser_pid'])
+            result['uia_' + mode] = facts
+            if mode != 'inspect':
+                result['strategy'] = 'verified-embedded-uia' if mode == 'cancel' else 'verified-focused-hwnd'
+                result['dispatched'] = facts['dispatched']
+            return result
+
+        try:
+            if browser_session is None:
+                raise RuntimeError('No browser CDP session for attributed embedded preview')
+            current = browser_session.send('Target.getTargetInfo', {'targetId': target['id']})['targetInfo']
+            if current['url'] != target['url']:
+                raise RuntimeError('Attributed preview document changed before action')
+            if proof.get('browser_context') and current.get('browserContextId') != proof['browser_context']:
+                raise RuntimeError('Attributed preview context changed before action')
+            preview = _PreviewSession(browser_session, target)
+        except (PlaywrightError, RuntimeError) as error:
+            result['cdp_attach_error'] = type(error).__name__ + ': ' + str(error)
+            return embedded(action)
+        try:
+            try:
+                control = preview.send('Runtime.evaluate', {
+                    'expression': '(() => {const n=(' + _CANCEL_CONTROL + ')();return {tag:n.tagName,id:n.id,text:(n.innerText||n.textContent||" ").trim(),url:location.href};})()',
+                    'returnByValue': True})
+                if 'exceptionDetails' in control:
+                    raise RuntimeError('Actual Cancel inspection: ' + str(control['exceptionDetails']))
+                result['cancel_control'] = control['result']['value']
+            except (PlaywrightError, RuntimeError) as error:
+                result['cdp_dom_error'] = type(error).__name__ + ': ' + str(error)
+                if action == 'cancel':
+                    return embedded('cancel')
+                embedded('inspect')
+            if action == 'cancel':
+                try:
+                    clicked = preview.send('Runtime.evaluate', {
+                        'expression': '(() => {const n=(' + _CANCEL_CONTROL + ')();setTimeout(()=>n.click(),0);return {cancel_scheduled:true};})()',
+                        'returnByValue': True, 'userGesture': True}, allow_detach=True)
+                except _PreviewProtocolError as error:
+                    result['cdp_cancel_error'] = str(error)
+                    return embedded('cancel')
+                if 'exceptionDetails' in clicked:
+                    result['cdp_cancel_error'] = str(clicked['exceptionDetails'])
+                    return embedded('cancel')
+                result['cancel_dispatch'] = clicked
+                result['strategy'] = 'exact-preview-cdp-cancel-control'
+            else:
+                key = {'key': 'Escape', 'code': 'Escape', 'windowsVirtualKeyCode': 27,
+                       'nativeVirtualKeyCode': 27}
+                try:
+                    result['keydown'] = preview.send('Input.dispatchKeyEvent',
+                        dict(key, type='keyDown'), allow_detach=True)
+                except _PreviewProtocolError as error:
+                    result['cdp_escape_error'] = str(error)
+                    return embedded('escape')
+                except PlaywrightError as error:
+                    if preview.last_command_dispatched:
+                        raise  # Delivery is unknown: never queue a second Escape.
+                    result['cdp_escape_error'] = str(error)
+                    return embedded('escape')
+                if not preview.detached:
+                    live = browser_session.send('Target.getTargets')['targetInfos']
+                    if any(item['targetId'] == target['id'] for item in live):
+                        try:
+                            result['keyup'] = preview.send('Input.dispatchKeyEvent',
+                                dict(key, type='keyUp'), allow_detach=True)
+                        except (PlaywrightError, RuntimeError) as error:
+                            live = browser_session.send('Target.getTargets')['targetInfos']
+                            if any(item['targetId'] == target['id'] for item in live):
+                                raise
+                            result['keyup'] = {'target_closed_before_keyup': True, 'error': str(error)}
+                    else:
+                        result['keyup'] = {'target_closed_before_keyup': True}
+                result['strategy'] = 'exact-preview-cdp-escape'
+            result['dispatched'] = True
+            return result
+        finally:
+            try:
+                preview.close()
+            except PlaywrightError as error:
+                result['session_detach_error'] = type(error).__name__ + ': ' + str(error)
 
     def observed_close(target, label):
         # Let a real UI transition occur without relying on source-page JavaScript.
@@ -373,6 +670,21 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
                 capture(action + '-dispatch-error')
                 return report
             action_result['closed'] = observed_close(target, action + '-after')
+            proof = target.get('attribution', {})
+            if (not action_result['closed'] and target['kind'] == 'html'
+                    and 'main' in proof and 'browser_pid' in proof):
+                # A renderer command can be accepted without closing Edge UI.
+                # Revalidate the actual embedded Print/Cancel controls. Escape
+                # additionally requires native and UIA focus inside that same
+                # owner root; never repeat a key against an unproven target.
+                try:
+                    action_result['guarded_native_fallback'] = _native(
+                        app_pid, output / 'unused.png', 'embedded-' + action,
+                        main_hwnd=proof['main'], browser_pid=proof['browser_pid'])
+                    action_result['closed'] = observed_close(target, action + '-fallback-after')
+                except Exception as error:
+                    action_result['guarded_native_fallback_error'] = type(error).__name__ + ': ' + str(error)
+                    capture(action + '-fallback-error')
             report[action + '_observed'] = action_result['closed']
             if not action_result['closed']:
                 report['status'] = 'targeted-' + action + '-closure-not-confirmed'

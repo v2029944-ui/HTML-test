@@ -118,7 +118,7 @@ jobs:
         run: |
           python -m pip install playwright==1.62.0
           if ($LASTEXITCODE -ne 0) { throw 'Playwright installation failed' }
-          python -m unittest discover -s tauri/tests -p test_reference_file_dialogs.py -v
+          python -m unittest discover -s tauri/tests -p 'test_reference_*.py' -v
           if ($LASTEXITCODE -ne 0) { throw 'Native dialog identification tests failed' }
           $env:REFERENCE_HEAD_SHA = "${{ github.event.pull_request.head.sha || github.sha }}"
           python tauri/tests/windows_smoke.py
