@@ -46,15 +46,21 @@ test('late SQL charts are discarded after scope invalidation and errors clear th
  const bad=fixture({nativeAnalysisCompare:async()=>{throw Error('database failed');}});await bad.bootstrap();assert.equal(bad.nodes.get('overviewKpis').textContent,'');assert.match(bad.nodes.get('overviewAlerts').textContent,/database failed/);assert.equal(bad.nodes.get('printSummary').disabled,true);
 });
 function descendants(node){return [node,...node.children.flatMap(child=>typeof child==='object'?descendants(child):[])];}
-test('coverage acknowledgement retains the canonical key and never confirms missing data',async()=>{
+test('incomplete coverage remains visible and opens a missing-org/day matrix',async()=>{
  const complete={complete:true,periods:1,missing:0,total:{count:2,amount:20,average:10},available_reports:1,available_total:{count:2,amount:20,average:10},invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};
  const partial={...complete,complete:false,missing:1,total:{count:null,amount:null,average:null},import_warning_reports:1};
- const f=fixture({nativeAnalysisCompare:async()=>({summary:{before:complete,after:partial},top_count:[],top_amount:[]})}),storage=new Map();f.window.localStorage={getItem:key=>storage.get(key),setItem:(key,v)=>storage.set(key,v)};
- await f.bootstrap();const acknowledge=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='BUTTON'&&n.textContent.includes('замечание известно'));assert.ok(acknowledge);acknowledge.dispatch('click');
- const expected='sql-coverage-ack-v1:'+JSON.stringify([1,'day','2024-01-02','2024-01-02',['A'],[],1,1,0,0,0,1,1]);assert.equal(storage.get(expected),'accepted');
- assert.match(f.nodes.get('overviewAlerts').textContent,/неполная \(известно\)/);assert.match(f.nodes.get('overviewKpis').textContent,/—/);assert.doesNotMatch(f.nodes.get('overviewAlerts').textContent,/Понятно, замечание известно/);
- f.nodes.get('printSummary').dispatch('click');assert.match(f.nodes.get('printReport').textContent,/Частичный итог/);assert.match(f.nodes.get('printReport').textContent,/исходных отчётах есть замечания/);assert.match(f.nodes.get('printReport').textContent,/20/);
- f.UI.revision=2;f.UI.snapshot.revision=2;await f.bootstrap();assert.match(f.nodes.get('overviewAlerts').textContent,/Понятно, замечание известно/);
+ const f=fixture({
+  nativeAnalysisCompare:async()=>({summary:{before:complete,after:partial},top_count:[],top_amount:[]}),
+  nativeOrganizationTrends:async()=>({series:[{organization:'A',points:[{start:'2024-01-02',missing:1}]}]})
+ });await f.bootstrap();
+ assert.match(f.nodes.get('overviewAlerts').textContent,/Неполные данные: 1 пропуск/);
+ assert.doesNotMatch(f.nodes.get('overviewAlerts').textContent,/замечание известно/);
+ const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
+ assert.ok(details);details.open=true;details.dispatch('toggle');await settle();
+ assert.match(details.textContent,/Подразделение/);assert.match(details.textContent,/02\.01\.2024/);
+ assert.match(details.textContent,/Нет/);assert.match(f.nodes.get('overviewAlerts').textContent,/Проверить данные/);
+ assert.match(f.nodes.get('overviewKpis').textContent,/—/);
+ f.nodes.get('printSummary').dispatch('click');assert.match(f.nodes.get('printReport').textContent,/Частичный итог/);
 });
 test('pending and empty sources immediately publish a null scope',async()=>{
  const wait=deferred();let reads=0;const f=fixture({unifiedPeriodOptions:()=>++reads===1?Promise.resolve({min:'2024-01-01',max:'2024-01-02',total_rows:2}):wait.promise});await f.bootstrap();assert.ok(f.published.at(-1));f.nodes.get('periodType').value='month';f.nodes.get('periodType').dispatch('change');assert.equal(f.published.at(-1),null);
