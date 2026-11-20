@@ -81,7 +81,17 @@ function changeContext(){
 function changeMeasure(row,metric){const m=row[metric]||{};return {...m,smallBase:m.smallBase??m.small_base??false};}
 function changeLabel(row,m){if(m.negative)return 'Изменение с отрицательными значениями';if(row.status==='new')return 'Новая';if(row.status==='gone')return 'Нет выполнений';return m.delta>0?'Рост':m.delta<0?'Снижение':'Без изменений';}
 function renderChangeSummary(summary,chosen){clear('changesSummary');const root=$('changesSummary');
- for(const [label,n,cls] of [['Значительно выросло',summary.grown,'numeric-rise'],['Значительно снизилось',summary.fallen,'numeric-fall'],['Новых услуг',summary.new,''],['Нет выполнений',summary.gone,'']]){const card=UI.el('div',null,'kpi');card.append(UI.el('span',label),UI.el('strong',String(n),n?cls:''));root.append(card);}
+ for(const [label,n,cls,direction] of [['Значительно выросло',summary.grown,'numeric-rise','up'],['Значительно снизилось',summary.fallen,'numeric-fall','down'],['Новых услуг',summary.new,'','new'],['Нет выполнений',summary.gone,'','gone']]){
+  const card=UI.el('button',null,'kpi kpi-action');card.type='button';
+  const explanation=direction==='up'||direction==='down'
+   ?'Изменение не меньше '+value('changesPercent')+'% и минимальной разницы: '+value('changesCountMin')+' по количеству / объёму или '+value('changesAmountMin')+' по сумме. Без отрицательных значений и малой базы.'
+   :direction==='new'?'Работа появилась в загруженном периоде и отсутствовала в базовом.':
+    'В базовом периоде работа выполнялась, в текущем выполнений нет. Пропуски не считаются нулём.';
+  card.title=explanation;card.setAttribute('aria-label',label+': '+n+'. '+explanation+' Показать строки этой категории.');
+  card.append(UI.el('span',label),UI.el('strong',String(n),n?cls:''));
+  card.addEventListener('click',()=>{$('changesDirection').value=direction;invalidate('changes');void changes();$('changesResults').scrollIntoView?.({block:'start'});});
+  root.append(card);
+ }
  for(const metric of chosen){const top=summary['top_'+metric],m=top&&changeMeasure(top,metric),card=UI.el('div',null,'kpi');card.append(UI.el('span','Наибольшее абсолютное изменение · '+titles[metric]),UI.el('strong',m?delta(m.delta,metric):'—',m?.delta>0?'numeric-rise':m?.delta<0?'numeric-fall':''));if(top)card.append(UI.el('small',workLabel(top.name)+' · '+top.org+' · '+periodLabel(top.baseStart,value('changesType'))+' / '+periodLabel(top.currentStart,value('changesType'))));root.append(card);}
 }
 async function changes(positions=[null]){
