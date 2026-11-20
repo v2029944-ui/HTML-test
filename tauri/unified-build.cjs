@@ -14,6 +14,21 @@ function buildUnified(source){
  script=script.replace(metricMarker,"function metricTitle(metric){return {count:'Количество / объём',amount:'Сумма',average:'Сумма / количество (объём)'}[metric]||metric;}");
  // The original renderer predates calendar-year rollups. Adapt only generated
  // presentation helpers; the independent browser source remains unchanged.
+ const rankingColor="fill.style.setProperty('--rank-color',seriesColor(row.name));";
+ if(!script.includes(rankingColor))throw Error('Original ranking color marker changed');
+ script=script.replace(rankingColor,"fill.style.setProperty('--rank-color','var(--accent)');");
+ const rankingRows=".filter(item=>Number.isFinite(item.value))";
+ if(!script.includes(rankingRows))throw Error('Original ranking filter marker changed');
+ script=script.replace(rankingRows,".filter(item=>Number.isFinite(item.value)&&item.value!==0)");
+ const noZero="Нет сопоставимых значений за выбранный период.";
+ if(!script.includes(noZero))throw Error('Original empty ranking marker changed');
+ script=script.replace(noZero,"Нет ненулевых значений за выбранный период. Нулевые строки рейтинга скрыты.");
+ const chartValues="return value===null?[]:[value||0];";
+ if(!script.includes(chartValues))throw Error('Original chart value marker changed');
+ script=script.replace(chartValues,"return Number.isFinite(value)?[value]:[];");
+ const chartPoint="if(raw===null){flush();return;}";
+ if(!script.includes(chartPoint))throw Error('Original chart point marker changed');
+ script=script.replace(chartPoint,"if(!Number.isFinite(raw)){flush();return;}");
  const horizontalMarker="  const data=options.data||periods.map(p=>reportHasOrganizations(p,orgs)?summary(p,orgs).by:null);\n  if(periods.length===1){";
  if(!script.includes(horizontalMarker))throw Error('Original chart geometry changed');
  script=script.replace(horizontalMarker,"  const data=options.data||periods.map(p=>reportHasOrganizations(p,orgs)?summary(p,orgs).by:null);\n  if(bar&&options.orientation==='horizontal'&&periods.length>1){\n    if(typeof window.unifiedHorizontalBars!=='function')throw Error('Не загружена горизонтальная диаграмма.');\n    window.unifiedHorizontalBars(periods,shown,data,metric,root,options,seriesColor,()=>drawChart(periods,orgs,metric,root,options));\n    return;\n  }\n  if(periods.length===1){");
