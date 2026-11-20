@@ -14,6 +14,9 @@ function buildUnified(source){
  script=script.replace(metricMarker,"function metricTitle(metric){return {count:'Количество / объём',amount:'Сумма',average:'Сумма / количество (объём)'}[metric]||metric;}");
  // The original renderer predates calendar-year rollups. Adapt only generated
  // presentation helpers; the independent browser source remains unchanged.
+ const horizontalMarker="  const data=options.data||periods.map(p=>reportHasOrganizations(p,orgs)?summary(p,orgs).by:null);\n  if(periods.length===1){";
+ if(!script.includes(horizontalMarker))throw Error('Original chart geometry changed');
+ script=script.replace(horizontalMarker,"  const data=options.data||periods.map(p=>reportHasOrganizations(p,orgs)?summary(p,orgs).by:null);\n  if(bar&&options.orientation==='horizontal'&&periods.length>1){\n    if(typeof window.unifiedHorizontalBars!=='function')throw Error('Не загружена горизонтальная диаграмма.');\n    window.unifiedHorizontalBars(periods,shown,data,metric,root,options,seriesColor,()=>drawChart(periods,orgs,metric,root,options));\n    return;\n  }\n  if(periods.length===1){");
  script+=`
 (function(){
  const original={periodEnd,periodTitle,periodScale,periodUnit,plotPeriodLabel,displayPeriod,shiftPeriod};
@@ -54,7 +57,8 @@ function buildUnified(source){
  html=html.replace('<div class="filters">','<div class="filters"><label>Источник<select id="unifiedSource"><option value="daily">Дневные отчёты</option><option value="imported">Отчёты выбранного типа</option></select></label>',1);
  html=html.replace(/<div class="section-filter-row"><label>Тип источника<select id="calendarType">[\s\S]*?<\/div>/,'');
  // Issue67: hide only confirmed zero periods, keep missing periods and natural vertical layout.
- html=html.replace('<div class="segmented chart-mode-controls">','<label class="checkline"><input id="hideEmptyPeriods" type="checkbox"> Скрывать подтверждённые нулевые периоды</label><div class="segmented chart-mode-controls">',1);
+ if(!html.includes("<div class=\"segmented chart-mode-controls\"><button data-chart=\"line\" class=\"active\" title=\"Показывать изменение значений по периодам линиями\">Линейный график</button><button data-chart=\"bar\" title=\"Сравнивать значения столбцами\">Столбцы</button><button data-chart=\"table\" title=\"Показывать точные значения по периодам\">Таблица значений</button></div>"))throw Error('Canonical chart modes changed');
+ html=html.replace("<div class=\"segmented chart-mode-controls\"><button data-chart=\"line\" class=\"active\" title=\"Показывать изменение значений по периодам линиями\">Линейный график</button><button data-chart=\"bar\" title=\"Сравнивать значения столбцами\">Столбцы</button><button data-chart=\"table\" title=\"Показывать точные значения по периодам\">Таблица значений</button></div>",'<label class="checkline"><input id="hideEmptyPeriods" type="checkbox"> Скрывать подтверждённые нулевые периоды</label>'+"<div class=\"chart-mode-line\"><div class=\"segmented chart-mode-controls\"><button type=\"button\" data-chart=\"bar\" class=\"active\" title=\"Сравнить значения по периодам\">Диаграмма</button><button type=\"button\" data-chart=\"table\" title=\"Показать точные значения\">Таблица значений</button></div><label>Расположение столбцов<select id=\"chartOrientation\"><option value=\"vertical\">Вертикально</option><option value=\"horizontal\">Горизонтально</option></select></label></div>");
  html=html.replace('</head>','<meta name="analiz-unified-sql" content="true"><link rel="stylesheet" href="tauri-app-status.css"><link rel="stylesheet" href="tauri-unified.css"><script src="tauri-bridge.js"></script></head>');
  html=html.replace('Данные остаются в этом браузере','Локальная база SQLite');
  html=html.replace('и защиты от очистки данных браузера.','и защиты от потери данных.');
@@ -62,7 +66,7 @@ function buildUnified(source){
  html=html.replace('>Скачать группы (JSON)</button>','>Экспорт групп</button>').replace('>Импорт групп JSON<input','>Импорт групп<input').replace('Добавить справочник услуг из Excel\n','Импорт справочника Excel\n');
  const catalog=html.match(/<div class="catalog-toolbar">[\s\S]*?<\/div>/);
  if(catalog){html=html.replace(catalog[0],'');const groups=html.indexOf('id="importGroups"');const end=html.indexOf('</div>',groups);if(groups<0||end<0)throw Error('Missing group import toolbar');html=html.slice(0,end)+catalog[0]+html.slice(end);}
- const modules=['unified-original','native-errors','native-period-selection','app-status','unified-base','unified-management','unified-reports','native-metric-kinds','unified-extended','unified-analytics','unified-app','updates'];
+ const modules=['unified-original','unified-horizontal-bars','native-errors','native-period-selection','app-status','unified-base','unified-management','unified-reports','native-metric-kinds','unified-extended','unified-analytics','unified-app','updates'];
  html=html.replace('</body>',modules.map(name=>'<script src="tauri-'+name+'.js"></script>').join('\n')+'\n</body>');
  return {html,script};
 }
