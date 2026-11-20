@@ -4,6 +4,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const path=require('node:path');
 const script=fs.readFileSync(path.join(__dirname,'../unified-analytics.js'),'utf8');
+const coverageScript=fs.readFileSync(path.join(__dirname,'../unified-coverage.js'),'utf8');
 const original=fs.readFileSync(path.join(__dirname,'../../index.html'),'utf8');
 class Element{
  constructor(tag='div',text=''){this.tagName=tag.toUpperCase();this.children=[];this._text=text??'';this.value='';this.dataset={};this.listeners={};this.hidden=false;this.open=false;this.checked=false;this.classList={toggle(){}};}
@@ -13,19 +14,24 @@ class Element{
 }
 const settle=()=>new Promise(r=>setImmediate(r));
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
+function matrixPage(revision,kind,from,to,organizations,missing=()=>true){
+ const periods=[];for(let start=from;start<=to;){const d=new Date(start+'T00:00:00Z'),end=new Date(d);if(kind==='week')end.setUTCDate(end.getUTCDate()+6);if(kind==='month'){end.setUTCMonth(end.getUTCMonth()+1);end.setUTCDate(0);}periods.push({start,end:end.toISOString().slice(0,10),unassigned_invalid:0});if(kind==='month')d.setUTCMonth(d.getUTCMonth()+1);else d.setUTCDate(d.getUTCDate()+(kind==='week'?7:1));start=d.toISOString().slice(0,10);}
+ return {revision,report_type:kind,periods,rows:organizations.map(organization=>({organization,cells:periods.map(({start})=>({start,available:!missing(organization),matching_reports:missing(organization)?0:1,invalid_reports:0,duplicate_reports:0,overlap_reports:0,shifted_reports:0,warned_reports:0,count:missing(organization)?null:2,amount:missing(organization)?null:20,numeric_zero:false,has_activity:!missing(organization)}))}))};
+}
 function fixture(overrides={}){
  const nodes=new Map();for(const m of original.matchAll(/<([a-z][\w-]*)\b[^>]*\bid="([^"]+)"[^>]*>/gi)){const n=new Element(m[1]);n.id=m[2];nodes.set(n.id,n);}
- for(const id of ['unifiedSource','hideEmptyPeriods']){const node=new Element('input');node.id=id;nodes.set(id,node);}
- for(const [id,v]of Object.entries({periodType:'day',unifiedSource:'daily',overviewMode:'single',chartBreakdown:'works',chartOrgScope:'all',chartSeriesLayout:'combined'}))nodes.get(id).value=v;
+ for(const id of ['unifiedSource','hideEmptyPeriods','chartOrientation','analysisBasePeriod','workViewMode']){const node=new Element('input');node.id=id;nodes.set(id,node);}
+ for(const [id,v]of Object.entries({periodType:'day',unifiedSource:'daily',overviewMode:'single',chartBreakdown:'works',chartOrgScope:'all',chartSeriesLayout:'combined',chartOrientation:'vertical'}))nodes.get(id).value=v;
  const buttons=['line','bar','table'].map(chart=>{const n=new Element('button');n.dataset.chart=chart;return n;}),draws=[],tables=[],published=[],multi=new Map(),calls=[],notices=[];
  let snapshotHook,viewHook,prints=0;
  const totals={count:2,amount:20,average:10},summary={complete:true,periods:1,organizations:1,missing:0,values:1,total:totals,available_reports:1,available_total:totals,invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};
  const points=[{start:'2024-01-01',periods:1,missing:0,total:totals},{start:'2024-01-02',periods:1,missing:0,total:totals}];
- const defaults={unifiedPeriodOptions:async()=>({rows:[{start:'2024-01-01',end:'2024-01-01'}],min:'2024-01-01',max:'2024-01-02',total_rows:2,next:null}),unifiedNameOptions:async()=>({rows:[{key:'work:W',name:'W',kind:'work'}],next:null,total_rows:1}),nativeAnalysisCompare:async()=>({summary:{before:summary,after:summary},top_count:[],top_amount:[]}),nativeAnalysisOrganizations:async()=>[{org:'A',complete:true,missing:0,total:totals}],nativeAnalysisRanking:async()=>({complete:true,rows:[{key:'work:W',name:'W',kind:'work'}]}),nativeAnalysisTimeline:async()=>({granularity:'period',points}),nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points})};
+ const defaults={nativeQualityMatrixPage:async(...args)=>matrixPage(...args),unifiedPeriodOptions:async()=>({rows:[{start:'2024-01-01',end:'2024-01-01'}],min:'2024-01-01',max:'2024-01-02',total_rows:2,next:null}),unifiedNameOptions:async()=>({rows:[{key:'work:W',name:'W',kind:'work'}],next:null,total_rows:1}),nativeAnalysisCompare:async()=>({summary:{before:summary,after:summary},top_count:[],top_amount:[]}),nativeAnalysisOrganizations:async()=>[{org:'A',complete:true,missing:0,total:totals}],nativeAnalysisRanking:async()=>({complete:true,rows:[{key:'work:W',name:'W',kind:'work'}]}),nativeAnalysisTimeline:async()=>({granularity:'period',points}),nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points})};
  const api=new Proxy({...defaults,...overrides},{get(target,key){if(key==='load'||key==='save')throw Error('Forbidden full history');if(!(key in target))throw Error('Unexpected API '+key);return (...args)=>{calls.push({key,args});return target[key](...args);};}});
- const originalHelpers={periodEnd:(start,kind)=>start,displayPeriod:p=>p.start,renderMultiFilter:(id,items,selected,callback)=>multi.set(id,{items,selected,callback})};
- const UI={api,revision:1,snapshot:{revision:1,org_names:['A','B','C','D']},state:{selectedOrganizations:new Set(['A']),selectedMetrics:new Set(['amount','count']),chartMetrics:new Set(['amount','count']),chart:'line'},$:id=>nodes.get(id),el:(tag,text,cls)=>{const n=new Element(tag,text);n.className=cls;return n;},fmt:n=>Number.isFinite(n)?String(n):'—',notice:(...args)=>notices.push(args),table:(root,metric,caption,headers,rows,options)=>{tables.push({root:root.id,metric,rows,options});root.append(new Element('table',rows.map(r=>r.join('|')).join('\n')));},drawChart:(...args)=>draws.push(args),drawDepartments:(...args)=>draws.push(args),setPeriodInput:(id,kind,date)=>{const node=nodes.get(id);node.dataset.periodType=kind;if(date!==undefined)node.value=date;},range:(kind,from,to,source)=>from&&from<=to?{type:source==='daily'?'day':kind,displayType:kind,source,from,to}:null,publishScope:s=>published.push(s),onSnapshot:fn=>snapshotHook=fn,onView:(view,fn)=>viewHook=fn};
- const window={unifiedUI:UI,unifiedOriginal:originalHelpers,nativePeriodSelection:{fromIsoDate:date=>date},print:()=>prints++};
+ const originalHelpers={periodEnd:(start,kind)=>{const d=new Date(start+'T00:00:00Z');if(kind==='week')d.setUTCDate(d.getUTCDate()+6);else if(kind==='month'){d.setUTCMonth(d.getUTCMonth()+1);d.setUTCDate(0);}return d.toISOString().slice(0,10);},displayPeriod:p=>p.start,renderMultiFilter:(id,items,selected,callback)=>multi.set(id,{items,selected,callback})};
+ const UI={api,revision:1,snapshot:{revision:1,org_names:['A','B','C','D']},state:{selectedOrganizations:new Set(['A']),selectedMetrics:new Set(['amount','count']),chartMetrics:new Set(['amount','count']),chart:'bar'},$:id=>nodes.get(id),el:(tag,text,cls)=>{const n=new Element(tag,text);n.className=cls;return n;},fmt:n=>Number.isFinite(n)?String(n):'—',notice:(...args)=>notices.push(args),table:(root,metric,caption,headers,rows,options)=>{tables.push({root:root.id,metric,rows,options});root.append(new Element('table',rows.map(r=>r.join('|')).join('\n')));},drawChart:(...args)=>draws.push(args),drawDepartments:(...args)=>draws.push(args),setPeriodInput:(id,kind,date)=>{const node=nodes.get(id);node.dataset.periodType=kind;if(date!==undefined)node.value=date;},range:(kind,from,to,source)=>from&&from<=to?{type:source==='daily'?'day':kind,displayType:kind,source,from,to}:null,publishScope:s=>published.push(s),onSnapshot:fn=>snapshotHook=fn,onView:(view,fn)=>viewHook=fn};
+ const window={unifiedUI:UI,unifiedOriginal:originalHelpers,nativePeriodSelection:{fromIsoDate:date=>date,normalize:(_kind,date)=>date},print:()=>prints++};
+ vm.runInNewContext(coverageScript,{window,Date,Map,Set});
  vm.runInNewContext(script,{window,document:{querySelectorAll:selector=>selector==='[data-chart]'?buttons:[]},Date,Map,Set,setTimeout,clearTimeout});window.unifiedAnalytics.init();
  return {UI,window,nodes,buttons,draws,tables,published,multi,calls,notices,get prints(){return prints;},bootstrap:async()=>{await snapshotHook(UI.snapshot);await settle();},invalidate:()=>snapshotHook(null)};
 }
@@ -46,15 +52,21 @@ test('late SQL charts are discarded after scope invalidation and errors clear th
  const bad=fixture({nativeAnalysisCompare:async()=>{throw Error('database failed');}});await bad.bootstrap();assert.equal(bad.nodes.get('overviewKpis').textContent,'');assert.match(bad.nodes.get('overviewAlerts').textContent,/database failed/);assert.equal(bad.nodes.get('printSummary').disabled,true);
 });
 function descendants(node){return [node,...node.children.flatMap(child=>typeof child==='object'?descendants(child):[])];}
-test('coverage acknowledgement retains the canonical key and never confirms missing data',async()=>{
+test('incomplete coverage remains visible and opens a missing-org/day matrix',async()=>{
  const complete={complete:true,periods:1,missing:0,total:{count:2,amount:20,average:10},available_reports:1,available_total:{count:2,amount:20,average:10},invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};
  const partial={...complete,complete:false,missing:1,total:{count:null,amount:null,average:null},import_warning_reports:1};
- const f=fixture({nativeAnalysisCompare:async()=>({summary:{before:complete,after:partial},top_count:[],top_amount:[]})}),storage=new Map();f.window.localStorage={getItem:key=>storage.get(key),setItem:(key,v)=>storage.set(key,v)};
- await f.bootstrap();const acknowledge=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='BUTTON'&&n.textContent.includes('замечание известно'));assert.ok(acknowledge);acknowledge.dispatch('click');
- const expected='sql-coverage-ack-v1:'+JSON.stringify([1,'day','2024-01-02','2024-01-02',['A'],[],1,1,0,0,0,1,1]);assert.equal(storage.get(expected),'accepted');
- assert.match(f.nodes.get('overviewAlerts').textContent,/неполная \(известно\)/);assert.match(f.nodes.get('overviewKpis').textContent,/—/);assert.doesNotMatch(f.nodes.get('overviewAlerts').textContent,/Понятно, замечание известно/);
- f.nodes.get('printSummary').dispatch('click');assert.match(f.nodes.get('printReport').textContent,/Частичный итог/);assert.match(f.nodes.get('printReport').textContent,/исходных отчётах есть замечания/);assert.match(f.nodes.get('printReport').textContent,/20/);
- f.UI.revision=2;f.UI.snapshot.revision=2;await f.bootstrap();assert.match(f.nodes.get('overviewAlerts').textContent,/Понятно, замечание известно/);
+ const f=fixture({
+  nativeAnalysisCompare:async()=>({summary:{before:complete,after:partial},top_count:[],top_amount:[]}),
+  nativeQualityMatrixPage:async(...args)=>matrixPage(...args)
+ });await f.bootstrap();
+ assert.match(f.nodes.get('overviewAlerts').textContent,/Неполные данные: 1 пропуск/);
+ assert.doesNotMatch(f.nodes.get('overviewAlerts').textContent,/замечание известно/);
+ const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
+ assert.ok(details);details.open=true;details.dispatch('toggle');await settle();
+ assert.match(details.textContent,/Подразделение/);assert.match(details.textContent,/02\.01\.2024/);
+ assert.match(details.textContent,/Нет/);assert.match(f.nodes.get('overviewAlerts').textContent,/Проверить данные/);
+ assert.match(f.nodes.get('overviewKpis').textContent,/—/);
+ f.nodes.get('printSummary').dispatch('click');assert.match(f.nodes.get('printReport').textContent,/Частичный итог/);
 });
 test('pending and empty sources immediately publish a null scope',async()=>{
  const wait=deferred();let reads=0;const f=fixture({unifiedPeriodOptions:()=>++reads===1?Promise.resolve({min:'2024-01-01',max:'2024-01-02',total_rows:2}):wait.promise});await f.bootstrap();assert.ok(f.published.at(-1));f.nodes.get('periodType').value='month';f.nodes.get('periodType').dispatch('change');assert.equal(f.published.at(-1),null);
@@ -76,4 +88,270 @@ test('quantity and average labels never claim fractional volume is a count of jo
  assert.match(printed,/Количество \/ объём/);
  assert.match(printed,/сверять с исходными Excel/);
  assert.doesNotMatch(printed,/Средняя сумма на работу/);
+});
+
+
+test('charts default to columns and switch orientation without changing data grouping',async()=>{
+ const f=fixture();await f.bootstrap();
+ assert.equal(f.UI.state.chart,'bar');
+ f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ assert.equal(f.draws.at(-1)[4].chart,'bar');assert.equal(f.draws.at(-1)[4].orientation,'vertical');
+ f.nodes.get('chartOrientation').value='horizontal';f.nodes.get('chartOrientation').dispatch('change');await settle();
+ assert.equal(f.draws.at(-1)[4].chart,'bar');assert.equal(f.draws.at(-1)[4].orientation,'horizontal');
+});
+
+test('missing daily reports offer existing weekly imports without inventing zeros',async()=>{
+ const f=fixture({unifiedPeriodOptions:async(_revision,kind,grouping)=>{
+  if(kind==='day'&&grouping==='week')return {rows:[],min:null,max:null,total_rows:0,next:null};
+  if(kind==='week')return {rows:[{start:'2024-01-01',end:'2024-01-07'}],min:'2024-01-01',max:'2024-01-01',total_rows:1,next:null};
+  throw Error('Unexpected period type');
+ }});
+ f.nodes.get('periodType').value='week';await f.bootstrap();await settle();
+ assert.match(f.nodes.get('overviewAlerts').textContent,/Дневных отчётов пока нет/);
+ assert.match(f.nodes.get('overviewAlerts').textContent,/Открыть недельные отчёты/);
+ const btn=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='BUTTON');
+ assert.ok(btn);btn.dispatch('click');await settle();
+ assert.equal(f.nodes.get('unifiedSource').value,'imported');
+ assert.equal(f.nodes.get('periodType').value,'week');
+});
+
+test('shared baseline changes the SQL comparison and is published to extended sections',async()=>{
+ const f=fixture();await f.bootstrap();
+ const comparisons=()=>f.calls.filter(item=>item.key==='nativeAnalysisCompare');
+ assert.equal(f.nodes.get('analysisBasePeriod').value,'2024-01-01');
+ assert.equal(comparisons().at(-1).args[2],'2024-01-01');
+ f.nodes.get('analysisBasePeriod').value='2023-12-30';
+ f.nodes.get('analysisBasePeriod').dispatch('change');await settle();
+ assert.equal(comparisons().at(-1).args[2],'2023-12-30');
+ assert.equal(f.published.at(-1).baseFrom,'2023-12-30');
+ assert.equal(f.published.at(-1).baseTo,'2023-12-30');
+ assert.match(f.nodes.get('overviewInsights').textContent,/базовым периодом/);
+});
+
+test('a weekly imported period shows its full calendar dates, not a repeated Monday',async()=>{
+ const f=fixture({unifiedPeriodOptions:async()=>({rows:[{start:'2024-01-01',end:'2024-01-07'}],min:'2024-01-01',max:'2024-01-01',total_rows:1,next:null})});
+ f.nodes.get('periodType').value='week';f.nodes.get('unifiedSource').value='imported';
+ await f.bootstrap();assert.match(f.nodes.get('overviewPeriodText').textContent,/01\.01\.2024 — 07\.01\.2024/);
+});
+
+test('missing-month quality matrix shows the full native calendar period',async()=>{
+ const full={complete:true,periods:1,missing:0,total:{count:2,amount:20,average:10},available_reports:1,available_total:{count:2,amount:20,average:10},invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};
+ const f=fixture({
+  unifiedPeriodOptions:async()=>({rows:[{start:'2024-01-01',end:'2024-01-31'}],min:'2024-01-01',max:'2024-01-01',total_rows:1,next:null}),
+  nativeAnalysisCompare:async()=>({summary:{before:full,after:{...full,complete:false,missing:1,total:{amount:null,count:null,average:null}}}}),
+  nativeQualityMatrixPage:async(...args)=>matrixPage(...args)
+ });
+ f.nodes.get('periodType').value='month';f.nodes.get('unifiedSource').value='imported';
+ await f.bootstrap();const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
+ assert.ok(details);details.open=true;details.dispatch('toggle');await settle();
+ assert.match(details.textContent,/01\.01\.2024 — 31\.01\.2024/);
+});
+
+test('daily missing-report matrix pages a long period without a whole-history query',async()=>{
+ const complete={complete:true,periods:1,missing:0,total:{count:2,amount:20,average:10},available_reports:1,available_total:{count:2,amount:20,average:10},invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};
+ const queries=[];const f=fixture({
+  nativeAnalysisCompare:async()=>({summary:{before:complete,after:{...complete,complete:false,missing:1,total:{count:null,amount:null,average:null}}}}),
+  nativeQualityMatrixPage:async(revision,kind,from,to,orgs)=>{
+   queries.push([from,to]);return matrixPage(revision,kind,from,to,orgs);
+  }
+ });await f.bootstrap();
+ f.nodes.get('overviewMode').value='range';
+ f.nodes.get('rangeStart').value='2024-01-01';
+ f.nodes.get('rangeEnd').value='2024-02-15';
+ f.nodes.get('overviewMode').dispatch('change');await settle();
+ const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
+ assert.ok(details);details.open=true;details.dispatch('toggle');await settle();
+ assert.equal(queries.length,1);assert.deepEqual(queries[0],['2024-01-01','2024-01-31']);
+ assert.match(details.textContent,/Страница 1 из 2/);
+ const next=descendants(details).find(n=>n.tagName==='BUTTON'&&n.textContent==='Позднее →');
+ assert.ok(next);next.dispatch('click');await settle();
+ assert.equal(queries.length,2);assert.deepEqual(queries[1],['2024-02-01','2024-02-15']);
+ assert.match(details.textContent,/Страница 2 из 2/);
+ assert.match(details.textContent,/Нет/);
+});
+
+test('composition view stops hidden chart queries and discards an in-flight trend',async()=>{
+ const pending=deferred();let reads=0;
+ const f=fixture({nativeWorkTimeline:()=>{reads++;return pending.promise;}});await f.bootstrap();
+ f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ assert.equal(reads,1);
+ f.nodes.get('workViewMode').value='composition';f.nodes.get('workViewMode').dispatch('change');
+ pending.resolve({granularity:'period',points:['2024-01-01','2024-01-02'].map(start=>({start,missing:0,total:{count:2,amount:20,average:10}}))});await settle();
+ assert.equal(f.draws.length,0);
+ f.nodes.get('chartOrientation').value='horizontal';f.nodes.get('chartOrientation').dispatch('change');await settle();
+ assert.equal(reads,1,'hidden trends must not issue another SQL query');
+ f.nodes.get('workViewMode').value='trend';f.nodes.get('workViewMode').dispatch('change');await settle();
+ assert.equal(reads,2,'showing trends reloads their current filters');
+});
+
+test('coverage matrix queries every selected organization beyond the eight-series SQL limit',async()=>{
+ const complete={complete:true,periods:1,missing:0,total:{count:2,amount:20,average:10}};
+ const queries=[],organizations=Array.from({length:10},(_,i)=>'Org '+i);
+ const f=fixture({
+  nativeAnalysisCompare:async()=>({summary:{before:complete,after:{...complete,complete:false,missing:1}}}),
+  nativeQualityMatrixPage:async(revision,kind,from,to,orgs)=>{
+   queries.push(Array.from(orgs));
+   return matrixPage(revision,kind,from,to,orgs,organization=>organization==='Org 0');
+  }
+ });
+ f.UI.snapshot.org_names=organizations;f.UI.state.selectedOrganizations=new Set(organizations);
+ await f.bootstrap();const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
+ details.open=true;details.dispatch('toggle');await settle();
+ const cells=descendants(details).filter(n=>n.tagName==='TD');
+ assert.equal(cells.length,10);assert.equal(cells.filter(n=>n.textContent==='Есть данные').length,9);
+ assert.deepEqual(queries,[organizations.slice(0,8),organizations.slice(8)]);
+});
+
+test('overview and print round percentages to one decimal without rounding SQL values',async()=>{
+ const summary=amount=>({complete:true,periods:1,missing:0,total:{amount,count:amount,average:1}});
+ const f=fixture({nativeAnalysisCompare:async()=>({summary:{before:summary(3),after:summary(4)}})});
+ await f.bootstrap();assert.match(f.nodes.get('overviewInsights').textContent,/33,3%/);
+ assert.doesNotMatch(f.nodes.get('overviewInsights').textContent,/33,333/);
+ f.nodes.get('printSummary').dispatch('click');assert.match(f.nodes.get('printReport').textContent,/33,3%/);
+});
+
+test('weekly and monthly coverage pages retain exact year-crossing boundaries',async()=>{
+ for(const [kind,from,to,pageEnd,nextStart,lastEnd]of [
+  ['week','2024-11-04','2025-02-03','2025-01-20','2025-01-27','2025-02-09'],
+  ['month','2024-02-01','2025-02-01','2025-01-01','2025-02-01','2025-02-28']
+ ]){
+  const queries=[],full={complete:true,periods:1,missing:0,total:{amount:1,count:1,average:1}};
+  const f=fixture({
+   nativeAnalysisCompare:async()=>({summary:{before:full,after:{...full,complete:false,missing:1}}}),
+   nativeQualityMatrixPage:async(revision,type,start,end,orgs)=>{queries.push([type,start,end]);return matrixPage(revision,type,start,end,orgs);}
+  });
+  f.nodes.get('periodType').value=kind;f.nodes.get('unifiedSource').value='imported';await f.bootstrap();
+  f.nodes.get('overviewMode').value='range';f.nodes.get('rangeStart').value=from;f.nodes.get('rangeEnd').value=to;
+  f.nodes.get('overviewMode').dispatch('change');await settle();
+  const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
+  details.open=true;details.dispatch('toggle');await settle();
+  assert.deepEqual(queries[0],[kind,from,pageEnd]);
+  descendants(details).find(n=>n.tagName==='BUTTON'&&n.textContent==='Позднее →').dispatch('click');await settle();
+  assert.deepEqual(queries[1],[kind,nextStart,to]);
+  assert.match(details.textContent,new RegExp(lastEnd.split('-').reverse().join('\\.')));
+ }
+});
+
+test('stale coverage responses cannot populate a replaced period',async()=>{
+ const pending=deferred(),full={complete:true,periods:1,missing:0,total:{amount:1,count:1,average:1}};
+ const f=fixture({nativeAnalysisCompare:async()=>({summary:{before:full,after:{...full,complete:false,missing:1}}}),nativeQualityMatrixPage:()=>pending.promise});
+ await f.bootstrap();const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
+ details.open=true;details.dispatch('toggle');await settle();
+ f.nodes.get('overviewPeriod').value='2024-01-01';f.nodes.get('overviewPeriod').dispatch('change');await settle();
+ pending.resolve(matrixPage(1,'day','2024-01-02','2024-01-02',['A']));await settle();
+ assert.equal(descendants(details).filter(n=>n.tagName==='TABLE').length,0);
+ assert.doesNotMatch(f.nodes.get('overviewAlerts').textContent,/02\.01\.2024/);
+});
+
+test('department charts and CSV retain organizations after the first eight series',async()=>{
+ const organizations=Array.from({length:10},(_,i)=>'Org '+i),queries=[];
+ const f=fixture({
+  nativeOrganizationTrends:async(_rev,_kind,_from,_to,orgs)=>{
+   queries.push(Array.from(orgs));return {granularity:'period',series:orgs.slice(0,8).map(organization=>({organization,points:[{start:'2024-01-02',missing:0,total:{count:2.5,amount:-10.75,average:-4.3}}]}))};
+  },
+  nativeAnalysisOrganizations:async()=>organizations.map(org=>({org,complete:true,total:{count:2.5,amount:-10.75,average:-4.3}}))
+ });
+ f.UI.snapshot.org_names=organizations;f.UI.state.selectedOrganizations=new Set(organizations);f.UI.state.chartMetrics=new Set(['amount']);
+ await f.bootstrap();f.nodes.get('chartBreakdown').value='organizations';
+ f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ assert.equal(f.draws.at(-1)[4].data[0].get('Org 9')?.amount,-10.75);
+ f.buttons.find(button=>button.dataset.chart==='table').dispatch('click');await settle();
+ const table=f.tables.findLast(t=>t.root==='dataTable');
+ assert.equal(table.options.csvRows.length,10);assert.equal(table.options.csvRows[9][2],-10.75);
+ assert.ok(queries.every(orgs=>orgs.length<=8));
+});
+test('horizontal department guide describes original units instead of normalized percentages',async()=>{
+ const f=fixture({nativeOrganizationTrends:async()=>({granularity:'period',series:[{organization:'A',points:[{start:'2024-01-02',missing:0,total:{amount:20,count:2,average:10}}]}]})});
+ await f.bootstrap();f.nodes.get('chartBreakdown').value='organizations';
+ f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ assert.match(f.nodes.get('chartReadGuide').textContent,/% от максимума/);
+ f.nodes.get('chartOrientation').value='horizontal';f.nodes.get('chartOrientation').dispatch('change');await settle();
+ assert.match(f.nodes.get('chartReadGuide').textContent,/в исходных единицах/);
+ assert.doesNotMatch(f.nodes.get('chartReadGuide').textContent,/% от максимума/);
+});
+
+test('fully available ranges expose lazy quality evidence without hiding source warnings',async()=>{
+ const f=fixture({nativeQualityMatrixPage:async(...args)=>matrixPage(...args,()=>false)});await f.bootstrap();assert.equal(f.calls.filter(c=>c.key==='nativeQualityMatrixPage').length,0);
+ const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');assert.ok(details);assert.match(details.textContent,/Качество данных/);
+ details.open=true;details.dispatch('toggle');await settle();assert.equal(f.calls.filter(c=>c.key==='nativeQualityMatrixPage').length,1);assert.match(details.textContent,/Есть данные/);
+});
+test('the reference filter passes both exact intervals and selected work keys through the native detail scope',async()=>{
+ const f=fixture();await f.bootstrap();
+ const shared={revision:1,displayType:'month',source:'daily',type:'day',overviewMode:'single',from:'2024-02-01',to:'2024-02-29',
+  baseFrom:'2023-02-01',baseTo:'2023-02-28',organizations:['B'],metric:'count',allNames:false,nameRows:[{key:'work:W',name:'W',kind:'work'}]};
+ await f.window.unifiedAnalytics.applyReferenceScope(shared);
+ const query=f.calls.filter(c=>c.key==='nativeAnalysisCompare').at(-1);
+ assert.deepEqual(query.args.slice(2,6),['2023-02-01','2023-02-28','2024-02-01','2024-02-29']);
+ const scope=f.published.at(-1);assert.deepEqual(Array.from(scope.organizations),['B']);
+ assert.deepEqual(Array.from(scope.selectedKeys),['work:W']);assert.deepEqual(Array.from(f.UI.state.selectedMetrics),['count']);
+ assert.equal(scope.baseTo,'2023-02-28');assert.equal(scope.to,'2024-02-29');
+ f.window.unifiedAnalytics.applyReferenceScope({...shared,revision:0});
+ assert.equal(f.published.at(-1),null);
+});
+test('the reference weekly chart requests daily observations without changing the shared weekly selection',async()=>{
+ const f=fixture();await f.bootstrap();
+ f.window.referenceDetail={active:'chartPanel'};
+ f.nodes.get('advancedAnalytics').open=true;
+ const shared={revision:1,displayType:'week',source:'daily',type:'day',overviewMode:'single',from:'2024-01-01',to:'2024-01-07',
+  baseFrom:'2023-12-25',baseTo:'2023-12-31',organizations:['A'],metric:'count',allNames:false,nameRows:[{key:'work:W',name:'W',kind:'work'}]};
+ await f.window.unifiedAnalytics.applyReferenceScope(shared);
+ const query=f.calls.filter(c=>c.key==='nativeAnalysisTimeline').at(-1);
+ assert.equal(query.args[6],'day');
+ assert.equal(f.draws.at(-1)[0][0].type,'day');
+ assert.equal(f.published.at(-1).displayType,'week');
+ f.window.referenceDetail.active='regularityPanel';
+ const before=f.calls.filter(c=>c.key==='nativeAnalysisTimeline').length;
+ f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ assert.equal(f.calls.filter(c=>c.key==='nativeAnalysisTimeline').length,before);
+});
+
+test('reference trend CSV captures all selected names and cancelling activity remains visible across pages',async()=>{
+ const saved=[],points=[{start:'2024-01-01',periods:1,missing:0,has_activity:true,total:{count:0,amount:0,average:null}}];
+ const f=fixture({
+  nativeAnalysisTimeline:async()=>({granularity:'period',points}),
+  nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points:points.map(p=>({...p,has_activity:false}))}),
+  chooseCsvPath:async()=>'/tmp/view.csv',referenceTrendCsv:async(...args)=>saved.push(args)
+ });
+ f.window.referenceDetail={active:'chartPanel'};
+ f.UI.request=s=>({revision:s.revision,organizations:[...s.organizations],selectedNames:s.allNames?[]:[...s.selectedNames],query:{from:s.from,to:s.to}});
+ await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;
+ f.nodes.get('selectAll').dispatch('click');f.nodes.get('hideEmptyPeriods').checked=true;
+ f.buttons.find(button=>button.dataset.chart==='table').dispatch('click');await settle();
+ const table=f.tables.findLast(t=>t.root==='dataTable'&&t.metric==='amount');
+ assert.ok(table);assert.equal(table.rows[0].length,2);
+ await table.options.csvContext.export();
+ assert.deepEqual([...saved[0][0].selectedNames],[]);assert.deepEqual([...saved[0][1].metrics],['amount']);
+ assert.equal(saved[0][1].table,'works');assert.equal(saved[0][1].hideEmpty,true);assert.equal(saved[0][2],'/tmp/view.csv');
+ f.window.referenceDetail.active='regularityPanel';
+ await assert.rejects(table.options.csvContext.export(),/изменились/);assert.equal(saved.length,1);
+});
+
+test('reference details receive exact selected dates while overview SQL is pending and discard them on failure',async()=>{
+ const overview=deferred(),organizations=deferred();
+ const f=fixture({nativeAnalysisCompare:()=>overview.promise,nativeAnalysisOrganizations:()=>organizations.promise});
+ const shared={revision:1,displayType:'week',source:'daily',type:'day',overviewMode:'single',from:'2026-11-16',to:'2026-11-22',
+  baseFrom:'2026-11-09',baseTo:'2026-11-15',organizations:['A'],metric:'amount',allNames:false,nameRows:[{key:'work:W',name:'W',kind:'work'}]};
+ const pending=f.window.unifiedAnalytics.applyReferenceScope(shared);
+ const immediate=f.published.at(-1);
+ assert.ok(immediate);
+ assert.deepEqual([immediate.from,immediate.to,immediate.baseFrom,immediate.baseTo],[shared.from,shared.to,shared.baseFrom,shared.baseTo]);
+ assert.deepEqual([...immediate.selectedKeys],['work:W']);
+ assert.deepEqual([...immediate.organizations],['A']);
+ const count=f.published.length;
+ organizations.resolve([]);overview.reject(Error('overview unavailable'));
+ await pending;
+ assert.equal(f.published.length,count+1);
+ assert.equal(f.published.at(-1),null);
+ assert.match(f.nodes.get('overviewAlerts').textContent,/overview unavailable/);
+});
+test('successful reference overview publishes its validated detail scope once',async()=>{
+ const f=fixture(),shared={revision:1,displayType:'day',source:'daily',type:'day',overviewMode:'single',
+  from:'2024-01-02',to:'2024-01-02',baseFrom:'2024-01-01',baseTo:'2024-01-01',
+  organizations:['A'],metric:'amount',allNames:true,nameRows:[]};
+ const pending=f.window.unifiedAnalytics.applyReferenceScope(shared);
+ const initial=f.published.at(-1);
+ assert.equal(initial?.allNames,true);
+ await pending;
+ assert.deepEqual(f.published.filter(Boolean),[initial]);
+ assert.equal(f.calls.filter(call=>call.key==='nativeAnalysisCompare').length,1);
 });

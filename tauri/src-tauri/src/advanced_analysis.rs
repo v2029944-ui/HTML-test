@@ -351,10 +351,10 @@ fn regularity_row(
     gap: i64,
 ) -> Result<Value, String> {
     let (first,last,hits,old_hits,last_index):(Option<String>,Option<String>,i64,i64,Option<i64>)=tx.query_row(
-        "SELECT min(f.label),max(f.label),count(CASE WHEN d.slot=1 AND d.complete THEN 1 END),
+        "SELECT min(f.label) FILTER(WHERE f.label<=?2),max(f.label) FILTER(WHERE f.label<=?2),count(CASE WHEN d.slot=1 AND d.complete THEN 1 END),
             count(CASE WHEN d.slot=0 AND d.complete THEN 1 END),min(t.distance)
          FROM adv_combined f LEFT JOIN adv_dates d ON d.label=f.label LEFT JOIN adv_tail t ON t.label=f.label
-         WHERE f.key=?1 AND f.active AND f.label<=?2",params![key,to],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(err)?;
+         WHERE f.key=?1 AND f.active AND (f.label<=?2 OR d.slot=0)",params![key,to],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(err)?;
     let trailing = if last.is_some() {
         Some(match last_index {
             Some(n) => n,
@@ -416,21 +416,30 @@ impl Storage {
         window: i32,
         after: Option<&str>,
     ) -> Result<PatternPage, String> {
-        self.patterns_filtered(revision,s,q,grouping,mode,window,after,None)
+        self.patterns_filtered(revision,s,q,grouping,mode,window,after,None,None)
     }
 
     pub fn unified_pattern_page(
         &self, revision:i64, s:&AnalysisScope, q:&ChangeQuery, grouping:Option<&str>,
         mode:&str, window:i32, options:&UnifiedPatternOptions, after:Option<&str>,
     )->Result<PatternPage,String> {
+        self.unified_patterns_output(revision,s,q,grouping,mode,window,options,after,None)
+    }
+
+    pub(super) fn unified_patterns_output(
+        &self, revision:i64, s:&AnalysisScope, q:&ChangeQuery, grouping:Option<&str>,
+        mode:&str, window:i32, options:&UnifiedPatternOptions, after:Option<&str>,
+        csv:Option<(&Path,&DetailCsvOptions)>,
+    )->Result<PatternPage,String> {
         if options.search.len()>512 || !matches!(options.status.as_str(),"all"|"frequent"|"rare"|"rarer"|"disappeared"|"new"|"dormant")
-            || (mode=="usual" && options.status!="all") {return Err("Invalid pattern filters".into())}
-        self.patterns_filtered(revision,s,q,grouping,mode,window,after,Some(options))
+            || (mode=="usual" && (options.status!="all" || options.baseline.is_some()))
+            || (mode!="usual" && options.range_window) {return Err("Invalid pattern filters".into())}
+        self.patterns_filtered(revision,s,q,grouping,mode,window,after,Some(options),csv)
     }
 
     fn patterns_filtered(
         &self, revision:i64, s:&AnalysisScope, q:&ChangeQuery, grouping:Option<&str>,
-        mode:&str, window:i32, after:Option<&str>, options:Option<&UnifiedPatternOptions>,
+        mode:&str, window:i32, after:Option<&str>, options:Option<&UnifiedPatternOptions>, csv:Option<(&Path,&DetailCsvOptions)>,
     )->Result<PatternPage,String> {
         if !matches!(mode, "usual" | "regularity") || !matches!(window, 4 | 8) {
             return Err("Invalid pattern mode or window".into());
@@ -451,7 +460,7 @@ impl Storage {
         }else{0};
         calendar.facts(&tx, s, None)?;
         tx.execute_batch("CREATE TEMP TABLE adv_complete(label TEXT PRIMARY KEY) WITHOUT ROWID;
-          CREATE TEMP TABLE adv_dates(label TEXT PRIMARY KEY,slot INTEGER,complete INTEGER) WITHOUT ROWID;
+          CREATE TEMP TABLE adv_dates(label TEXT,slot INTEGER,batch INTEGER,complete INTEGER,PRIMARY KEY(label,slot)) WITHOUT ROWID;
           CREATE TEMP TABLE adv_tail(label TEXT PRIMARY KEY,distance INTEGER) WITHOUT ROWID;
           CREATE TEMP TABLE adv_combined(key TEXT,label TEXT,count REAL,amount REAL,active INTEGER,PRIMARY KEY(key,label)) WITHOUT ROWID;
           INSERT INTO adv_combined SELECT key,label,sum(count),sum(amount),max(active) FROM adv_facts GROUP BY key,label;
@@ -461,29 +470,44 @@ impl Storage {
         tx.execute("INSERT INTO adv_keys SELECT coalesce(g.key,'work:'||f.item),f.item,CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END FROM analysis_filter_items f
             LEFT JOIN analysis_group_names g ON g.name=f.item WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM adv_keys k WHERE k.name=f.item)",[&s.names]).map_err(err)?;
         let usual = mode == "usual";
-        let first = if usual { calendar.last } else { calendar.first };
+        let range_window = options.is_some_and(|o| o.range_window);
+        let first = if usual && !range_window { calendar.last } else { calendar.first };
         let mut d = first;
         let mut count = 0;
         while d <= calendar.last {
-            tx.execute("INSERT INTO adv_dates VALUES(?1,1,EXISTS(SELECT 1 FROM adv_complete WHERE label=?1))",[d.to_string()]).map_err(err)?;
+            tx.execute("INSERT INTO adv_dates VALUES(?1,1,0,EXISTS(SELECT 1 FROM adv_complete WHERE label=?1))",[d.to_string()]).map_err(err)?;
             count += 1;
             if d == calendar.last {
                 break;
             }
             d = step(&calendar.kind, d, 1)?;
         }
-        let base_count = if usual { window } else { count };
-        let baseline_from = step(&calendar.kind, first, -base_count)?;
-        let baseline_to = step(&calendar.kind, first, -1)?;
+        let sample_length = if range_window { count } else { 1 };
+        let (baseline_from, baseline_to) = if let Some(base) = options.and_then(|o| o.baseline.as_ref()) {
+            let selected = ChangeQuery { from: base.from.clone(), to: base.to.clone(), ..q.clone() };
+            let baseline = Calendar::new(s, &selected, grouping)?;
+            (baseline.first, baseline.last)
+        } else {
+            let base_count = if usual { window * sample_length } else { count };
+            (step(&calendar.kind, first, -base_count)?, step(&calendar.kind, first, -1)?)
+        };
+        let mut index = 0;
         d = baseline_from;
-        while d < first {
-            tx.execute("INSERT INTO adv_dates VALUES(?1,0,EXISTS(SELECT 1 FROM adv_complete WHERE label=?1))",[d.to_string()]).map_err(err)?;
+        while d <= baseline_to {
+            tx.execute("INSERT INTO adv_dates VALUES(?1,0,?2,EXISTS(SELECT 1 FROM adv_complete WHERE label=?1))",
+                params![d.to_string(), index / sample_length]).map_err(err)?;
+            if d == baseline_to { break; }
             d = step(&calendar.kind, d, 1)?;
+            index += 1;
         }
-        let previous = count_sql(
-            &tx,
-            "SELECT count(*) FROM adv_dates WHERE slot=0 AND complete",
-        )?;
+        // A missing day excludes its entire historical sample from the mean.
+        // Other samples retain their original values, including observed zeros.
+        if range_window {
+            tx.execute_batch("UPDATE adv_dates SET complete=0 WHERE slot=0 AND batch IN
+                (SELECT batch FROM adv_dates WHERE slot=0 GROUP BY batch HAVING min(complete)=0)").map_err(err)?;
+        }
+        let previous = count_sql(&tx,
+            "SELECT count(DISTINCT batch) FROM adv_dates WHERE slot=0 AND complete")?;
         let used = count_sql(
             &tx,
             "SELECT count(*) FROM adv_dates WHERE slot=1 AND complete",
@@ -539,7 +563,7 @@ impl Storage {
                     coalesce(sum(count) FILTER(WHERE slot=1),0),coalesce(sum(amount) FILTER(WHERE slot=1),0)
                     FROM adv_combined JOIN adv_dates USING(label) WHERE key=?1 AND complete",[&key],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(err)?;
                 let base = totals(bc, ba, previous > 0)?;
-                let now = totals(ac, aa, used > 0)?;
+                let now = totals(ac, aa, used == i64::from(count))?;
                 json!({"count":usual_metric(base.count.map(|v|v/previous as f64),now.count,previous,q.percent)?,
                     "amount":usual_metric(base.amount.map(|v|v/previous as f64),now.amount,previous,q.percent)?,
                     "average":usual_metric(base.average,now.average,previous,q.percent)?})
@@ -573,10 +597,14 @@ impl Storage {
             tx.execute("DELETE FROM unified_patterns WHERE instr(classic_normalized(name),?1)=0 OR (?2<>'all' AND NOT EXISTS(SELECT 1 FROM json_each(json_extract(data,'$.statuses')) WHERE value=?2))",params![term,options.status]).map_err(err)?;
             total_rows=count_sql(&tx,"SELECT count(*) FROM unified_patterns")?;
             let order=if term.is_empty(){"key"}else{"(instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key"};
+            if let Some((path,table))=csv {
+                super::reference_detail_csv::export_patterns(&tx,path,table,s,q,&term,order,used,previous,&baseline_from.to_string(),&baseline_to.to_string())?;
+            } else {
             let mut query=tx.prepare(&format!("SELECT data FROM unified_patterns WHERE ?1 IS NOT NULL ORDER BY {order} LIMIT 51 OFFSET ?2")).map_err(err)?;
             let mut result=query.query(params![term,offset]).map_err(err)?;
             while let Some(r)=result.next().map_err(err)? {rows.push(serde_json::from_str(&r.get::<_,String>(0).map_err(err)?).map_err(err)?);}
             next=if rows.len()>50 {rows.pop();Some(super::unified_analytics::next_cursor(fingerprint.as_deref().unwrap(),offset+50)?)}else{None};
+            }
         }
         Ok(PatternPage {
             total_rows,

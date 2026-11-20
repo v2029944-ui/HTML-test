@@ -1,6 +1,6 @@
 [package]
 name = "analiz-rabot-tauri"
-version = "1.8.0"
+version = "1.9.5"
 description = "Анализ выполненных работ — Tauri и SQLite"
 authors = ["HTML-test contributors"]
 edition = "2021"

@@ -1697,7 +1697,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <div class="sectionbar"><div><h2 id="calendarHeading">Отчёты по периодам</h2>
           <p class="muted small">Полнота всех подразделений, замечания и пропущенные периоды. Отсутствующий отчёт не считается нулём.</p></div>
         </div>
-        <div class="section-filter-row"><label>Тип источника<select id="calendarType"><option value="all">Все источники</option><option value="day">Дневные</option><option value="week">Недельные</option><option value="month">Месячные</option></select></label><label>Год<select id="calendarYearSelect" aria-label="Год календаря"></select></label></div>
+        <div class="section-filter-row" hidden style="display:none"><label>Тип источника<select id="calendarType"><option value="all">Все источники</option><option value="day">Дневные</option><option value="week">Недельные</option><option value="month">Месячные</option></select></label><label>Год<select id="calendarYearSelect" aria-label="Год календаря"></select></label></div>
         <div class="calendar-toolbar" aria-label="Выбор года">
           <button type="button" class="button secondary" id="calendarPrev" aria-label="Предыдущий год">← Год</button>
           <strong id="calendarRange" aria-live="polite"></strong>
@@ -1730,7 +1730,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
       <section class="panel" id="groupWorkspace" aria-labelledby="groupHeading">
         <h2 id="groupHeading">Группы работ</h2>
         <p class="muted small">Общие группы действуют для всех подразделений. Раскройте группу, чтобы посмотреть состав или перенести работу. Исходные показатели не меняются.</p>
-        <div class="actions"><button id="createGroup" class="button primary" type="button">Создать группу</button><button id="exportGroups" class="button secondary" title="Скачать список групп без отчётов">Скачать группы (JSON)</button><label class="button secondary file-label">Импорт групп JSON<input type="file" id="importGroups" accept=".json,application/json" hidden></label></div>
+        <div class="actions"><button id="createGroup" class="button primary" type="button">Создать группу</button><button id="exportGroups" class="button secondary" title="Скачать список групп без отчётов">Скачать группы (JSON)</button><label class="button secondary file-label">Импорт групп JSON<input type="file" id="importGroups" accept=".json,application/json" hidden></label><label class="button secondary file-label">Добавить справочник услуг из Excel<input id="catalogFile" type="file" accept=".xlsx" hidden></label></div>
 <p class="muted small">Файл JSON содержит названия групп и входящие работы, без отчётов. Импорт заменяет текущий список групп после подтверждения.</p>
         <p id="groupCoverage" class="group-coverage" role="status" aria-live="polite"></p>
         <label class="group-search">Найти группу<input id="groupSearch" type="search" placeholder="Название группы"></label>
@@ -1764,9 +1764,6 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
       </details>
         <details class="group-section" id="groupCatalog"><summary>Справочник услуг</summary>
         <div class="catalog-toolbar">
-          <label class="button secondary file-label">Добавить справочник услуг из Excel
-            <input id="catalogFile" type="file" accept=".xlsx" hidden>
-          </label>
           <span id="catalogStatus" class="muted small">Справочник пока не загружен.</span>
         </div>
         <p class="muted small">Если второй лист файла содержит услуги по подразделениям, он будет добавлен при импорте отчёта. Список услуг также можно загрузить отдельно — это не изменит суммы и количество в отчётах.</p>
@@ -4661,7 +4658,7 @@ function renderCalendarDay(model,date,target){
 }
 function renderCalendarMonth(model){
   const root=$('calendarDetails');root.replaceChildren(elem('h3',new Intl.DateTimeFormat('ru-RU',{month:'long',year:'numeric',timeZone:'UTC'}).format(new Date(model.start+'T12:00:00Z'))+' · '+model.label));
-  const back=elem('button','К списку месяцев','button secondary');back.type='button';back.addEventListener('click',()=>{$('reportCalendar').scrollIntoView({behavior:'smooth',block:'start'});});root.append(back);
+  const back=elem('button','Закрыть дни месяца','button secondary');back.type='button';back.addEventListener('click',()=>{calendarSelectedMonth=null;renderReportCalendar();$('reportCalendar').scrollIntoView({behavior:'smooth',block:'start'});});root.append(back);
   root.append(elem('p','Дневных отчётов: '+model.loaded+' · Подтверждённых пропусков: '+model.missing+'. Отсутствие отчёта отличается от нулевого показателя.'));
   const grid=elem('div',null,'calendar-day-grid');grid.setAttribute('aria-label','Дни месяца');
   ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'].forEach(name=>grid.append(elem('span',name,'calendar-weekday')));

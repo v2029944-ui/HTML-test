@@ -21,12 +21,125 @@
     reportOperation(command);
     try{return await invoke(command,args);}finally{operations[kind]--;reportOperation(command);}
   }
+  // Native pickers disable their owner HWND; remember the actual visible opener
+  // before an async controller disables its hidden file input or button.
+  const document=window.document;
+  let activation=null,pickerOpen=false,interaction=0,pendingFocus=null;
+  const restoredLabels=new WeakSet();
+  function visibleOpener(node){
+    return node?.closest?.('label')||node?.closest?.('button,a,input,select,textarea,[tabindex]')||null;
+  }
+  function newInteraction(){
+    if(pickerOpen)return;
+    interaction++;
+    pendingFocus?.();
+  }
+  document?.addEventListener('pointerdown',newInteraction,true);
+  document?.addEventListener('click',event=>{
+    const opener=visibleOpener(event.target);
+    if(!opener)return;
+    if(pickerOpen){event.preventDefault();event.stopImmediatePropagation();return;}
+    newInteraction();
+    activation=opener;
+  },true);
+  document?.addEventListener('keydown',event=>{
+    newInteraction();
+    const opener=document.activeElement;
+    if(!restoredLabels.has(opener)||!['Enter',' '].includes(event.key)||opener.control?.disabled)return;
+    event.preventDefault();
+    if(!pickerOpen)opener.click();
+  },true);
+  function restoreOpener(opener,expectedInteraction){
+    if(!opener||expectedInteraction!==interaction)return;
+    pendingFocus?.();
+    const initialFocus=document?.activeElement;
+    let observer=null,timer=null,expiry=null,finished=false;
+    const stop=()=>{
+      if(finished)return;
+      finished=true;observer?.disconnect();
+      clearTimeout(timer);clearTimeout(expiry);
+      if(pendingFocus===stop)pendingFocus=null;
+    };
+    const attempt=()=>{
+      if(finished)return;
+      const active=document?.activeElement;
+      if(expectedInteraction!==interaction||!opener.isConnected||
+         (active!==initialFocus&&active!==opener&&active!==opener.control&&active!==document?.body)){
+        stop();return;
+      }
+      // Folder cancellation reloads metadata asynchronously and disables its
+      // button again. Wait for the real controller unlock, not one timer tick.
+      if(opener.disabled||opener.control?.disabled||opener.getAttribute('aria-busy')==='true'||
+         opener.getAttribute('aria-disabled')==='true'||
+         opener.control?.getAttribute?.('aria-busy')==='true')return;
+      if(!opener.getClientRects().length){stop();return;}
+      stop();
+      if(opener.tagName==='LABEL'){
+        restoredLabels.add(opener);
+        if(!opener.hasAttribute('tabindex')){
+          opener.setAttribute('tabindex','0');
+          opener.addEventListener('blur',()=>opener.removeAttribute('tabindex'),{once:true});
+        }
+      }
+      opener.focus({preventScroll:true});
+    };
+    pendingFocus=stop;
+    if(typeof MutationObserver==='function'){
+      observer=new MutationObserver(attempt);
+      for(const node of new Set([opener,opener.control].filter(Boolean)))
+        observer.observe(node,{attributes:true,attributeFilter:['disabled','aria-busy','aria-disabled']});
+    }
+    timer=setTimeout(attempt,0);
+    expiry=setTimeout(stop,90_000);
+  }
+  // The dialog plugin supplies an asynchronous confirmation. Controllers may
+  // temporarily disable their opener while the native owner window is blocked.
+  const originalConfirm=window.confirm;
+  if(typeof originalConfirm==='function')window.confirm=function(...args){
+    const opener=visibleOpener(document?.activeElement)||(activation?.isConnected?activation:null);
+    const expectedInteraction=interaction;
+    const answer=originalConfirm.apply(this,args);
+    const finish=accepted=>{if(accepted===false)restoreOpener(opener,expectedInteraction);return accepted;};
+    return answer&&typeof answer.then==='function'?answer.then(finish):finish(answer);
+  };
+  async function nativePicker(kind,options){
+    if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
+    if(pickerOpen)throw Error('Закройте открытый диалог выбора файла.');
+    const active=document?.activeElement;
+    const opener=(activation?.isConnected?activation:visibleOpener(active));
+    const expectedInteraction=interaction;
+    const oldBusy=opener?.getAttribute('aria-busy'),oldDisabled=opener?.getAttribute('aria-disabled');
+    pickerOpen=true;
+    opener?.setAttribute('aria-busy','true');opener?.setAttribute('aria-disabled','true');
+    let cancelled=true;
+    try{
+      const result=await tauri.dialog[kind](options);
+      cancelled=result===null||result===undefined||result===false||result==='';
+      return result;
+    }finally{
+      pickerOpen=false;
+      if(opener){
+        if(oldBusy===null)opener.removeAttribute('aria-busy');else opener.setAttribute('aria-busy',oldBusy);
+        if(oldDisabled===null)opener.removeAttribute('aria-disabled');else opener.setAttribute('aria-disabled',oldDisabled);
+      }
+      if(cancelled)restoreOpener(opener,expectedInteraction);
+    }
+  }
   window.desktopAPI=Object.freeze({
     load:()=>invoke('load_data'),
+    referenceChanges:request=>tracked('reference_changes',{request},'reads'),
+    referenceChangesCsv:(request,destination)=>tracked('reference_changes_csv',{request,destination},'saves'),
+    referenceSummaryCsv:(request,destination)=>tracked('reference_summary_csv',{request,destination},'saves'),
+    unifiedQualityCsv:(revision,filter,destination)=>tracked('unified_quality_csv',{revision,filter,destination},'saves'),
+    unifiedGroupAuditCsv:(request,mode,search,destination)=>tracked('unified_group_audit_csv',{request,mode,search,destination},'saves'),
+    nativePreviewQualityPage:(query,offset)=>tracked('native_preview_quality_page',{query,offset},'reads'),
+    nativePreviewQualityCsv:(query,destination)=>tracked('native_preview_quality_csv',{query,destination},'saves'),
     unifiedPeriodOptions:(revision,reportType,grouping=null,after=null,limit=100)=>tracked('unified_period_options',{revision,reportType,grouping,after,limit},'reads'),
     unifiedNameOptions:(revision,search='',after=null,limit=50)=>tracked('unified_name_options',{revision,search,after,limit},'reads'),
     unifiedChangesPage:(request,options,after=null)=>tracked('unified_changes_page',{request,options,after},'reads'),
     unifiedChangesCsv:(request,options,destination)=>tracked('unified_changes_csv',{request,options,destination},'saves'),
+    referenceTrendCsv:(request,options,destination)=>tracked('reference_trend_csv',{request,options,destination},'saves'),
+    referenceDetailCsv:(payload,destination)=>tracked('reference_detail_csv',{payload,destination},'saves'),
     unifiedPatternPage:(request,mode,windowSize,options,after=null)=>tracked('unified_pattern_page',{request,mode,windowSize,options,after},'reads'),
     unifiedComparisonPage:(request,before,organization=null,after=null,limit=50)=>tracked('unified_comparison_page',{request,before,organization,after,limit},'reads'),
     unifiedGroupAuditPage:(request,mode,search='',offset=0,limit=50)=>tracked('unified_group_audit_page',{request,mode,search,offset,limit},'reads'),
@@ -44,19 +157,21 @@
     managementReportSummary:(revision,filter)=>tracked('unified_report_summary',{revision,filter},'reads'),
     managementReportOrgPage:(revision,id,after=null,limit=50)=>tracked('unified_report_org_page',{revision,id,after,limit},'reads'),
     unifiedQualityPage:(revision,filter,offset=0,limit=50)=>tracked('unified_quality_page',{revision,filter,offset,limit},'reads'),
+    nativeQualityMatrixPage:(revision,reportType,from,to,organizations)=>tracked('native_quality_matrix_page',{revision,reportType,from,to,organizations},'reads'),
+    nativeQualityMatrixReports:(revision,reportType,start,organization=null,after=null,limit=20)=>tracked('native_quality_matrix_reports',{revision,reportType,start,organization,after,limit},'reads'),
     unifiedCalendar:(revision,year)=>tracked('unified_calendar',{revision,year},'reads'),
     chooseXlsx:async()=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
-      return tauri.dialog.open({multiple:false,directory:false,title:'Выберите справочник XLSX',filters:[{name:'Excel XLSX',extensions:['xlsx']}]});
+      return nativePicker('open',{multiple:false,directory:false,title:'Выберите справочник XLSX',filters:[{name:'Excel XLSX',extensions:['xlsx']}]});
     },
     chooseGroupsImport:async()=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
-      return tauri.dialog.open({multiple:false,directory:false,title:'Импорт групп',filters:[{name:'JSON',extensions:['json']}]});
+      return nativePicker('open',{multiple:false,directory:false,title:'Импорт групп',filters:[{name:'JSON',extensions:['json']}]});
     },
     chooseGroupsExport:async()=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
       if(typeof tauri.dialog.save!=='function')throw Error('Диалог сохранения недоступен.');
-      return tauri.dialog.save({title:'Сохранить группы',defaultPath:'groups.json',filters:[{name:'JSON',extensions:['json']}]});
+      return nativePicker('save',{title:'Сохранить группы',defaultPath:'groups.json',filters:[{name:'JSON',extensions:['json']}]});
     },
     nativeRevision:()=>tracked('native_read_revision',{},'reads'),
     nativeSettingsBootstrap:()=>tracked('native_settings_bootstrap',{},'reads'),
@@ -105,13 +220,13 @@
     chooseCsvPath:async defaultPath=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
       if(typeof tauri.dialog.save!=='function')throw Error('Диалог сохранения CSV недоступен.');
-      return tauri.dialog.save({title:'Сохранить результаты анализа',defaultPath,filters:[{name:'CSV',extensions:['csv']}]});
+      return nativePicker('save',{title:'Сохранить результаты анализа',defaultPath,filters:[{name:'CSV',extensions:['csv']}]});
     },
     nativeExportRangeCsv:(revision,reportType,from,to,organizations,organization,destination,selectedName=null,selectedNames=null)=>tracked(
       'native_export_range_csv',{revision,reportType,from,to,organizations,organization,destination,selectedName,selectedNames},'saves'),
     chooseWideXlsx:async()=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
-      return tauri.dialog.open({multiple:false,directory:false,title:'Выберите XLSX для нативного импорта',filters:[{name:'Excel XLSX',extensions:['xlsx']}]});
+      return nativePicker('open',{multiple:false,directory:false,title:'Выберите XLSX для нативного импорта',filters:[{name:'Excel XLSX',extensions:['xlsx']}]});
     },
     nativeFolderImportSession:enabled=>enabled?tracked('native_folder_import_session',{enabled},'saves'):invoke('native_folder_import_session',{enabled}),
     nativeFolderImportPreview:request=>tracked('native_folder_import_preview',{request},'reads'),
@@ -121,6 +236,7 @@
       'native_wide_import_apply',{source,options,reviewToken,confirmation},'saves'),
     nativeLegacyImportSheets:source=>tracked(
       'native_legacy_import_sheets',{source},'reads'),
+    nativeImportSheets:source=>tracked('native_import_sheets',{source},'reads'),
     nativeLegacyImportPreview:(source,options)=>tracked(
       'native_legacy_import_preview',{source,options},'reads'),
     nativeLegacyImportApply:(source,options,reviewToken,confirmation)=>tracked(
@@ -128,16 +244,16 @@
     chooseSqliteBackupPath:async defaultPath=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
       if(typeof tauri.dialog.save!=='function')throw Error('Диалог резервного копирования недоступен.');
-      return tauri.dialog.save({title:'Сохранить резервную копию SQLite',defaultPath,filters:[{name:'База SQLite',extensions:['sqlite3']}]});
+      return nativePicker('save',{title:'Сохранить резервную копию SQLite',defaultPath,filters:[{name:'База SQLite',extensions:['sqlite3']}]});
     },
     nativeBackupSqlite:destination=>tracked('native_backup_sqlite',{destination},'saves'),
     chooseRestoreBackupPath:async()=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
-      return tauri.dialog.open({multiple:false,directory:false,title:'Проверить резервную копию SQLite',filters:[{name:'База SQLite',extensions:['sqlite3']}]});
+      return nativePicker('open',{multiple:false,directory:false,title:'Проверить резервную копию SQLite',filters:[{name:'База SQLite',extensions:['sqlite3']}]});
     },
     chooseRestoreDestination:async defaultPath=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
-      return tauri.dialog.save({title:'Создать отдельную восстановленную копию',defaultPath,filters:[{name:'База SQLite',extensions:['sqlite3']}]});
+      return nativePicker('save',{title:'Создать отдельную восстановленную копию',defaultPath,filters:[{name:'База SQLite',extensions:['sqlite3']}]});
     },
     nativeRestorePreview:source=>tracked('native_restore_preview',{source},'reads'),
     nativeRestoreCopy:(source,verification,destination)=>tracked(
@@ -149,7 +265,7 @@
     nativeMetricKinds:()=>tracked('native_metric_kinds',{},'reads'),
     chooseMetricJson:async()=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
-      return tauri.dialog.open({multiple:false,directory:false,title:'Выберите JSON для нового вида отчёта',filters:[{name:'JSON',extensions:['json']}]});
+      return nativePicker('open',{multiple:false,directory:false,title:'Выберите JSON для нового вида отчёта',filters:[{name:'JSON',extensions:['json']}]});
     },
     nativeMetricPreview:source=>tracked('native_metric_preview',{source},'reads'),
     nativeMetricApply:(source,reviewToken)=>tracked('native_metric_apply',{source,reviewToken},'saves'),
@@ -157,7 +273,7 @@
     nativeMetricXlsxProfiles:()=>tracked('native_metric_xlsx_profiles',{},'reads'),
     chooseMetricXlsx:async()=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
-      return tauri.dialog.open({multiple:false,directory:false,title:'Выберите XLSX для нового вида отчёта',filters:[{name:'Excel XLSX',extensions:['xlsx']}]});
+      return nativePicker('open',{multiple:false,directory:false,title:'Выберите XLSX для нового вида отчёта',filters:[{name:'Excel XLSX',extensions:['xlsx']}]});
     },
     nativeMetricXlsxPreview:(source,profile,start,end)=>tracked(
       'native_metric_xlsx_preview',{source,profile,start,end},'reads'),
@@ -170,7 +286,7 @@
     save:data=>tracked('save_data',{data},'saves'),
     info:()=>invoke('get_info'),
     chooseFolder:async()=>{
-      const folder=await tauri.dialog.open({directory:true,multiple:false,title:'Папка с Excel-отчётами'});
+      const folder=await nativePicker('open',{directory:true,multiple:false,title:'Папка с Excel-отчётами'});
       return folder?tracked('set_folder',{folder},'saves'):null;
     },
     list:()=>invoke('list_excel'),

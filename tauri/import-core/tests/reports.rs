@@ -242,6 +242,7 @@ fn invalid_values_keep_source_coordinates_and_do_not_invent_zero() {
     assert_eq!(invalid["expected"], serde_json::Value::Null);
     assert_eq!(invalid["actual"], serde_json::Value::Null);
     assert_eq!(invalid["cells"], serde_json::json!(["B4"]));
+    assert_eq!(invalid["skipped"], true);
     assert_eq!(invalid["type"], "invalid");
     assert_eq!(invalid["row"], 4);
     assert_eq!(invalid["count_cell"], "B4");
@@ -446,6 +447,7 @@ fn unnamed_invalid_cells_match_raw_presence_and_parsed_numbers() {
         assert_eq!(serialized["cells"], serde_json::json!(expected_cells));
         assert_eq!(serialized["expected"], serde_json::Value::Null);
         assert_eq!(serialized["actual"], serde_json::Value::Null);
+        assert_eq!(serialized["skipped"], true);
     }
 }
 #[test]
@@ -592,4 +594,35 @@ fn totals_api_pages_many_controls_and_preserves_nullable_totals() {
             .collect::<Vec<_>>(),
         ["ТРАК", "СМУ16", "ЦЕНТР", "АВТО"]
     );
+}
+
+#[test]
+fn omitted_detail_tag_does_not_mark_invalid_controls_or_included_unnamed_rows() {
+    let temp=tempfile::tempdir().unwrap();let source=temp.path().join("evidence.xlsx");
+    fixture_rows(&source,&[
+        vec!["Работа","Количество","Сумма"],
+        vec!["СМУ16","3","8"],
+        vec!["Included","1","5"],
+        vec!["Rejected","bad","99"],
+        vec!["","2","3"],
+        vec!["АВТО","bad","7"],
+        vec!["Unknown organization","4","9"],
+        vec!["Итого","bad","8"],
+    ]);
+    let area=StageArea::open(temp.path().join("stage")).unwrap();let cancel=AtomicBool::new(false);
+    let mut stage=area.ingest(&source,Limits::default(),&cancel,|_|{}).unwrap();
+    stage.convert_legacy(&options("day","2020-03-01"),&cancel,|_|{}).unwrap();
+    let report=stage.report_page(0,1).unwrap().remove(0);assert_eq!(report.row_count,2);assert_eq!(report.count,3.);assert_eq!(report.amount,8.);
+    let notes=stage.report_issues(&report.id,0,50).unwrap();
+    let find=|row|serde_json::to_value(notes.iter().find(|n|n.source_row==Some(row)).unwrap()).unwrap();
+    assert_eq!(find(4)["skipped"],true);
+    assert_eq!(find(4)["organization"],"СМУ16");
+    assert_eq!(find(5)["kind"],"empty-name");assert!(find(5).get("skipped").is_none());
+    assert_eq!(find(6)["kind"],"invalid");assert!(find(6).get("skipped").is_none());
+    assert_eq!(find(7)["kind"],"skipped");assert_eq!(find(7)["skipped"],true);assert!(find(7)["organization"].is_null());
+    assert_eq!(find(8)["kind"],"invalid");assert!(find(8).get("skipped").is_none());
+    let prepared=stage.prepare(&cancel,|_|{}).unwrap();let saved=prepared.next_report(0).unwrap().unwrap();
+    let document:serde_json::Value=serde_json::from_reader(prepared.open_document(&saved).unwrap()).unwrap();
+    let persisted=document["issues"].as_array().unwrap();assert_eq!(persisted.iter().filter(|i|i["skipped"]==true).count(),2);
+    assert_eq!(document["rows"].as_array().unwrap().len(),2);assert_eq!(document["count"],3.);assert_eq!(document["amount"],8.);
 }

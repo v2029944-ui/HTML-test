@@ -21,6 +21,27 @@ pub struct ReportQualityPage {
     source_anchor: Option<String>,
     warning_fallback: bool,
     invalid_entries: u32,
+    evidence: QualityEvidence,
+}
+
+#[derive(Debug, Default, PartialEq, Serialize)]
+struct EvidenceCoverage {
+    start: String,
+    end: String,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct QualityEvidence {
+    document_id: String,
+    source_format: Option<String>,
+    sheet_name: Option<String>,
+    coverage: Option<EvidenceCoverage>,
+    explicit_zero: Option<bool>,
+    invalid_fields: u32,
+    missing_day_entries: u32,
+    deferred_day_entries: u32,
+    unclassified_day_entries: u32,
+    omitted_row_entries: u32,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -35,7 +56,12 @@ struct QualityIssue {
     count_cell: Option<String>,
     amount_cell: Option<String>,
     cells: Vec<String>,
+    expected: Option<serde_json::Value>,
+    actual: Option<serde_json::Value>,
+    raw: Option<Vec<serde_json::Value>>,
     relevant: Option<bool>,
+    scope: Option<String>,
+    skipped: Option<bool>,
 }
 
 fn clip(mut text: String, max_bytes: usize) -> String {
@@ -60,10 +86,16 @@ fn label(text: Option<String>) -> Option<String> {
 enum Field {
     #[default]
     Unsupported,
+    Null,
     Text(String),
     Number(u64),
+    Signed(i64),
+    Decimal(f64),
+    Comparison(serde_json::Value),
+    Raw(Vec<serde_json::Value>),
     Boolean(bool),
     Cells(Vec<String>),
+    Coverage(EvidenceCoverage),
 }
 
 impl Field {
@@ -74,15 +106,34 @@ impl Field {
     fn number(self) -> Option<u64> {
         if let Self::Number(number) = self { Some(number) } else { None }
     }
+
+    fn metric(self) -> Option<serde_json::Value> {
+        match self {
+            Self::Number(n) => Some(n.into()),
+            Self::Signed(n) => Some(n.into()),
+            Self::Decimal(n) if n.is_finite() => Some(n.into()),
+            Self::Null => Some(serde_json::Value::Null),
+            _ => None,
+        }
+    }
+
+    fn nullable_text(self) -> Result<Option<String>, ()> {
+        match self {
+            Self::Null => Ok(None),
+            Self::Text(text) => Ok(Some(text)),
+            _ => Err(()),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
-enum ValueShape { Issue, Warning, Scalar, Cells }
+enum ValueShape { Issue, Warning, Scalar, Cells, Coverage, Comparison, Raw }
 
 #[derive(Default)]
 struct Entry {
     issue: Option<QualityIssue>,
     mirrored: bool,
+    invalid_fields: u32,
 }
 
 impl<'de> DeserializeSeed<'de> for ValueShape {
@@ -106,18 +157,76 @@ impl<'de> Visitor<'de> for ValueShape {
 
     fn visit_u64<E: Error>(self, value: u64) -> Result<Field, E> { Ok(Field::Number(value)) }
     fn visit_i64<E: Error>(self, value: i64) -> Result<Field, E> {
-        Ok(u64::try_from(value).map(Field::Number).unwrap_or_default())
+        Ok(u64::try_from(value).map(Field::Number).unwrap_or(Field::Signed(value)))
     }
     fn visit_bool<E: Error>(self, value: bool) -> Result<Field, E> { Ok(Field::Boolean(value)) }
-    fn visit_unit<E: Error>(self) -> Result<Field, E> { Ok(Field::Unsupported) }
-    fn visit_f64<E: Error>(self, _: f64) -> Result<Field, E> { Ok(Field::Unsupported) }
+    fn visit_unit<E: Error>(self) -> Result<Field, E> { Ok(Field::Null) }
+    fn visit_f64<E: Error>(self, n: f64) -> Result<Field, E> { Ok(Field::Decimal(n)) }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Field, A::Error> {
+        if matches!(self, Self::Comparison) {
+            let mut values = serde_json::Map::new();
+            let mut valid = true;
+            while let Some(key) = map.next_key::<String>()? {
+                if matches!(key.as_str(), "count" | "amount") {
+                    match map.next_value_seed(Self::Scalar)?.metric() {
+                        Some(n) if !values.contains_key(&key) => { values.insert(key,n); }
+                        _ => valid = false,
+                    }
+                } else {
+                    map.next_value::<IgnoredAny>()?;
+                }
+            }
+            return Ok(if valid && !values.is_empty() {
+                Field::Comparison(serde_json::Value::Object(values))
+            } else { Field::Unsupported });
+        }
+        if matches!(self, Self::Coverage) {
+            let (mut start, mut end) = (None, None);
+            let (mut seen_start, mut seen_end) = (false, false);
+            while let Some(key) = map.next_key::<String>()? {
+                match key.as_str() {
+                    "start" => {
+                        if seen_start { return Err(A::Error::duplicate_field("start")); }
+                        seen_start = true;
+                        start = map.next_value_seed(Self::Scalar)?.text();
+                    }
+                    "end" => {
+                        if seen_end { return Err(A::Error::duplicate_field("end")); }
+                        seen_end = true;
+                        end = map.next_value_seed(Self::Scalar)?.text();
+                    }
+                    _ => { map.next_value::<IgnoredAny>()?; }
+                }
+            }
+            return Ok(match (start, end) {
+                (Some(start), Some(end)) if iso_date(&start) && iso_date(&end) && start <= end =>
+                    Field::Coverage(EvidenceCoverage { start, end }),
+                _ => Field::Unsupported,
+            });
+        }
         while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
         Ok(Field::Unsupported)
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Field, A::Error> {
+        if matches!(self, Self::Raw) {
+            let mut values = Vec::new();
+            // Importers store one value per Excel input cell. Keep malformed
+            // historical arrays bounded without shifting the remaining cells.
+            while let Some(field) = seq.next_element_seed(Self::Scalar)? {
+                if values.len() == 8 { continue; }
+                match field {
+                    Field::Text(s) => values.push(clip(s,256).into()),
+                    Field::Boolean(b) => values.push(b.into()),
+                    scalar => if let Some(value)=scalar.metric() {values.push(value)} else {
+                        while seq.next_element::<IgnoredAny>()?.is_some() {}
+                        return Ok(Field::Unsupported);
+                    }
+                }
+            }
+            return Ok(Field::Raw(values));
+        }
         if !matches!(self, Self::Cells) {
             while seq.next_element::<IgnoredAny>()?.is_some() {}
             return Ok(Field::Unsupported);
@@ -170,15 +279,49 @@ impl<'de> Visitor<'de> for EntryRead {
         let mut legacy_kind = None;
         let mut legacy_row = None;
         let mut mirrored = false;
+        let mut seen = 0u8;
+        let mut invalid = 0u8;
         while let Some(key) = map.next_key::<String>()? {
             let scalar = ValueShape::Scalar;
+            let flag = match key.as_str() {
+                "kind" => 1, "type" => 2, "date" => 4, "relevant" => 8,
+                "scope" => 16, "skipped" => 32, _ => 0,
+            };
+            if flag != 0 {
+                if seen & flag != 0 { invalid |= flag; }
+                seen |= flag;
+            }
             match key.as_str() {
                 "reason" => reason = map.next_value_seed(scalar)?.text(),
-                "kind" => issue.kind = label(map.next_value_seed(scalar)?.text()),
-                "type" => legacy_kind = label(map.next_value_seed(scalar)?.text()),
+                "kind" => {
+                    match map.next_value_seed(scalar)?.nullable_text() {
+                        Ok(value) => {
+                            issue.kind = label(value);
+                            if issue.kind.as_ref().is_some_and(|s| s.is_empty()) { invalid |= flag; }
+                        }
+                        Err(()) => invalid |= flag,
+                    }
+                }
+                "type" => {
+                    match map.next_value_seed(scalar)?.nullable_text() {
+                        Ok(value) => {
+                            legacy_kind = label(value);
+                            if legacy_kind.as_ref().is_some_and(|s| s.is_empty()) { invalid |= flag; }
+                        }
+                        Err(()) => invalid |= flag,
+                    }
+                }
                 "sheet" => issue.sheet = label(map.next_value_seed(scalar)?.text()),
                 "organization" => issue.organization = label(map.next_value_seed(scalar)?.text()),
-                "date" => issue.date = label(map.next_value_seed(scalar)?.text()),
+                "date" => {
+                    match map.next_value_seed(scalar)?.nullable_text() {
+                        Ok(value) => {
+                            if value.as_deref().is_some_and(|s| !iso_date(s)) { invalid |= flag; }
+                            issue.date = label(value);
+                        }
+                        Err(()) => invalid |= flag,
+                    }
+                }
                 "source_row" | "sourceRow" => {
                     issue.source_row = map.next_value_seed(scalar)?.number().and_then(|n| u32::try_from(n).ok());
                 }
@@ -186,18 +329,52 @@ impl<'de> Visitor<'de> for EntryRead {
                 "work_cell" | "workCell" => issue.work_cell = label(map.next_value_seed(scalar)?.text()),
                 "count_cell" | "countCell" => issue.count_cell = label(map.next_value_seed(scalar)?.text()),
                 "amount_cell" | "amountCell" => issue.amount_cell = label(map.next_value_seed(scalar)?.text()),
+                "expected" => if let Field::Comparison(v)=map.next_value_seed(ValueShape::Comparison)? {issue.expected=Some(v)},
+                "actual" => if let Field::Comparison(v)=map.next_value_seed(ValueShape::Comparison)? {issue.actual=Some(v)},
+                "raw" => if let Field::Raw(v)=map.next_value_seed(ValueShape::Raw)? {issue.raw=Some(v)},
                 "cells" => {
                     if let Field::Cells(cells) = map.next_value_seed(ValueShape::Cells)? { issue.cells = cells; }
                 }
                 "relevant" => {
-                    if let Field::Boolean(value) = map.next_value_seed(scalar)? { issue.relevant = Some(value); }
+                    match map.next_value_seed(scalar)? {
+                        Field::Boolean(value) => issue.relevant = Some(value),
+                        Field::Null => issue.relevant = None,
+                        _ => invalid |= flag,
+                    }
+                }
+                "scope" => {
+                    match map.next_value_seed(scalar)?.nullable_text() {
+                        Ok(value) => {
+                            issue.scope = label(value);
+                            if issue.scope.as_ref().is_some_and(|s| s.is_empty()) { invalid |= flag; }
+                        }
+                        Err(()) => invalid |= flag,
+                    }
+                }
+                "skipped" => {
+                    match map.next_value_seed(scalar)? {
+                        Field::Boolean(value) => issue.skipped = Some(value),
+                        Field::Null => issue.skipped = None,
+                        _ => invalid |= flag,
+                    }
                 }
                 "source_issue_sequence" => mirrored = map.next_value_seed(scalar)?.number().is_some(),
                 _ => { map.next_value::<IgnoredAny>()?; }
             }
         }
+        if matches!((&issue.kind, &legacy_kind), (Some(a), Some(b)) if a != b) {
+            invalid |= 1;
+        }
+        // Equal native kind/type aliases and nullable options are valid. Only
+        // invalidate facts that depend on each malformed classification field.
+        if invalid & 3 != 0 { issue.kind = None; legacy_kind = None; }
+        if invalid & 4 != 0 { issue.date = None; }
+        if invalid & 16 != 0 { issue.scope = None; }
+        if invalid & (1 | 2 | 4 | 8 | 16) != 0 { issue.relevant = None; }
+        if invalid & (1 | 2 | 16 | 32) != 0 { issue.skipped = None; }
         Ok(Entry {
             mirrored,
+            invalid_fields: invalid.count_ones(),
             issue: reason.map(|reason| {
                 issue.reason = reason;
                 issue.kind = issue.kind.or(legacy_kind);
@@ -213,6 +390,33 @@ struct Window {
     total: u32,
     invalid_entries: u32,
     issues: Vec<QualityIssue>,
+    evidence: QualityEvidence,
+}
+
+fn iso_date(value: &str) -> bool {
+    value.len() == 10 && value.bytes().enumerate().all(|(i, c)|
+        if i == 4 || i == 7 { c == b'-' } else { c.is_ascii_digit() })
+        && super::valid_date(value)
+}
+
+impl QualityEvidence {
+    fn observe(&mut self, issue: &QualityIssue, invalid_fields: u32) {
+        self.invalid_fields += invalid_fields;
+        if issue.kind.as_deref() == Some("missing-day") {
+            if issue.scope.as_deref() == Some("source-period")
+                && issue.date.as_deref().is_some_and(iso_date)
+            {
+                match issue.relevant {
+                    Some(true) => self.missing_day_entries += 1,
+                    Some(false) => self.deferred_day_entries += 1,
+                    None => self.unclassified_day_entries += 1,
+                }
+            } else { self.unclassified_day_entries += 1; }
+        }
+        if matches!(issue.kind.as_deref(), Some("invalid" | "skipped")) && issue.skipped == Some(true)
+            && matches!(issue.scope.as_deref(), None | Some("report"))
+        { self.omitted_row_entries += 1; }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -321,6 +525,8 @@ impl<'de> Visitor<'de> for WindowRead<'_, '_> {
                 index.execute([&issue.reason]).map_err(A::Error::custom)?;
             }
             if self.page.omit_mirrors && entry.mirrored { continue; }
+            // Observe every active entry before applying the display window.
+            result.evidence.observe(&issue, entry.invalid_fields);
             if result.total >= self.page.offset && result.issues.len() < self.page.limit {
                 issue.reason = clip(issue.reason, 4096);
                 result.issues.push(issue);
@@ -338,6 +544,7 @@ struct Document {
     source_issues: Option<Window>,
     sheet: Option<String>,
     anchor: Option<String>,
+    evidence: QualityEvidence,
 }
 
 struct DocumentRead<'a> {
@@ -364,10 +571,51 @@ impl<'de> Visitor<'de> for DocumentRead<'_> {
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Document, A::Error> {
         let mut doc = Document::default();
         let mut legacy_sheet = None;
+        let mut metadata_seen = 0u8;
         while let Some(key) = map.next_key::<String>()? {
+            let flag = match key.as_str() {
+                "sourceFormat" => 1, "sheetName" => 2,
+                "sourceCoverage" => 4, "explicitZero" => 8, _ => 0,
+            };
+            if flag != 0 {
+                if metadata_seen & flag != 0 { return Err(A::Error::custom(format!("duplicate source metadata field: {key}"))); }
+                metadata_seen |= flag;
+            }
             match key.as_str() {
                 "sourceSheet" => doc.sheet = label(map.next_value_seed(ValueShape::Scalar)?.text()),
-                "sheetName" => legacy_sheet = label(map.next_value_seed(ValueShape::Scalar)?.text()),
+                "sheetName" => {
+                    match map.next_value_seed(ValueShape::Scalar)?.nullable_text() {
+                        Ok(value) => {
+                            legacy_sheet = label(value);
+                            doc.evidence.sheet_name = legacy_sheet.clone().filter(|s| !s.is_empty());
+                            if legacy_sheet.as_ref().is_some_and(|s| s.is_empty()) { doc.evidence.invalid_fields += 1; }
+                        }
+                        Err(()) => doc.evidence.invalid_fields += 1,
+                    }
+                }
+                "sourceFormat" => {
+                    match map.next_value_seed(ValueShape::Scalar)?.nullable_text() {
+                        Ok(value) => {
+                            if value.as_ref().is_some_and(|s| s.is_empty()) { doc.evidence.invalid_fields += 1; }
+                            doc.evidence.source_format = label(value.filter(|s| !s.is_empty()));
+                        }
+                        Err(()) => doc.evidence.invalid_fields += 1,
+                    }
+                }
+                "sourceCoverage" => {
+                    match map.next_value_seed(ValueShape::Coverage)? {
+                        Field::Coverage(coverage) => doc.evidence.coverage = Some(coverage),
+                        Field::Null => {},
+                        _ => doc.evidence.invalid_fields += 1,
+                    }
+                }
+                "explicitZero" => {
+                    match map.next_value_seed(ValueShape::Scalar)? {
+                        Field::Boolean(value) => doc.evidence.explicit_zero = Some(value),
+                        Field::Null => {},
+                        _ => doc.evidence.invalid_fields += 1,
+                    }
+                }
                 "sourceDiagnosticsReport" => doc.anchor = map.next_value_seed(ValueShape::Scalar)?.text(),
                 "issues" if self.scope == QualityScope::Report => {
                     if doc.issues.is_some() { return Err(A::Error::duplicate_field("issues")); }
@@ -478,6 +726,13 @@ impl Storage {
                 issue.sheet.clone_from(&doc.sheet);
             }
         }
+        let mut evidence = doc.evidence;
+        evidence.document_id = if scope == QualityScope::Report { id.to_owned() } else { source_anchor.clone().expect("source document anchor") };
+        evidence.invalid_fields += window.evidence.invalid_fields;
+        evidence.missing_day_entries = window.evidence.missing_day_entries;
+        evidence.deferred_day_entries = window.evidence.deferred_day_entries;
+        evidence.unclassified_day_entries = window.evidence.unclassified_day_entries;
+        evidence.omitted_row_entries = window.evidence.omitted_row_entries;
         tx.commit().map_err(err)?;
         Ok(ReportQualityPage {
             issues: window.issues,
@@ -485,6 +740,7 @@ impl Storage {
             source_anchor,
             warning_fallback,
             invalid_entries: window.invalid_entries,
+            evidence,
         })
     }
 }

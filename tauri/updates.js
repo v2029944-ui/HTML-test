@@ -1,7 +1,7 @@
 (async function onlineUpdates(){
   'use strict';
   await window.appReady;
-  const tauri=window.__TAURI__,settings=document.getElementById('storage'),main=document.querySelector('main');
+  const tauri=window.__TAURI__,settings=document.getElementById('storage'),main=document.getElementById('refRoot')||document.querySelector('main');
   if(!tauri?.updater||!settings||!main)return;
   const deferredKey='work-reports-update-deferred-v1',operations=window.tauriOperations;
   let busy=false,update=null;

@@ -9,7 +9,24 @@ function init(){
  const controls=new Set(),pages=new Set(),memberPages=new Set();
  const valid=r=>Number.isSafeInteger(r)&&r===revision&&r===U.revision;
  async function confirmAction(expected,message){const accepted=await window.confirm(message);if(!valid(expected))throw Error('База изменилась. Повторите действие.');return accepted===true;}
- async function promptAction(expected,message,value){const answer=await window.prompt(message,value);if(!valid(expected))throw Error('База изменилась. Повторите действие.');if(answer!==null&&typeof answer!=='string')throw Error('Получен некорректный ответ диалога.');return answer;}
+ function requestGroupName(anchor,group){
+  const dialog=el('dialog'),form=el('form'),heading=el('h2','Переименовать группу');
+  dialog.id='groupRenameDialog';heading.id='groupRenameTitle';dialog.setAttribute('aria-labelledby',heading.id);
+  const label=el('label','Новое название группы'),input=el('input');
+  input.id='groupRenameName';input.type='text';input.required=true;input.value=group.name;label.htmlFor=input.id;
+  const actions=el('div',null,'actions'),cancel=el('button','Отмена','button secondary'),save=el('button','Сохранить','button');
+  cancel.id='groupRenameCancel';cancel.type='button';save.id='groupRenameSubmit';save.type='submit';
+  actions.append(cancel,save);form.append(heading,label,input,actions);dialog.append(form);
+  const host=anchor.closest('dialog[open]')||anchor.closest('#refNative')||document.body;
+  return new Promise(resolve=>{
+   let answer=null;
+   form.addEventListener('submit',event=>{event.preventDefault();const name=input.value.trim();if(!name){input.focus();return;}answer=name;dialog.close();});
+   cancel.addEventListener('click',()=>dialog.close());
+   dialog.addEventListener('cancel',event=>{event.preventDefault();dialog.close();});
+   dialog.addEventListener('close',()=>{dialog.remove();resolve(answer);},{once:true});
+   host.append(dialog);dialog.showModal();input.focus();input.select();
+  });
+ }
  const fail=e=>U.notice(window.analizUserError?window.analizUserError(e):(e?.message||String(e)),true);
  function button(text,run){const n=el('button',text,'button secondary');n.type='button';n.addEventListener('click',run);controls.add(n);return n;}
  function lock(){for(const n of controls){if(n.isConnected===false){controls.delete(n);continue;}n.disabled=busy||revision===null;}for(const p of pages){p.prev.disabled=busy||revision===null||p.loading||!p.offset;p.next.disabled=busy||revision===null||p.loading||p.offset+LIMIT>=p.total;}}
@@ -19,7 +36,7 @@ function init(){
  function pager(root,prefix){const bar=el('div',null,'change-pagination'),prev=button('← Предыдущая',()=>load(p,p.offset-LIMIT)),label=el('span','','muted small'),next=button('Следующая →',()=>load(p,p.offset+LIMIT));bar.append(prev,label,next);root.append(bar);const p={prefix,root:null,prev,next,label,offset:0,total:0,ticket:0,loading:false,query:()=>'',kind:'works',group:()=>null,render:()=>{}};pages.add(p);return p;}
  function existingPager(prefix,root){const p={prefix,root,prev:$(prefix+'Prev'),next:$(prefix+'Next'),label:$(prefix+'Page'),offset:0,total:0,ticket:0,loading:false,query:()=>'',kind:'works',group:()=>null,render:()=>{}};p.prev.addEventListener('click',()=>load(p,p.offset-LIMIT));p.next.addEventListener('click',()=>load(p,p.offset+LIMIT));pages.add(p);return p;}
  function clear(p){++p.ticket;p.loading=false;p.total=0;p.root?.replaceChildren();p.label.textContent='';lock();}
- async function load(p,offset=0){const expected=revision;if(!valid(expected))return;const ticket=++p.ticket;p.loading=true;p.offset=Math.max(0,offset);p.root.replaceChildren();p.label.textContent='Загрузка…';lock();try{
+ async function load(p,offset=0){if(p.ready&&!p.ready()){clear(p);$('groupAuditCoverage').textContent=auditEmptyPeriod;return;}const expected=revision;if(!valid(expected))return;const ticket=++p.ticket;p.loading=true;p.offset=Math.max(0,offset);p.root.replaceChildren();p.label.textContent='Загрузка…';lock();try{
   const result=p.fetch?await p.fetch(expected,p.offset):await api.unifiedManagementPage(expected,p.kind,p.query(),p.group(),p.offset,LIMIT);
   if(ticket!==p.ticket||!valid(expected))return;
   if(!result||!Array.isArray(result.rows)||result.rows.length>LIMIT||!Number.isSafeInteger(result.total)||result.total<0)throw Error('Получена некорректная страница.');
@@ -41,7 +58,21 @@ function init(){
   const find=button('Найти',()=>targets()),prev=button('←',()=>targets(offset-LIMIT)),nextButton=button('→',()=>targets(offset+LIMIT));controls.add(select);select.addEventListener('change',guard(async r=>{if(r!==expected)return;await mutate(expected,()=>api.unifiedWorkAssign(expected,row.name,select.value||null),'Работа перенесена.');}));label.append(select);box.append(el('span',row.name),search,find,prev,nextButton,label,status);void targets();return box;
  }
  groups.render=(result,expected)=>{for(const p of memberPages){clear(p);pages.delete(p);}memberPages.clear(); $('groupSearchCount').textContent='Найдено групп: '+result.total;for(const group of result.rows){const details=el('details',null,'group-details'),summary=el('summary',group.name),actions=el('div',null,'actions'),memberRoot=el('div',null,'group-members');summary.append(el('small','Работ: '+group.members));details.append(summary,actions,memberRoot);
-  actions.append(button('Изменить группу',()=>editGroup(group,expected)),button('Переименовать',guard(async()=>{if(!valid(expected))return;const name=await promptAction(expected,'Новое название группы',group.name);if(name===null||!name.trim())return;await mutate(expected,()=>api.nativeGroupRename(expected,group.handle,name.trim()),'Группа переименована.');})),button('Удалить группу',guard(async()=>{if(!valid(expected)||!await confirmAction(expected,'Удалить группу «'+group.name+'»? Исходные работы останутся.'))return;await mutate(expected,()=>api.nativeSettingsEdit(expected,{kind:'delete_group',handle:group.handle}),'Группа удалена.');})));
+  const rename=button('Переименовать',async()=>{
+   if(busy||!valid(expected))return;
+   await guard(async()=>{
+    const name=await requestGroupName(rename,group);
+    if(name===null)return;
+    if(!valid(expected))throw Error('База изменилась. Повторите действие.');
+    await mutate(expected,()=>api.nativeGroupRename(expected,group.handle,name),'Группа переименована.');
+    if(active&&valid(revision))await load(groups,groups.offset);
+   })();
+   if(rename.isConnected!==false&&!rename.disabled){rename.focus({preventScroll:true});return;}
+   const current=Array.from(groups.root.querySelectorAll('button')).find(item=>item.dataset.groupRename===group.id);
+   if(current){current.closest('details').open=true;current.focus({preventScroll:true});}else $('groupSearch').focus({preventScroll:true});
+  });
+  rename.dataset.groupRename=group.id;
+  actions.append(button('Изменить группу',()=>editGroup(group,expected)),rename,button('Удалить группу',guard(async()=>{if(!valid(expected)||!await confirmAction(expected,'Удалить группу «'+group.name+'»? Исходные работы останутся.'))return;await mutate(expected,()=>api.nativeSettingsEdit(expected,{kind:'delete_group',handle:group.handle}),'Группа удалена.');})));
   let members=null;details.addEventListener('toggle',()=>{if(!details.open||!valid(expected))return;if(!members){members=pager(memberRoot,'members');memberPages.add(members);members.root=el('div');memberRoot.append(members.root);members.kind='members';members.group=()=>group.handle;members.render=r=>{for(const row of r.rows)members.root.append(moveControl(row,expected));};}void load(members,members.offset);});groups.root.append(details);
  }};
  bind('createGroup',()=>{if(busy)return;resetEditor();$('groupEditor').open=true;$('groupName').focus();});bind('resetGroup',()=>{if(!busy)resetEditor();});bind('saveGroup',guard(async expected=>{const name=$('groupName').value.trim();if(!name||!selected.size||selected.size>5000)throw Error('Введите название и выберите от 1 до 5000 работ.');const id=editing?.id||window.crypto.randomUUID();await mutate(expected,()=>api.unifiedGroupSave(expected,editing?.handle||null,id,name,[...selected]),'Группа сохранена.');}));
@@ -60,15 +91,35 @@ function init(){
  bind('clearReports',guard(async expected=>{if(!await confirmAction(expected,'Удалить все импортированные отчёты? Группы останутся. Перед удалением будет создана резервная копия SQLite.'))return;const destination=await api.chooseSqliteBackupPath('analiz-before-clear.sqlite3');if(!destination)return;await mutate(expected,()=>api.unifiedClearReports(expected,destination),'Отчёты удалены. Резервная копия создана.');}));
  bind('exportBackup',guard(async()=>{const destination=await api.chooseSqliteBackupPath('analiz-backup.sqlite3');if(!destination)return;await api.nativeBackupSqlite(destination);U.notice('Проверенная резервная копия SQLite сохранена.');}));
  $('exportBackup').title='Сохранить проверенную резервную копию SQLite';$('clearReports').title='Удалить загруженные отчёты после подтверждения и резервного копирования';$('importBackup').accept='.sqlite3';const backupPanel=$('importBackup').parentNode.parentNode.parentNode,restoreStatus=el('p','','muted small');backupPanel.append(restoreStatus);function restoreMessage(text){restoreStatus.textContent=text;}
- file('importBackup',async()=>{restore=null;restoreMessage('Проверка резервной копии…');const source=await api.chooseRestoreBackupPath();if(!source){restoreMessage('Выбор отменён.');return;}const preview=await api.nativeRestorePreview(source);if(!preview||!/^[a-f0-9]{64}$/i.test(preview.verification)||!Number.isSafeInteger(preview.reportCount)||preview.reportCount<0)throw Error('Не удалось подтвердить целостность резервной копии.');restore={source,verification:preview.verification};restoreMessage('Копия проверена. Отчётов: '+preview.reportCount+'. Выберите способ восстановления.');});
+ file('importBackup',async()=>{const source=await api.chooseRestoreBackupPath();if(!source){if(!restore)restoreMessage('Выбор отменён.');return;}restore=null;restoreMessage('Проверка резервной копии…');const preview=await api.nativeRestorePreview(source);if(!preview||!/^[a-f0-9]{64}$/i.test(preview.verification)||!Number.isSafeInteger(preview.reportCount)||preview.reportCount<0)throw Error('Не удалось подтвердить целостность резервной копии.');restore={source,verification:preview.verification};restoreMessage('Копия проверена. Отчётов: '+preview.reportCount+'. Выберите способ восстановления.');});
  backupPanel.append(button('Создать отдельную восстановленную копию',guard(async expected=>{const chosen=restore;if(!chosen||!await confirmAction(expected,'Создать отдельную проверенную копию SQLite?'))return;const destination=await api.chooseRestoreDestination('analiz-restored.sqlite3');if(!destination)return;if(!valid(expected)||restore!==chosen)throw Error('База или выбранная копия изменилась. Повторите действие.');const result=await api.nativeRestoreCopy(chosen.source,chosen.verification,destination);if(result?.verification!==chosen.verification)throw Error('Проверка восстановленной копии не совпала.');restoreMessage('Отдельная восстановленная копия создана и проверена.');})),button('Восстановить при следующем запуске',guard(async expected=>{const chosen=restore;if(!chosen||!await confirmAction(expected,'При следующем запуске рабочая база будет заменена выбранной копией. Программа сохранит защитную копию текущей базы. Продолжить?'))return;const result=await api.nativeRestoreSchedule(chosen.source,chosen.verification);if(!result?.restartRequired)throw Error('Не удалось запланировать восстановление.');restore=null;restoreMessage('Восстановление запланировано. Полностью закройте приложение и откройте снова. До перезапуска рабочая база не изменена.');})),button('Отменить запланированное восстановление',guard(async expected=>{if(!await confirmAction(expected,'Отменить запланированное восстановление?'))return;const removed=await api.nativeRestoreCancel();restore=null;restoreMessage(removed?'Восстановление отменено.':'Запланированных восстановлений нет.');})));
- const audit=existingPager('groupAudit',$('groupAuditResults'));audit.query=()=>$('groupAuditSearch').value;
- audit.render=(result,expected)=>{const unused=$('groupAuditMode').value==='unused';for(const row of result.rows){const status=row.active===true?'Есть выполнения':row.active===false?'Нет выполнений':'Недостаточно данных о выполнениях';if(unused){const node=el('div',null,'group-member');node.append(el('span',row.name+' · Работ: '+row.members),el('span',status,'muted small'),button('Открыть группу',()=>{if(!valid(expected))return;$('groupSearch').value=row.name;void load(groups); }));audit.root.append(node);}else{const node=moveControl(row,expected);node.append(el('span',(row.group_name?'Группа: '+row.group_name+' · ':'')+status,'muted small'));audit.root.append(node);}}const coverage=result.coverage;$('groupAuditCoverage').textContent='Найдено: '+result.total+(coverage?' · '+(coverage.complete?'Полные данные':'Неполные данные')+' · Периодов: '+coverage.periods+' · Пропусков подразделение–период: '+coverage.missing+'. Пропуски не считаются нулём.':'');};
- // The audit is replaced with the scoped SQL query below when available.
- audit.fetch=async(expected,offset)=>{if(typeof api.unifiedGroupAuditPage!=='function')throw Error('Проверка выполнений требует SQL-запроса аудита групп.');if(!U.scope)throw Error('Выберите период и подразделения в аналитике.');const range=U.range(U.scope.displayType,$('groupAuditFrom').value,$('groupAuditTo').value,U.scope.source);if(!range)throw Error('Укажите корректный диапазон проверки.');const scope={...U.scope,...range,selectedNames:[],selectedKeys:[],allNames:true};return api.unifiedGroupAuditPage(U.request(scope),$('groupAuditMode').value,$('groupAuditSearch').value,offset,LIMIT);};
+ const auditEmptyPeriod='Выберите корректный период в аналитике.';
+ const audit=existingPager('groupAudit',$('groupAuditResults'));audit.ready=()=>Boolean(U.scope);audit.query=()=>$('groupAuditSearch').value;
+ audit.render=(result,expected)=>{const unused=$('groupAuditMode').value==='unused';for(const row of result.rows){const status=row.active===true?'Есть выполнения':row.active===false?'Нет выполнений':'Недостаточно данных о выполнениях';if(unused){const node=el('div',null,'group-member');node.append(el('span',row.name+' · Работ: '+row.members),el('span',status,'muted small'),button('Открыть группу',()=>{if(!valid(expected))return;$('groupSearch').value=row.name;void load(groups); }));audit.root.append(node);}else{const node=moveControl(row,expected);node.append(el('span',(row.group_name?'Группа: '+row.group_name+' · ':'')+status,'muted small'));audit.root.append(node);}}if(result.total){
+  const ticket=audit.ticket,save=button('Скачать CSV',async()=>{
+   await guard(async()=>{
+    if(!valid(expected)||ticket!==audit.ticket)return;
+    const destination=await api.chooseCsvPath('analiz-group-audit.csv');
+    if(!destination||!valid(expected)||ticket!==audit.ticket)return;
+    await api.unifiedGroupAuditCsv(result.request,result.mode,result.search,destination);
+    U.notice('Результаты проверки групп сохранены в CSV.');
+   })();
+   if(save.isConnected&&valid(expected)&&ticket===audit.ticket)save.focus();
+  });save.id='groupAuditExportCsv';audit.root.append(save);
+ }const coverage=result.coverage;$('groupAuditCoverage').textContent='Найдено: '+result.total+(coverage?' · '+(coverage.complete?'Полные данные':'Неполные данные')+' · Периодов: '+coverage.periods+' · Пропусков подразделение–период: '+coverage.missing+'. Пропуски не считаются нулём.':'');};
+ function auditRequest(){
+  const range=U.range(U.scope.displayType,$('groupAuditFrom').value,$('groupAuditTo').value,U.scope.source);
+  if(!range)throw Error('Укажите корректный диапазон проверки.');
+  return U.request({...U.scope,...range,selectedNames:[],selectedKeys:[],allNames:true});
+ }
+ audit.fetch=async(expected,offset)=>{
+  const request=auditRequest(),mode=$('groupAuditMode').value,search=$('groupAuditSearch').value;
+  const page=await api.unifiedGroupAuditPage(request,mode,search,offset,LIMIT);
+  return {...page,request,mode,search};
+ };
  for(const id of ['groupAuditSearch','groupAuditMode','groupAuditFrom','groupAuditTo'])bind(id,()=>load(audit),id==='groupAuditSearch'?'input':'change');
- U.onScope(scope=>{if(scope){U.setPeriodInput('groupAuditFrom',scope.displayType,scope.from);U.setPeriodInput('groupAuditTo',scope.displayType,scope.to);}clear(audit);$('groupAuditCoverage').textContent=scope?'':'Выберите корректный период в аналитике.';if(scope&&active&&$('groupAuditPanel').open)void load(audit);});$('groupAuditPanel').addEventListener('toggle',()=>{if($('groupAuditPanel').open)void load(audit);});
- U.onSnapshot(snapshot=>{revision=Number.isSafeInteger(snapshot?.revision)?snapshot.revision:null;editTicket++;editing=null;selected=new Set();catalogEdit=null;workInput.value='';for(const p of pages)clear(p);$('groupSearchCount').textContent='';$('groupCoverage').textContent='';$('catalogStatus').textContent='';$('groupAuditCoverage').textContent='';organizationFields();lock();if(active&&valid(revision)){void load(groups);void load(works);if(catalogPanel.open)void load(catalog);if($('groupAuditPanel').open)void load(audit);}});
+ U.onScope(scope=>{if(scope){U.setPeriodInput('groupAuditFrom',scope.displayType,scope.from);U.setPeriodInput('groupAuditTo',scope.displayType,scope.to);}clear(audit);$('groupAuditCoverage').textContent=scope?'':auditEmptyPeriod;if(scope&&active&&$('groupAuditPanel').open)void load(audit);});$('groupAuditPanel').addEventListener('toggle',()=>{if($('groupAuditPanel').open)void load(audit);});
+ U.onSnapshot(snapshot=>{revision=Number.isSafeInteger(snapshot?.revision)?snapshot.revision:null;editTicket++;editing=null;selected=new Set();catalogEdit=null;workInput.value='';for(const p of pages)clear(p);$('groupSearchCount').textContent='';$('groupCoverage').textContent='';$('catalogStatus').textContent='';$('groupAuditCoverage').textContent=U.scope?'':auditEmptyPeriod;organizationFields();lock();if(active&&valid(revision)){void load(groups);void load(works);if(catalogPanel.open)void load(catalog);if($('groupAuditPanel').open)void load(audit);}});
  U.onView('groups',()=>{active=true;if(valid(revision)){void load(groups,groups.offset);void load(works,works.offset);if(catalogPanel.open)void load(catalog);}});U.onView('storage',()=>{organizationFields();});
  $('storageModeInfo').textContent='Отчёты хранятся в SQLite на этом устройстве. Резервная копия включает отчёты, группы, справочник и настройки.';
  if(typeof api.nativeRestoreLaunchInfo==='function')void api.nativeRestoreLaunchInfo().then(result=>{if(result?.message)restoreMessage(result.message);if(result?.restartRequired)restoreMessage('Восстановление ожидает перезапуска приложения.');}).catch(fail);

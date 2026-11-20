@@ -1,4 +1,5 @@
 /* Same canonical interface; only requested issue fixes and bounded-data notices. */
+body{min-width:0}
 .table-scroll{overflow-x:auto;overflow-y:visible;max-height:none}
 label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;max-width:100%;font:inherit}
 .period-pair input{width:100%;min-width:0;background:var(--surface);color:var(--text);border:1px solid var(--field-border);padding:9px 12px;border-radius:var(--radius-control)}
@@ -19,3 +20,83 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
 #additionalMetrics .metric-results .metric{padding:12px;border:1px solid var(--border);border-radius:var(--radius-control);min-width:0}
 #additionalMetrics .metric-results .metric strong{display:block;font-size:1.2rem;font-variant-numeric:tabular-nums}
 #additionalMetrics .metric-results .metric span{display:block;font-size:.85rem;color:var(--muted);overflow-wrap:anywhere}
+
+/* Chart layout is a view option; horizontal bars scroll within a bounded region. */
+.chart-mode-line{display:flex;align-items:end;gap:14px;flex-wrap:wrap;margin:12px 0}
+.chart-mode-line>label{min-width:170px}
+.chart-mode-line>label select{display:block;min-height:38px;width:100%;margin-top:5px;padding:7px 9px;border:1px solid var(--field-border);border-radius:var(--radius-control);color:var(--text);background:var(--surface)}
+.horizontal-bar-scroll{max-height:540px;max-width:100%;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-control);margin:10px 0}
+.chart-wrap .horizontal-bar-scroll svg{display:block;width:100%;height:auto;min-height:0;max-height:none;overflow:visible}
+.horizontal-bar-pager{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}
+.horizontal-bar-pager button{min-height:34px}
+
+/* Missing-data quality is persistent and keyboard-accessible, not dismissible. */
+.coverage-details{margin:9px 0}.coverage-details summary{font-weight:700;cursor:pointer}
+.coverage-matrix-scroll{overflow-x:auto;max-width:100%;margin-top:8px}
+.coverage-matrix{min-width:max-content;max-width:none}.coverage-matrix th{white-space:nowrap}
+.coverage-matrix td{padding:8px 11px;text-align:center;font-weight:700}
+.coverage-missing{background:var(--negative-bg);color:var(--negative)}.coverage-ok{background:var(--positive-bg);color:var(--positive)}
+#overviewAlerts .button{margin:6px 0}.kpi strong{white-space:nowrap;overflow-wrap:normal;font-size:clamp(17px,2vw,29px);letter-spacing:-.025em}
+#changesSummary .kpi{padding:14px 16px}#changesSummary .kpi strong{margin:7px 0 3px}
+@media(max-width:700px){#changesSummary .kpi strong{font-size:clamp(16px,3vw,24px)}}
+
+/* The change counters are keyboard-operable filters, with the original KPI appearance. */
+.kpi-action{font:inherit;text-align:left;cursor:pointer;width:100%;color:inherit}
+.kpi-action:hover{border-color:var(--accent);background:var(--hover)}
+.kpi-action:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+
+/* One shared baseline; local period overrides remain visible until explicitly reset. */
+.global-baseline{display:flex;flex-direction:column;gap:5px;min-width:170px}
+.global-baseline input{min-height:40px;padding:8px 11px;border:1px solid var(--field-border);border-radius:var(--radius-control);background:var(--surface);color:var(--text);width:100%}
+.period-override{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0;padding:7px 0;color:var(--muted);font-size:12px}
+.period-override[hidden]{display:none!important}
+.period-override .button{min-height:32px;padding:6px 9px;font-size:12px}
+
+/* Tauri-only sensitivity control, advanced filters hidden until requested. */
+.changes-sensitivity-quick{padding:12px 15px;margin:13px 0 8px;border:1px solid var(--border);border-radius:var(--radius-control)}
+.changes-sensitivity-quick>label{display:block;font-weight:650;margin-bottom:7px}
+.changes-sensitivity-row{display:flex;gap:14px;align-items:center}
+.changes-sensitivity-row input[type=range]{flex:1;min-width:140px;max-width:560px;accent-color:var(--accent)}
+.changes-sensitivity-row output{min-width:58px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+.changes-sensitivity-quick p{margin:7px 0 0}
+.changes-more-options{margin:10px 0}
+.changes-more-options>summary{cursor:pointer;font-weight:650;padding:8px 2px}
+#changesActiveFilter{font-weight:400;margin-left:8px}
+.changes-more-options .changes-filters{padding:10px 0}
+
+/* One display control for different SQL analysis views; filters and exports survive. */
+.work-view-switcher{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;margin:10px 0;border:1px solid var(--border);border-radius:var(--radius-control)}
+.work-view-switcher label{font-weight:700}
+.work-view-switcher select{min-height:38px;min-width:210px;max-width:100%;padding:7px 10px;border:1px solid var(--field-border);border-radius:var(--radius-control);background:var(--surface);color:var(--text)}
+.work-view-switcher p{flex-basis:100%;margin:0}
+#chartPanel[hidden],#structurePanel[hidden]{display:none!important}
+
+/* Bounded coverage matrix pagination: no whole-history fetch. */
+.coverage-matrix-pager{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:7px 0 12px}
+.coverage-matrix-pager button{min-height:34px}
+
+.coverage-warning{background:var(--warning-bg,var(--panel));color:var(--text)}
+.coverage-cell-action{font:inherit;color:inherit;background:none;border:0;cursor:pointer;max-width:230px;padding:7px;text-align:center}
+.coverage-cell-action:hover{text-decoration:underline}.coverage-cell-action:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.coverage-inspection{margin:14px 0;padding:14px;border:1px solid var(--border);border-radius:10px;overflow-wrap:anywhere}
+.coverage-report{padding:12px 0;border-bottom:1px solid var(--border)}.coverage-report details{margin-top:10px}
+.coverage-issue{padding:6px 10px;border-left:3px solid var(--border);margin:9px 0}.coverage-unassigned{margin:12px 0}
+.coverage-inspection button{margin:5px 6px 5px 0}
+
+#groupRenameDialog {
+  box-sizing:border-box;
+  width:min(28rem,calc(100vw - 2rem));
+  max-height:calc(100vh - 2rem);
+  margin:auto;
+  padding:1.25rem;
+  overflow:auto;
+  color:var(--text,#e8edf3);
+  background:var(--surface,#1b222c);
+  border:1px solid var(--border,#3a4656);
+  border-radius:var(--radius-panel,14px);
+}
+#groupRenameDialog::backdrop {background:#080b10b8}
+#groupRenameDialog form {display:grid;gap:.75rem}
+#groupRenameDialog h2 {margin:0;font-size:1.25rem}
+#groupRenameDialog input {min-width:0;width:100%;box-sizing:border-box}
+#groupRenameDialog .actions {display:flex;justify-content:flex-end;flex-wrap:wrap;gap:.5rem}

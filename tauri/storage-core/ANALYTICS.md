@@ -193,3 +193,27 @@ UI integration also needs catalog/name/group browsing pages, optional explicit
 organization-matrix pages, localized CSV context, and the usual/regularity/audit/
 contribution/structure analysis APIs. No claim of those analyses or the frontend
 migration is made here.
+
+## Saved source evidence on demand
+
+`report_quality_page(revision, id, scope, offset, limit)` returns at most 50
+issues and an `evidence` summary of the entire selected diagnostic array.
+It streams only the selected saved report or its current shared diagnostic
+anchor. `evidence.document_id` identifies the document actually read.
+No source JSON, schema, indexes, or analytical totals are changed.
+
+`explicit_zero` preserves the saved boolean or unknown (`null`); it is not
+fresh validation of an Excel file. `coverage` contains valid declared sheet
+bounds, which do not certify source completeness. Logical `sheet_name` is
+separate from the existing diagnostic location fallback.
+
+Only a typed `missing-day` issue with `source-period` scope, a valid date,
+and `relevant: true` increments `missing_day_entries`. False relevance and
+unknown date/scope/relevance have separate counters. Counters count saved
+entries, not distinct dates. Missing organization attribution is preserved.
+An `invalid` or `skipped` issue with explicit `skipped: true` and report or legacy scope
+increments `omitted_row_entries`; a generic warning or mismatch does not.
+An omitted row with unknown organization remains unattributed.
+Malformed classification fields do not erase independent valid facts, and
+nullable legacy fields remain unknown. Shared-source counts can concern other
+reports or sheets and must not be assigned to the selected matrix cell.

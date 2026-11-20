@@ -15,7 +15,7 @@ on:
         required: true
         type: choice
         default: check-keys
-        options: [check-keys, publish]
+        options: [check-keys, sign-only, publish]
       version:
         description: "For publish: new version, e.g. 0.1.6"
         type: string
@@ -75,7 +75,7 @@ jobs:
           node tauri/check-update-signing.cjs historical/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig
           echo 'Public key identity matches signed 0.1.2.' >> "$GITHUB_STEP_SUMMARY"
       - name: Require new version, release notes and successful main Windows CI
-        if: inputs.operation == 'publish' && steps.keys.outputs.configured == 'true'
+        if: (inputs.operation == 'publish' || inputs.operation == 'sign-only') && steps.keys.outputs.configured == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -107,7 +107,7 @@ jobs:
 
   build-and-publish:
     needs: signing-ready
-    if: inputs.operation == 'publish' && needs.signing-ready.outputs.configured == 'true'
+    if: (inputs.operation == 'publish' || inputs.operation == 'sign-only') && needs.signing-ready.outputs.configured == 'true'
     runs-on: windows-latest
     timeout-minutes: 75
     permissions:
@@ -172,6 +172,24 @@ jobs:
           if (!(Test-Path $exe) -or !(Test-Path "$exe.sig")) { throw 'Missing signed release files' }
           node tauri/check-update-signing.cjs "$exe.sig"
           if ($LASTEXITCODE -ne 0) { throw 'Signing key mismatch' }
+          # Verify the actual installer bytes with the configured updater public key.
+          @'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const exe = process.argv[2];
+          const unpack = text => text.startsWith('untrusted comment:') ? text : Buffer.from(text, 'base64').toString('utf8');
+          const publicText = process.env.ANALIZ_UPDATER_PUBLIC_KEY.trim();
+          const raw = Buffer.from(publicText, 'base64');
+          const key = raw.length === 42 ? raw : Buffer.from(unpack(publicText).trim().split(/\r?\n/)[1], 'base64');
+          const sig = Buffer.from(unpack(fs.readFileSync(exe + '.sig', 'utf8').trim()).trim().split(/\r?\n/)[1], 'base64');
+          const alg = sig.subarray(0, 2).toString();
+          if (key.length !== 42 || sig.length !== 74 || !['ED','Ed'].includes(alg) || !key.subarray(2,10).equals(sig.subarray(2,10))) throw Error('Invalid updater signature');
+          const bytes = fs.readFileSync(exe);
+          const payload = alg === 'ED' ? crypto.createHash('blake2b512').update(bytes).digest() : bytes;
+          const der = Buffer.concat([Buffer.from('302a300506032b6570032100','hex'),key.subarray(10)]);
+          if (!crypto.verify(null,payload,{key:der,format:'der',type:'spki'},sig.subarray(10))) throw Error('Invalid installer signature');
+          '@ | node - $exe
+          if ($LASTEXITCODE -ne 0) { throw 'Signed installer verification failed' }
           New-Item -ItemType Directory -Force 'tauri/test-artifacts' | Out-Null
           Copy-Item $exe 'tauri/test-artifacts/setup.exe'
           Copy-Item "$exe.sig" 'tauri/test-artifacts/setup.exe.sig'
@@ -184,6 +202,9 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'WebView2 test build failed' }
           } finally { Pop-Location }
       - name: Test installed app through real WebView2
+        env:
+          PYTHONIOENCODING: utf-8
+          REFERENCE_HEAD_SHA: ${{ github.sha }}
         shell: pwsh
         run: |
           python -m pip install playwright==1.62.0
@@ -198,6 +219,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Publish signed GitHub Release and advance updater channel
+        if: inputs.operation == 'publish'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

@@ -59,6 +59,8 @@ fn unified_metadata_and_pattern_filters_are_paged() {
         .unwrap();
     assert_eq!(month.rows[0].end, "2024-01-31");
     let options = UnifiedPatternOptions {
+        range_window: false,
+        baseline: None,
         search: "яркая".into(),
         status: "all".into(),
     };
@@ -77,6 +79,8 @@ fn unified_metadata_and_pattern_filters_are_paged() {
             "regularity",
             4,
             &UnifiedPatternOptions {
+                range_window: false,
+                baseline: None,
                 search: "яркая".into(),
                 status: "rare".into(),
             },
@@ -367,4 +371,72 @@ fn unified_historical_picker_keys_have_zero_only_with_complete_coverage() {
     let filter=s.analysis_filter_create(r,"names").unwrap();s.analysis_filter_append(r,&filter,&["Работа 02".into()]).unwrap();s.analysis_filter_seal(r,&filter).unwrap();scope.names=Some(filter);
     assert!(s.analysis_work_timeline(r,&scope,&current,None,"group:historical").is_err());
     assert!(s.analysis_work_timeline(r+1,&scope,&current,None,"work:ЯРКАЯ услуга").is_err());
+}
+
+#[test]
+fn reference_usual_uses_whole_equal_windows_and_excludes_partial_samples() {
+    let (_dir, store, revision, scope) = fixture();
+    let options = UnifiedPatternOptions {
+        search: "яркая".into(), status: "all".into(), range_window: true, baseline: None,
+    };
+    let run = |from: &str, to: &str| {
+        let query = ChangeQuery { from: from.into(), to: to.into(), ..query() };
+        store.unified_pattern_page(revision, &scope, &query, None, "usual", 4, &options, None).unwrap()
+    };
+    let current = run("2024-01-01", "2024-01-02");
+    assert_eq!(current.rows[0]["count"]["current"], 3.0);
+    assert_eq!(current.used, 0);
+    assert!(current.rows[0]["count"]["base"].is_null());
+    let with_sample = run("2024-01-03", "2024-01-04");
+    assert_eq!(with_sample.used, 1);
+    assert_eq!(with_sample.rows[0]["count"]["base"], 3.0);
+    assert!(with_sample.rows[0]["count"]["current"].is_null());
+    let partial_sample = run("2024-01-04", "2024-01-06");
+    assert_eq!(partial_sample.used, 0);
+    assert!(partial_sample.rows[0]["count"]["base"].is_null());
+}
+
+#[test]
+fn reference_frequency_counts_overlapping_and_future_baseline_days_separately() {
+    let (_dir, store, revision, scope) = fixture();
+    let q = ChangeQuery { from: "2024-01-01".into(), to: "2024-01-01".into(), ..query() };
+    let options = UnifiedPatternOptions {
+        search: "яркая".into(), status: "all".into(), range_window: false,
+        baseline: Some(RangeQuery { from: "2024-01-01".into(), to: "2024-01-02".into() }),
+    };
+    let result = store.unified_pattern_page(revision, &scope, &q, None, "regularity", 4, &options, None).unwrap();
+    assert_eq!(result.used, 1);
+    assert_eq!(result.previous_used, 2);
+    assert_eq!(result.rows[0]["hits"], 1);
+    assert_eq!(result.rows[0]["previousHits"], 2);
+    assert_eq!(result.rows[0]["last"], "2024-01-01");
+}
+
+#[path="reference_detail_csv_tests.rs"]
+mod reference_detail_csv_tests;
+
+#[test]
+fn group_audit_csv_keeps_all_filtered_rows_and_unknown_coverage() {
+    let (root, store, _, _) = fixture();
+    let mut data = store.load().unwrap();
+    data["settings"]["catalog"] = json!((0..64).map(|n|json!({"work":format!("=export {n:02}"),"organization":"A"})).collect::<Vec<_>>());
+    store.save(data).unwrap();
+    let rev=store.revision().unwrap();
+    for id in ["d0","d1"]{store.analysis_index_report(id,rev).unwrap();}
+    store.analysis_index_settings(rev).unwrap();
+    store.management_index_settings(rev,&ManagementJob::new()).unwrap();
+    let org=store.analysis_filter_create(rev,"organizations").unwrap();
+    store.analysis_filter_append(rev,&org,&["A".into()]).unwrap();store.analysis_filter_seal(rev,&org).unwrap();
+    let scope=AnalysisScope{report_type:"day".into(),organizations:org,names:None};
+    let query=RangeQuery{from:"2024-01-01".into(),to:"2024-01-03".into()};
+    let last=store.unified_group_audit_page(rev,&scope,&query,"ungrouped","export",50,50).unwrap();
+    assert_eq!(last.rows.len(),14);assert!(last.rows.iter().all(|r|r.active.is_none()));
+    let target=root.path().join("audit.csv");
+    store.unified_group_audit_csv(rev,&scope,&query,"ungrouped","export",&target).unwrap();
+    let text=std::fs::read_to_string(&target).unwrap();
+    assert_eq!(text.lines().count(),65);assert!(text.contains("'=export 63"));assert_eq!(text.matches("Недостаточно данных").count(),64);
+    assert!(store.unified_group_audit_csv(rev,&scope,&query,"ungrouped","export",&target).is_err());
+    let stale=root.path().join("stale.csv");
+    assert!(store.unified_group_audit_csv(rev+1,&scope,&query,"ungrouped","export",&stale).is_err());
+    assert!(!stale.exists());
 }

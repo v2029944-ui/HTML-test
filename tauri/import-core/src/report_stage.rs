@@ -60,6 +60,7 @@ pub struct ReportRow {
 }
 #[derive(Debug)]
 pub struct ReportIssue {
+    pub skipped: Option<bool>,
     pub scope: Option<String>,
     pub date: Option<String>,
     pub source_issue_sequence: Option<u64>,
@@ -134,6 +135,9 @@ impl Serialize for ReportIssue {
         if let Some(sequence) = self.source_issue_sequence {
             map.serialize_entry("source_issue_sequence", &sequence)?;
         }
+        if self.skipped == Some(true) {
+            map.serialize_entry("skipped", &true)?;
+        }
         map.serialize_entry("sequence", &self.sequence)?;
         map.serialize_entry("kind", &self.kind)?;
         map.serialize_entry("reason", &self.reason)?;
@@ -191,7 +195,7 @@ pub struct ReportOrganization {
 }
 pub(crate) const SCHEMA:&str="CREATE TABLE IF NOT EXISTS converted_reports(ordinal INTEGER PRIMARY KEY,id TEXT UNIQUE,sheet TEXT,kind TEXT,start TEXT,end TEXT,row_count INTEGER,count REAL,amount REAL,has_mismatch INTEGER,header_row INTEGER,work_col INTEGER,count_col INTEGER,amount_col INTEGER);
  CREATE TABLE IF NOT EXISTS converted_rows(report_id TEXT,row_index INTEGER,organization TEXT,work TEXT,count REAL,amount REAL,source_row INTEGER,work_cell TEXT,count_cell TEXT,amount_cell TEXT,PRIMARY KEY(report_id,row_index)) WITHOUT ROWID;
- CREATE TABLE IF NOT EXISTS converted_issues(report_id TEXT,seq INTEGER,kind TEXT,reason TEXT,source_row INTEGER,organization TEXT,work_cell TEXT,count_cell TEXT,amount_cell TEXT,expected_count REAL,expected_amount REAL,actual_count REAL,actual_amount REAL,scope TEXT,date TEXT,source_issue_seq INTEGER,PRIMARY KEY(report_id,seq)) WITHOUT ROWID;
+ CREATE TABLE IF NOT EXISTS converted_issues(report_id TEXT,seq INTEGER,kind TEXT,reason TEXT,source_row INTEGER,organization TEXT,work_cell TEXT,count_cell TEXT,amount_cell TEXT,expected_count REAL,expected_amount REAL,actual_count REAL,actual_amount REAL,scope TEXT,date TEXT,source_issue_seq INTEGER,skipped INTEGER CHECK(skipped IS NULL OR skipped IN(0,1)),PRIMARY KEY(report_id,seq)) WITHOUT ROWID;
  CREATE TABLE IF NOT EXISTS converted_totals(report_id TEXT,seq INTEGER,kind TEXT,organization TEXT,source_row INTEGER,count REAL,amount REAL,PRIMARY KEY(report_id,seq)) WITHOUT ROWID;
  CREATE TABLE IF NOT EXISTS converted_organizations(report_id TEXT,seq INTEGER,organization TEXT,count REAL,amount REAL,PRIMARY KEY(report_id,seq)) WITHOUT ROWID;";
 pub(crate) fn js_space(c: char) -> bool {
@@ -523,6 +527,7 @@ impl Stage<'_> {
                         (None, None, None),
                         None,
                         None,
+                        false,
                     )?;
                 }
                 for (j, (q, a)) in context.by_org.iter().enumerate() {
@@ -649,7 +654,7 @@ impl Stage<'_> {
     pub fn report_issues(&self, id: &str, after: u64, limit: usize) -> Result<Vec<ReportIssue>> {
         page_limit(limit)?;
         self.conversion_ready()?;
-        let mut s=self.db.prepare("SELECT seq,kind,reason,source_row,organization,work_cell,count_cell,amount_cell,expected_count,expected_amount,actual_count,actual_amount,scope,date,source_issue_seq FROM converted_issues WHERE report_id=?1 AND seq>?2 ORDER BY seq LIMIT ?3")?;
+        let mut s=self.db.prepare("SELECT seq,kind,reason,source_row,organization,work_cell,count_cell,amount_cell,expected_count,expected_amount,actual_count,actual_amount,scope,date,source_issue_seq,skipped FROM converted_issues WHERE report_id=?1 AND seq>?2 ORDER BY seq LIMIT ?3")?;
         let r = s.query_map(params![id, after, limit], |r| {
             Ok(ReportIssue {
                 sequence: r.get(0)?,
@@ -667,6 +672,7 @@ impl Stage<'_> {
                 scope: r.get(12)?,
                 date: r.get(13)?,
                 source_issue_sequence: r.get(14)?,
+                skipped: r.get(15)?,
             })
         })?;
         Ok(r.collect::<std::result::Result<_, _>>()?)
@@ -735,10 +741,11 @@ impl Context<'_> {
         cells: (Option<String>, Option<String>, Option<String>),
         expected: Option<(f64, f64)>,
         actual: Option<(f64, f64)>,
+        skipped: bool,
     ) -> Result<()> {
         self.issues += 1;
         self.db.execute(
-            "INSERT INTO converted_issues VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,NULL,NULL,NULL)",
+            "INSERT INTO converted_issues VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,NULL,NULL,NULL,?14)",
             params![
                 self.id,
                 self.issues,
@@ -752,7 +759,8 @@ impl Context<'_> {
                 expected.map(|x| x.0),
                 expected.map(|x| x.1),
                 actual.map(|x| x.0),
-                actual.map(|x| x.1)
+                actual.map(|x| x.1),
+                skipped.then_some(true)
             ],
         )?;
         Ok(())
@@ -777,6 +785,7 @@ impl Context<'_> {
                     ),
                     Some((a.count, a.amount)),
                     Some(actual),
+                    false,
                 )?;
             }
         }
@@ -862,6 +871,7 @@ impl Context<'_> {
                     (Some(cell(self.m.work_col, row)), None, None),
                     None,
                     None,
+                    false,
                 )?;
             } else if q.is_some() || a.is_some() || raw_present(1) || raw_present(2) {
                 let cells = if q.is_some() || a.is_some() {
@@ -881,6 +891,7 @@ impl Context<'_> {
                     cells,
                     None,
                     None,
+                    true,
                 )?;
             }
             return Ok(false);
@@ -914,6 +925,7 @@ impl Context<'_> {
                         bad_cells,
                         None,
                         None,
+                        false,
                     )?;
                 } else if (self.sum.0 - q.unwrap()).abs() > 0.001
                     || (self.sum.1 - a.unwrap()).abs() > 0.03
@@ -931,6 +943,7 @@ impl Context<'_> {
                         ),
                         Some((q.unwrap(), a.unwrap())),
                         Some(self.sum),
+                        false,
                     )?;
                 }
                 return Ok(true);
@@ -977,6 +990,7 @@ impl Context<'_> {
                     bad_cells,
                     None,
                     None,
+                    false,
                 )?;
                 self.active = None;
             }
@@ -997,6 +1011,7 @@ impl Context<'_> {
                     (Some(cell(self.m.work_col, row)), None, None),
                     None,
                     None,
+                    true,
                 )?;
             }
         } else {
@@ -1008,6 +1023,7 @@ impl Context<'_> {
                 bad_cells,
                 None,
                 None,
+                true,
             )?;
         }
         Ok(false)
@@ -1132,6 +1148,7 @@ pub(crate) fn convert_day(
             (None, None, None),
             None,
             None,
+            false,
         )?;
     }
     for (j, (q, a)) in context.by_org.iter().enumerate() {

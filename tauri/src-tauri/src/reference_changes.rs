@@ -1,0 +1,317 @@
+//! Independent current/baseline intervals over real work × organization facts.
+use super::*;
+use std::collections::BTreeSet;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReferenceChangesRequest {
+    pub revision: i64,
+    pub report_type: String,
+    pub from: String,
+    pub to: String,
+    pub base_from: String,
+    pub base_to: String,
+    pub organizations: Vec<String>,
+    pub metric: String,
+    pub percent: f64,
+    pub min_count: f64,
+    pub min_amount: f64,
+    pub kind: String,
+    pub search: String,
+    pub sort: String,
+    pub page: u32,
+}
+#[derive(Debug, Serialize)]
+pub struct ReferenceChangeRow {
+    pub name: String,
+    pub org: String,
+    pub before: f64,
+    pub after: f64,
+    pub delta: f64,
+    pub percent: Option<f64>,
+}
+#[derive(Debug, Serialize)]
+pub struct ReferenceChangeCounts {
+    pub up: i64,
+    pub down: i64,
+    pub new: i64,
+    pub gone: i64,
+}
+#[derive(Debug, Serialize)]
+pub struct ReferenceChangesPage {
+    pub rows: Vec<ReferenceChangeRow>,
+    pub total: i64,
+    pub searched: i64,
+    pub significant: i64,
+    pub counts: ReferenceChangeCounts,
+    pub leader: Option<ReferenceChangeRow>,
+    pub comparable: Vec<String>,
+}
+impl ReferenceChangesRequest {
+    fn validate(&self) -> Result<(), String> {
+        if !(1..=100).contains(&self.organizations.len())
+            || self.organizations.iter().collect::<BTreeSet<_>>().len() != self.organizations.len()
+            || self
+                .organizations
+                .iter()
+                .any(|v| v.is_empty() || v.len() > BOUND)
+            || !matches!(self.metric.as_str(), "count" | "amount")
+            || !matches!(
+                self.kind.as_str(),
+                "significant" | "all" | "up" | "down" | "new" | "gone"
+            )
+            || !matches!(self.sort.as_str(), "delta" | "percent" | "name")
+            || self.search.len() > 512
+            || i64::from(self.page) * 12 > i64::from(i32::MAX)
+            || [self.percent, self.min_count, self.min_amount]
+                .iter()
+                .any(|n| !n.is_finite() || *n < 0.)
+        {
+            return Err("Invalid reference changes query".into());
+        }
+        for query in [self.current(), self.baseline()] {
+            let (first, last) = range_bounds(&self.report_type, &query)?;
+            if (last - first).num_days() > 3660 {
+                return Err("Select up to ten years per interval".into());
+            }
+        }
+        Ok(())
+    }
+    fn current(&self) -> RangeQuery {
+        RangeQuery {
+            from: self.from.clone(),
+            to: self.to.clone(),
+        }
+    }
+    fn baseline(&self) -> RangeQuery {
+        RangeQuery {
+            from: self.base_from.clone(),
+            to: self.base_to.clone(),
+        }
+    }
+}
+fn periods(c: &Connection, s: &AnalysisScope, q: &RangeQuery, slot: i64) -> Result<(), String> {
+    let (mut current, last) = range_bounds(&s.report_type, q)?;
+    loop {
+        c.execute(
+            "INSERT INTO an_periods VALUES(?1,?2)",
+            params![slot, current.to_string()],
+        )
+        .map_err(err)?;
+        if current == last {
+            break;
+        }
+        current = shift(&s.report_type, current, 1)?;
+    }
+    c.execute("INSERT INTO an_missing SELECT ?1,f.item,p.start FROM analysis_filter_items f CROSS JOIN an_periods p LEFT JOIN an_valid v ON v.org=f.item AND v.start=p.start WHERE f.id=?2 AND p.slot=?1 AND v.report_id IS NULL",params![slot,s.organizations]).map_err(err)?;
+    Ok(())
+}
+fn prepare_reference(
+    c: &Connection,
+    q: &ReferenceChangesRequest,
+    s: &AnalysisScope,
+) -> Result<(), String> {
+    workspace(c, q.revision, s)?;
+    unified_analytics::presentation_functions(c)?;
+    periods(c, s, &q.baseline(), 1)?;
+    periods(c, s, &q.current(), 2)?;
+    c.execute_batch("CREATE TEMP TABLE ref_orgs(org TEXT PRIMARY KEY) WITHOUT ROWID;
+        CREATE TEMP TABLE ref_values(slot INTEGER,org TEXT,name TEXT,count REAL,amount REAL,PRIMARY KEY(slot,org,name)) WITHOUT ROWID;
+        CREATE TEMP TABLE ref_changes(name TEXT,org TEXT,before REAL,after REAL,delta REAL,percent REAL,kind TEXT,PRIMARY KEY(name,org)) WITHOUT ROWID;").map_err(err)?;
+    c.execute("INSERT INTO ref_orgs SELECT f.item FROM analysis_filter_items f WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM an_missing m WHERE m.org=f.item)",[&s.organizations]).map_err(err)?;
+    c.execute_batch("INSERT INTO ref_values SELECT p.slot,v.org,x.work,sum(x.count),sum(x.amount)
+        FROM an_valid v JOIN an_periods p ON p.start=v.start JOIN ref_orgs o ON o.org=v.org
+        JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY p.slot,v.org,x.work;").map_err(err)?;
+    validate_numbers(c, "SELECT count,amount FROM ref_values")?;
+    let mut statement=c.prepare("WITH keys AS (SELECT DISTINCT org,name FROM ref_values)
+        SELECT k.name,k.org,coalesce(b.count,0.0),coalesce(b.amount,0.0),coalesce(a.count,0.0),coalesce(a.amount,0.0)
+        FROM keys k LEFT JOIN ref_values b ON b.org=k.org AND b.name=k.name AND b.slot=1
+        LEFT JOIN ref_values a ON a.org=k.org AND a.name=k.name AND a.slot=2").map_err(err)?;
+    let mut rows = statement.query([]).map_err(err)?;
+    let mut put = c
+        .prepare("INSERT INTO ref_changes VALUES(?1,?2,?3,?4,?5,?6,?7)")
+        .map_err(err)?;
+    while let Some(row) = rows.next().map_err(err)? {
+        let name: String = row.get(0).map_err(err)?;
+        let org: String = row.get(1).map_err(err)?;
+        let bc: f64 = row.get(2).map_err(err)?;
+        let ba: f64 = row.get(3).map_err(err)?;
+        let ac: f64 = row.get(4).map_err(err)?;
+        let aa: f64 = row.get(5).map_err(err)?;
+        let (before, after, minimum) = if q.metric == "count" {
+            (bc, ac, q.min_count)
+        } else {
+            (ba, aa, q.min_amount)
+        };
+        let value = measure(before, after, minimum, q.percent)?;
+        let kind = if value.delta == 0. {
+            ""
+        } else if bc == 0. && ba == 0. && (ac != 0. || aa != 0.) {
+            "new"
+        } else if (bc != 0. || ba != 0.) && ac == 0. && aa == 0. {
+            "gone"
+        } else if before != 0. && value.significant {
+            if value.delta > 0. {
+                "up"
+            } else {
+                "down"
+            }
+        } else {
+            ""
+        };
+        put.execute(params![
+            name,
+            org,
+            before,
+            after,
+            value.delta,
+            value.percent,
+            kind
+        ])
+        .map_err(err)?;
+    }
+    Ok(())
+}
+fn order(q: &ReferenceChangesRequest) -> &'static str {
+    match q.sort.as_str() {
+        "percent"=>"(percent IS NULL),abs(percent) DESC,abs(delta) DESC,name COLLATE classic_ru,org COLLATE classic_ru,name,org",
+        "name"=>"name COLLATE classic_ru,org COLLATE classic_ru,name,org",
+        _=>"abs(delta) DESC,name COLLATE classic_ru,org COLLATE classic_ru,name,org",
+    }
+}
+const FILTER:&str="(?1='all' OR (?1='significant' AND kind<>'') OR kind=?1) AND instr(classic_normalized(name),?2)>0";
+fn change_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReferenceChangeRow> {
+    Ok(ReferenceChangeRow {
+        name: row.get(0)?,
+        org: row.get(1)?,
+        before: row.get(2)?,
+        after: row.get(3)?,
+        delta: row.get(4)?,
+        percent: row.get(5)?,
+    })
+}
+impl Storage {
+    fn reference_scope<T>(
+        &self,
+        q: &ReferenceChangesRequest,
+        run: impl FnOnce(&AnalysisScope) -> Result<T, String>,
+    ) -> Result<T, String> {
+        q.validate()?;
+        let id = self.analysis_filter_create(q.revision, "organizations")?;
+        let result = (|| {
+            self.analysis_filter_append(q.revision, &id, &q.organizations)?;
+            self.analysis_filter_seal(q.revision, &id)?;
+            run(&AnalysisScope {
+                report_type: q.report_type.clone(),
+                organizations: id.clone(),
+                names: None,
+            })
+        })();
+        let cleanup = self.analysis_filter_delete(&id);
+        match (result, cleanup) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(e), _) | (_, Err(e)) => Err(e),
+        }
+    }
+    pub fn reference_changes(
+        &self,
+        q: &ReferenceChangesRequest,
+    ) -> Result<ReferenceChangesPage, String> {
+        self.reference_scope(q,|scope| {
+            let mut conn=self.connect()?;let tx=conn.transaction().map_err(err)?;
+            prepare_reference(&tx,q,scope)?;
+            let counts=tx.query_row("SELECT coalesce(sum(kind='up'),0),coalesce(sum(kind='down'),0),coalesce(sum(kind='new'),0),coalesce(sum(kind='gone'),0) FROM ref_changes",[],|r|Ok(ReferenceChangeCounts {up:r.get(0)?,down:r.get(1)?,new:r.get(2)?,gone:r.get(3)?})).map_err(err)?;
+            let leader=tx.query_row("SELECT name,org,before,after,delta,percent FROM ref_changes ORDER BY abs(delta) DESC,name COLLATE classic_ru,org COLLATE classic_ru,name,org LIMIT 1",[],change_row).optional().map_err(err)?;
+            let comparable=tx.prepare("SELECT f.item FROM analysis_filter_items f JOIN ref_orgs o ON o.org=f.item WHERE f.id=?1 ORDER BY f.ordinal").map_err(err)?.query_map([&scope.organizations],|r|r.get(0)).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+            let search=unified_analytics::normalized(&q.search);
+            let (total,searched,significant)=tx.query_row(
+                "SELECT count(*) FILTER (WHERE ?1='all' OR (?1='significant' AND kind<>'') OR kind=?1),
+                        count(*), count(*) FILTER (WHERE kind<>'')
+                 FROM ref_changes WHERE instr(classic_normalized(name),?2)>0",
+                params![q.kind,search],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))
+            ).map_err(err)?;
+            let rows=tx.prepare(&format!("SELECT name,org,before,after,delta,percent FROM ref_changes WHERE {FILTER} ORDER BY {} LIMIT 12 OFFSET ?3",order(q))).map_err(err)?.query_map(params![q.kind,search,i64::from(q.page)*12],change_row).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+            Ok(ReferenceChangesPage {rows,total,searched,significant,counts,leader,comparable})
+        })
+    }
+    pub fn reference_changes_csv(
+        &self,
+        q: &ReferenceChangesRequest,
+        destination: &Path,
+    ) -> Result<(), String> {
+        if !destination.is_absolute()
+            || destination.as_os_str().len() > 32767
+            || !destination
+                .extension()
+                .and_then(|v| v.to_str())
+                .is_some_and(|v| v.eq_ignore_ascii_case("csv"))
+        {
+            return Err("Choose an absolute CSV file path".into());
+        }
+        self.reference_scope(q,|scope| {
+            let mut conn=self.connect()?;let tx=conn.transaction().map_err(err)?;
+            prepare_reference(&tx,q,scope)?;
+            export(destination,|writer| {
+                csv_record(writer,&[Cell::Text("Работа"),Cell::Text("Подразделение"),Cell::Text("Было"),Cell::Text("Стало"),Cell::Text("Изменение"),Cell::Text("%")])?;
+                let mut stmt=tx.prepare(&format!("SELECT name,org,before,after,delta,percent FROM ref_changes WHERE {FILTER} ORDER BY {}",order(q))).map_err(err)?;
+                let mut rows=stmt.query(params![q.kind,unified_analytics::normalized(&q.search)]).map_err(err)?;
+                while let Some(row)=rows.next().map_err(err)? {
+                    let value=change_row(row).map_err(err)?;
+                    csv_record(writer,&[Cell::Text(&value.name),Cell::Text(&value.org),Cell::Number(Some(value.before)),Cell::Number(Some(value.after)),Cell::Number(Some(value.delta)),Cell::Number(value.percent)])?;
+                }
+                Ok(())
+            })
+        })
+    }
+    pub fn reference_summary_csv(
+        &self,
+        q: &ReferenceChangesRequest,
+        destination: &Path,
+    ) -> Result<(), String> {
+        if !destination.is_absolute()
+            || destination.as_os_str().len() > 32767
+            || !destination
+                .extension()
+                .and_then(|v| v.to_str())
+                .is_some_and(|v| v.eq_ignore_ascii_case("csv"))
+        {
+            return Err("Choose an absolute CSV file path".into());
+        }
+        self.reference_scope(q,|scope| {
+            let mut conn=self.connect()?;let tx=conn.transaction().map_err(err)?;
+            workspace(&tx,q.revision,scope)?;
+            unified_analytics::presentation_functions(&tx)?;
+            periods(&tx,scope,&q.current(),2)?;
+            export(destination,|writer| {
+                csv_record(writer,&[Cell::Text("Сводка доступных данных"),Cell::Text(&q.from),Cell::Text(&q.to)])?;
+                csv_record(writer,&[Cell::Text("База сравнения"),Cell::Text(&q.base_from),Cell::Text(&q.base_to)])?;
+                csv_record(writer,&[])?;
+                csv_record(writer,&[Cell::Text("Подразделение"),Cell::Text("Сумма"),Cell::Text("Количество / объём"),Cell::Text("Доля суммы, %"),Cell::Text("Сумма / количество (объём)"),Cell::Text("Состояние")])?;
+                let mut statement=tx.prepare("WITH observed AS (
+                    SELECT v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,coalesce(sum(x.amount),0.0) amount
+                    FROM an_valid v JOIN an_periods p ON p.slot=2 AND p.start=v.start
+                    LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY v.org)
+                    SELECT f.item,coalesce(o.reports,0),o.count,o.amount,
+                    NOT EXISTS(SELECT 1 FROM an_missing m WHERE m.slot=2 AND m.org=f.item),
+                    (SELECT sum(amount) FROM observed)
+                    FROM analysis_filter_items f LEFT JOIN observed o ON o.org=f.item WHERE f.id=?1
+                    ORDER BY (o.amount IS NULL),o.amount DESC,f.item COLLATE classic_ru,f.item").map_err(err)?;
+                let mut rows=statement.query([&scope.organizations]).map_err(err)?;
+                while let Some(row)=rows.next().map_err(err)? {
+                    let org:String=row.get(0).map_err(err)?;let available:i64=row.get(1).map_err(err)?;
+                    let (count,amount)=if available>0 {(Some(finite(row.get(2).map_err(err)?)?),Some(finite(row.get(3).map_err(err)?)?))} else {(None,None)};
+                    let average=match (count,amount) {(Some(c),Some(a)) if c>0.=>Some(finite(a/c)?),_=>None};
+                    let total=row.get::<_,Option<f64>>(5).map_err(err)?.map(finite).transpose()?;
+                    let share=match (amount,total) {(Some(a),Some(t)) if t>0.=>Some(finite(a/t*100.)?),_=>None};
+                    let complete:bool=row.get(4).map_err(err)?;
+                    let state=if available==0 {"нет данных"} else if complete {"полные периоды"} else {"частичные данные"};
+                    csv_record(writer,&[Cell::Text(&org),Cell::Number(amount),Cell::Number(count),Cell::Number(share),Cell::Number(average),Cell::Text(state)])?;
+                }
+                Ok(())
+            })
+        })
+    }
+}
+#[cfg(test)]
+#[path = "reference_changes_tests.rs"]
+mod tests;

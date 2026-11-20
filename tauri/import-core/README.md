@@ -49,3 +49,14 @@ Progress is a callback at 2048-cell batch boundaries and component completion. C
 Already implemented in this crate: conversion of ordinary triples and supported daily-wide reports, including merged-header dates, 1904-system dates, financial controls, and bounded diagnostics. Exact warning wording and parity with every possible Excel layout are **not** guaranteed.
 
 Still required: complete prepared quality confirmation, revision/source/conflict checks, atomic live application, bounded full-application analytics/exports, asynchronous Tauri worker/IPC integration, and Windows/WebView2/fault tests. Draft PRs [#18](https://github.com/v2029944-ui/HTML-test/pull/18), [#20](https://github.com/v2029944-ui/HTML-test/pull/20), [#21](https://github.com/v2029944-ui/HTML-test/pull/21) and [#25](https://github.com/v2029944-ui/HTML-test/pull/25) cover portions of this work, but are **not merged or activated**. Do not switch the production importer based solely on standalone staging tests.
+
+
+Omitted-detail evidence: native diagnostics serialize `skipped: true` only when
+conversion actually omits a detail row (invalid values or unknown organization).
+Included unnamed rows and invalid control totals do not acquire this marker.
+The issue kind, source coordinates, unknown organization, numerical totals and
+quality acknowledgment remain unchanged. The nullable marker is stored only in
+the private conversion stage and copied into prepared report JSON; it does not
+change the user's SQLite schema. Shared source-period notes remain unmarked,
+and preparation rejects tampered source-period omission markers. Absence of the
+marker in older reports does not prove that every source row was imported.
