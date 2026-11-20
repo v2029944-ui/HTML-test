@@ -84,7 +84,7 @@ async function renderMissingMatrix(root,s){
   if(!periods.length){root.replaceChildren(UI.el('p','Нет отчётов выбранного типа. Проверьте источник.','muted small'));return;}
   const table=UI.el('table',null,'table coverage-matrix'),header=UI.el('tr');
   header.append(UI.el('th','Подразделение'));
-  for(const period of periods)header.append(UI.el('th',rangeLabel(period.start,s.type==='day'?period.start:O.periodEnd(period.start,s.displayType))));
+  for(const period of periods){const start=period.start.length===7?period.start+'-01':period.start;header.append(UI.el('th',rangeLabel(start,s.type==='day'?start:O.periodEnd(start,s.displayType))));}
   const head=UI.el('thead');head.append(header);table.append(head);
   const body=UI.el('tbody');
   for(const name of s.organizations){

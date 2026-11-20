@@ -127,3 +127,16 @@ test('a weekly imported period shows its full calendar dates, not a repeated Mon
  f.nodes.get('periodType').value='week';f.nodes.get('unifiedSource').value='imported';
  await f.bootstrap();assert.match(f.nodes.get('overviewPeriodText').textContent,/01\.01\.2024 — 07\.01\.2024/);
 });
+
+test('missing-month matrix accepts YYYY-MM native period labels without rendering invalid dates',async()=>{
+ const full={complete:true,periods:1,missing:0,total:{count:2,amount:20,average:10},available_reports:1,available_total:{count:2,amount:20,average:10},invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};
+ const f=fixture({
+  unifiedPeriodOptions:async()=>({rows:[{start:'2024-01-01',end:'2024-01-31'}],min:'2024-01-01',max:'2024-01-01',total_rows:1,next:null}),
+  nativeAnalysisCompare:async()=>({summary:{before:full,after:{...full,complete:false,missing:1,total:{amount:null,count:null,average:null}}}}),
+  nativeOrganizationTrends:async()=>({series:[{organization:'A',points:[{start:'2024-01',missing:1}]}]})
+ });
+ f.nodes.get('periodType').value='month';f.nodes.get('unifiedSource').value='imported';
+ await f.bootstrap();const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
+ assert.ok(details);details.open=true;details.dispatch('toggle');await settle();
+ assert.match(details.textContent,/01\.01\.2024 — 31\.01\.2024/);
+});
