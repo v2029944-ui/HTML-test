@@ -151,6 +151,15 @@ class OwnedFileDialogs:
         assert self.user32.IsWindowVisible(hwnd) and self.user32.IsWindowEnabled(hwnd)
         assert not self.user32.IsWindowEnabled(owner)
 
+    def titlebar_info(self, hwnd):
+        """Read the native Close slot; no input and no inference from UIA roles."""
+        info = TitleBarInfoEx()
+        info.cbSize = ctypes.sizeof(info)
+        self.message(hwnd, 0x033F, 0, ctypes.addressof(info))  # WM_GETTITLEBARINFOEX
+        rect = info.rgrect[5]
+        return {'closeRect': [rect.left, rect.top, rect.right, rect.bottom],
+                'state': int(info.rgstate[5])}
+
     def close_titlebar(self, hwnd, owner, title, screenshot=None):
         """Physically click only the exact window's enabled Win32 close region.
 
@@ -168,12 +177,9 @@ class OwnedFileDialogs:
             self.user32.GetForegroundWindow.argtypes = []
             self.user32.GetSystemMetrics.restype = ctypes.c_int
             self.user32.GetSystemMetrics.argtypes = [ctypes.c_int]
-            info = TitleBarInfoEx()
-            info.cbSize = ctypes.sizeof(info)
-            self.message(hwnd, 0x033F, 0, ctypes.addressof(info))  # WM_GETTITLEBARINFOEX
-            rect = info.rgrect[5]  # documented Close button, never a guessed offset
-            state = info.rgstate[5]
-            facts.update(closeRect=[rect.left, rect.top, rect.right, rect.bottom], state=int(state))
+            facts.update(self.titlebar_info(hwnd))
+            rect = wintypes.RECT(*facts['closeRect'])
+            state = facts['state']
             assert not state & (0x1 | 0x8000 | 0x10000), ('Close unavailable/invisible/offscreen', facts)
             assert rect.right > rect.left and rect.bottom > rect.top, ('No native Close bounds', facts)
             window = wintypes.RECT()
@@ -278,7 +284,7 @@ class OwnedFileDialogs:
         self.user32.GetWindowTextW(hwnd, text, len(text))
         return text.value
 
-    def inspect(self, hwnd, title, screenshot=None):
+    def inspect(self, hwnd, title, screenshot=None, require_cancel=True):
         result = subprocess.run(
             ['powershell', '-NoProfile', '-NonInteractive', '-Command', self.inspect_script],
             env=dict(os.environ, ANALIZ_SMOKE_DIALOG_PID=str(self.native.pid),
@@ -294,7 +300,7 @@ class OwnedFileDialogs:
             record = Path(screenshot).with_name('native-file-dialogs-inventory-' + Path(screenshot).stem + '.json')
             record.write_text(json.dumps(facts, ensure_ascii=False, indent=2), encoding='utf-8')
         assert facts['pid'] == self.native.pid and facts['title'] == title, facts
-        cancel = self.cancel_control(hwnd, facts)
+        cancel = self.cancel_control(hwnd, facts) if require_cancel else None
         return facts, cancel
 
     def find(self, expected):
@@ -564,6 +570,12 @@ def check_reference_data_file_dialogs(page, nativeConfirmations, output):
             screenshot='native-file-verified-backup-open.png',
             caption=title + ' — настоящий Open изолированной копии для проверки без восстановления')
         copy = page.get_by_role('button', name='Создать отдельную восстановленную копию', exact=True)
+        nativeConfirmations.cancel_only(copy, 'Создать отдельную проверенную копию SQLite?',
+                                       drafts=walk.drafts)
+        nativeConfirmations.cancel_only(
+            page.get_by_role('button', name='Восстановить при следующем запуске', exact=True),
+            'При следующем запуске рабочая база будет заменена выбранной копией. '
+            'Программа сохранит защитную копию текущей базы. Продолжить?', drafts=walk.drafts)
         walk.exercise('sqlite-restored-copy', copy, 'Создать отдельную восстановленную копию',
                       confirmation='Создать отдельную проверенную копию SQLite?')
         assert hashlib.sha256(backup.read_bytes()).hexdigest() == original

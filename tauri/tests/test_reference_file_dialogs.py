@@ -1,12 +1,14 @@
 """Regression guards for exact native dialog targets; no Windows input is sent."""
 import ctypes
+import json
 from pathlib import Path
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from reference_file_dialogs import OwnedFileDialogs, TitleBarInfoEx
+from windows_smoke import NativeConfirmations
 
 
 class FileDialogCancelTests(unittest.TestCase):
@@ -221,6 +223,69 @@ class BackupOpenControlsTests(unittest.TestCase):
     def assert_refused(self):
         with self.assertRaises(AssertionError):
             self.dialog.backup_open_controls(101, self.facts)
+
+
+class NativeConfirmationCyclesTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        root = Path(self.temporary.name)
+        (root / 'tauri/test-artifacts').mkdir(parents=True)
+        self.record = root / 'tauri/test-artifacts/native-file-dialogs-confirmations.json'
+        self.native = NativeConfirmations.__new__(NativeConfirmations)
+        self.native.revision = Mock(return_value=42)
+        self.native.find_dialog = Mock(return_value=(101, 102))
+        self.native.answer = Mock()
+        self.native.user32 = SimpleNamespace(IsWindowVisible=Mock(return_value=False),
+                                             IsWindowEnabled=Mock(return_value=True))
+        self.closer = Mock()
+        self.closer.title.return_value = 'Exact native title'
+        self.closer.titlebar_info.return_value = {'state': 0, 'closeRect': [560, 30, 600, 60]}
+        self.closer.close_titlebar.return_value = {'inputSent': True}
+        self.closer.escape.return_value = 103
+        for name, value in [('ROOT', root), ('OwnedFileDialogs', Mock(return_value=self.closer)),
+                            ('expect', Mock())]:
+            active = patch('windows_smoke.' + name, value)
+            active.start()
+            self.addCleanup(active.stop)
+        self.trigger = Mock()
+
+    def test_cancel_only_never_sends_ok_and_reopens_from_focus(self):
+        self.native.cancel_only(self.trigger, 'Actual prompt', drafts=lambda: ['unchanged draft'])
+        self.assertEqual([call.args[-1] for call in self.native.answer.call_args_list], [2])
+        self.closer.close_titlebar.assert_called_once()
+        self.closer.escape.assert_called_once_with(101)
+        self.assertEqual(self.trigger.press.call_count, 2)
+        self.assertEqual([event['action'] for event in json.loads(self.record.read_text())],
+                         ['cancel', 'close', 'escape'])
+
+    def test_existing_authorized_accept_still_runs_after_three_cancel_modes(self):
+        self.native.cancel_then_accept(self.trigger, 'Actual prompt')
+        self.assertEqual([call.args[-1] for call in self.native.answer.call_args_list], [2, 1])
+        self.assertEqual([event['action'] for event in json.loads(self.record.read_text())],
+                         ['cancel', 'close', 'escape', 'accept'])
+
+    def test_explicitly_disabled_close_is_recorded_without_claiming_click(self):
+        self.closer.titlebar_info.return_value = {'state': 1, 'closeRect': [560, 30, 600, 60]}
+        self.native.cancel_only(self.trigger, 'Actual prompt')
+        self.closer.close_titlebar.assert_not_called()
+        self.assertEqual([call.args[-1] for call in self.native.answer.call_args_list], [2, 2])
+        close = json.loads(self.record.read_text())[1]
+        self.assertEqual(close['outcome'], 'Close unavailable; dismissed using verified Cancel')
+
+    def test_enabled_but_unusable_close_does_not_fall_back_to_cancel(self):
+        self.closer.titlebar_info.return_value = {'state': 0, 'closeRect': [0, 0, 0, 0]}
+        self.closer.close_titlebar.side_effect = AssertionError('No native Close bounds')
+        with self.assertRaisesRegex(AssertionError, 'No native Close bounds'):
+            self.native.cancel_only(self.trigger, 'Actual prompt')
+        self.assertEqual([call.args[-1] for call in self.native.answer.call_args_list], [2])
+
+    def test_changed_draft_stops_before_reopening(self):
+        with self.assertRaisesRegex(AssertionError, 'changed drafts'):
+            self.native.cancel_only(self.trigger, 'Actual prompt',
+                                    drafts=Mock(side_effect=[['before'], ['changed']]))
+        self.assertEqual(self.trigger.click.call_count, 1)
+        self.trigger.press.assert_not_called()
 
 
 if __name__ == '__main__':

@@ -191,24 +191,64 @@ class NativeConfirmations:
             return database.execute('SELECT revision FROM storage_revision WHERE singleton=1').fetchone()[0]
 
     def cancel_then_accept(self, trigger, prompt):
+        self.confirmation_cycles(trigger,prompt,accept=True)
+
+    def cancel_only(self, trigger, prompt, drafts=None):
+        self.confirmation_cycles(trigger,prompt,drafts=drafts)
+
+    def confirmation_cycles(self, trigger, prompt, accept=False, drafts=None):
         revision=self.revision()
-        for action in ('cancel','escape','accept'):
-            trigger.click()
+        before=drafts() if drafts else None
+        closer=OwnedFileDialogs(self)
+        output=ROOT/'tauri/test-artifacts';output.mkdir(exist_ok=True)
+        digest=hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:12]
+        for index,action in enumerate(('cancel','close','escape')+(('accept',) if accept else ())):
+            if index:
+                expect(trigger).to_be_focused(timeout=30_000)
+                trigger.press('Enter')
+            else:
+                trigger.click()
             dialog,owner=self.find_dialog(prompt)
             assert self.revision()==revision,('Storage changed before native confirmation',prompt)
-            if action=='escape':
-                OwnedFileDialogs(self).escape(dialog)
+            title=closer.title(dialog)
+            screenshot=output/('native-file-task-'+digest+'-'+action+'.png')
+            closer.verify_window(dialog,owner,title)
+            closer.inspect(dialog,title,screenshot,require_cancel=False)
+            bar=closer.titlebar_info(dialog)
+            event={'prompt':prompt,'action':action,'screenshot':screenshot.name,
+                   'revisionBefore':revision,'nativeTitlebar':bar}
+            if action=='close' and bar['state']&(0x1|0x8000|0x10000):
+                # Explicit native state is evidence of an unavailable control.
+                # Unknown/zero bounds with an enabled state still fail below.
+                event['outcome']='Close unavailable; dismissed using verified Cancel'
+                self.answer(dialog,owner,prompt,2)
+            elif action in ('close','escape'):
+                if action=='close':
+                    event['closeTarget']=closer.close_titlebar(dialog,owner,title,screenshot)
+                    event['outcome']='Physical click on verified HTCLOSE'
+                else:
+                    event['escapeFocusHwnd']=closer.escape(dialog)
+                    event['outcome']='SendInput VK_ESCAPE down/up'
                 deadline=time.monotonic()+10
                 while self.user32.IsWindowVisible(dialog) or not self.user32.IsWindowEnabled(owner):
                     if time.monotonic()>=deadline:
-                        raise AssertionError('Native confirmation stayed open after Escape: '+prompt)
+                        raise AssertionError('Native confirmation stayed open after '+action+': '+prompt)
                     time.sleep(.05)
             else:
                 self.answer(dialog,owner,prompt,2 if action=='cancel' else 1)
+                event['outcome']='Verified TaskDialog '+('Cancel' if action=='cancel' else 'OK')
             if action!='accept':
                 expect(trigger).to_be_enabled(timeout=30_000)
                 expect(trigger).to_be_focused(timeout=30_000)
                 assert self.revision()==revision,('Cancelled native confirmation changed storage',prompt)
+                if drafts:
+                    assert drafts()==before,('Cancelled native confirmation changed drafts',prompt,action)
+            event['revisionAfter']=self.revision()
+            event['caption']=prompt+' — '+event['outcome']
+            record=output/'native-file-dialogs-confirmations.json'
+            events=json.loads(record.read_text(encoding='utf-8')) if record.exists() else []
+            events.append(event)
+            record.write_text(json.dumps(events,ensure_ascii=False,indent=2),encoding='utf-8')
 
 
 def wait_for_webview_page(browser, timeout_ms=60_000):
@@ -403,6 +443,49 @@ def check_dated_quarters_preview(page,temporary):
     second=api(page,'nativeWideImportPreview',str(source),options|{'sheets':['Q2']})
     assert second['reportCount']==91 and second['sampleReports'][0]['start']=='2023-04-01',second
     assert api(page,'nativeRevision')==before
+
+
+def check_cancelled_management_confirmations(page, confirmations):
+    """Exercise only cancellation on the runner's populated synthetic database."""
+    before=api(page,'nativeSettingsBootstrap')
+    assert before['reports']>0
+    revision=confirmations.revision()
+    navigate(page,'storage')
+    fields=page.locator('#organizationFields input')
+    expect(fields).to_have_count(4)
+    original=fields.first.input_value()
+    fields.first.fill(original+' · отменяемый черновик CI')
+
+    def drafts():
+        return page.evaluate('''() => ({organizations:[...document.querySelectorAll('#organizationFields input')]
+          .map(node=>node.value),restore:[...document.querySelector('#importBackup').parentNode.parentNode.parentNode
+          .querySelectorAll(':scope > p')].map(node=>node.textContent)})''')
+
+    confirmations.cancel_only(page.locator('#saveOrganizations'),
+        'Изменить названия подразделений во всех отчётах и справочнике? '
+        'Сначала будет создана резервная копия SQLite.',drafts=drafts)
+    fields.first.fill(original)
+    confirmations.cancel_only(page.locator('#clearReports'),
+        'Удалить все импортированные отчёты? Группы останутся. '
+        'Перед удалением будет создана резервная копия SQLite.',drafts=drafts)
+    # This button is offered even without a scheduled restore. We cancel its
+    # real confirmation; no pending restore is fabricated or cancelled via IPC.
+    confirmations.cancel_only(
+        page.get_by_role('button',name='Отменить запланированное восстановление',exact=True),
+        'Отменить запланированное восстановление?',drafts=drafts)
+    navigate(page,'upload')
+    loaded=page.locator('#uploadedReports')
+    if not loaded.evaluate('node=>node.open'):
+        loaded.locator(':scope > summary').click()
+    card=page.locator('#reports .calendar-source').first
+    expect(card).to_be_visible(timeout=90_000)
+    dates=re.search(r'· (\d{4}-\d{2}-\d{2}) — (\d{4}-\d{2}-\d{2})',card.locator('strong').inner_text())
+    assert dates, 'Saved report card must expose its real period'
+    confirmations.cancel_only(card.get_by_role('button',name='Удалить отчёт',exact=True),
+        'Удалить отчёт '+dates[1]+' — '+dates[2]+' после создания резервной копии SQLite?')
+    assert confirmations.revision()==revision
+    after=api(page,'nativeSettingsBootstrap')
+    assert after==before,('Cancelled management confirmations changed SQLite snapshot',before,after)
 
 
 def check_report_views(page):
@@ -1223,6 +1306,12 @@ def run():
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 check_reference_data_file_dialogs(page,confirmations,output)
                 report['checks'].append('Populated summary CSV and verified restore-copy Save dialogs preserve data on cancellation')
+            with independent('Read-only management confirmations'), installed_page() as (page,_,pid):
+                ready(page,366)
+                open_full_workspace(page)
+                confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
+                check_cancelled_management_confirmations(page,confirmations)
+                report['checks'].append('Native management confirmation Cancel, available Close, and Escape preserve reports and drafts')
             with independent('System print preview'), installed_page(print_probe_phase=True) as (page,_,pid):
                 wait_for_app_state(page,'Boolean(window.appReady && window.unifiedUI?.snapshot?.reports)',
                                    'Print probe on the isolated populated SQLite database',90_000)
