@@ -49,7 +49,8 @@ function copyScope(next){return {...next,organizations:[...next.organizations],s
 function scopeFor(range,overrides={}){return {...copyScope(scope),...range,...overrides};}
 function request(s,overrides={}){return UI.request(s,overrides);}
 function dateLabel(iso){return /^\d{4}-\d{2}-\d{2}$/.test(iso)?iso.slice(8,10)+'.'+iso.slice(5,7)+'.'+iso.slice(0,4):iso;}
-function caption(range){return dateLabel(range.from)+(range.to!==range.from?' — '+dateLabel(range.to):'');}
+function visibleEnd(range){return range.source==='daily'?range.to:periodEnd(range.to,range.displayType);}
+function caption(range){const end=visibleEnd(range);return dateLabel(range.from)+(end!==range.from?' — '+dateLabel(end):'');}
 function periodLabel(start,kind){return dateLabel(start)+(kind==='week'?' — '+dateLabel(periodEnd(start,'week')):'');}
 function workLabel(name){return String(name).trim().replace(/,\s*$/,'');}
 function itemButton(entry,s,organization=null,target='analytics'){const button=UI.el('button',workLabel(entry.name)+(entry.kind==='group'?' (группа)':''),'service-link text-button');button.type='button';button.addEventListener('click',()=>history(entry,s,organization,target));return button;}
@@ -187,7 +188,7 @@ async function departmentComparison(task,positions){
   for(const item of perName){rows.push(make(itemButton(item.entry,s),item.rows));raw.push(makeRaw(item.entry.name,item.rows));}
   UI.table($('comparisonTable'),metric,caption(range),['Работа / группа',...s.organizations.flatMap(org=>org===baseOrg?[org]:[org,org+' · разница',org+' · %'])],rows,{csvRows:raw});
   const plot=UI.el('div',null,'metric-plot');$('comparisonCharts').append(plot);
-  UI.drawChart([{type:s.displayType,start:s.from,end:s.to}],new Set(s.organizations),metric,plot,{chart:'bar',seriesType:'organizations',categories:s.organizations,data:[new Map(organizations.map(o=>[o.org,o.total]))]});
+  UI.drawChart([{type:s.displayType,start:s.from,end:visibleEnd(s)}],new Set(s.organizations),metric,plot,{chart:'bar',seriesType:'organizations',categories:s.organizations,data:[new Map(organizations.map(o=>[o.org,o.total]))]});
  }
  if(namePage){const state=task.s;state.positions=positions;const bar=UI.el('div',null,'change-pagination'),prev=UI.el('button','← Предыдущая','button secondary'),next=UI.el('button','Следующая →','button secondary');prev.type=next.type='button';prev.disabled=positions.length<=1;next.disabled=!namePage.next;prev.addEventListener('click',()=>comparison(positions.slice(0,-1)));next.addEventListener('click',()=>comparison([...positions,namePage.next]));bar.append(prev,UI.el('span','Страница '+positions.length+' · '+namePage.total_rows+' работ','muted small'),next);$('comparisonTable').append(bar);}
  const trends=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations,null,s.source==='daily'?s.displayType:null,s.selectedNames);
@@ -234,7 +235,7 @@ async function structure(){
   UI.table(root,metric,caption(before)+' / '+caption(after),headers,rows,{totalRow:false,csvRows:raw});
   const plot=UI.el('div',null,'metric-plot');root.append(plot);
   const key=row=>row.other?'others':row.key;
-  UI.drawChart([{type:s.displayType,start:after.from,end:after.to}],new Set(s.organizations),metric,plot,
+  UI.drawChart([{type:s.displayType,start:after.from,end:visibleEnd(after)}],new Set(s.organizations),metric,plot,
    {chart:'bar',orientation:orientation(),categories:visible.map(key),limit:visible.length,
     data:[new Map(visible.map(r=>[key(r),{[metric]:r.current}]))],label:k=>workLabel(visible.find(r=>key(r)===k).name)});
  }catch(error){task.error(error);}finally{task.done();}

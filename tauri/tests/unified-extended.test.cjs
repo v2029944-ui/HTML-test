@@ -121,3 +121,16 @@ test('shared baseline seeds comparison and structure, local overrides stay flagg
  assert.equal(f.nodes.get('structureBase').value,'2023-12-26');
  assert.equal(f.nodes.get('structurePeriodOverride').hidden,true);
 });
+
+test('imported week captions and one-period chart bounds show Sunday as the end',async()=>{
+ const plots=[];const f=fixture({nativeCompositionPage:async()=>({
+  currentComplete:true,baseComplete:true,sharesValid:true,total:10,
+  rows:[{key:'work:W',name:'Work',current:10,base:5,baseShare:100,share:100,cumulative:100,shareChange:0}]
+ })});
+ f.UI.drawChart=(...args)=>plots.push(args);
+ f.publish({displayType:'week',type:'week',source:'imported',from:'2024-01-01',to:'2024-01-01',baseFrom:'2023-12-25',baseTo:'2023-12-25'});
+ f.nodes.get('structurePanel').open=true;f.nodes.get('structurePanel').dispatch('toggle');await settle();
+ const table=f.tables.find(t=>t.root==='structureResults');assert.ok(table);
+ assert.match(table.caption,/01\.01\.2024 — 07\.01\.2024/);
+ assert.equal(plots[0][0][0].end,'2024-01-07');
+});
