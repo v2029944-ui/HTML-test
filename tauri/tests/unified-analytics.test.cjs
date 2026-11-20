@@ -15,7 +15,7 @@ const settle=()=>new Promise(r=>setImmediate(r));
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 function fixture(overrides={}){
  const nodes=new Map();for(const m of original.matchAll(/<([a-z][\w-]*)\b[^>]*\bid="([^"]+)"[^>]*>/gi)){const n=new Element(m[1]);n.id=m[2];nodes.set(n.id,n);}
- for(const id of ['unifiedSource','hideEmptyPeriods','chartOrientation','analysisBasePeriod']){const node=new Element('input');node.id=id;nodes.set(id,node);}
+ for(const id of ['unifiedSource','hideEmptyPeriods','chartOrientation','analysisBasePeriod','workViewMode']){const node=new Element('input');node.id=id;nodes.set(id,node);}
  for(const [id,v]of Object.entries({periodType:'day',unifiedSource:'daily',overviewMode:'single',chartBreakdown:'works',chartOrgScope:'all',chartSeriesLayout:'combined',chartOrientation:'vertical'}))nodes.get(id).value=v;
  const buttons=['line','bar','table'].map(chart=>{const n=new Element('button');n.dataset.chart=chart;return n;}),draws=[],tables=[],published=[],multi=new Map(),calls=[],notices=[];
  let snapshotHook,viewHook,prints=0;
@@ -162,4 +162,77 @@ test('daily missing-report matrix pages a long period without a whole-history qu
  assert.equal(queries.length,2);assert.deepEqual(queries[1],['2024-02-01','2024-02-15']);
  assert.match(details.textContent,/Страница 2 из 2/);
  assert.match(details.textContent,/Нет/);
+});
+
+test('composition view stops hidden chart queries and discards an in-flight trend',async()=>{
+ const pending=deferred();let reads=0;
+ const f=fixture({nativeWorkTimeline:()=>{reads++;return pending.promise;}});await f.bootstrap();
+ f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ assert.equal(reads,1);
+ f.nodes.get('workViewMode').value='composition';f.nodes.get('workViewMode').dispatch('change');
+ pending.resolve({granularity:'period',points:['2024-01-01','2024-01-02'].map(start=>({start,missing:0,total:{count:2,amount:20,average:10}}))});await settle();
+ assert.equal(f.draws.length,0);
+ f.nodes.get('chartOrientation').value='horizontal';f.nodes.get('chartOrientation').dispatch('change');await settle();
+ assert.equal(reads,1,'hidden trends must not issue another SQL query');
+ f.nodes.get('workViewMode').value='trend';f.nodes.get('workViewMode').dispatch('change');await settle();
+ assert.equal(reads,2,'showing trends reloads their current filters');
+});
+
+test('coverage matrix queries every selected organization beyond the eight-series SQL limit',async()=>{
+ const complete={complete:true,periods:1,missing:0,total:{count:2,amount:20,average:10}};
+ const queries=[],organizations=Array.from({length:10},(_,i)=>'Org '+i);
+ const f=fixture({
+  nativeAnalysisCompare:async()=>({summary:{before:complete,after:{...complete,complete:false,missing:1}}}),
+  nativeOrganizationTrends:async(_rev,_kind,from,_to,orgs)=>{
+   queries.push(Array.from(orgs));
+   return {series:orgs.slice(0,8).map(organization=>({organization,points:[{start:from,missing:organization==='Org 0'?1:0}]}))};
+  }
+ });
+ f.UI.snapshot.org_names=organizations;f.UI.state.selectedOrganizations=new Set(organizations);
+ await f.bootstrap();const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
+ details.open=true;details.dispatch('toggle');await settle();
+ const cells=descendants(details).filter(n=>n.tagName==='TD');
+ assert.equal(cells.length,10);assert.equal(cells.filter(n=>n.textContent==='Есть').length,9);
+ assert.deepEqual(queries,[organizations.slice(0,8),organizations.slice(8)]);
+});
+
+test('overview and print round percentages to one decimal without rounding SQL values',async()=>{
+ const summary=amount=>({complete:true,periods:1,missing:0,total:{amount,count:amount,average:1}});
+ const f=fixture({nativeAnalysisCompare:async()=>({summary:{before:summary(3),after:summary(4)}})});
+ await f.bootstrap();assert.match(f.nodes.get('overviewInsights').textContent,/33,3%/);
+ assert.doesNotMatch(f.nodes.get('overviewInsights').textContent,/33,333/);
+ f.nodes.get('printSummary').dispatch('click');assert.match(f.nodes.get('printReport').textContent,/33,3%/);
+});
+
+test('weekly and monthly coverage pages retain exact year-crossing boundaries',async()=>{
+ for(const [kind,from,to,pageEnd,nextStart,lastEnd]of [
+  ['week','2024-11-04','2025-02-03','2025-01-20','2025-01-27','2025-02-09'],
+  ['month','2024-02-01','2025-02-01','2025-01-01','2025-02-01','2025-02-28']
+ ]){
+  const queries=[],full={complete:true,periods:1,missing:0,total:{amount:1,count:1,average:1}};
+  const f=fixture({
+   nativeAnalysisCompare:async()=>({summary:{before:full,after:{...full,complete:false,missing:1}}}),
+   nativeOrganizationTrends:async(_rev,type,start,end)=>{queries.push([type,start,end]);return {series:[{organization:'A',points:[{start,missing:1}]}]};}
+  });
+  f.nodes.get('periodType').value=kind;f.nodes.get('unifiedSource').value='imported';await f.bootstrap();
+  f.nodes.get('overviewMode').value='range';f.nodes.get('rangeStart').value=from;f.nodes.get('rangeEnd').value=to;
+  f.nodes.get('overviewMode').dispatch('change');await settle();
+  const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
+  details.open=true;details.dispatch('toggle');await settle();
+  assert.deepEqual(queries[0],[kind,from,pageEnd]);
+  descendants(details).find(n=>n.tagName==='BUTTON'&&n.textContent==='Позднее →').dispatch('click');await settle();
+  assert.deepEqual(queries[1],[kind,nextStart,to]);
+  assert.match(details.textContent,new RegExp(lastEnd.split('-').reverse().join('\\.')));
+ }
+});
+
+test('stale coverage responses cannot populate a replaced period',async()=>{
+ const pending=deferred(),full={complete:true,periods:1,missing:0,total:{amount:1,count:1,average:1}};
+ const f=fixture({nativeAnalysisCompare:async()=>({summary:{before:full,after:{...full,complete:false,missing:1}}}),nativeOrganizationTrends:()=>pending.promise});
+ await f.bootstrap();const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
+ details.open=true;details.dispatch('toggle');await settle();
+ f.nodes.get('overviewPeriod').value='2024-01-01';f.nodes.get('overviewPeriod').dispatch('change');await settle();
+ pending.resolve({series:[{organization:'A',points:[{start:'2024-01-02',missing:1}]}]});await settle();
+ assert.equal(descendants(details).filter(n=>n.tagName==='TABLE').length,0);
+ assert.doesNotMatch(f.nodes.get('overviewAlerts').textContent,/02\.01\.2024/);
 });
