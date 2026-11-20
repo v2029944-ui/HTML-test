@@ -218,3 +218,26 @@ test('a failed native picker keeps the reviewed workbook and source together',as
  await ui.nodes.excelFile.click();assert.equal(ui.nodes.saveImport.disabled,false);assert.equal(ui.nodes.inspectFile.disabled,false);
  assert.equal(ui.nodes.excelFileStatus.textContent,'first.xlsx');assert.match(ui.nodes.unifiedImportStatus.textContent,/picker failed/);
 });
+
+test('quality calendar uses only observed staged period starts, including dates beyond preview samples',async()=>{
+ const ui=mount({
+  managementReportPage:async()=>[{id:'saved',report_type:'week',start:'2023-08-07',end:'2023-08-13'}],
+  chooseWideXlsx:async()=>'/tmp/periods.xlsx',
+  nativeLegacyImportPreview:async()=>({reviewToken:'a'.repeat(64),reportCount:83,rowCount:84,conflicts:{},quality:{},sampleReports:[],qualityPeriodMonths:{'day:2024-02':(1<<28)|1,'day:2024-03':2},qualityPeriodsPartial:false}),
+  nativePreviewQualityPage:async()=>({issues:[],total:0,counts:{},next_offset:null})
+ });
+ const values=()=>ui.nodes.qualityPeriod.children.map(o=>o.value);
+ await ui.refresh();assert.deepEqual(values(),['all','week:2023-08-07']);
+ await ui.nodes.excelFile.click();ui.nodes.importWeek.value='2024-01-01';await ui.nodes.inspectFile.click();
+ ui.nodes.qualityPeriod.value='week:2023-08-07';ui.nodes.qualitySource.value='pending';await ui.nodes.qualitySource.fire('change');await flush();
+ assert.deepEqual(values(),['all','day:2024-02-01','day:2024-02-29','day:2024-03-02']);assert.equal(ui.nodes.qualityPeriod.value,'all');
+ assert.equal(ui.nodes.qualityPeriodHint.textContent,'');
+ ui.nodes.importWeek.value='2024-01-03';await ui.nodes.importWeek.fire('change');assert.deepEqual(values(),['all']);
+ ui.nodes.qualitySource.value='saved';await ui.nodes.qualitySource.fire('change');assert.deepEqual(values(),['all','week:2023-08-07']);
+});
+test('partial older staged metadata lists only confirmed dates and explains manual date range',async()=>{
+ const ui=mount({chooseWideXlsx:async()=>'/tmp/review.xlsx',nativeLegacyImportPreview:async()=>({reviewToken:'a'.repeat(64),reportCount:15,rowCount:46,conflicts:{},quality:{},sampleReports:[{kind:'day',start:'2024-02-03',rows:1}]}),nativePreviewQualityPage:async()=>({issues:[],total:0,counts:{},next_offset:null})});
+ await ui.nodes.excelFile.click();ui.nodes.importWeek.value='2024-02-01';await ui.nodes.inspectFile.click();
+ ui.nodes.qualitySource.value='pending';await ui.nodes.qualitySource.fire('change');await flush();
+ assert.deepEqual(ui.nodes.qualityPeriod.children.map(o=>o.value),['all','day:2024-02-03']);assert.match(ui.nodes.qualityPeriodHint.textContent,/Период с/);
+});

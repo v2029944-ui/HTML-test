@@ -91,3 +91,13 @@ test('audit export captures the filter for all pages and rejects a stale destina
  const opened=actionByText(m.nodes.groupAuditResults,'Скачать CSV').fire();
  m.snapshot(8);picker.resolve('/tmp/stale.csv');await opened;assert.equal(writes.length,1);
 });
+
+test('an open audit without a valid period explains the selection and never requests SQL or CSV',async()=>{
+ const m=mount();let reads=0;m.api.unifiedGroupAuditPage=async()=>{reads++;throw Error('should not read');};
+ m.UI.scope=null;m.snapshot(7);for(const fn of m.scopes)fn(null);m.views.groups();m.nodes.groupAuditPanel.open=true;
+ await m.nodes.groupAuditPanel.fire('toggle');await m.nodes.groupAuditSearch.fire('input');await tick();
+ assert.equal(reads,0);assert.equal(m.nodes.groupAuditCoverage.textContent,'Выберите корректный период в аналитике.');
+ assert.equal(m.nodes.groupAuditPage.textContent,'');assert.equal(m.nodes.groupAuditPrev.disabled,true);
+ assert.equal(m.nodes.groupAuditNext.disabled,true);assert.equal(m.nodes.groupAuditResults.children.length,0);
+ assert.equal(m.messages.length,0);
+});

@@ -304,3 +304,24 @@ test('the reference weekly chart requests daily observations without changing th
  f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
  assert.equal(f.calls.filter(c=>c.key==='nativeAnalysisTimeline').length,before);
 });
+
+test('reference trend CSV captures all selected names and cancelling activity remains visible across pages',async()=>{
+ const saved=[],points=[{start:'2024-01-01',periods:1,missing:0,has_activity:true,total:{count:0,amount:0,average:null}}];
+ const f=fixture({
+  nativeAnalysisTimeline:async()=>({granularity:'period',points}),
+  nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points:points.map(p=>({...p,has_activity:false}))}),
+  chooseCsvPath:async()=>'/tmp/view.csv',referenceTrendCsv:async(...args)=>saved.push(args)
+ });
+ f.window.referenceDetail={active:'chartPanel'};
+ f.UI.request=s=>({revision:s.revision,organizations:[...s.organizations],selectedNames:s.allNames?[]:[...s.selectedNames],query:{from:s.from,to:s.to}});
+ await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;
+ f.nodes.get('selectAll').dispatch('click');f.nodes.get('hideEmptyPeriods').checked=true;
+ f.buttons.find(button=>button.dataset.chart==='table').dispatch('click');await settle();
+ const table=f.tables.findLast(t=>t.root==='dataTable'&&t.metric==='amount');
+ assert.ok(table);assert.equal(table.rows[0].length,2);
+ await table.options.csvContext.export();
+ assert.deepEqual([...saved[0][0].selectedNames],[]);assert.deepEqual([...saved[0][1].metrics],['amount']);
+ assert.equal(saved[0][1].table,'works');assert.equal(saved[0][1].hideEmpty,true);assert.equal(saved[0][2],'/tmp/view.csv');
+ f.window.referenceDetail.active='regularityPanel';
+ await assert.rejects(table.options.csvContext.export(),/изменились/);assert.equal(saved.length,1);
+});

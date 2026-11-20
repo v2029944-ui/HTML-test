@@ -206,3 +206,21 @@ test('metric calculate does not publish a stale response after SQLite revision c
  assert.equal(m.elements.metricKindTotals.children.length,0);
  assert.match(m.elements.metricKindStatus.textContent,/Ошибка расчёта/);
 });
+
+test('canceling JSON or XLSX reselection preserves the original reviewed path, format and token',async()=>{
+ for(const original of ['json','xlsx']){
+  const opts={};const m=mount(opts),e=m.elements;await m.window.metricKindWorkspaceReady;
+  e.metricKindFrom.value='2026-11-18';e.metricKindTo.value='2026-11-18';
+  await (original==='json'?e.metricKindChoose:e.metricKindChooseXlsx).events.click();
+  const draft=e.metricKindPreview.children[0],file=e.metricKindFile.textContent;
+  opts.cancel=true;opts.cancelXlsx=true;
+  await e.metricKindChoose.events.click();await e.metricKindChooseXlsx.events.click();
+  assert.equal(e.metricKindPreview.children[0],draft);assert.equal(e.metricKindFile.textContent,file);
+  assert.equal(e.metricKindApply.disabled,false);
+  assert.equal(m.calls.filter(c=>c[0]==='preview'||c[0]==='xlsx_preview').length,1);
+  await e.metricKindApply.events.click();
+  const writes=m.calls.filter(c=>c[0]==='apply'||c[0]==='xlsx_apply');
+  assert.equal(writes.length,1);assert.equal(writes[0][0],original==='json'?'apply':'xlsx_apply');
+  assert.equal(writes[0][1],original==='json'?'C:/Data/new.json':'C:/Data/hours.xlsx');assert.equal(writes[0].at(-1),'a'.repeat(64));
+ }
+});

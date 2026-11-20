@@ -31,7 +31,7 @@ function init(){
   }catch(error){if(UI.revision===rev)root.textContent='Не удалось прочитать подразделения: '+String(error.message||error);}
  }
  function qualityAction(report){return button('Контроль качества',()=>{
-  $('qualitySource').value='saved';$('qualityPeriod').value='all';$('qualityFrom').value=$('qualityTo').value='';qualityRange={from:report.start,to:report.start};
+  $('qualitySource').value='saved';syncQualityPeriods();$('qualityPeriod').value='all';$('qualityFrom').value=$('qualityTo').value='';qualityRange={from:report.start,to:report.start};
   $('qualitySearch').value='';$('qualityReportSource').value=report.source_name||'';qualityOffset=0;void loadQuality();$('qualityHeading').scrollIntoView?.({block:'start',behavior:'smooth'});
  });}
  function reportCard(r,rev){
@@ -58,7 +58,7 @@ function init(){
   try{const [rows,summary]=await Promise.all([api.managementReportPage(rev,reportFilter(),reportAfter,LIMIT),api.managementReportSummary(rev,reportFilter())]);
    if(!live(rev,ticket,reportTicket))return;if(!Array.isArray(rows)||rows.length>LIMIT)throw Error('Некорректная страница отчётов');
    $('reportCount').textContent=summary.reports+' периодов · '+summary.rows+' строк · '+UI.fmt(summary.amount,'amount');
-   for(const r of rows){$('reports').append(reportCard(r,rev));const key=r.report_type+':'+r.start;if(![...$('qualityPeriod').children].some(o=>o.value===key)){const option=el('option',(kinds[r.report_type]||r.report_type)+' · '+r.start);option.value=key;$('qualityPeriod').append(option);}}if(!rows.length)$('reports').append(el('p','Отчёты не найдены.'));
+   for(const r of rows){$('reports').append(reportCard(r,rev));if(kinds[r.report_type]&&validDate(r.start))savedQualityPeriods.add(r.report_type+':'+r.start);}if($('qualitySource').value!=='pending')syncQualityPeriods();if(!rows.length)$('reports').append(el('p','Отчёты не найдены.'));
    const offset=reportBack.length*LIMIT,total=summary.reports,totalPages=Math.max(1,Math.ceil(total/LIMIT));reportPageStatus.textContent='Страница '+(reportBack.length+1)+' из '+totalPages+' · '+(total?(offset+1)+'–'+(offset+rows.length)+' из '+total:'Отчётов: 0');
    reportNext=rows.length===LIMIT&&offset+rows.length<total?{start:rows.at(-1).start,id:rows.at(-1).id}:null;reportPrev.disabled=!reportBack.length;reportMore.disabled=!reportNext;
    if(year===null)year=Number((summary.latest||new Date().toISOString()).slice(0,4));
@@ -136,6 +136,27 @@ function init(){
  $('calendarPrev').addEventListener('click',()=>{if(year>1){year--;void loadCalendar();}});$('calendarNext').addEventListener('click',()=>{if(year<9998){year++;void loadCalendar();}});
  // Canonical quality filters include native global search and source filename.
  let qualityRange=null,previewRead=Promise.resolve();
+ const savedQualityPeriods=new Set();
+ function pendingPeriods(){
+  const periods=new Set();
+  if(review?.qualityPeriodMonths){
+   for(const [key,mask] of Object.entries(review.qualityPeriodMonths)){
+    const [type,month]=key.split(':');
+    if(!kinds[type]||!/^\d{4}-\d{2}$/.test(month)||!Number.isSafeInteger(mask)||mask<0)continue;
+    for(let n=1;n<=31;n++){const date=month+'-'+String(n).padStart(2,'0');if((mask&(1<<(n-1)))&&validDate(date))periods.add(type+':'+date);}
+   }
+  }else for(const r of review?.sampleReports||[])if(kinds[r.kind]&&validDate(r.start))periods.add(r.kind+':'+r.start);
+  return periods;
+ }
+ function syncQualityPeriods(){
+  const field=$('qualityPeriod'),previous=field.value,pending=$('qualitySource').value==='pending';
+  const options=pending?pendingPeriods():savedQualityPeriods;
+  const all=el('option','Все периоды');all.value='all';field.replaceChildren(all);
+  for(const key of [...options].sort()){const [kind,date]=key.split(':'),o=el('option',kinds[kind]+' · '+date);o.value=key;field.append(o);}
+  field.value=options.has(previous)?previous:'all';
+  $('qualityPeriodHint').textContent=pending&&review&&(review.qualityPeriodsPartial===true||(!review.qualityPeriodMonths&&review.reportCount>(review.sampleReports?.length||0)))?'Календарь показывает часть подтверждённых периодов Excel. Другие даты задайте в полях «Период с» и «Период до».':'';
+ }
+ const periodHint=el('small',undefined,'muted');periodHint.id='qualityPeriodHint';$('qualityPeriod').after(periodHint);
  for(const [id,label] of [['qualitySearch','Поиск замечаний'],['qualityReportSource','Файл источника']]){const field=el('label',label),input=el('input');input.id=id;input.type='search';input.maxLength=1024;field.append(input);$('qualityType').parentElement.parentElement.append(field);}
  $('qualityType').replaceChildren();for(const [value,label] of [['all','Все проблемы'],...Object.entries(types)]){const o=el('option',label);o.value=value;$('qualityType').append(o);}
  for(const [id,title]of [['qualityFrom','Период с'],['qualityTo','Период до']]){const field=el('label',title),input=el('input');input.id=id;input.type='date';field.append(input);$('qualityType').parentElement.parentElement.append(field);input.addEventListener('change',()=>{qualityRange=null;$('qualityPeriod').value='all';qualityOffset=0;void loadQuality();});}
@@ -211,7 +232,7 @@ function init(){
    }
   }catch(error){if(current()){status('qualitySummary','Не удалось прочитать замечания: '+String(error.message||error));$('qualityTable').replaceChildren();}}
  }
- for(const id of ['qualitySource','qualityPeriod','qualityOrg','qualityType','qualityReportSource','qualitySearch'])$(id).addEventListener(id==='qualitySearch'||id==='qualityReportSource'?'input':'change',()=>{qualityOffset=0;if(id==='qualityPeriod')qualityRange=null;void loadQuality();});
+ for(const id of ['qualitySource','qualityPeriod','qualityOrg','qualityType','qualityReportSource','qualitySearch'])$(id).addEventListener(id==='qualitySearch'||id==='qualityReportSource'?'input':'change',()=>{qualityOffset=0;if(id==='qualitySource'){qualityRange=null;syncQualityPeriods();}if(id==='qualityPeriod')qualityRange=null;void loadQuality();});
  $('qualityPrev').addEventListener('click',()=>{if(qualityOffset){qualityOffset=Math.max(0,qualityOffset-LIMIT);void loadQuality();}});$('qualityNext').addEventListener('click',()=>{if(qualityNext!==null){qualityOffset=qualityNext;void loadQuality();}});
  // The canonical file input is intercepted before the browser opens a File:
  // Rust needs the real path and owns parsing, review tokens and atomic writes.
@@ -220,7 +241,7 @@ function init(){
  $('replaceExisting').parentElement.after(acknowledgements);
  const importStatus=el('p',undefined,'muted small');importStatus.id='unifiedImportStatus';importStatus.setAttribute('aria-live','polite');$('importPreview').before(importStatus);
  function importLock(){for(const id of ['excelFile','importFormat','importType','importWeek','importMonth','sheetSelect','dailyYear','importMappingMode','replaceExisting','unifiedAcceptOverlap','unifiedAcceptQuality'])$(id).disabled=importBusy||(id==='sheetSelect'&&!sourcePath);$('inspectFile').disabled=importBusy||!sourcePath;$('saveImport').disabled=importBusy||!review;$('addImportMapping').disabled=importBusy;$('saveDailyFolderRule').disabled=importBusy||!review;for(const root of [$('importColumnMappings'),$('importPeriodDates'),$('dailySheetChoices')])for(const control of root.querySelectorAll('input,select,textarea,button'))control.disabled=importBusy;}
- function resetReview(message){review=null;options=null;if($('qualitySource').value==='pending'){qualityOffset=0;void loadQuality();}$('saveDailyFolderRule').hidden=true;$('saveImport').disabled=true;for(const id of ['unifiedAcceptOverlap','unifiedAcceptQuality'])$(id).checked=false;if(message)status('unifiedImportStatus',message);}
+ function resetReview(message){review=null;options=null;if($('qualitySource').value==='pending'){qualityOffset=0;syncQualityPeriods();void loadQuality();}$('saveDailyFolderRule').hidden=true;$('saveImport').disabled=true;for(const id of ['unifiedAcceptOverlap','unifiedAcceptQuality'])$(id).checked=false;if(message)status('unifiedImportStatus',message);}
  function changed(){++parameterTicket;if(!importBusy)resetReview('Настройки изменены. Проверьте Excel заново.');}
  function formatChanged(){const wide=$('importFormat').value==='daily-wide';$('dailyWideOptions').hidden=!wide;$('importType').disabled=wide||importBusy;$('weekStartLabel').hidden=wide||$('importType').value==='month';$('monthStartLabel').hidden=wide||$('importType').value!=='month';$('importDateCaption').textContent=$('importType').value==='day'?'Дата первого дня':'Начало первой недели';changed();}
  function mappingRow(value={}){
@@ -314,7 +335,7 @@ function init(){
  }
  $('inspectFile').addEventListener('click',async()=>{
   if(importBusy||!sourcePath)return;importBusy=true;resetReview();importLock();const rev=UI.revision,ticket=sourceTicket,parameters=parameterTicket;
-  try{options=getOptions();const wide=$('importFormat').value==='daily-wide',result=await (wide?api.nativeWideImportPreview(sourcePath,options):api.nativeLegacyImportPreview(sourcePath,options));if(ticket!==sourceTicket||UI.revision!==rev||parameters!==parameterTicket)throw Error('Данные или файл изменились; проверьте Excel заново.');if(!result||typeof result.reviewToken!=='string'||!/^[a-f0-9]{64}$/.test(result.reviewToken))throw Error('Некорректный токен проверки импорта.');review=result;renderReview(result);if($('qualitySource').value==='pending')void loadQuality();}
+  try{options=getOptions();const wide=$('importFormat').value==='daily-wide',result=await (wide?api.nativeWideImportPreview(sourcePath,options):api.nativeLegacyImportPreview(sourcePath,options));if(ticket!==sourceTicket||UI.revision!==rev||parameters!==parameterTicket)throw Error('Данные или файл изменились; проверьте Excel заново.');if(!result||typeof result.reviewToken!=='string'||!/^[a-f0-9]{64}$/.test(result.reviewToken))throw Error('Некорректный токен проверки импорта.');review=result;renderReview(result);if($('qualitySource').value==='pending'){syncQualityPeriods();void loadQuality();}}
   catch(error){resetReview();status('unifiedImportStatus','Не удалось проверить Excel: '+String(error.message||error));$('importPreview').replaceChildren();}
   finally{importBusy=false;importLock();}
  });
@@ -368,7 +389,7 @@ function init(){
  }
  window.nativeWorkspaceRefresh=async()=>{await UI.refresh();return true;};
  UI.onSnapshot(snapshot=>{
-  ++generation;++reportTicket;++calendarTicket;++qualityTicket;++detailTicket;if(!snapshot){reportPageStatus.textContent='Данные обновляются';resetReview('Обновление данных. Проверьте Excel заново.');$('reports').replaceChildren();$('reportCalendar').replaceChildren();$('calendarDetails').replaceChildren();$('qualityTable').replaceChildren();reportPrev.disabled=reportMore.disabled=$('qualityPrev').disabled=$('qualityNext').disabled=true;return;}reportAfter=null;reportBack=[];qualityOffset=0;qualityRange=null;resetReview('Данные обновлены. Перед импортом выполните новую проверку.');
+  ++generation;++reportTicket;++calendarTicket;++qualityTicket;++detailTicket;savedQualityPeriods.clear();syncQualityPeriods();if(!snapshot){reportPageStatus.textContent='Данные обновляются';resetReview('Обновление данных. Проверьте Excel заново.');$('reports').replaceChildren();$('reportCalendar').replaceChildren();$('calendarDetails').replaceChildren();$('qualityTable').replaceChildren();reportPrev.disabled=reportMore.disabled=$('qualityPrev').disabled=$('qualityNext').disabled=true;return;}reportAfter=null;reportBack=[];qualityOffset=0;qualityRange=null;resetReview('Данные обновлены. Перед импортом выполните новую проверку.');
   const selected=$('qualityOrg').value;$('qualityOrg').replaceChildren();for(const [value,label]of [['all','Все подразделения'],...(snapshot.org_names||[]).map(v=>[v,v])]){const o=el('option',label);o.value=value;$('qualityOrg').append(o);}$('qualityOrg').value=(snapshot.org_names||[]).includes(selected)?selected:'all';
   void refreshUpload();
  });

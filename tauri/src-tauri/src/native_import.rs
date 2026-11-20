@@ -22,6 +22,9 @@ pub struct NativeWideReview {
     pub conflicts: ImportCounts,
     pub quality: QualityCounts,
     pub diagnostics: SourceDiagnostics,
+    // Keys combine report type and YYYY-MM. Each bit marks an observed start day.
+    pub quality_period_months: std::collections::BTreeMap<String,u32>,
+    pub quality_periods_partial: bool,
     pub sample_reports: Vec<NativeReportSample>,
     pub sample_report_issues: Vec<serde_json::Value>,
     pub sample_source_issues: serde_json::Value,
@@ -92,10 +95,19 @@ fn review<T: serde::Serialize>(
     )).map_err(|e|e.to_string())?);
     let mut samples=Vec::new();
     let mut report_issues=Vec::new();
+    // Cap unusual workbooks while covering over ten years of daily imports.
+    let mut quality_period_months=std::collections::BTreeMap::new();
+    let mut quality_periods_partial=false;
     let mut after=0;
     let mut reports=0u64;
     let mut rows=0u64;
     while let Some(report)=prepared.next_report(after).map_err(|e|e.to_string())? {
+        let month=report.start.get(..7).ok_or("Invalid reviewed period start")?;
+        let day=report.start.get(8..).and_then(|s|s.parse::<u32>().ok()).filter(|d|(1..=31).contains(d)).ok_or("Invalid reviewed period day")?;
+        let key=format!("{}:{month}",report.kind);
+        if quality_period_months.len()<128 || quality_period_months.contains_key(&key) {
+            *quality_period_months.entry(key).or_insert(0u32) |= 1u32 << (day-1);
+        } else { quality_periods_partial=true; }
         if samples.len()<12 {
             samples.push(NativeReportSample {
                 id:report.info.id.clone(),kind:report.kind.clone(),
@@ -142,6 +154,7 @@ fn review<T: serde::Serialize>(
         conflicts:preview.counts().clone(),
         quality:prepared.quality().clone(),
         diagnostics:prepared.source_diagnostics().clone(),
+        quality_period_months,quality_periods_partial,
         sample_reports:samples,
         sample_report_issues:report_issues,
         sample_source_issues:serde_json::to_value(issues).map_err(|e|e.to_string())?,
@@ -536,6 +549,8 @@ mod reviewed_quality_tests {
             mappings:Some(vec![analiz_import_core::TripleMapping{header_row:1,work_col:1,count_col:2,amount_col:3}]),
         };
         let reviewed=with_legacy_prepared(&store,"native-import-stages",source,options(),|p,v,o|review(p,v,o,b"legacy-manual-review-v1\0",&o.organizations)).unwrap();
+        assert_eq!(reviewed.quality_period_months.get("day:2024-01"),Some(&1));
+        assert!(!reviewed.quality_periods_partial);
         let make_query=||ReviewedQualityQuery{
             source:source.into(),selection:QualityImportOptions::Legacy(options()),review_token:reviewed.review_token.clone(),filter:Default::default(),
         };
