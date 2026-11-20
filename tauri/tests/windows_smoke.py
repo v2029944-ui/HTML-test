@@ -667,6 +667,20 @@ def quality_evidence_xlsx(rows):
     return output.getvalue()
 
 
+def open_daily_overview(page, stamp):
+    # The shared period is reapplied when a new SQLite revision is published.
+    page.locator('#sharedHeader .main-nav').get_by_role('button',name='Сводка',exact=True).click()
+    filters=page.locator('#reportShell .filter-fold')
+    if not filters.evaluate('node => node.open'):
+        filters.locator(':scope > summary').click()
+    filters.locator('[data-filter="type"]').get_by_role('button',name='День',exact=True).click()
+    filters.locator('[data-filter="mode"]').get_by_role('button',name='Один период',exact=True).click()
+    choose_calendar_date(page,filters.locator('[data-date="start"]'),stamp)
+    wait_for_app_state(page,'window.referenceFilters.scope?.displayFrom==='+json.dumps(stamp),'Shared day selected')
+    navigate(page,'dashboard')
+    wait_for_app_state(page,'window.unifiedUI.scope?.displayType==="day" && window.unifiedUI.scope?.from==='+json.dumps(stamp),'Daily SQLite overview')
+
+
 def check_source_evidence(page, temporary, output):
     source=temporary/'zero-and-missing-day.xlsx';original=source_evidence_xlsx();source.write_bytes(original)
     snapshot=api(page,'nativeSettingsBootstrap');before=snapshot['reports']
@@ -695,11 +709,7 @@ def check_source_evidence(page, temporary, output):
     assert shared['evidence']['deferred_day_entries']==0 and shared['evidence']['omitted_row_entries']==0,shared
     gap=next(issue for issue in shared['issues'] if issue['kind']=='missing-day')
     assert gap['date']=='2020-02-29' and gap['organization'] is None and gap['relevant'] is True and gap['scope']=='source-period',gap
-    navigate(page,'dashboard');page.locator('#periodType').select_option('day')
-    wait_for_app_state(page,'document.getElementById("overviewPeriod").type==="date" && window.unifiedUI.scope?.displayType==="day"','Day input and scope are ready')
-    page.locator('#overviewMode').select_option('single')
-    set_calendar_field(page, 'overviewPeriod', '2020-02-28')
-    wait_for_app_state(page,'window.unifiedUI.scope?.from==="2020-02-28"','Synthetic zero report is selected')
+    open_daily_overview(page,'2020-02-28')
     details=page.locator('#overviewAlerts .coverage-details');details.locator(':scope > summary').click()
     expect(details.locator('td.coverage-warning')).to_have_count(1)
     expect(details.locator('td.coverage-warning')).to_contain_text('Нулевые значения')
@@ -751,11 +761,7 @@ def check_omitted_detail_evidence(page, temporary, output):
     assert by_row[5]['kind']=='empty-name' and by_row[5]['skipped'] is None,notes
     assert by_row[6]['kind']=='invalid' and by_row[6]['skipped'] is None,notes
     assert by_row[7]['kind']=='skipped' and by_row[7]['skipped'] is True and by_row[7]['organization'] is None,notes
-    navigate(page,'dashboard')
-    page.locator('#periodType').select_option('day')
-    page.locator('#overviewMode').select_option('single')
-    set_calendar_field(page, 'overviewPeriod', '2020-03-01')
-    wait_for_app_state(page,'window.unifiedUI.scope?.from==="2020-03-01"','Imported omitted-detail report is selected')
+    open_daily_overview(page,'2020-03-01')
     details=page.locator('#overviewAlerts .coverage-details');details.locator(':scope > summary').click()
     expect(details.locator('td.coverage-warning')).to_have_count(1)
     details.locator('td.coverage-warning .coverage-cell-action').click()
