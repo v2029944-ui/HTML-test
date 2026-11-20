@@ -16,7 +16,7 @@ function value(id){return $(id)?.value||'';}
 function selected(){return Boolean(scope&&(scope.allNames===true||scope.selectedNames?.length));}
 function metrics(){return [...(UI.state?.selectedMetrics||['count','amount'])].filter(m=>titles[m]);}
 function fmt(n,m='count'){return UI.fmt(n,m);}
-function percent(n){return Number.isFinite(n)?fmt(n,'count')+'%':'—';}
+function percent(n){return Number.isFinite(n)?n.toLocaleString('ru-RU',{maximumFractionDigits:1})+'%':'—';}
 function delta(n,m){return Number.isFinite(n)?(n>0?'+':'')+fmt(n,m):'—';}
 function rawDifference(now,base){return [Number.isFinite(now)&&Number.isFinite(base)?now-base:null,Number.isFinite(now)&&Number.isFinite(base)&&base!==0?(now-base)/Math.abs(base)*100:null];}
 function difference(now,base,m){return [Number.isFinite(now)&&Number.isFinite(base)?delta(now-base,m):'—',Number.isFinite(now)&&Number.isFinite(base)&&base!==0?percent((now-base)/Math.abs(base)*100):'—'];}
@@ -48,8 +48,11 @@ function setDate(id,kind,date,force=false){const node=$(id);if(node&&(!node.data
 function copyScope(next){return {...next,organizations:[...next.organizations],selectedNames:[...(next.selectedNames||[])],selectedKeys:[...(next.selectedKeys||[])]};}
 function scopeFor(range,overrides={}){return {...copyScope(scope),...range,...overrides};}
 function request(s,overrides={}){return UI.request(s,overrides);}
-function caption(range){return range.from+(range.to!==range.from?' — '+range.to:'');}
-function itemButton(entry,s,organization=null,target='analytics'){const button=UI.el('button',entry.name+(entry.kind==='group'?' (группа)':''),'service-link text-button');button.type='button';button.addEventListener('click',()=>history(entry,s,organization,target));return button;}
+function dateLabel(iso){return /^\d{4}-\d{2}-\d{2}$/.test(iso)?iso.slice(8,10)+'.'+iso.slice(5,7)+'.'+iso.slice(0,4):iso;}
+function caption(range){return dateLabel(range.from)+(range.to!==range.from?' — '+dateLabel(range.to):'');}
+function periodLabel(start,kind){return dateLabel(start)+(kind==='week'?' — '+dateLabel(periodEnd(start,'week')):'');}
+function workLabel(name){return String(name).trim().replace(/,\s*$/,'');}
+function itemButton(entry,s,organization=null,target='analytics'){const button=UI.el('button',workLabel(entry.name)+(entry.kind==='group'?' (группа)':''),'service-link text-button');button.type='button';button.addEventListener('click',()=>history(entry,s,organization,target));return button;}
 function plotTimeline(result,entry,s,root,chosenMetrics,seriesType){
  const points=result.points||[],kind=result.granularity==='period'?s.displayType:result.granularity;
  const periods=points.map(p=>{const start=p.start.length===7?p.start+'-01':p.start;return {type:kind,start,end:periodEnd(start,kind)};});
@@ -79,19 +82,19 @@ function changeMeasure(row,metric){const m=row[metric]||{};return {...m,smallBas
 function changeLabel(row,m){if(m.negative)return 'Изменение с отрицательными значениями';if(row.status==='new')return 'Новая';if(row.status==='gone')return 'Нет выполнений';return m.delta>0?'Рост':m.delta<0?'Снижение':'Без изменений';}
 function renderChangeSummary(summary,chosen){clear('changesSummary');const root=$('changesSummary');
  for(const [label,n,cls] of [['Значительно выросло',summary.grown,'numeric-rise'],['Значительно снизилось',summary.fallen,'numeric-fall'],['Новых услуг',summary.new,''],['Нет выполнений',summary.gone,'']]){const card=UI.el('div',null,'kpi');card.append(UI.el('span',label),UI.el('strong',String(n),n?cls:''));root.append(card);}
- for(const metric of chosen){const top=summary['top_'+metric],m=top&&changeMeasure(top,metric),card=UI.el('div',null,'kpi');card.append(UI.el('span','Наибольшее абсолютное изменение · '+titles[metric]),UI.el('strong',m?delta(m.delta,metric):'—',m?.delta>0?'numeric-rise':m?.delta<0?'numeric-fall':''));if(top)card.append(UI.el('small',top.name+' · '+top.org+' · '+top.baseStart+' / '+top.currentStart));root.append(card);}
+ for(const metric of chosen){const top=summary['top_'+metric],m=top&&changeMeasure(top,metric),card=UI.el('div',null,'kpi');card.append(UI.el('span','Наибольшее абсолютное изменение · '+titles[metric]),UI.el('strong',m?delta(m.delta,metric):'—',m?.delta>0?'numeric-rise':m?.delta<0?'numeric-fall':''));if(top)card.append(UI.el('small',workLabel(top.name)+' · '+top.org+' · '+periodLabel(top.baseStart,value('changesType'))+' / '+periodLabel(top.currentStart,value('changesType'))));root.append(card);}
 }
 async function changes(positions=[null]){
  changeLayout();const task=loading('changes',['changesResults','changesSummary','changesWarnings']);$('changeDetails').hidden=true;
  try{const captured=changeContext(),result=await api.unifiedChangesPage(captured.request,captured.options,positions.at(-1));if(!task.valid())return;
   clear('changesResults');clear('changesWarnings');renderChangeSummary(result.summary,captured.options.metrics);
   const diagnostic=result.summary.totals;
-  if(diagnostic?.missing_pairs||diagnostic?.invalid_reports||diagnostic?.duplicate_issues||diagnostic?.overlap_issues||diagnostic?.import_warning_pairs){$('changesWarnings').append(UI.el('p','Нет сопоставимых пар: '+diagnostic.missing_pairs+'. Некорректных отчётов: '+diagnostic.invalid_reports+', дубликатов: '+diagnostic.duplicate_issues+', пересечений: '+diagnostic.overlap_issues+'. Пар с замечаниями импорта: '+diagnostic.import_warning_pairs+'. Пропуски не считаются нулём.','warn small'));}
+  if(diagnostic?.missing_pairs||diagnostic?.invalid_reports||diagnostic?.duplicate_issues||diagnostic?.overlap_issues||diagnostic?.import_warning_pairs){$('changesWarnings').append(UI.el('p','Нет данных для сравнения: '+diagnostic.missing_pairs+' пар подразделений и периодов. Замечаний импорта: '+diagnostic.import_warning_pairs+', некорректных отчётов: '+diagnostic.invalid_reports+', повторов: '+diagnostic.duplicate_issues+', пересечений: '+diagnostic.overlap_issues+'. Пропуски не считаются нулём.','warn small'));}
   for(const pair of result.missing_examples||[])$('changesWarnings').append(UI.el('p',pair.org+': нет полного отчёта за '+[pair.missing_base?pair.base_start:null,pair.missing_current?pair.current_start:null].filter(Boolean).join(', '),'warn small'));
   if(!result.rows.length)clear('changesResults','Нет сопоставимых записей по выбранным условиям. Измените фильтры или проверьте наличие соседних отчётов.');
   const rows=[],raw=[];
   for(const row of result.rows)for(const metric of captured.options.metrics){const m=changeMeasure(row,metric),name=itemButton(row,{...captured.scope,from:row.baseStart,to:captured.scope.source==='daily'?periodEnd(row.currentStart,captured.scope.displayType):row.currentStart},row.org,'change');const direction=changeLabel(row,m),kind=m.smallBase?' · малая база':'';
-   rows.push([name,row.org,row.baseStart,row.currentStart,titles[metric],fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent),UI.el('span',direction+kind,m.delta>0?'numeric-rise':m.delta<0?'numeric-fall':'')]);raw.push([row.name,row.org,row.baseStart,row.currentStart,titles[metric],m.base,m.current,m.delta,m.percent,direction+kind]);}
+   rows.push([name,row.org,periodLabel(row.baseStart,captured.scope.displayType),periodLabel(row.currentStart,captured.scope.displayType),titles[metric],fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent),UI.el('span',direction+kind,m.delta>0?'numeric-rise':m.delta<0?'numeric-fall':'')]);raw.push([row.name,row.org,row.baseStart,row.currentStart,titles[metric],m.base,m.current,m.delta,m.percent,direction+kind]);}
   if(rows.length)UI.table($('changesResults'),'count',caption(captured.scope),['Работа / группа','Подразделение','Базовый период','Текущий период','Показатель','Было','Стало','Изменение','Изменение, %','Направление'],rows,{title:'Анализ изменений',totalRow:false,csvRows:raw,csvContext:{text:'Все строки по текущим фильтрам',export:async()=>{
    if(!task.valid())throw Error('Параметры анализа изменились. Рассчитайте заново.');const path=await api.chooseCsvPath('izmeneniya-'+captured.scope.from+'-'+captured.scope.to+'.csv');if(!path)return;if(!task.valid())throw Error('Данные изменились. Рассчитайте заново.');await api.unifiedChangesCsv(captured.request,captured.options,path);
   }}});
@@ -114,13 +117,41 @@ async function comparison(positions=[null]){
   if(!task.valid())return;for(const id of ['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis'])clear(id);
   const summary=dashboard.summary;
   $('comparisonHelp').textContent='Второй интервал сравнивается с первым по отмеченным работам. Прочерк — неполные данные; при нулевой базе процент не рассчитывается.';
-  for(const [label,total] of [['Первый интервал',summary.before],['Второй интервал',summary.after]])$('comparisonCoverage').append(UI.el('p',label+': '+(total.complete?'Полные данные':'Неполные данные')+' · периодов '+total.periods+', пропусков подразделение–период '+total.missing,total.complete?'muted small':'warn small'));
+  for(const [label,total] of [['Первый интервал',summary.before],['Второй интервал',summary.after]])$('comparisonCoverage').append(UI.el('p',label+': '+(total.complete?'Полные данные':'Неполные данные')+' · периодов '+total.periods+', пропусков: '+total.missing+' (подразделение × период)',total.complete?'muted small':'warn small'));
+  const beforeComplete=summary.before.complete,afterComplete=summary.after.complete;
+  if(!beforeComplete||!afterComplete){
+   $('comparisonCoverage').append(UI.el('p',
+    'Сравнение недоступно: '+(!beforeComplete?'не хватает отчётов базового периода':'не хватает отчётов анализируемого периода')+
+    '. Показаны только доступные показатели; прочерк не означает ноль.','warn small'));
+  }
   for(const metric of metrics()){
-   const valueNow=summary.after.total[metric],valueBefore=summary.before.total[metric],card=UI.el('div',null,'kpi');card.append(UI.el('span',titles[metric]+' · второй интервал'),UI.el('strong',fmt(valueNow,metric)),UI.el('small',difference(valueNow,valueBefore,metric).join(' · ')));$('kpis').append(card);
+   const valueNow=summary.after.total[metric],valueBefore=summary.before.total[metric],card=UI.el('div',null,'kpi');
+   card.append(UI.el('span',titles[metric]+' · анализируемый период'),UI.el('strong',fmt(valueNow,metric)),
+    UI.el('small',beforeComplete&&afterComplete?difference(valueNow,valueBefore,metric).join(' · '):'Неполные данные'));
+   $('kpis').append(card);
+   if(!beforeComplete||!afterComplete){
+    const showAfter=afterComplete,label=showAfter?'Значение сейчас':'Значение раньше';
+    const total=showAfter?valueNow:valueBefore;
+    const visible=page.filter(entry=>Number.isFinite((entry[metric]||{})[showAfter?'current':'base']));
+    if(!Number.isFinite(total)&&!visible.length)continue;
+    const raw=[['Итого по выбранным работам',total]],rows=[['Итого по выбранным работам',fmt(total,metric)]];
+    for(const entry of visible){const value=(entry[metric]||{})[showAfter?'current':'base'];
+     rows.push([itemButton(entry,s),fmt(value,metric)]);raw.push([entry.name,value]);}
+    UI.table($('comparisonTable'),metric,caption(showAfter?after:before),
+     ['Работа / группа',label],rows,{csvRows:raw});
+    continue;
+   }
    const raw=[['Итого по выбранным работам',valueBefore,valueNow,...rawDifference(valueNow,valueBefore)]];
    const rows=[['Итого по выбранным работам',fmt(valueBefore,metric),fmt(valueNow,metric),...difference(valueNow,valueBefore,metric)]];
-   for(const entry of page){const m=entry[metric]||{};rows.push([itemButton(entry,{...s,from:before.from<after.from?before.from:after.from,to:before.to>after.to?before.to:after.to}),fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent)]);raw.push([entry.name,m.base,m.current,m.delta,m.percent]);}
-   UI.table($('comparisonTable'),metric,caption(before)+' / '+caption(after),['Работа / группа','Значение раньше','Значение сейчас','Разница','Изменение, %'],rows,{csvRows:raw});
+   for(const entry of page){
+    const m=entry[metric]||{};
+    if(!Number.isFinite(m.base)&&!Number.isFinite(m.current))continue;
+    rows.push([itemButton(entry,{...s,from:before.from<after.from?before.from:after.from,to:before.to>after.to?before.to:after.to}),
+     fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent)]);
+    raw.push([entry.name,m.base,m.current,m.delta,m.percent]);
+   }
+   UI.table($('comparisonTable'),metric,caption(before)+' / '+caption(after),
+    ['Работа / группа','Значение раньше','Значение сейчас','Разница','Изменение, %'],rows,{csvRows:raw});
   }
   task.s.positions=positions;addBoundedPager($('comparisonTable'),task.s,page,comparison);
   if($('contributions').open)contributions();
