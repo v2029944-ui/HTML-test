@@ -1,0 +1,13 @@
+.sql-scroll{max-width:100%;min-width:0;max-height:min(58vh,36rem);overflow:auto;overscroll-behavior:contain;overflow-anchor:none;scrollbar-gutter:stable;position:relative}
+.sql-scroll:focus-visible{outline:2px solid var(--accent,#568fff);outline-offset:2px}
+.sql-scroll-gap{padding:0;border:0;pointer-events:none}
+.sql-scroll-page{display:flow-root;min-width:0}
+.sql-scroll-content{max-height:none!important}
+.sql-scroll-page .table-scroll{max-height:none!important}
+.sql-scroll-page>.sql-scroll-content:is(.works-list,.category-list){overflow:visible}
+.sql-scroll[data-sql-row-scroll=x]{display:flex;align-items:stretch;max-height:none;scrollbar-gutter:auto}
+.sql-scroll[data-sql-row-scroll=x]>.sql-scroll-gap{flex:0 0 auto;min-height:1px}
+.sql-scroll[data-sql-row-scroll=x]>.sql-scroll-page{flex:0 0 auto;min-width:100%;width:max-content}
+.sql-scroll[data-sql-row-scroll=x] .table-scroll{max-width:none;overflow:visible}
+.sql-obsolete-control[hidden]{display:none!important}
+@media print{.sql-scroll{display:block!important;max-height:none!important;overflow:visible!important}.sql-scroll-gap{display:none!important}.sql-scroll-page{min-height:0!important}}

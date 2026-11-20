@@ -2,6 +2,7 @@
 // The original markup/styles are canonical; only its full-history controller is retired.
 const fs=require('node:fs'),path=require('node:path');
 const dateIds=['overviewPeriod','rangeStart','rangeEnd','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','structureBase','structureCurrent','usualPeriod','groupAuditFrom','groupAuditTo','changesFrom','changesTo'];
+const rangeBoundaries={rangeStart:'start',rangeEnd:'end',baseRangeStart:'start',baseRangeEnd:'end',currentRangeStart:'start',currentRangeEnd:'end',comparisonRangeStart:'start',comparisonRangeEnd:'end',groupAuditFrom:'start',groupAuditTo:'end',changesFrom:'start'};
 function buildUnified(source){
  if(/analiz-unified-sql|tauri-bridge\.js/.test(source))throw Error('Настольные скрипты уже присутствуют.');
  const inline=[...source.matchAll(/<script>([\s\S]*?)<\/script>/g)];
@@ -71,8 +72,12 @@ function buildUnified(source){
  for(const id of dateIds){
   const expression=new RegExp('<select\\b([^>]*\\bid="'+id+'"[^>]*)>[\\s\\S]*?<\\/select>');
   if(!expression.test(html))throw Error('Missing canonical period control '+id);
-  html=html.replace(expression,(_match,attributes)=>'<input'+attributes+' type="date">');
+  const boundary=rangeBoundaries[id];
+  html=html.replace(expression,(_match,attributes)=>'<input'+attributes+(boundary?' data-range-boundary="'+boundary+'"':'')+' type="date">');
  }
+ // Normalize only the labels of inclusive ranges in the desktop template.
+ html=html.replace(/>С периода(?=<input|<\/label>)/g,'>С')
+  .replace(/>(?:До периода|По период включительно)(?=<input|<\/label>)/g,'>По');
  // Issue64: daily source supports every calendar granularity, without duplicate calendar selectors.
  html=html.replace('<option value="day">Дни</option></select>','<option value="day">Дни</option><option value="year">Годы</option></select>');
  html=html.replace('<div class="filters">','<div class="filters"><label>Источник<select id="unifiedSource"><option value="daily">Дневные отчёты</option><option value="imported">Отчёты выбранного типа</option></select></label>',1);
@@ -116,7 +121,7 @@ function buildUnified(source){
  const relocated=html.indexOf('<section class="panel" id="comparison"');
  html=html.slice(0,relocated)+'      '+structure+'\n      '+html.slice(relocated);
 
- html=html.replace('</head>','<meta name="analiz-unified-sql" content="true"><link rel="stylesheet" href="tauri-app-status.css"><link rel="stylesheet" href="tauri-unified.css"><script src="tauri-bridge.js"></script></head>');
+ html=html.replace('</head>','<meta name="analiz-unified-sql" content="true"><link rel="stylesheet" href="tauri-app-status.css"><link rel="stylesheet" href="tauri-unified.css"><link rel="stylesheet" href="tauri-sql-row-scroll.css"><script src="tauri-bridge.js"></script></head>');
  html=html.replace('Данные остаются в этом браузере','Локальная база SQLite');
  html=html.replace('и защиты от очистки данных браузера.','и защиты от потери данных.');
  html=html.replace('Работает в браузере · Без отправки Excel на сервер · На другом устройстве данные не появляются автоматически','Локальная база SQLite · Без отправки Excel на сервер · Для переноса на другое устройство сохраните резервную копию');
@@ -132,7 +137,7 @@ function buildUnified(source){
  const workspace=html.slice(nativeStart,nativeEnd);
  html=html.slice(0,nativeStart)+reference.replace('<div id="refNative"></div>',()=>'<div id="refNative">'+workspace+'</div>')+html.slice(nativeEnd);
  html=html.replace('</head>','<link rel="stylesheet" href="tauri-reference-shell.css"><link rel="stylesheet" href="tauri-reference-detail.css"></head>');
- const modules=['unified-original','unified-horizontal-bars','native-errors','native-period-selection','app-status','unified-base','unified-coverage','unified-management','unified-reports','native-metric-kinds','unified-extended','unified-analytics','reference-calendar','reference-detail','reference-results','reference-filters','reference-desktop','unified-app','updates'];
+ const modules=['unified-original','unified-horizontal-bars','native-errors','native-period-selection','app-status','unified-base','sql-row-scroll','unified-coverage','unified-management','unified-reports','native-metric-kinds','unified-extended','unified-analytics','reference-calendar','reference-detail','reference-results','reference-filters','reference-desktop','unified-app','updates'];
  html=html.replace('</body>',modules.map(name=>'<script src="tauri-'+name+'.js"></script>').join('\n')+'\n</body>');
  return {html,script};
 }

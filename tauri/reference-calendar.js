@@ -108,6 +108,8 @@ function openCalendar({anchor, title, initial, unit='day', allowed, variants, al
 const nativeFields='input[type="date"],input[type="week"],input[type="month"],input[data-period-type="year"],#dailyYear,#qualityPeriod';
 const controls=new WeakMap();
 const sourceFields=new WeakMap();
+const fieldLabels=new WeakMap();
+let fieldIndex=0;
 function syncField(field){
  const trigger=controls.get(field);
  if(!trigger)return;
@@ -115,7 +117,9 @@ function syncField(field){
  if(trigger.textContent!==text)trigger.textContent=text;
  if(trigger.hidden!==field.hidden)trigger.hidden=field.hidden;
  const disabled=field.disabled||field.readOnly;if(trigger.disabled!==Boolean(disabled))trigger.disabled=Boolean(disabled);
- const label=field.getAttribute('aria-label')||[...(field.closest('label')?.childNodes||[])].filter(n=>n!==field&&n!==trigger).map(n=>n.textContent.trim()).filter(Boolean).join(' ');
+ const label=field.getAttribute('aria-label')||(fieldLabels.get(field)||[]).flatMap(label=>
+  [...label.childNodes].filter(n=>n!==field&&n!==trigger&&n.tagName!=='SMALL').map(n=>n.textContent.trim()).filter(Boolean)
+ ).join(' ');
  const caption=(label||'Выбрать период')+' · '+text;
  if(trigger.getAttribute('aria-label')!==caption)trigger.setAttribute('aria-label',caption);
 }
@@ -126,6 +130,10 @@ function enhance(panel){
    if(!trigger){
     trigger=btn('',event=>{event.preventDefault();openField(field,trigger);});
     trigger.className='ref-calendar-field button date-field-trigger';trigger.setAttribute('aria-haspopup','dialog');
+    const labels=Array.from(field.labels||[]);
+    trigger.id=(field.id||'periodField'+(++fieldIndex))+'Calendar';
+    fieldLabels.set(field,labels);
+    for(const label of labels)label.htmlFor=trigger.id;
     controls.set(field,trigger);sourceFields.set(trigger,field);
     field.classList.add('ref-calendar-source');field.after(trigger);
    }
@@ -133,7 +141,7 @@ function enhance(panel){
   }
  }
  const observer=new MutationObserver(sync);
- observer.observe(panel,{subtree:true,childList:true,attributes:true,attributeFilter:['type','disabled','hidden','value']});
+ observer.observe(panel,{subtree:true,childList:true,attributes:true,attributeFilter:['type','disabled','readonly','hidden','value','data-range-boundary']});
  panel.addEventListener('change',sync);panel.addEventListener('input',sync);
  panel.addEventListener('focusin',event=>{if(sourceFields.has(event.target))sync();});
  sync();return sync;
@@ -143,6 +151,8 @@ function fieldText(field){
  if(field.options)return field.selectedOptions[0]?.textContent||'Все периоды';
  const kind=kindOf(field),date=window.nativePeriodSelection.normalize(kind,field.value);
  if(!date)return kind==='year'?'Выбрать год':kind==='month'?'Выбрать месяц':'Выбрать дату';
+ const boundary=field.dataset.rangeBoundary;
+ if(boundary)return stamp(boundary==='end'?period(date,kind)[1]:date);
  if(kind==='year')return date.slice(0,4);
  if(kind==='month')return new Intl.DateTimeFormat('ru-RU',{month:'long',year:'numeric',timeZone:'UTC'}).format(dateOf(date));
  if(kind==='week')return stamp(date)+' — '+stamp(period(date,kind)[1]);

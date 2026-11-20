@@ -36,6 +36,15 @@ function page(name='Work'){
  return {rows:[{key:'work:'+name,name,kind:'work',org:'A',baseStart:'2024-01-01',currentStart:'2024-01-02',status:'new',count:measure,amount:measure}],next:null,total_rows:1,summary:{rows:1,grown:0,fallen:0,new:1,gone:0,top_count:null,top_amount:null,totals:{missing_pairs:0,invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_pairs:0}},missing_examples:[]};
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
+test('extended SQL scrolling preserves bounded cursors, hides only buttons and rejects stale callbacks',async()=>{
+ const requests=[];let fail=false;const fx=fixture({unifiedChangesPage:async(...args)=>{requests.push(args);if(fail)throw Error('scroll SQL failed');return {...page(),next:args[2]?null:'changes-cursor',total_rows:120};}});
+ const attached=[],reset=[];fx.window.sqlRowScroll={attach:(root,options)=>{attached.push({root,options});return root;},reset:root=>reset.push(root)};
+ fx.publish();fx.view('changes');await settle();let entry=attached.findLast(x=>x.root.id==='changesResults');assert.ok(entry);assert.equal(entry.options.size,50);assert.equal(entry.options.direct,false);assert.equal(entry.options.total,120);
+ assert.equal(fx.nodes.get('changesPrev').hidden,true);assert.equal(fx.nodes.get('changesNext').hidden,true);assert.match(fx.nodes.get('changesPage').textContent,/120 строк/);
+ await entry.options.go(4);assert.equal(requests.length,1);await entry.options.go(1);assert.equal(requests[1][2],'changes-cursor');entry=attached.at(-1);assert.equal(entry.options.index,1);
+ await entry.options.go(0);assert.equal(requests[2][2],null);entry=attached.at(-1);fail=true;await entry.options.go(1);assert.match(entry.root.textContent,/scroll SQL failed/);assert.ok(reset.includes(entry.root));
+ const count=requests.length;await entry.options.go(0);assert.equal(requests.length,count);fx.publish(null);assert.ok(reset.includes(entry.root));
+});
 test('original controls initialize once and changes discard a late SQL response',async()=>{
  const first=deferred(),second=deferred();let reads=0;const fx=fixture({unifiedChangesPage:()=>++reads===1?first.promise:second.promise});fx.window.unifiedExtended.init();fx.publish();fx.view('changes');
  fx.nodes.get('changesMode').value='strong';fx.nodes.get('changesMode').dispatch('change');assert.equal(reads,2);

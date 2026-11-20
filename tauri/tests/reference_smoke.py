@@ -9,7 +9,9 @@ from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect
 
+from reference_control_layout import check_control_layout
 from reference_table_help import check_table_help
+from reference_data_smoke import choose_calendar_date
 
 
 TIMEOUT = 90_000
@@ -51,6 +53,7 @@ def check_reference(page, output, has_reports):
             name:node.getAttribute('aria-label') || node.innerText || node.title || node.placeholder || '',
             type:node.type || '',disabled:Boolean(node.disabled),value:node.value ?? null,
             expanded:node.getAttribute('aria-expanded'),pressed:node.getAttribute('aria-pressed')}))''')
+        check_control_layout(page)
         inventory.append({'step': name, 'controls': controls})
         page.screenshot(path=str(output / f'{prefix}-{name}.png'))
         (output / f'{prefix}-inventory.json').write_text(
@@ -363,7 +366,7 @@ def check_reference(page, output, has_reports):
                 if page.evaluate('Boolean(window.unifiedUI.scope)'):
                     # A completed pager avoids reading the previous range's coverage
                     # while the newly opened audit is still loading.
-                    page.wait_for_function("""() => /^(Страница [0-9]+|Записей нет[.])/.test(
+                    page.wait_for_function("""() => /^([0-9]+–[0-9]+ из [0-9]+|Записей нет[.])/.test(
                       document.getElementById('groupAuditPage').textContent)""", timeout=TIMEOUT)
                     expect(page.locator('#groupAuditCoverage')).to_contain_text('Найдено:', timeout=TIMEOUT)
                     audit_total = int(page.locator('#groupAuditCoverage').inner_text()
@@ -538,7 +541,8 @@ def check_reference(page, output, has_reports):
             page.locator('#changesType').select_option('day')
             page.locator('#changesMethod').select_option('previous')
             expect(page.locator('#changesTo')).to_have_attribute('type', 'date')
-            page.locator('#changesTo').fill(latest)
+            choose_calendar_date(page, page.locator('#changesToCalendar'), latest)
+            expect(page.locator('#changesTo')).to_have_value(latest)
             more = page.locator('#changesMoreOptions')
             if not more.evaluate('(node) => node.open'):
                 more.locator(':scope > summary').click()

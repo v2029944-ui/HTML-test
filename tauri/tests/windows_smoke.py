@@ -1,6 +1,7 @@
 """Run the packaged Tauri app through its real WebView2 and SQLite on an isolated Windows CI runner."""
 import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib,sqlite3,io,re,zipfile
 from pathlib import Path
+from datetime import date
 from contextlib import contextmanager, closing
 from playwright.sync_api import expect, sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 ROOT=Path(__file__).resolve().parents[2]
@@ -9,8 +10,9 @@ from test_daily_wide import wide_xlsx
 from test_import_controls import daily_workbook_bytes
 sys.path.insert(0,str(ROOT/'tauri'/'examples'))
 from make_metric_xlsx import create_example
+from reference_control_layout import check_control_layout
 from reference_smoke import check_reference
-from reference_data_smoke import check_reference_data
+from reference_data_smoke import check_reference_data, choose_calendar_date
 from reference_gallery import write_reference_gallery
 from reference_print_probe import probe_reference_print
 from reference_file_dialogs import OwnedFileDialogs, check_reference_file_dialogs, check_reference_data_file_dialogs
@@ -391,13 +393,33 @@ def set_folder(page, folder, filenames):
     return listing
 
 
+def set_calendar_field(page, field_id, value):
+    field = page.locator('#' + field_id)
+    trigger = page.locator('#' + field_id + 'Calendar')
+    expect(field).to_be_hidden()
+    if '-W' in value:
+        year, week = value.split('-W')
+        stamp = date.fromisocalendar(int(year), int(week), 1).isoformat()
+    elif len(value) == 4:
+        stamp = value + '-01-01'
+    elif len(value) == 7:
+        stamp = value + '-01'
+    else:
+        stamp = value
+    choose_calendar_date(page, trigger, stamp)
+    expect(field).to_have_value(value)
+
+
 def import_year(page, workbook, confirmations):
+    expect(page.locator('#unifiedImportAcknowledgements')).not_to_be_visible()
+    expect(page.locator('#unifiedAcceptOverlap')).not_to_be_visible()
+    expect(page.locator('#unifiedAcceptQuality')).not_to_be_visible()
     page.get_by_role('button',name='Показать файлы папки',exact=True).click()
     page.locator('#sourceManualFile').select_option(label=workbook.name)
     page.get_by_role('button',name='Открыть для проверки',exact=True).click()
     wait_for_text(page,'#excelFileStatus',workbook.name)
     page.locator('#importFormat').select_option('daily-wide')
-    page.locator('#dailyYear').fill('2024')
+    set_calendar_field(page, 'dailyYear', '2024')
     metadata=api(page,'nativeImportSheets',str(workbook))
     assert [sheet['name'] for sheet in metadata]==['Q1','Q2','Q3','Q4'],metadata
     assert page.locator('#sheetSelect option').all_text_contents()==['Q1','Q2','Q3','Q4']
@@ -411,7 +433,19 @@ def import_year(page, workbook, confirmations):
     assert page.locator('#importPreview tbody tr').count()<=50
     assert api(page,'nativeSettingsBootstrap')['reports']==0
     assert not page.locator('#saveDailyFolderRule').is_visible()
-    page.locator('#unifiedAcceptQuality').check()
+    check_control_layout(page)
+    offered=[]
+    for field,reason in [('unifiedAcceptOverlap','Проверьте даты и типы'),
+                         ('unifiedAcceptQuality','замечаний качества')]:
+        acknowledgement=page.locator('#'+field)
+        expect(acknowledgement).not_to_be_checked()
+        if acknowledgement.is_visible():
+            label=acknowledgement.locator('xpath=parent::label')
+            expect(label).to_contain_text(reason)
+            assert re.search(r'\d+',label.inner_text()), 'Consent must explain the actual preview count'
+            offered.append(field)
+            acknowledgement.check()
+    assert page.locator('#unifiedImportAcknowledgements').is_visible()==bool(offered)
     confirmations.cancel_then_accept(page.locator('#saveImport'),
         'Повторно проверить Excel и атомарно сохранить 366 отчётов')
     wait_for_text(page,'#unifiedImportStatus','Сохранено: 366 отчётов',120_000)
@@ -495,13 +529,27 @@ def check_report_views(page):
     assert rows.count()==50
     first=rows.first.locator('strong').inner_text()
     assert '2024-12-31' in first
-    page.locator('#unifiedReportsNext').click()
+    scroll=page.locator('[data-sql-scroll-host="reports"]')
+    expect(scroll).to_be_visible()
+    expect(page.locator('#unifiedReportsNext')).to_be_hidden()
+    expect(page.locator('#unifiedReportsPrev')).to_be_hidden()
+    names=lambda: rows.locator('strong').all_text_contents()
+    first_names=names()
+    scroll.focus()
+    scroll.press('End')
     wait_for_text(page,'#unifiedReportsPage','51–100 из 366')
-    assert rows.count()==50
-    assert rows.first.locator('strong').inner_text()!=first
-    page.locator('#unifiedReportsPrev').click()
+    second_names=names()
+    assert len(second_names)==50 and not set(first_names).intersection(second_names)
+    scroll.press('End')
+    wait_for_text(page,'#unifiedReportsPage','101–150 из 366')
+    third_names=names()
+    assert len(third_names)==50 and not set(first_names+second_names).intersection(third_names)
+    scroll.press('Home')
+    wait_for_text(page,'#unifiedReportsPage','51–100 из 366')
+    assert names()==second_names
+    scroll.press('Home')
     wait_for_text(page,'#unifiedReportsPage','1–50 из 366')
-    assert rows.first.locator('strong').inner_text()==first
+    assert names()==first_names and rows.first.locator('strong').inner_text()==first
     snapshot=api(page,'nativeSettingsBootstrap')
     daily=api(page,'managementReportSummary',snapshot['revision'],{'report_type':'day'})
     assert daily['reports']==366 and abs(daily['amount']-7320)<.001,daily
@@ -578,7 +626,7 @@ def dashboard_month(page):
     page.locator('#periodType').select_option('month')
     wait_for_app_state(page,'document.getElementById("overviewPeriod").type==="month"','Monthly period input')
     page.locator('#overviewMode').select_option('single')
-    page.locator('#overviewPeriod').fill('2024-02')
+    set_calendar_field(page, 'overviewPeriod', '2024-02')
     wait_for_app_state(page,
         'window.unifiedUI.scope?.from==="2024-02-01" && window.unifiedUI.scope?.to==="2024-02-29" '
         '&& document.querySelectorAll("#overviewKpis .kpi").length===4','February SQLite dashboard')
@@ -642,7 +690,7 @@ def check_source_evidence(page, temporary, output):
     assert gap['date']=='2020-02-29' and gap['organization'] is None and gap['relevant'] is True and gap['scope']=='source-period',gap
     navigate(page,'dashboard');page.locator('#periodType').select_option('day')
     wait_for_app_state(page,'document.getElementById("overviewPeriod").type==="date" && window.unifiedUI.scope?.displayType==="day"','Day input and scope are ready')
-    page.locator('#overviewPeriod').fill('2020-02-28')
+    set_calendar_field(page, 'overviewPeriod', '2020-02-28')
     wait_for_app_state(page,'window.unifiedUI.scope?.from==="2020-02-28"','Synthetic zero report is selected')
     details=page.locator('#overviewAlerts .coverage-details');details.locator(':scope > summary').click()
     expect(details.locator('td.coverage-warning')).to_have_count(1)
@@ -695,7 +743,7 @@ def check_omitted_detail_evidence(page, temporary, output):
     assert by_row[5]['kind']=='empty-name' and by_row[5]['skipped'] is None,notes
     assert by_row[6]['kind']=='invalid' and by_row[6]['skipped'] is None,notes
     assert by_row[7]['kind']=='skipped' and by_row[7]['skipped'] is True and by_row[7]['organization'] is None,notes
-    page.locator('#overviewPeriod').fill('2020-03-01')
+    set_calendar_field(page, 'overviewPeriod', '2020-03-01')
     wait_for_app_state(page,'window.unifiedUI.scope?.from==="2020-03-01"','Imported omitted-detail report is selected')
     details=page.locator('#overviewAlerts .coverage-details');details.locator(':scope > summary').click()
     expect(details.locator('td.coverage-warning')).to_have_count(1)
@@ -804,7 +852,7 @@ def check_analytics(page, temporary, output):
 
     page.locator('#periodType').select_option('week')
     wait_for_app_state(page,'document.getElementById("overviewPeriod").type==="week"','Weekly period input')
-    page.locator('#overviewPeriod').fill('2025-W02')
+    set_calendar_field(page, 'overviewPeriod', '2025-W02')
     wait_for_app_state(page,'window.unifiedUI.scope?.from==="2025-01-06"','Missing weekly range is selected')
     alerts=page.locator('#overviewAlerts')
     expect(alerts).to_contain_text('Неполные данные: 28 пропусков')
@@ -831,24 +879,27 @@ def check_analytics(page, temporary, output):
     page.screenshot(path=str(output/'windows-sql-persistent-coverage.png'))
     # Entirely absent daily ranges must still generate every expected day.
     page.locator('#overviewMode').select_option('range')
-    page.locator('#rangeStart').fill('2025-W02')
-    page.locator('#rangeEnd').fill('2025-W07')
+    set_calendar_field(page, 'rangeStart', '2025-W02')
+    set_calendar_field(page, 'rangeEnd', '2025-W07')
     expect(alerts).to_contain_text('Неполные данные: 168 пропусков')
     details=alerts.locator('.coverage-details')
     details.locator('summary').click()
     expect(details.locator('.coverage-matrix thead th')).to_have_count(32)
     expect(details.locator('td.coverage-missing')).to_have_count(124)
     expect(details.locator('.coverage-matrix-pager')).to_contain_text('06.01.2025 — 05.02.2025')
-    details.get_by_role('button',name='Позднее →',exact=True).click()
+    matrix_scroll=details.locator('[data-sql-row-scroll="x"]')
+    matrix_scroll.evaluate('node => { node.scrollLeft = node.scrollWidth }')
+    expect(matrix_scroll).to_have_attribute('data-sql-window','1')
     expect(details.locator('.coverage-matrix thead th')).to_have_count(12)
     expect(details.locator('td.coverage-missing')).to_have_count(44)
     expect(details.locator('.coverage-matrix-pager')).to_contain_text('06.02.2025 — 16.02.2025')
-    details.get_by_role('button',name='← Ранее',exact=True).click()
+    matrix_scroll.evaluate('node => { node.scrollLeft = 0 }')
+    expect(matrix_scroll).to_have_attribute('data-sql-window','0')
     expect(details.locator('td.coverage-missing')).to_have_count(124)
     page.screenshot(path=str(output/'windows-sql-coverage-pages.png'))
     # The installed WebView2 must drill into actual indexed report provenance.
-    page.locator('#rangeStart').fill('2025-W01')
-    page.locator('#rangeEnd').fill('2025-W02')
+    set_calendar_field(page, 'rangeStart', '2025-W01')
+    set_calendar_field(page, 'rangeEnd', '2025-W02')
     wait_for_app_state(page,'window.unifiedUI.scope?.from==="2024-12-30" && window.unifiedUI.scope?.to==="2025-01-12"','Mixed complete and missing daily quality range')
     details=alerts.locator('.coverage-details')
     details.locator(':scope > summary').click()
@@ -889,30 +940,30 @@ def check_extended(page):
         page.emulate_media(media='screen')
     page.locator('#advancedAnalytics > summary').click()
     wait_for_text(page,'#comparisonCoverage','Второй интервал: Полные данные',90_000)
-    page.locator('#analysisBasePeriod').fill('2023-12')
+    set_calendar_field(page, 'analysisBasePeriod', '2023-12')
     wait_for_app_state(page,
         'window.unifiedUI.scope?.baseFrom==="2023-12-01" && window.unifiedUI.scope?.baseTo==="2023-12-31"',
         'Shared baseline calendar bounds')
     expect(page.locator('#basePeriod')).to_have_value('2023-12')
-    page.locator('#basePeriod').fill('2024-01')
+    set_calendar_field(page, 'basePeriod', '2024-01')
     expect(page.locator('#comparisonPeriodOverride')).to_be_visible()
-    page.locator('#analysisBasePeriod').fill('2023-11')
+    set_calendar_field(page, 'analysisBasePeriod', '2023-11')
     wait_for_app_state(page,'window.unifiedUI.scope?.baseFrom==="2023-11-01"','Changed shared baseline')
     expect(page.locator('#basePeriod')).to_have_value('2024-01')
     page.locator('#comparisonPeriodReset').click()
     expect(page.locator('#basePeriod')).to_have_value('2023-11')
     expect(page.locator('#comparisonPeriodOverride')).to_be_hidden()
     # Both missing intervals show a reason, with no meaningless pager/CSV.
-    page.locator('#currentPeriod').fill('2023-12')
+    set_calendar_field(page, 'currentPeriod', '2023-12')
     wait_for_text(page,'#comparisonCoverage','базового и анализируемого периодов',90_000)
     expect(page.locator('#comparisonTable')).to_contain_text('Нет доступных значений для сравнения')
     expect(page.locator('#comparisonTable table')).to_have_count(0)
     expect(page.locator('#comparisonTable .change-pagination')).to_have_count(0)
     expect(page.locator('#comparisonTable button')).to_have_count(0)
     page.locator('#comparison').screenshot(path=str(ROOT/'tauri/test-artifacts/windows-sql-empty-comparison.png'))
-    page.locator('#currentPeriod').fill('2024-02')
+    set_calendar_field(page, 'currentPeriod', '2024-02')
     wait_for_text(page,'#comparisonCoverage','Второй интервал: Полные данные',90_000)
-    page.locator('#analysisBasePeriod').fill('2024-01')
+    set_calendar_field(page, 'analysisBasePeriod', '2024-01')
     wait_for_text(page,'#comparisonCoverage','Первый интервал: Полные данные',90_000)
     page.locator('#contributions > summary').click()
     wait_for_text(page,'#contributionCheck','совпадает',90_000)
@@ -932,8 +983,8 @@ def check_extended(page):
         wait_for_text(page,f'#{result}','Полных периодов:',90_000)
     navigate(page,'changes')
     page.locator('#changesType').select_option('month')
-    page.locator('#changesTo').fill('2024-02')
-    wait_for_text(page,'#changesPage','Страница 1',90_000)
+    set_calendar_field(page, 'changesTo', '2024-02')
+    expect(page.locator('[data-sql-row-scroll]:has(#changesResults)')).to_have_attribute('data-sql-window','0',timeout=90_000)
     assert page.locator('#changesSummary .kpi').count()>=4
     assert page.locator('#changesResults tbody tr').count()<=100
     slider=page.locator('#changesPercent')

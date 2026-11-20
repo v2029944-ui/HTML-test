@@ -153,7 +153,7 @@ function chooseOrgs(anchor){
 }
 function chooseWorks(anchor){
  const {box,query,actions,list,count,pages}=listShell('Работы в подробной аналитике',anchor,'Выбор применяется к подробной аналитике. В сводке учитываются все работы.');
- query.placeholder='Найти работу';
+ query.placeholder='Найти работу';list.dataset.sqlScrollHost='reference-work-options';
  const initial=revision,selected=new Map(nameRows);
  let everything=allNames,rows=[],positions=[null],next=null,ticket=0,matchingTotal=0;
  const limit=50;
@@ -168,8 +168,8 @@ function chooseWorks(anchor){
  const apply=button('Применить',()=>{if(initial!==revision){UI.notice('Данные изменились. Откройте выбор повторно.',true);close(box);return;}allNames=everything;nameRows=new Map(selected);close(box);publish();});apply.className='filter-apply';box.append(apply);
  function draw(){
   list.replaceChildren();pages.replaceChildren();update();
-  const search=Boolean(query.value.trim());all.textContent=search?(matchingTotal>limit?'Выбрать на странице':'Выбрать найденные'):'Выбрать все';
-  clear.textContent=search&&!everything?'Снять выбор на странице':'Снять выбор';all.disabled=!rows.length;
+  const search=Boolean(query.value.trim());all.textContent=search?(matchingTotal>limit?'Выбрать показанные':'Выбрать найденные'):'Выбрать все';
+  clear.textContent=search&&!everything?'Снять выбор с показанных':'Снять выбор';all.disabled=!rows.length;
   for(const row of rows){
    const input=checkbox(list,row.name+(row.kind==='group'?' (группа)':''),everything||selected.has(row.key),field=>{
     if(everything){
@@ -182,9 +182,12 @@ function chooseWorks(anchor){
    if(everything&&(search||nameCount>limit))input.disabled=true;
   }
   if(!rows.length)list.append(make('p',search?'Совпадений нет.':'Список пуст.'));
-  if(!next&&positions.length===1)return;
-  const prev=button('← Предыдущая',()=>load(positions.slice(0,-1))),forward=button('Следующая →',()=>load([...positions,next]));
-  prev.disabled=positions.length===1;forward.disabled=!next;pages.append(prev,make('span','Страница '+positions.length),forward);
+  const index=positions.length-1;
+  if(window.sqlRowScroll?.attach(list,{index,size:limit,count:rows.length,total:matchingTotal,hasNext:Boolean(next),label:'Прокрутка списка работ',go:i=>{
+   if(!box.isConnected||initial!==revision)return false;
+   return load(i<index?positions.slice(0,-1):[...positions,next]);
+  }}))pages.textContent=rows.length?(index*limit+1)+'–'+(index*limit+rows.length)+' из '+matchingTotal:'';
+
  }
  async function load(path){
   const mine=++ticket;list.replaceChildren(make('p','Загрузка…'));pages.replaceChildren();all.disabled=clear.disabled=true;
@@ -192,9 +195,9 @@ function chooseWorks(anchor){
    const page=initial===null?{rows:[],next:null,total_rows:0}:await UI.api.unifiedNameOptions(initial,query.value.trim(),path.at(-1),limit);
    if(mine!==ticket||!box.isConnected||initial!==revision)return;
    rows=page.rows;next=page.next;matchingTotal=page.total_rows;positions=path;clear.disabled=false;draw();
-  }catch(error){if(mine===ticket&&box.isConnected)list.replaceChildren(make('p','Не удалось открыть список. '+(window.analizUserError?.(error)||error.message)));}
+  }catch(error){if(mine===ticket&&box.isConnected){window.sqlRowScroll?.reset(list);list.replaceChildren(make('p','Не удалось открыть список. '+(window.analizUserError?.(error)||error.message)));}}
  }
- query.oninput=()=>load([null]);void load([null]);query.focus();
+ query.oninput=()=>{window.sqlRowScroll?.reset(list);return load([null]);};void load([null]);query.focus();
 }
 async function readBounds(snap){
  const mine=++lastTicket;
@@ -263,7 +266,7 @@ function init(){
  const org=one('[data-pick=orgs]'),work=one('[data-pick=works]');
  org.onclick=()=>chooseOrgs(org);work.onclick=()=>chooseWorks(work);
  many('.quick-actions button').forEach((b,i)=>b.onclick=()=>applyQuick(i));one('.filter-reset').onclick=reset;
- const tools=document.getElementById('toolsPage');if(tools)syncFields=C.enhance(tools);
+ const native=document.getElementById('refNative');if(native)syncFields=C.enhance(native);
  UI.onSnapshot(configure);paint(...baseRange());
  if(UI.snapshot)void configure(UI.snapshot);
 }

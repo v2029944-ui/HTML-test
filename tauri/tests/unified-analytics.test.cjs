@@ -52,6 +52,18 @@ test('late SQL charts are discarded after scope invalidation and errors clear th
  const bad=fixture({nativeAnalysisCompare:async()=>{throw Error('database failed');}});await bad.bootstrap();assert.equal(bad.nodes.get('overviewKpis').textContent,'');assert.match(bad.nodes.get('overviewAlerts').textContent,/database failed/);assert.equal(bad.nodes.get('printSummary').disabled,true);
 });
 function descendants(node){return [node,...node.children.flatMap(child=>typeof child==='object'?descendants(child):[])];}
+test('SQL name scrolling follows only adjacent opaque cursors and resets on search/error',async()=>{
+ let fail=false;const f=fixture({unifiedNameOptions:async(_r,term,after,limit)=>{if(fail)throw Error('name read failed');return {rows:Array.from({length:50},(_,i)=>({key:'work:'+i,name:term||'Work '+i,kind:'work'})),total_rows:120,next:after?null:'name-cursor'};}});
+ const attached=[],reset=[];f.window.sqlRowScroll={attach:(root,options)=>{attached.push({root,options});return root;},reset:root=>reset.push(root)};
+ await f.bootstrap();let entry=attached.findLast(x=>x.root===f.nodes.get('categories'));assert.ok(entry);assert.equal(entry.options.size,50);assert.equal(entry.options.direct,false);assert.equal(entry.options.total,120);
+ assert.ok(descendants(entry.root).filter(n=>n.tagName==='BUTTON').every(n=>n.hidden));
+ const before=f.calls.length;await entry.options.go(3);assert.equal(f.calls.length,before);
+ await entry.options.go(1);entry=attached.findLast(x=>x.root===entry.root);assert.equal(entry.options.index,1);assert.equal(f.calls.at(-1).args[2],'name-cursor');
+ await entry.options.go(0);assert.equal(f.calls.at(-1).args[2],null);
+ fail=true;entry=attached.findLast(x=>x.root===entry.root);await entry.options.go(1);assert.match(entry.root.textContent,/name read failed/);assert.ok(reset.includes(entry.root));
+ const stale=entry.options.go;f.nodes.get('categorySearch').value='New';f.nodes.get('categorySearch').dispatch('input');const reads=f.calls.length;await stale(1);assert.equal(f.calls.length,reads);
+ await new Promise(resolve=>setTimeout(resolve,180));
+});
 test('incomplete coverage remains visible and opens a missing-org/day matrix',async()=>{
  const complete={complete:true,periods:1,missing:0,total:{count:2,amount:20,average:10},available_reports:1,available_total:{count:2,amount:20,average:10},invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};
  const partial={...complete,complete:false,missing:1,total:{count:null,amount:null,average:null},import_warning_reports:1};

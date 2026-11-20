@@ -26,8 +26,19 @@ function fixture(overrides={}){
  const UI={api,el:(tag,text,cls)=>{const n=new Element(tag,text);n.className=cls||'';return n;},fmt:n=>n===null?'—':String(n)};
  const window={unifiedUI:UI};vm.runInNewContext(fs.existsSync(filename)?fs.readFileSync(filename,'utf8'):'',{window,Date,Map,Set});
  assert.equal(typeof window.unifiedCoverage?.render,'function');
- return{root,calls,scope,render:()=>window.unifiedCoverage.render(root,scope,()=>active),invalidate:()=>active=false};
+ return{window,root,calls,scope,render:()=>window.unifiedCoverage.render(root,scope,()=>active),invalidate:()=>active=false};
 }
+test('coverage period scrolling seeks directly with one bounded request and retains its host',async()=>{
+ const f=fixture(),attached=[];f.window.sqlRowScroll={attach:(root,options)=>{attached.push({root,options});return root;},reset(){}};
+ f.scope.from='2024-01-01';f.scope.to='2024-12-31';await f.render();let entry=attached.find(x=>x.root.attributes['data-sql-scroll-host']==='coverage-periods');assert.ok(entry);assert.equal(entry.options.axis,'x');assert.equal(entry.options.direct,true);assert.equal(entry.options.total,366);assert.equal(entry.options.size,31);
+ assert.equal(find(f.root,'BUTTON','Позднее →').hidden,true);await entry.options.go(11);assert.equal(f.calls.length,2);assert.deepEqual(Array.from(f.calls.at(-1).args.slice(2,4)),['2024-12-07','2024-12-31']);const next=attached.at(-1);assert.equal(next.root,entry.root);assert.equal(next.options.index,11);await entry.options.go(1);assert.equal(f.calls.length,2);await next.options.go(0);assert.equal(f.calls.length,3);
+});
+test('coverage report and diagnostic scrolling keeps cursor/offset bounds and saved summaries',async()=>{
+ const f=fixture({nativeQualityMatrixReports:async(_r,_k,start,_org,after)=>({revision:1,rows:[{id:'r1',start,end:start,valid:true}],next:after?null:'report-cursor'}),nativeReportQualityPage:async(_r,_id,scope,offset)=>({issues:[{reason:scope+' '+offset}],next_offset:offset?null:50,evidence:evidence({missing_day_entries:53}),source_anchor:'anchor'})});
+ const attached=[];f.window.sqlRowScroll={attach:(root,options)=>{attached.push({root,options});return root;},reset(){}};await f.render();all(f.root).find(n=>n.className==='coverage-cell-action').dispatch('click');await settle();
+ let reports=attached.findLast(x=>x.root.attributes['data-sql-scroll-host']==='coverage-reports');assert.ok(reports);assert.equal(reports.options.size,20);assert.equal(reports.options.direct,false);await reports.options.go(4);assert.equal(f.calls.length,2);await reports.options.go(1);assert.equal(f.calls.at(-1).args[4],'report-cursor');assert.equal(attached.at(-1).root,reports.root);
+ const details=all(f.root).find(n=>n.tagName==='DETAILS');details.open=true;details.dispatch('toggle');await settle();let notes=attached.findLast(x=>x.root.attributes['data-sql-scroll-host']==='coverage-notes');assert.ok(notes);assert.equal(notes.options.size,50);assert.equal(notes.options.direct,false);await notes.options.go(1);assert.equal(f.calls.at(-1).args[3],50);assert.match(f.root.textContent,/Записи о пропусках дней источника: 53/);find(f.root,'BUTTON','Замечания источника').dispatch('click');await settle();assert.equal(f.calls.at(-1).args[2],'source');assert.equal(attached.at(-1).options.index,0);const before=f.calls.length;await notes.options.go(0);assert.equal(f.calls.length,before);
+});
 test('quality labels distinguish missing, invalid, conflicts, warnings, zeros and cancellation',async()=>{
  const patches=[{available:false,matching_reports:0,count:null,amount:null,has_activity:false},{available:false,invalid_reports:1,count:null,amount:null},{available:false,duplicate_reports:2,count:null,amount:null},{available:false,overlap_reports:1,count:null,amount:null},{warned_reports:1},{count:0,amount:0,numeric_zero:true,has_activity:false},{count:0,amount:0,numeric_zero:true,has_activity:true}];
  const f=fixture({nativeQualityMatrixPage:async(_r,_k,from,to,orgs)=>page(from,to,orgs,(_o,start)=>patches[Number(start.slice(-2))-1])});
