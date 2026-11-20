@@ -164,6 +164,10 @@ def check_reference(page, output, has_reports):
                           'reason': 'No visible nonzero SVG series mark for the current filters.'})
 
     def table_help(selector, name, expected_count=None):
+        # Disclosure toggle events are queued separately from the click. Let
+        # them start their controller work before deciding whether SQL is done.
+        page.evaluate("""() => new Promise(resolve =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)))""")
         # A missing conditional table is meaningful only after its SQL is done.
         page.wait_for_function('''() => !window.tauriOperations?.reads &&
           !window.tauriOperations?.saves && ![...document.querySelectorAll('[aria-busy="true"]')]
@@ -171,6 +175,7 @@ def check_reference(page, output, has_reports):
         section = page.locator(selector + ':visible').first
         available = section.count() > 0
         if available:
+            expect(section.locator('thead th').first).to_be_visible(timeout=TIMEOUT)
             visible_headers = section.locator('thead th:visible').count()
             assert visible_headers > 0, 'A rendered results table has no visible headings'
             expected = visible_headers if expected_count is None else expected_count
@@ -451,7 +456,6 @@ def check_reference(page, output, has_reports):
                 expect(work).to_be_visible(timeout=TIMEOUT)
                 history_close(work, 'analyticsDetails', 'analyticsDetailContent', 'closeAnalyticsDetails', '08-analytics-work-history')
                 expect(page.locator('#toolsPage')).to_be_visible()
-            check_disclosures(page.locator('#toolsPage'), '08-analytics-disclosures')
             record('08-analytics-' + target, page.locator('#toolsPage'))
             help_tables = {'structurePanel': '#structureResults .metric-table',
                            'usualPanel': '#usualResults .metric-table',
@@ -461,10 +465,10 @@ def check_reference(page, output, has_reports):
             if target == 'comparison':
                 contribution = page.locator('#contributions')
                 contribution_summary = contribution.locator(':scope > summary')
-                if contribution_summary.is_visible():
-                    if not contribution.evaluate('(node) => node.open'):
-                        contribution_summary.click()
-                    expect(contribution).to_have_js_property('open', True)
+                expect(contribution_summary).to_be_visible(timeout=TIMEOUT)
+                if not contribution.evaluate('(node) => node.open'):
+                    contribution_summary.click()
+                expect(contribution).to_have_js_property('open', True)
                 table_help('#contributionResults .metric-table', '08-contributions-table-help')
             if target == 'chartPanel':
                 breakdown = page.locator('#chartBreakdown')
@@ -475,6 +479,9 @@ def check_reference(page, output, has_reports):
                 table_help('#chartOrgTotals .metric-table', '08-department-totals-table-help')
                 if breakdown.input_value() != previous_breakdown:
                     breakdown.select_option(previous_breakdown)
+            # Closing/reopening a result disclosure reruns SQL and replaces its
+            # table. Check heading controls before exercising that lifecycle.
+            check_disclosures(page.locator('#toolsPage'), '08-analytics-disclosures')
         close_panel(analytics)
         analytics.click()
         panel('chartPanel')
