@@ -12,6 +12,7 @@ let customComparisonMetrics=false;
 function slot(name){if(!channels.has(name))channels.set(name,{ticket:0,positions:[null],page:null,captured:null,timer:null});return channels.get(name);}
 function clear(id,text=''){const node=$(id);if(node){node.replaceChildren();if(text)node.append(UI.el('p',text,'muted small'));}}
 function value(id){return $(id)?.value||'';}
+ function orientation(){return value('chartOrientation')==='horizontal'?'horizontal':'vertical';}
 function selected(){return Boolean(scope&&(scope.allNames===true||scope.selectedNames?.length));}
 function metrics(){return [...(UI.state?.selectedMetrics||['count','amount'])].filter(m=>titles[m]);}
 function fmt(n,m='count'){return UI.fmt(n,m);}
@@ -53,14 +54,14 @@ function plotTimeline(result,entry,s,root,chosenMetrics,seriesType){
  const points=result.points||[],kind=result.granularity==='period'?s.displayType:result.granularity;
  const periods=points.map(p=>{const start=p.start.length===7?p.start+'-01':p.start;return {type:kind,start,end:periodEnd(start,kind)};});
  const data=points.map(p=>p.missing===0?new Map([[entry.key,p.total]]):null);
- for(const metric of chosenMetrics){const section=UI.el('section',null,'metric-chart'),plot=UI.el('div',null,'metric-plot');section.append(UI.el('h3',titles[metric]),plot);root.append(section);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'line',categories:[entry.key],data,label:()=>entry.name,seriesType});}
+ for(const metric of chosenMetrics){const section=UI.el('section',null,'metric-chart'),plot=UI.el('div',null,'metric-plot');section.append(UI.el('h3',titles[metric]),plot);root.append(section);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'bar',orientation:orientation(),categories:[entry.key],data,label:()=>entry.name,seriesType});}
 }
 async function history(entry,s,organization,target){
  if(!entry.key||entry.other)return;
  const prefix=target==='change'?'change':'analytics',panel=$(prefix==='change'?'changeDetails':'analyticsDetails'),title=$(prefix==='change'?'changeDetailTitle':'analyticsDetailTitle'),content=$(prefix==='change'?'changeDetailContent':'analyticsDetailContent');
  if(!panel||!content)return;panel.hidden=false;title.textContent=entry.name+(organization?' · '+organization:'');
  const task=loading(prefix+'History',[content.id]);
- try{const result=await api.nativeWorkTimeline(s.revision,s.type,s.from,s.to,s.organizations,organization,entry.key,null,s.source==='daily'?s.displayType:null,s.selectedNames||[]);if(!task.valid())return;content.replaceChildren();content.append(UI.el('p','Динамика за '+caption(s)+'. Пропуски не считаются нулём; масштаб: '+result.granularity+'.','muted small'));plotTimeline(result,entry,s,content,target==='change'?[...changeMetrics]:metrics());title.focus?.({preventScroll:true});panel.scrollIntoView?.({block:'nearest'});}
+ try{const result=await api.nativeWorkTimeline(s.revision,s.type,s.from,s.to,s.organizations,organization,entry.key,null,s.source==='daily'?s.displayType:null,s.selectedNames||[]);if(!task.valid())return;content.replaceChildren();content.append(UI.el('p','Динамика за '+caption(s)+'. Пропуски не считаются нулём. Данные представлены по периодам.','muted small'));plotTimeline(result,entry,s,content,target==='change'?[...changeMetrics]:metrics());title.focus?.({preventScroll:true});panel.scrollIntoView?.({block:'nearest'});}
  catch(error){task.error(error);}finally{task.done();}
 }
 function changeLayout(){const single=value('changesMethod')==='previous';$('changesFromLabel').hidden=single;$('changeDatePair').classList.toggle('single',single);$('changesToText').textContent=single?'Текущий период':'Конец диапазона';
@@ -152,7 +153,7 @@ async function departmentComparison(task,positions){
  if(!task.valid())return;
  const first=trends.series?.[0]?.points||[],kind=trends.granularity==='period'?s.displayType:trends.granularity,periods=first.map(p=>({type:kind,start:p.start.length===7?p.start+'-01':p.start,end:periodEnd(p.start.length===7?p.start+'-01':p.start,kind)}));
  const data=first.map((p,i)=>new Map(trends.series.map(series=>[series.organization,series.points[i]?.missing===0?series.points[i].total:{count:null,amount:null,average:null}])));
- for(const metric of chosen){const plot=UI.el('div',null,'metric-plot');$('comparisonDynamicsPlots').append(plot);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'line',seriesType:'organizations',categories:s.organizations,data});}
+ for(const metric of chosen){const plot=UI.el('div',null,'metric-plot');$('comparisonDynamicsPlots').append(plot);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'bar',orientation:orientation(),seriesType:'organizations',categories:s.organizations,data});}
 }
 async function contributions(positions=[null]){
  const task=loading('contribution',['contributionResults','contributionCheck']);
