@@ -231,10 +231,11 @@ async function comparison(positions=[null]){
    if(!beforeComplete||!afterComplete){
     const showAfter=afterComplete,label=showAfter?'Значение сейчас':'Значение раньше';
     const total=showAfter?valueNow:valueBefore;
-    const visible=page.filter(entry=>Number.isFinite((entry[metric]||{})[showAfter?'current':'base']));
+    const knownValue=entry=>entry.available?.[metric]??(entry[metric]||{})[showAfter?'current':'base'];
+    const visible=page.filter(entry=>Number.isFinite(knownValue(entry)));
     if(!Number.isFinite(total)&&!visible.length)continue;
     const raw=[['Итого по выбранным работам',total]],rows=[['Итого по выбранным работам',fmt(total,metric)]];
-    for(const entry of visible){const value=(entry[metric]||{})[showAfter?'current':'base'];
+    for(const entry of visible){const value=knownValue(entry);
      rows.push([itemButton(entry,s),fmt(value,metric)]);raw.push([entry.name,value]);}
     UI.table($('comparisonTable'),metric,caption(showAfter?after:before),
      ['Работа / группа',label],rows,{csvRows:raw,csvContext:fullExport(task,req,'comparison',metric,{before:{from:before.from,to:before.to}})});

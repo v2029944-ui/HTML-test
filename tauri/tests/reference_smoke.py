@@ -288,6 +288,13 @@ def check_reference(page, output, has_reports):
             for index in range(local_calendars.count()):
                 calendar(local_calendars.nth(index), f'08-{target}-calendar-{index}')
             if target == 'comparison':
+                comparison_modes = page.locator('#refComparisonModes')
+                comparison_modes.locator('[data-value="organizations"]').click()
+                expect(comparison_modes.locator('[data-value="organizations"]')).to_have_attribute('aria-pressed', 'true')
+                expect(page.locator('#orgComparisonFilters')).to_be_visible()
+                record('08-comparison-organizations', page.locator('#comparison'))
+                comparison_modes.locator('[data-value="periods"]').click()
+                expect(comparison_modes.locator('[data-value="periods"]')).to_have_attribute('aria-pressed', 'true')
                 local_dates = page.locator('#refComparisonDates')
                 if local_dates.count() and local_dates.is_visible():
                     local_dates.locator('[data-edit-base]').click()
@@ -371,9 +378,10 @@ def check_reference(page, output, has_reports):
             more = page.locator('#changesMoreOptions')
             if not more.evaluate('(node) => node.open'):
                 more.locator(':scope > summary').click()
+            if page.locator('#changesSearch').input_value():
+                page.locator('#changesSearch').fill('')
             page.locator('#changesMode').select_option('all')
             page.locator('#changesDirection').select_option('all')
-            page.locator('#changesSearch').fill('')
             work = page.locator('#changesResults .service-link').first
             expect(work).to_be_visible(timeout=TIMEOUT)
             history_close(work, 'changeDetails', 'changeDetailContent', 'closeChangeDetails', '09-native-change-history')

@@ -42,7 +42,7 @@ impl Storage {
                 let status=match row.active{Some(true)=>"Есть выполнения",Some(false)=>"Нет выполнений",None=>"Недостаточно данных о выполнениях"};
                 csv_record(w,&[Cell::Text(&row.name),Cell::Text(row.group_name.as_deref().unwrap_or("")),Cell::Number((mode=="unused").then_some(row.members as f64)),Cell::Text(status),Cell::Text(&query.from),Cell::Text(&query.to)])
             })?;
-            read_model::check_revision(&self.connect()?,revision)
+            check_revision(&self.connect()?,revision)
         })
     }
 

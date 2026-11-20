@@ -457,3 +457,49 @@ pub async fn native_folder_import_apply(
         })
     }).await.map_err(|e|e.to_string())?
 }
+
+/// Every paged read or export reopens the source and verifies the original
+/// preview token, which includes Excel contents, conversion options and revision.
+#[derive(Deserialize)]
+#[serde(tag="format", content="options")]
+pub enum QualityImportOptions {
+    #[serde(rename="daily-wide")]
+    Wide(WideOptions),
+    #[serde(rename="legacy")]
+    Legacy(LegacyOptions),
+}
+#[derive(Deserialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+pub struct ReviewedQualityQuery {
+    source:String,
+    selection:QualityImportOptions,
+    review_token:String,
+    filter:crate::storage::UnifiedQualityFilter,
+}
+impl ReviewedQualityQuery {
+    fn read<T>(self,store:&Storage,action:impl FnOnce(&PreparedImport<'_>,i64,&crate::storage::UnifiedQualityFilter)->Result<T,String>)->Result<T,String>{
+        if self.review_token.len()!=64||!self.review_token.bytes().all(|b|b.is_ascii_hexdigit()){return Err("Invalid import review token".into());}
+        let accept=|prepared:&PreparedImport<'_>,preview:&ImportPreview,current:NativeWideReview|{
+            if current.review_token!=self.review_token{return Err("Excel, report quality, conflicts or SQLite changed. Preview again.".into());}
+            action(prepared,preview.revision(),&self.filter)
+        };
+        match self.selection{
+            QualityImportOptions::Wide(options)=>with_prepared(store,&self.source,options,|p,v,o|accept(p,v,review(p,v,o,b"wide-manual-review-v1\0",&o.organizations)?)),
+            QualityImportOptions::Legacy(options)=>with_legacy_prepared(store,&self.source,options,|p,v,o|accept(p,v,review(p,v,o,b"legacy-manual-review-v1\0",&o.organizations)?)),
+        }
+    }
+}
+#[tauri::command]
+pub async fn native_preview_quality_page(app:tauri::AppHandle,query:ReviewedQualityQuery,offset:u32)->Result<crate::storage::UnifiedQualityPage,String>{
+    tauri::async_runtime::spawn_blocking(move||{
+        let store=app.state::<Storage>();
+        query.read(&store,|prepared,revision,filter|store.prepared_quality_page(revision,prepared,filter,offset))
+    }).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+pub async fn native_preview_quality_csv(app:tauri::AppHandle,query:ReviewedQualityQuery,destination:String)->Result<(),String>{
+    tauri::async_runtime::spawn_blocking(move||{
+        let store=app.state::<Storage>();
+        query.read(&store,|prepared,revision,filter|store.prepared_quality_csv(revision,prepared,filter,Path::new(&destination)))
+    }).await.map_err(|e|e.to_string())?
+}

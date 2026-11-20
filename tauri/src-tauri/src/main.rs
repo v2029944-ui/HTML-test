@@ -24,7 +24,7 @@ use native_report_quality::native_report_quality_page;
 use native_management::{native_catalog_page, native_delete_report, native_member_page, native_settings_edit};
 
 use native_import::{
-    native_wide_import_preview, native_wide_import_apply,
+    native_wide_import_preview, native_wide_import_apply, native_preview_quality_page, native_preview_quality_csv,
     native_folder_import_session, native_folder_import_preview, native_folder_import_apply,
     native_import_sheets, native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
 };
@@ -1079,7 +1079,7 @@ fn main() {
             reference_trend_csv, reference_detail_csv, unified_pattern_page, unified_comparison_page, unified_group_audit_page,
             unified_rename_organizations, unified_clear_reports,
             unified_report_page, unified_report_summary, unified_report_org_page,
-            unified_quality_page, unified_calendar,
+            unified_quality_page, unified_calendar, unified_group_audit_csv, unified_quality_csv,
             unified_management_page, unified_group_save, unified_work_assign,
             unified_groups_preview, unified_groups_import, unified_groups_export,
             unified_catalog_preview, unified_catalog_apply,
@@ -1094,7 +1094,7 @@ fn main() {
             native_folder_import_session,
             native_folder_import_preview,
             native_folder_import_apply,
-            native_wide_import_preview, native_wide_import_apply,
+            native_wide_import_preview, native_wide_import_apply, native_preview_quality_page, native_preview_quality_csv,
             native_import_sheets, native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
             native_metric_kinds, native_metric_preview, native_metric_apply, native_metric_summary,
             native_metric_xlsx_profiles, native_metric_xlsx_preview, native_metric_xlsx_apply,

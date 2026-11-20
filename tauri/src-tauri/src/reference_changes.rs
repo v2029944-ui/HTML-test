@@ -273,6 +273,7 @@ impl Storage {
         self.reference_scope(q,|scope| {
             let mut conn=self.connect()?;let tx=conn.transaction().map_err(err)?;
             workspace(&tx,q.revision,scope)?;
+            unified_analytics::presentation_functions(&tx)?;
             periods(&tx,scope,&q.current(),2)?;
             export(destination,|writer| {
                 csv_record(writer,&[Cell::Text("Сводка доступных данных"),Cell::Text(&q.from),Cell::Text(&q.to)])?;
@@ -286,7 +287,8 @@ impl Storage {
                     SELECT f.item,coalesce(o.reports,0),o.count,o.amount,
                     NOT EXISTS(SELECT 1 FROM an_missing m WHERE m.slot=2 AND m.org=f.item),
                     (SELECT sum(amount) FROM observed)
-                    FROM analysis_filter_items f LEFT JOIN observed o ON o.org=f.item WHERE f.id=?1 ORDER BY f.ordinal").map_err(err)?;
+                    FROM analysis_filter_items f LEFT JOIN observed o ON o.org=f.item WHERE f.id=?1
+                    ORDER BY (o.amount IS NULL),o.amount DESC,f.item COLLATE classic_ru,f.item").map_err(err)?;
                 let mut rows=statement.query([&scope.organizations]).map_err(err)?;
                 while let Some(row)=rows.next().map_err(err)? {
                     let org:String=row.get(0).map_err(err)?;let available:i64=row.get(1).map_err(err)?;

@@ -91,3 +91,42 @@ fn detail_csv_validates_scope_destination_and_formula_safe_filter_text() {
     assert!(data.contains("\"Поиск\";\"'=формула\""));
     assert!(!data.contains("ЯРКАЯ услуга"));
 }
+
+#[test]
+fn unavailable_interval_preserves_only_the_complete_sides_values_on_screen_and_in_csv() {
+    let (dir, store, r, scope) = fixture();
+    let mut selection = query();
+    selection.from = "2024-03-01".into();
+    selection.to = selection.from.clone();
+    let before = RangeQuery {
+        from: "2024-01-01".into(),
+        to: "2024-01-01".into(),
+    };
+    let cmp = ComparisonQuery {
+        before: before.clone(),
+        after: RangeQuery {
+            from: selection.from.clone(),
+            to: selection.to.clone(),
+        },
+        percent: 0.,
+        min_amount: 0.,
+        min_count: 0.,
+    };
+    let page = store
+        .analysis_comparison_page(r, &scope, &cmp, None, None, 50)
+        .unwrap();
+    let first = page.iter().find(|x| x.name == "Работа 00").unwrap();
+    assert!(first.amount.is_none());
+    assert_eq!(first.available.as_ref().unwrap().amount, Some(-10.));
+    let table: DetailCsvOptions =
+        serde_json::from_value(json!({"section":"comparison","metric":"amount","before":before}))
+            .unwrap();
+    let path = dir.path().join("partial.csv");
+    store
+        .reference_detail_csv(r, &scope, &selection, None, &table, &path)
+        .unwrap();
+    let data = std::fs::read_to_string(path).unwrap();
+    assert!(data.contains("\"Работа / группа\";\"Значение раньше\""));
+    assert!(data.lines().any(|line| line == "\"Работа 00\";\"-10\""));
+    assert!(!data.contains("Разница"));
+}

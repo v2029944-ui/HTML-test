@@ -232,3 +232,6 @@ mod folder_rule_tests {
  }
 
 }
+
+#[path="prepared_quality.rs"]
+mod prepared_quality;

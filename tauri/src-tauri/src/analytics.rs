@@ -291,6 +291,9 @@ pub struct ComparisonValue {
     pub count: Option<ChangeMeasure>,
     pub amount: Option<ChangeMeasure>,
     pub average: AverageChange,
+    /// Exact values of the sole complete side when a delta cannot be computed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available: Option<AnalysisTotals>,
 }
 
 fn bounded(s: &str) -> Result<(), String> {
@@ -2240,6 +2243,11 @@ fn comparison_value(
             None
         },
         average: average_change(bt.average, at.average, q.percent)?,
+        available: match (b,a) {
+            (true,false) => Some(bt),
+            (false,true) => Some(at),
+            _ => None,
+        },
     })
 }
 impl Storage {

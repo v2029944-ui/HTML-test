@@ -149,6 +149,18 @@ async function calculate(shared=null){
 function descriptors(points,granularity,s){const kind=granularity==='period'?s.displayType:granularity;return points.map(p=>{const start=p.start.length===7?p.start+'-01':p.start;return {type:kind,start,end:O.periodEnd(start,kind)};});}
 function confirmedZero(point){return point&&point.missing===0&&point.has_activity!==true&&point.total?.count===0&&point.total?.amount===0;}
 function plotSection(root,metric,title=titles[metric]){const section=UI.el('section',null,'metric-chart'),plot=UI.el('div',null,'metric-plot');section.append(UI.el('h3',title),plot);root.append(section);return plot;}
+function chartExport(scope,isCurrent,table,metrics){
+ if(window.referenceDetail?.active!=='chartPanel')return null;
+ const req=UI.request(scope),options={table,metrics:[...metrics],hideEmpty:$('hideEmptyPeriods').checked};
+ const valid=()=>isCurrent()&&window.referenceDetail?.active==='chartPanel';
+ return {export:async()=>{
+  if(!valid())throw Error('Параметры графика изменились. Повторите расчёт.');
+  const path=await api.chooseCsvPath('dinamika-'+table+'-'+scope.from+'-'+scope.to+'.csv');
+  if(!path)return;
+  if(!valid())throw Error('Данные изменились. Повторите расчёт.');
+  await api.referenceTrendCsv(req,options,path);
+ }};
+}
 async function renderCharts(positions=seriesPositions){
  const mine=++chartTicket;
  layout();
@@ -173,7 +185,7 @@ async function renderCharts(positions=seriesPositions){
   for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id);
   for(const metric of chosenMetrics())if(state.chart==='table'){
    const raw=[['Итого по выбранным работам',...points.map(p=>p.missing===0?p.total[metric]:null)],...rows.map(row=>[row.name,...data.map(map=>map?.get(row.key)?.[metric]??null)])];
-   UI.table($('dataTable'),metric,s.from+' — '+s.to+' · прочерк означает неполные данные.',['Работа / группа',...periods.map(O.displayPeriod)],raw.map(row=>[row[0],...row.slice(1).map(n=>fmt(n,metric))]),{csvRows:raw});
+   UI.table($('dataTable'),metric,s.from+' — '+s.to+' · прочерк означает неполные данные.',['Работа / группа',...periods.map(O.displayPeriod)],raw.map(row=>[row[0],...row.slice(1).map(n=>fmt(n,metric))]),{csvRows:raw,csvContext:chartExport(s,isCurrent,'works',[metric])});
   }else UI.drawChart(periods,new Set(s.organizations),metric,plotSection($('chartsContainer'),metric),{chart:state.chart,orientation:orientation(),categories:rows.map(r=>r.key),data,label:key=>rows.find(r=>r.key===key).name,pointNotice:i=>points[i].missing?'Неполные данные: пропусков '+points[i].missing:''});
   seriesPositions=positions;const root=state.chart==='table'?$('dataTable'):$('chartsContainer');pager(root,positions,next,p=>{seriesPositions=p;renderCharts(p);},'Страница '+positions.length+' · '+rows.length+' работ из '+(allNames?totalNames:selectedRows.size));
   $('chartHelp').textContent='Выбрано подразделений: '+s.organizations.length+' из '+UI.snapshot.org_names.length+'. Данные сгруппированы '+({day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам',period:'по выбранным периодам'}[totals.granularity]||'по периодам')+'. Пропуски не считаются нулём.';
@@ -194,11 +206,11 @@ async function departmentCharts(base,isCurrent){
  const data=first.map((p,i)=>new Map(rawSeries.map(series=>[series.organization,series.points[i]?.missing===0?series.points[i].total:{count:null,amount:null,average:null}]))).filter((p,i)=>keep[i]);
  if(state.chart==='table'){
   const raw=s.organizations.flatMap(org=>chosen.map(metric=>[org,titles[metric],...data.map(map=>map.get(org)?.[metric]??null)]));
-  UI.table($('dataTable'),'amount',s.from+' — '+s.to,['Подразделение','Показатель',...periods.map(O.displayPeriod)],raw.map((row,i)=>[...row.slice(0,2),...row.slice(2).map(n=>fmt(n,chosen[i%chosen.length]))]),{title:'Все выбранные показатели по подразделениям',totalRow:false,csvRows:raw});
+  UI.table($('dataTable'),'amount',s.from+' — '+s.to,['Подразделение','Показатель',...periods.map(O.displayPeriod)],raw.map((row,i)=>[...row.slice(0,2),...row.slice(2).map(n=>fmt(n,chosen[i%chosen.length]))]),{title:'Все выбранные показатели по подразделениям',totalRow:false,csvRows:raw,csvContext:chartExport(s,isCurrent,'organizations',chosen)});
  }else if(chosen.length>1&&value('chartSeriesLayout')==='combined'&&orientation()!=='horizontal')UI.drawDepartments(periods,s.organizations,chosen,data,plotSection($('chartsContainer'),'amount','Совместное сравнение: '+s.organizations.length+' подразделений × '+chosen.length+' показателя'));
  else for(const metric of chosen)UI.drawChart(periods,new Set(s.organizations),metric,plotSection($('chartsContainer'),metric),{chart:state.chart,orientation:orientation(),seriesType:'organizations',categories:s.organizations,data});
  const raw=organizations.map(org=>[org.org,...chosen.map(metric=>org.total[metric]),org.complete?'Полные данные':'Пропусков: '+org.missing]);
- UI.table($('chartOrgTotals'),'amount',s.from+' — '+s.to,['Подразделение',...chosen.map(m=>titles[m]),'Полнота данных'],raw.map(row=>[row[0],...row.slice(1,-1).map((n,i)=>fmt(n,chosen[i])),row.at(-1)]),{title:'Итог по подразделениям за диапазон',totalRow:false,csvRows:raw});
+ UI.table($('chartOrgTotals'),'amount',s.from+' — '+s.to,['Подразделение',...chosen.map(m=>titles[m]),'Полнота данных'],raw.map(row=>[row[0],...row.slice(1,-1).map((n,i)=>fmt(n,chosen[i])),row.at(-1)]),{title:'Итог по подразделениям за диапазон',totalRow:false,csvRows:raw,csvContext:chartExport(s,isCurrent,'organizationTotals',chosen)});
  $('chartHelp').textContent='Сравниваются '+s.organizations.length+' подразделений. Учитываются '+(all?'все выполненные работы.':'отмеченные работы и группы.')+' Прочерк — неполные данные; средняя сумма рассчитана из общей суммы и количества. Данные сгруппированы '+({day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам',period:'по выбранным периодам'}[trends.granularity]||'по периодам')+'.';
 }
 async function configure(snapshot){
