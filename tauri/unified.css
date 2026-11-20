@@ -69,3 +69,7 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
 .work-view-switcher select{min-height:38px;min-width:210px;max-width:100%;padding:7px 10px;border:1px solid var(--field-border);border-radius:var(--radius-control);background:var(--surface);color:var(--text)}
 .work-view-switcher p{flex-basis:100%;margin:0}
 #chartPanel[hidden],#structurePanel[hidden]{display:none!important}
+
+/* Bounded coverage matrix pagination: no whole-history fetch. */
+.coverage-matrix-pager{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:7px 0 12px}
+.coverage-matrix-pager button{min-height:34px}

@@ -140,3 +140,26 @@ test('missing-month matrix accepts YYYY-MM native period labels without renderin
  assert.ok(details);details.open=true;details.dispatch('toggle');await settle();
  assert.match(details.textContent,/01\.01\.2024 — 31\.01\.2024/);
 });
+
+test('daily missing-report matrix pages a long period without a whole-history query',async()=>{
+ const complete={complete:true,periods:1,missing:0,total:{count:2,amount:20,average:10},available_reports:1,available_total:{count:2,amount:20,average:10},invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};
+ const queries=[];const f=fixture({
+  nativeAnalysisCompare:async()=>({summary:{before:complete,after:{...complete,complete:false,missing:1,total:{count:null,amount:null,average:null}}}}),
+  nativeOrganizationTrends:async(_revision,_kind,from,to)=>{
+   queries.push([from,to]);return {series:[{organization:'A',points:[{start:from,missing:1}]}]};
+  }
+ });await f.bootstrap();
+ f.nodes.get('overviewMode').value='range';
+ f.nodes.get('rangeStart').value='2024-01-01';
+ f.nodes.get('rangeEnd').value='2024-02-15';
+ f.nodes.get('overviewMode').dispatch('change');await settle();
+ const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
+ assert.ok(details);details.open=true;details.dispatch('toggle');await settle();
+ assert.equal(queries.length,1);assert.deepEqual(queries[0],['2024-01-01','2024-01-31']);
+ assert.match(details.textContent,/Страница 1 из 2/);
+ const next=descendants(details).find(n=>n.tagName==='BUTTON'&&n.textContent==='Позднее →');
+ assert.ok(next);next.dispatch('click');await settle();
+ assert.equal(queries.length,2);assert.deepEqual(queries[1],['2024-02-01','2024-02-15']);
+ assert.match(details.textContent,/Страница 2 из 2/);
+ assert.match(details.textContent,/Нет/);
+});

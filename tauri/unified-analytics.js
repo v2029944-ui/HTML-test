@@ -74,31 +74,68 @@ function dateLabel(iso){return /^\d{4}-\d{2}-\d{2}$/.test(iso)?iso.slice(8,10)+'
 function rangeLabel(from,to){return dateLabel(from)+(from===to?'':' — '+dateLabel(to));}
 function sourceRangeLabel(s){return rangeLabel(s.from,s.source==='daily'?s.to:O.periodEnd(s.to,s.displayType));}
 async function renderMissingMatrix(root,s){
- const days=(Date.parse(s.to)-Date.parse(s.from))/86400000+1;
- if(s.type==='day'&&days>31){root.replaceChildren(UI.el('p','Для просмотра пропусков по дням выберите диапазон до 31 дня.','muted small'));return;}
- root.replaceChildren(UI.el('p','Загрузка таблицы пропусков…','muted small'));
- try{
-  const result=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations,null,s.type==='day'?'day':null,[]);
-  if(UI.revision!==s.revision||printCapture?.scope!==s)return;
-  const series=result.series||[],periods=series[0]?.points||[];
-  if(!periods.length){root.replaceChildren(UI.el('p','Нет отчётов выбранного типа. Проверьте источник.','muted small'));return;}
-  const table=UI.el('table',null,'table coverage-matrix'),header=UI.el('tr');
-  header.append(UI.el('th','Подразделение'));
-  for(const period of periods){const start=period.start.length===7?period.start+'-01':period.start;header.append(UI.el('th',rangeLabel(start,s.type==='day'?start:O.periodEnd(start,s.displayType))));}
-  const head=UI.el('thead');head.append(header);table.append(head);
-  const body=UI.el('tbody');
-  for(const name of s.organizations){
-   const serie=series.find(x=>x.organization===name),line=UI.el('tr');
-   line.append(UI.el('th',name));
-   for(let i=0;i<periods.length;i++){
-    const found=serie?.points?.[i],complete=found?.missing===0;
-    const cell=UI.el('td',complete?'Есть':'Нет',complete?'coverage-ok':'coverage-missing');
-    cell.title=complete?'Полный отчёт':'Нет полного отчёта — не означает ноль';line.append(cell);
-   }body.append(line);
+ const kind=s.type,pageSize=kind==='day'?31:12;
+ const dateMs=86400000,first=Date.parse(s.from+'T00:00:00Z'),last=Date.parse(s.to+'T00:00:00Z');
+ if(!Number.isFinite(first)||!Number.isFinite(last)||first>last)return;
+ const interval=kind==='month'?
+  (Number(s.to.slice(0,4))-Number(s.from.slice(0,4)))*12+
+   Number(s.to.slice(5,7))-Number(s.from.slice(5,7))+1:
+  Math.floor((last-first)/(dateMs*(kind==='week'?7:1)))+1;
+ const pages=Math.ceil(interval/pageSize);
+ let page=0,sequence=0;
+ const active=()=>UI.revision===s.revision&&printCapture?.scope===s;
+ const shift=(start,n)=>{
+  const d=new Date(start+'T00:00:00Z');
+  if(kind==='month')d.setUTCMonth(d.getUTCMonth()+n);
+  else d.setUTCDate(d.getUTCDate()+n*(kind==='week'?7:1));
+  return d.toISOString().slice(0,10);
+ };
+ async function drawPage(){
+  const requestId=++sequence,start=shift(s.from,page*pageSize);
+  const endDate=shift(start,pageSize-1),to=endDate>s.to?s.to:endDate;
+  root.replaceChildren(UI.el('p','Загрузка таблицы пропусков…','muted small'));
+  try{
+   const result=await api.nativeOrganizationTrends(s.revision,kind,start,to,s.organizations,null,kind==='day'?'day':null,[]);
+   if(!active()||requestId!==sequence)return;
+   const series=result.series||[],periods=series[0]?.points||[];
+   const pager=UI.el('div',null,'coverage-matrix-pager');
+   if(pages>1){
+    const prev=UI.el('button','← Ранее','button secondary'),next=UI.el('button','Позднее →','button secondary');
+    prev.type=next.type='button';prev.disabled=page===0;next.disabled=page>=pages-1;
+    prev.addEventListener('click',()=>{if(page>0&&active()){page--;void drawPage();}});
+    next.addEventListener('click',()=>{if(page<pages-1&&active()){page++;void drawPage();}});
+    pager.append(prev,UI.el('span','Страница '+(page+1)+' из '+pages+': '+rangeLabel(start,to),'muted small'),next);
+   }
+   if(!periods.length){
+    root.replaceChildren(pager,UI.el('p','За показанный диапазон нет полных отчётов. Выберите другой источник или проверьте данные.','muted small'));
+    return;
+   }
+   const table=UI.el('table',null,'table coverage-matrix'),header=UI.el('tr');
+   header.append(UI.el('th','Подразделение'));
+   for(const period of periods){
+    const startDate=period.start.length===7?period.start+'-01':period.start;
+    header.append(UI.el('th',rangeLabel(startDate,kind==='day'?startDate:O.periodEnd(startDate,s.displayType))));
+   }
+   const head=UI.el('thead');head.append(header);table.append(head);
+   const body=UI.el('tbody');
+   for(const name of s.organizations){
+    const serie=series.find(x=>x.organization===name),line=UI.el('tr');
+    line.append(UI.el('th',name));
+    for(let i=0;i<periods.length;i++){
+     const found=serie?.points?.[i],complete=found?.missing===0;
+     const cell=UI.el('td',complete?'Есть':'Нет',complete?'coverage-ok':'coverage-missing');
+     cell.title=complete?'Полный отчёт':'Нет полного отчёта — не означает ноль';line.append(cell);
+    }
+    body.append(line);
+   }
+   table.append(body);
+   const scroll=UI.el('div',null,'coverage-matrix-scroll');scroll.append(table);
+   root.replaceChildren(pager,UI.el('p','«Нет» означает отсутствие полного отчёта, не нулевое значение.','muted small'),scroll);
+  }catch(err){
+   if(active()&&requestId===sequence)root.replaceChildren(UI.el('p','Не удалось показать пропуски: '+errorText(err),'warn small'));
   }
-  table.append(body);const scroll=UI.el('div',null,'coverage-matrix-scroll');scroll.append(table);
-  root.replaceChildren(UI.el('p','«Нет» означает отсутствие полного отчёта, не нулевое значение.','muted small'),scroll);
- }catch(err){if(UI.revision===s.revision&&printCapture?.scope===s)root.replaceChildren(UI.el('p','Не удалось показать пропуски: '+errorText(err),'warn small'));}
+ }
+ await drawPage();
 }
 async function suggestWeeklyReports(s){
  if(s.source!=='daily'||s.displayType!=='week')return;
