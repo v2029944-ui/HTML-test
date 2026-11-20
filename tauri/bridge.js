@@ -123,6 +123,7 @@
       'native_wide_import_apply',{source,options,reviewToken,confirmation},'saves'),
     nativeLegacyImportSheets:source=>tracked(
       'native_legacy_import_sheets',{source},'reads'),
+    nativeImportSheets:source=>tracked('native_import_sheets',{source},'reads'),
     nativeLegacyImportPreview:(source,options)=>tracked(
       'native_legacy_import_preview',{source,options},'reads'),
     nativeLegacyImportApply:(source,options,reviewToken,confirmation)=>tracked(

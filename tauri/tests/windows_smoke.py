@@ -1,5 +1,5 @@
 """Run the packaged Tauri app through its real WebView2 and SQLite on an isolated Windows CI runner."""
-import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib,sqlite3,io,zipfile
+import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib,sqlite3,io,re,zipfile
 from pathlib import Path
 from contextlib import contextmanager, closing
 from playwright.sync_api import expect, sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
@@ -336,11 +336,19 @@ def import_year(page, workbook, confirmations):
     wait_for_text(page,'#excelFileStatus',workbook.name)
     page.locator('#importFormat').select_option('daily-wide')
     page.locator('#dailyYear').fill('2024')
+    metadata=api(page,'nativeImportSheets',str(workbook))
+    assert [sheet['name'] for sheet in metadata]==['Q1','Q2','Q3','Q4'],metadata
+    assert page.locator('#sheetSelect option').all_text_contents()==['Q1','Q2','Q3','Q4']
+    for i in range(4):
+        page.locator(f'#unifiedWidePeriod{i}').select_option('q'+str(i+1))
+        assert page.locator(f'#unifiedWideSheet{i}').is_checked()
+    assert page.locator('#unifiedWideSheetMode').input_value()=='selected'
     page.locator('#inspectFile').click()
     wait_for_text(page,'#unifiedImportStatus','Проверка завершена',90_000)
     assert page.locator('#importPreview .kpi').first.locator('strong').inner_text()=='366'
     assert page.locator('#importPreview tbody tr').count()<=50
     assert api(page,'nativeSettingsBootstrap')['reports']==0
+    assert not page.locator('#saveDailyFolderRule').is_visible()
     page.locator('#unifiedAcceptQuality').check()
     confirmations.cancel_then_accept(page.locator('#saveImport'),
         'Повторно проверить Excel и атомарно сохранить 366 отчётов')
@@ -348,6 +356,31 @@ def import_year(page, workbook, confirmations):
     wait_for_text(page,'#unifiedIndexStatus','Отчётов: 366',90_000)
     assert api(page,'nativeSettingsBootstrap')['reports']==366
     assert page.evaluate('window.unifiedOriginal.state.reports.length===0')
+
+
+def undated_quarters_xlsx():
+    """Keep every daily quantity/amount pair; remove only its ISO date cell."""
+    source=io.BytesIO(wide_xlsx(2024,quarter_sheets=True));output=io.BytesIO()
+    with zipfile.ZipFile(source) as original,zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as target:
+        for entry in original.infolist():
+            data=original.read(entry.filename)
+            if entry.filename.startswith('xl/worksheets/'):
+                xml=data.decode('utf-8')
+                xml=re.sub(r'<c\b[^>]*><is><t>\d{4}-\d{2}-\d{2}</t></is></c>','',xml)
+                data=xml.encode('utf-8')
+            target.writestr(entry.filename,data)
+    return output.getvalue()
+
+
+def check_dated_quarters_preview(page,temporary):
+    source=temporary/'dated-quarters.xlsx';source.write_bytes(wide_xlsx(2023,quarter_sheets=True))
+    before=api(page,'nativeRevision');orgs=api(page,'nativeSettingsBootstrap')['org_names']
+    options={'year':2023,'sheets':[],'mappings':{},'organizations':orgs}
+    all_quarters=api(page,'nativeWideImportPreview',str(source),options)
+    assert all_quarters['reportCount']==365,all_quarters
+    second=api(page,'nativeWideImportPreview',str(source),options|{'sheets':['Q2']})
+    assert second['reportCount']==91 and second['sampleReports'][0]['start']=='2023-04-01',second
+    assert api(page,'nativeRevision')==before
 
 
 def check_report_views(page):
@@ -1056,7 +1089,7 @@ def run():
                     raise
 
             source_folder=tmp/'excel-sources';source_folder.mkdir()
-            workbook=source_folder/'synthetic-year.xlsx';workbook.write_bytes(wide_xlsx(2024))
+            workbook=source_folder/'synthetic-year.xlsx';workbook.write_bytes(undated_quarters_xlsx())
             original_xlsx=workbook.read_bytes()
             other_folder=tmp/'other-source';other_folder.mkdir()
             legacy_source=other_folder/'ordinary.xlsx';legacy_source.write_bytes(daily_workbook_bytes())
@@ -1085,6 +1118,7 @@ def run():
                 assert not page.locator('#sourceAutoImport').is_checked()
                 assert page.evaluate('window.unifiedUI.refresh()')['reports']==0
                 report['checks'].append('Changing the connected folder replaces metadata without importing; ordinary XLSX preview streams through Rust')
+                check_dated_quarters_preview(page,tmp)
                 import_year(page,workbook,confirmations)
                 assert workbook.read_bytes()==original_xlsx
                 check_report_views(page)

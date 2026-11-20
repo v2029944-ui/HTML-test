@@ -240,6 +240,39 @@ fn with_legacy_prepared<T>(
 }
 
 #[tauri::command]
+pub async fn native_import_sheets(
+    app: tauri::AppHandle,
+    source: String,
+) -> Result<Vec<NativeWorksheet>,String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if source.len()>32767 {return Err("Excel path too long".into());}
+        let path=Path::new(&source);
+        if !path.is_absolute() || !path.extension().and_then(|e|e.to_str())
+            .is_some_and(|e|e.eq_ignore_ascii_case("xlsx"))
+        {return Err("Choose an absolute .xlsx file".into());}
+        let storage=app.state::<Storage>();storage.revision()?;
+        let area=StageArea::open(storage.root().join("native-import-stages")).map_err(|e|e.to_string())?;
+        let cancel=AtomicBool::new(false);
+        let stage=area.ingest(path,Limits::default(),&cancel,|_|{}).map_err(|e|e.to_string())?;
+        let sheets=stage.sheet_names().map_err(|e|e.to_string())?;
+        if sheets.len()>64 {return Err("Too many Excel worksheets for native review".into());}
+        let mut result=Vec::new();
+        for (name,component) in sheets {
+            if !stage.page(&component,0,1).map_err(|e|e.to_string())?.is_empty() {
+                result.push(NativeWorksheet{name,component});
+            }
+        }
+        Ok(result)
+    }).await.map_err(|e|e.to_string())?
+}
+
+#[derive(Serialize)]
+pub struct NativeWorksheet {
+    pub name: String,
+    pub component: String,
+}
+
+#[tauri::command]
 pub async fn native_legacy_import_sheets(
     app: tauri::AppHandle,
     source: String,
