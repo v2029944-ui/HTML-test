@@ -483,7 +483,7 @@ def check_analytics(page, temporary, output):
     # Verify the canonical dashboard at both desktop and phone CSS viewports.
     original=page.viewport_size or page.evaluate('({width:innerWidth,height:innerHeight})')
     try:
-        for width,height in ((1280,720),(1366,768),(390,844),(320,568)):
+        for width,height in ((1280,720),(1366,768),(1920,1080),(768,1024),(390,844),(320,568)):
             page.set_viewport_size({'width':width,'height':height})
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),(width,height)
             assert page.locator('#overviewKpis .kpi').count()==4
@@ -555,6 +555,24 @@ def check_analytics(page, temporary, output):
     expect(alerts).to_contain_text('Неполные данные: 28 пропусков')
     expect(amount).to_have_text('—')
     page.screenshot(path=str(output/'windows-sql-persistent-coverage.png'))
+    # Entirely absent daily ranges must still generate every expected day.
+    page.locator('#overviewMode').select_option('range')
+    page.locator('#rangeStart').fill('2025-W02')
+    page.locator('#rangeEnd').fill('2025-W07')
+    expect(alerts).to_contain_text('Неполные данные: 168 пропусков')
+    details=alerts.locator('.coverage-details')
+    details.locator('summary').click()
+    expect(details.locator('.coverage-matrix thead th')).to_have_count(32)
+    expect(details.locator('td.coverage-missing')).to_have_count(124)
+    expect(details.locator('.coverage-matrix-pager')).to_contain_text('06.01.2025 — 05.02.2025')
+    details.get_by_role('button',name='Позднее →',exact=True).click()
+    expect(details.locator('.coverage-matrix thead th')).to_have_count(12)
+    expect(details.locator('td.coverage-missing')).to_have_count(44)
+    expect(details.locator('.coverage-matrix-pager')).to_contain_text('06.02.2025 — 16.02.2025')
+    details.get_by_role('button',name='← Ранее',exact=True).click()
+    expect(details.locator('td.coverage-missing')).to_have_count(124)
+    page.screenshot(path=str(output/'windows-sql-coverage-pages.png'))
+    page.locator('#overviewMode').select_option('single')
     dashboard_month(page)
 
 
@@ -568,6 +586,21 @@ def check_extended(page):
         page.emulate_media(media='screen')
     page.locator('#advancedAnalytics > summary').click()
     wait_for_text(page,'#comparisonCoverage','Второй интервал: Полные данные',90_000)
+    page.locator('#analysisBasePeriod').fill('2023-12')
+    wait_for_app_state(page,
+        'window.unifiedUI.scope?.baseFrom==="2023-12-01" && window.unifiedUI.scope?.baseTo==="2023-12-31"',
+        'Shared baseline calendar bounds')
+    expect(page.locator('#basePeriod')).to_have_value('2023-12')
+    page.locator('#basePeriod').fill('2024-01')
+    expect(page.locator('#comparisonPeriodOverride')).to_be_visible()
+    page.locator('#analysisBasePeriod').fill('2023-11')
+    wait_for_app_state(page,'window.unifiedUI.scope?.baseFrom==="2023-11-01"','Changed shared baseline')
+    expect(page.locator('#basePeriod')).to_have_value('2024-01')
+    page.locator('#comparisonPeriodReset').click()
+    expect(page.locator('#basePeriod')).to_have_value('2023-11')
+    expect(page.locator('#comparisonPeriodOverride')).to_be_hidden()
+    page.locator('#analysisBasePeriod').fill('2024-01')
+    wait_for_text(page,'#comparisonCoverage','Первый интервал: Полные данные',90_000)
     page.locator('#contributions > summary').click()
     wait_for_text(page,'#contributionCheck','совпадает',90_000)
     page.locator('#workViewMode').select_option('composition')
@@ -588,6 +621,15 @@ def check_extended(page):
     wait_for_text(page,'#changesPage','Страница 1',90_000)
     assert page.locator('#changesSummary .kpi').count()>=4
     assert page.locator('#changesResults tbody tr').count()<=100
+    slider=page.locator('#changesPercent')
+    slider.focus();slider.press('End')
+    expect(page.locator('#changesSensitivityValue')).to_have_text('200%')
+    expect(page.locator('#changesSensitivityExample')).to_contain_text('200')
+    slider.press('Home')
+    expect(page.locator('#changesSensitivityValue')).to_have_text('0%')
+    page.locator('#changesSummary .kpi-action').first.click()
+    expect(page.locator('#changesActiveFilter')).to_contain_text('рост')
+    expect(page.locator('#changesDirection')).to_have_value('up')
 
 
 def check_groups(page, confirmations):
