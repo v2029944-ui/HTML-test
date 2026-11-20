@@ -308,21 +308,35 @@ class OwnedFileDialogs:
         return text.value
 
     def inspect(self, hwnd, title, screenshot=None, require_cancel=True):
-        result = subprocess.run(
-            ['powershell', '-NoProfile', '-NonInteractive', '-Command', self.inspect_script],
-            env=dict(os.environ, ANALIZ_SMOKE_DIALOG_PID=str(self.native.pid),
-                     ANALIZ_SMOKE_DIALOG_HWND=str(hwnd), ANALIZ_SMOKE_FILE_TITLE=title,
-                     ANALIZ_SMOKE_FILE_SCREENSHOT=str(screenshot) if screenshot else ''),
-            capture_output=True, encoding='utf-8', errors='replace', timeout=20)
-        if result.returncode:
-            raise AssertionError('Owned file-dialog UIA verification failed: ' + result.stderr.strip())
+        owner = self.user32.GetWindow(hwnd, 4)
+        for attempt in range(1, 4):
+            self.verify_window(hwnd, owner, title)
+            assert self.native.window_class(hwnd) == '#32770'
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-NonInteractive', '-Command', self.inspect_script],
+                env=dict(os.environ, ANALIZ_SMOKE_DIALOG_PID=str(self.native.pid),
+                         ANALIZ_SMOKE_DIALOG_HWND=str(hwnd), ANALIZ_SMOKE_FILE_TITLE=title,
+                         ANALIZ_SMOKE_FILE_SCREENSHOT=str(screenshot) if screenshot else ''),
+                capture_output=True, encoding='utf-8', errors='replace', timeout=20)
+            self.verify_window(hwnd, owner, title)
+            if not result.returncode:
+                break
+            error = result.stderr.strip()
+            # A common file dialog can rebuild its UIA descendant tree while
+            # FindAll reads it. Retry only that provider error, on the same
+            # still-visible owned window. Never infer controls or send input.
+            if attempt == 3 or 'ElementNotAvailableException' not in error:
+                raise AssertionError('Owned file-dialog UIA verification failed: ' + error)
+            time.sleep(.1)
         facts = json.loads(result.stdout)
+        assert facts['pid'] == self.native.pid and facts['title'] == title, facts
+        facts['uiaReadAttempts'] = attempt
         facts['nativeChildren'] = self.native_inventory(hwnd)
         facts['dialogHwnd'] = int(hwnd)
         if screenshot:
             record = Path(screenshot).with_name('native-file-dialogs-inventory-' + Path(screenshot).stem + '.json')
             record.write_text(json.dumps(facts, ensure_ascii=False, indent=2), encoding='utf-8')
-        assert facts['pid'] == self.native.pid and facts['title'] == title, facts
+        self.verify_window(hwnd, owner, title)
         cancel = self.cancel_control(hwnd, facts) if require_cancel else None
         return facts, cancel
 
