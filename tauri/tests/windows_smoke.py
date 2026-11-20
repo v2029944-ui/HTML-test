@@ -485,7 +485,7 @@ def check_analytics(page, temporary, output):
     try:
         for width,height in ((1280,720),(1366,768),(1920,1080),(768,1024),(390,844),(320,568)):
             page.set_viewport_size({'width':width,'height':height})
-            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),(width,height)
+            assert page.evaluate('document.documentElement.scrollWidth<=document.documentElement.clientWidth+1'),(width,height)
             assert page.locator('#overviewKpis .kpi').count()==4
             page.screenshot(path=str(output/f'windows-sql-{width}x{height}.png'))
         page.set_viewport_size({'width':1280,'height':720})
@@ -493,7 +493,7 @@ def check_analytics(page, temporary, output):
             geometry=page.evaluate('''scale => {
               const html=document.documentElement;
               html.style.zoom=scale;
-              return {viewport:innerWidth,page:html.scrollWidth,scale,
+              return {viewport:html.clientWidth,page:html.scrollWidth,scale,
                 overview:document.querySelector('#overviewPanel').getBoundingClientRect().right,
                 periods:document.querySelector('.period-toolbar').getBoundingClientRect().right};
             }''',scale)
