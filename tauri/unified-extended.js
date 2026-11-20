@@ -207,9 +207,26 @@ async function structure(){
   if(!task.valid())return;clear('structureResults');const root=$('structureResults');
   if(!page.currentComplete){clear('structureResults','Нет полного отчёта анализируемого периода. Доли не рассчитываются.');return;}
   root.append(UI.el('p','Итог: '+fmt(page.total,metric),'small'));if(!page.sharesValid)root.append(UI.el('p','Есть отрицательные значения или неположительный итог: доли не рассчитываются.','warn small'));if(!page.baseComplete)root.append(UI.el('p','Базовый период неполон: изменение долей недоступно.','warn small'));
-  const rows=page.rows.map(row=>[row.other?row.name:itemButton(row,{...s,from:before.from<after.from?before.from:after.from,to:before.to>after.to?before.to:after.to}),fmt(row.base,metric),fmt(row.current,metric),percent(row.baseShare),percent(row.share),percent(row.cumulative),Number.isFinite(row.shareChange)?fmt(row.shareChange,'count')+' п. п.':'—']);
-  UI.table(root,metric,caption(before)+' / '+caption(after),['Услуга / группа','Значение раньше','Значение сейчас','Доля раньше','Доля сейчас','Накопленная доля','Изменение доли'],rows,{totalRow:false,csvRows:page.rows.map(r=>[r.name,r.base,r.current,r.baseShare,r.share,r.cumulative,r.shareChange])});
-  const plot=UI.el('div',null,'metric-plot');root.append(plot);const key=row=>row.other?'others':row.key;UI.drawChart([{type:s.displayType,start:after.from,end:after.to}],new Set(s.organizations),metric,plot,{chart:'bar',categories:page.rows.map(key),limit:page.rows.length,data:[new Map(page.rows.map(r=>[key(r),{[metric]:r.current}]))],label:k=>page.rows.find(r=>key(r)===k).name});
+  const visible=page.rows.filter(row=>Number.isFinite(row.current)&&row.current!==0);
+  const selectedLimit=Number(value('structureLimit'));
+  if(visible.length<selectedLimit)root.append(UI.el('p','Показано '+visible.length+' из '+selectedLimit+': у остальных нет ненулевых значений за этот период.','muted small'));
+  if(!visible.length){root.append(UI.el('p','Нет ненулевых значений за выбранный период. Нулевые строки рейтинга скрыты.','muted small'));return;}
+  const baselineValid=page.baseComplete;
+  const label=row=>row.other?row.name:itemButton(row,{...s,from:before.from<after.from?before.from:after.from,to:before.to>after.to?before.to:after.to});
+  const raw=visible.map(row=>baselineValid?
+   [row.name,row.base,row.current,row.baseShare,row.share,row.cumulative,row.shareChange]:
+   [row.name,row.current,row.share,row.cumulative]);
+  const rows=visible.map(row=>baselineValid?
+   [label(row),fmt(row.base,metric),fmt(row.current,metric),percent(row.baseShare),percent(row.share),percent(row.cumulative),Number.isFinite(row.shareChange)?fmt(row.shareChange,'count')+' п. п.':'—']:
+   [label(row),fmt(row.current,metric),percent(row.share),percent(row.cumulative)]);
+  const headers=baselineValid?['Услуга / группа','Значение раньше','Значение сейчас','Доля раньше','Доля сейчас','Накопленная доля','Изменение доли']:
+   ['Услуга / группа','Значение сейчас','Доля сейчас','Накопленная доля'];
+  UI.table(root,metric,caption(before)+' / '+caption(after),headers,rows,{totalRow:false,csvRows:raw});
+  const plot=UI.el('div',null,'metric-plot');root.append(plot);
+  const key=row=>row.other?'others':row.key;
+  UI.drawChart([{type:s.displayType,start:after.from,end:after.to}],new Set(s.organizations),metric,plot,
+   {chart:'bar',orientation:orientation(),categories:visible.map(key),limit:visible.length,
+    data:[new Map(visible.map(r=>[key(r),{[metric]:r.current}]))],label:k=>workLabel(visible.find(r=>key(r)===k).name)});
  }catch(error){task.error(error);}finally{task.done();}
 }
 async function patterns(mode,positions=[null]){
