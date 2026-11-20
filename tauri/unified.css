@@ -38,3 +38,8 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
 #overviewAlerts .button{margin:6px 0}.kpi strong{white-space:nowrap;overflow-wrap:normal;font-size:clamp(17px,2vw,29px);letter-spacing:-.025em}
 #changesSummary .kpi{padding:14px 16px}#changesSummary .kpi strong{margin:7px 0 3px}
 @media(max-width:700px){#changesSummary .kpi strong{font-size:clamp(16px,3vw,24px)}}
+
+/* The change counters are keyboard-operable filters, with the original KPI appearance. */
+.kpi-action{font:inherit;text-align:left;cursor:pointer;width:100%;color:inherit}
+.kpi-action:hover{border-color:var(--accent);background:var(--hover)}
+.kpi-action:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
