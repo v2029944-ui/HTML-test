@@ -296,7 +296,7 @@ function resetScope(next){if(!next){scope=null;clearExtended();return;}scope=cop
  setDate('baseRangeEnd',scope.displayType,beforeEnd,force);
  for(const id of ['currentPeriod','currentRangeEnd','comparisonPeriod','comparisonRangeEnd','structureCurrent','usualPeriod'])setDate(id,scope.displayType,scope.to,force);
  for(const id of ['currentRangeStart','comparisonRangeStart'])setDate(id,scope.displayType,scope.from,force);
- if(!changesKind){$('changesType').value=scope.displayType;changesKind=scope.displayType;}
+ if(!changesKind||force){$('changesType').value=scope.displayType;changesKind=scope.displayType;}
  for(const id of ['changesFrom','changesTo'])setDate(id,changesKind,id==='changesFrom'?scope.from:scope.to);
  const yearOption=[...($('changesType').options||[])].find(option=>option.value==='year');if(scope.source==='daily'&&!yearOption){const option=UI.el('option','Годы');option.value='year';$('changesType').append(option);}if(yearOption)yearOption.disabled=scope.source!=='daily';if(scope.source!=='daily'&&changesKind==='year'){changesKind=scope.displayType;$('changesType').value=changesKind;for(const id of ['changesFrom','changesTo'])setDate(id,changesKind,scope.to,true);}
  const orgNames=UI.snapshot?.org_names||scope.organizations;if(!changeOrganizations.size)changeOrganizations=new Set(orgNames);

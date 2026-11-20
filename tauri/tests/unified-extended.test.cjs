@@ -134,3 +134,12 @@ test('imported week captions and one-period chart bounds show Sunday as the end'
  assert.match(table.caption,/01\.01\.2024 — 07\.01\.2024/);
  assert.equal(plots[0][0][0].end,'2024-01-07');
 });
+
+test('changing global calendar granularity resets an obsolete local change-view type',()=>{
+ const f=fixture();f.publish();
+ assert.equal(f.nodes.get('changesType').value,'day');
+ f.nodes.get('changesType').value='month';f.nodes.get('changesType').dispatch('change');
+ f.publish({source:'daily',displayType:'week',type:'day',from:'2024-01-01',to:'2024-01-07'});
+ assert.equal(f.nodes.get('changesType').value,'week');
+ assert.equal(f.nodes.get('changesPeriodOverride').hidden,true);
+});
