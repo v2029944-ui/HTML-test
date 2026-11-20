@@ -1046,7 +1046,7 @@ def check_delete_without_backup(page, temporary, confirmations):
     assert remaining[0]==[row for row in stored[0] if row[0]!=rows[0]['id']]
     assert remaining[1:]==stored[1:]
     assert_rejected(lambda:api(page,'nativeDeleteReport',revision,rows[1]['id']),
-                    'An old single-delete selection was accepted','Stale storage revision')
+                    'An old single-delete selection was accepted','stale storage revision')
     navigate(page,'storage')
     clear_revision=api(page,'nativeSettingsBootstrap')['revision']
     confirmations.cancel_then_accept(page.locator('#clearReports'),
@@ -1056,7 +1056,7 @@ def check_delete_without_backup(page, temporary, confirmations):
     assert cleared[0]==[] and cleared[1:]==stored[1:]
     assert {p.name for p in database.parent.glob('*.sqlite3')}==files,'Deletion created an unsolicited SQLite backup'
     assert_rejected(lambda:api(page,'unifiedClearReports',clear_revision),
-                    'An old clear-all selection was accepted','Stale storage revision')
+                    'An old clear-all selection was accepted','stale storage revision')
     with closing(sqlite3.connect(database)) as check:
         assert check.execute('PRAGMA foreign_key_check').fetchall()==[]
         for table in ['report_source_diagnostic_links','report_source_ownership']:
