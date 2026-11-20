@@ -188,6 +188,20 @@ fn wide_zero_day_prepares_applies_and_backfills_without_fabricated_rows() {
         )
         .unwrap();
     assert_eq!(receipt.rows, 0);
+    let report_notes = serde_json::to_value(storage.report_quality_page(
+        receipt.revision, &report.id, QualityScope::Report, 0, 50,
+    ).unwrap()).unwrap();
+    assert_eq!(report_notes["evidence"]["document_id"], report.id);
+    assert_eq!(report_notes["evidence"]["explicit_zero"], true);
+    assert_eq!(report_notes["evidence"]["sheet_name"], "Data");
+    assert_eq!(report_notes["evidence"]["coverage"], json!({"start":"2024-02-28","end":"2024-02-29"}));
+    let source_notes = serde_json::to_value(storage.report_quality_page(
+        receipt.revision, &report.id, QualityScope::Source, 0, 50,
+    ).unwrap()).unwrap();
+    assert_eq!(source_notes["evidence"]["missing_day_entries"], 1);
+    assert_eq!(source_notes["evidence"]["deferred_day_entries"], 0);
+    assert_eq!(source_notes["evidence"]["omitted_row_entries"], 0);
+    assert_eq!(storage.revision().unwrap(), receipt.revision);
     let loaded = storage.load().unwrap();
     assert_eq!(
         loaded["reports"]

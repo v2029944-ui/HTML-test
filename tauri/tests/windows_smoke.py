@@ -1,5 +1,5 @@
 """Run the packaged Tauri app through its real WebView2 and SQLite on an isolated Windows CI runner."""
-import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib,sqlite3
+import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib,sqlite3,io,zipfile
 from pathlib import Path
 from contextlib import contextmanager, closing
 from playwright.sync_api import expect, sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
@@ -432,6 +432,79 @@ def dashboard_month(page):
         'window.unifiedUI.scope?.from==="2024-02-01" && window.unifiedUI.scope?.to==="2024-02-29" '
         '&& document.querySelectorAll("#overviewKpis .kpi").length===4','February SQLite dashboard')
     wait_for_text(page,'#overviewKpis',page.evaluate('window.unifiedUI.fmt(580,"amount")'))
+
+
+
+def source_evidence_xlsx():
+    """One proven zero day and one blank leap day; no real user input."""
+    rows=[['Работа','2020-02-28','2020-02-28','2020-02-29','2020-02-29','Итого за период','Итого за период'],
+          ['', 'Количество','Сумма','Количество','Сумма','Количество','Сумма'],
+          ['СМУ16',0,0,None,None,0,0],['Итого',0,0,None,None,0,0]]
+    xml=[]
+    for row,values in enumerate(rows,1):
+        cells=[]
+        for col,value in enumerate(values):
+            if value is None or value=='':continue
+            address=chr(65+col)+str(row)
+            cells.append(f'<c r="{address}"><v>{value}</v></c>' if isinstance(value,int) else f'<c r="{address}" t="inlineStr"><is><t>{value}</t></is></c>')
+        xml.append(f'<row r="{row}">'+''.join(cells)+'</row>')
+    files={'xl/worksheets/sheet1.xml':'<worksheet><sheetData>'+''.join(xml)+'</sheetData></worksheet>',
+           'xl/workbook.xml':'<workbook xmlns:r="r"><sheets><sheet name="Проверка источника" r:id="r1"/></sheets></workbook>',
+           'xl/_rels/workbook.xml.rels':'<Relationships><Relationship Id="r1" Target="worksheets/sheet1.xml" Type="worksheet"/></Relationships>'}
+    output=io.BytesIO()
+    with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as archive:
+        for name,value in files.items():archive.writestr(name,value)
+    return output.getvalue()
+
+
+def check_source_evidence(page, temporary, output):
+    source=temporary/'zero-and-missing-day.xlsx';original=source_evidence_xlsx();source.write_bytes(original)
+    snapshot=api(page,'nativeSettingsBootstrap');before=snapshot['reports']
+    options={'year':2020,'sheets':[],'mappings':{},'organizations':snapshot['org_names']}
+    preview=api(page,'nativeWideImportPreview',str(source),options)
+    assert preview['reportCount']==1 and preview['rowCount']==0 and preview['conflicts']['new_reports']==1,preview
+    flags={'replaceExact':False,'acceptCrossType':False,'acceptQuality':False}
+    assert_rejected(lambda:api(page,'nativeWideImportApply',str(source),options,preview['reviewToken'],flags),
+                    'Source gaps bypassed explicit quality acknowledgment','quality')
+    assert api(page,'nativeSettingsBootstrap')['reports']==before
+    receipt=api(page,'nativeWideImportApply',str(source),options,preview['reviewToken'],flags|{'acceptQuality':True})
+    assert receipt['reports']==1 and receipt['rows']==0 and source.read_bytes()==original,receipt
+    assert page.evaluate('window.unifiedUI.refresh()')['reports']==before+1
+    revision=receipt['revision']
+    matrix=api(page,'nativeQualityMatrixPage',revision,'day','2020-02-28','2020-02-28',['СМУ16'])
+    cell=matrix['rows'][0]['cells'][0]
+    assert cell['available'] and cell['numeric_zero'] and not cell['has_activity'] and cell['warned_reports']==1,cell
+    rows=api(page,'nativeQualityMatrixReports',revision,'day','2020-02-28','СМУ16',None,20)['rows']
+    assert len(rows)==1,rows
+    report_id=rows[0]['id']
+    local=api(page,'nativeReportQualityPage',revision,report_id,'report',0,50)
+    assert local['evidence']['explicit_zero'] is True and local['evidence']['sheet_name']=='Проверка источника',local
+    assert local['evidence']['coverage']=={'start':'2020-02-28','end':'2020-02-29'},local
+    shared=api(page,'nativeReportQualityPage',revision,report_id,'source',0,50)
+    assert shared['evidence']['document_id']==report_id and shared['evidence']['missing_day_entries']==1,shared
+    assert shared['evidence']['deferred_day_entries']==0 and shared['evidence']['omitted_row_entries']==0,shared
+    gap=next(issue for issue in shared['issues'] if issue['kind']=='missing-day')
+    assert gap['date']=='2020-02-29' and gap['organization'] is None and gap['relevant'] is True and gap['scope']=='source-period',gap
+    navigate(page,'dashboard');page.locator('#periodType').select_option('day')
+    wait_for_app_state(page,'document.getElementById("overviewPeriod").type==="date" && window.unifiedUI.scope?.displayType==="day"','Day input and scope are ready')
+    page.locator('#overviewPeriod').fill('2020-02-28')
+    wait_for_app_state(page,'window.unifiedUI.scope?.from==="2020-02-28"','Synthetic zero report is selected')
+    details=page.locator('#overviewAlerts .coverage-details');details.locator(':scope > summary').click()
+    expect(details.locator('td.coverage-warning')).to_have_count(1)
+    expect(details.locator('td.coverage-warning')).to_contain_text('Нулевые значения')
+    details.locator('td.coverage-warning .coverage-cell-action').click()
+    inspection=details.locator('.coverage-inspection');inspection.locator('.coverage-report > details > summary').click()
+    expect(inspection).to_contain_text('Сохранён признак явного нуля')
+    expect(inspection).to_contain_text('Заявленный охват листа: 28.02.2020 — 29.02.2020')
+    inspection.get_by_role('button',name='Замечания источника',exact=True).click()
+    evidence=inspection.locator('.coverage-source-evidence')
+    expect(evidence).to_contain_text('Записи о пропусках дней источника: 1')
+    expect(evidence).to_contain_text('не устанавливает пропуск у выбранного подразделения')
+    expect(evidence).not_to_contain_text('Сохранён признак явного нуля')
+    expect(inspection.locator('.coverage-issue')).to_contain_text('Дата: 29.02.2020')
+    inspection.screenshot(path=str(output/'windows-sql-source-evidence.png'))
+    assert api(page,'nativeSettingsBootstrap')['revision']==revision,'Read-only evidence changed storage'
+    assert source.read_bytes()==original,'Evidence flow rewrote the source XLSX'
 
 
 def check_analytics(page, temporary, output):
@@ -1013,6 +1086,8 @@ def run():
                 page.locator('#storage').get_by_text('Восстановление выполнено',exact=False).wait_for()
                 assert workbook.read_bytes()==original_xlsx
                 report['checks'].append('Installed restart restores exactly the SQLite backup, retains the replaced data and displays confirmation')
+                check_source_evidence(page,tmp,output)
+                report['checks'].append('Saved source evidence distinguishes zero provenance, source-day gaps, unknown organization and acknowledgment without changing source XLSX or read-only revision')
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(report,ensure_ascii=False),flush=True)
 

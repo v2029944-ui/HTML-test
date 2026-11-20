@@ -17,6 +17,21 @@ function status(cell){
  if(cell.warned_reports)labels.push('Есть замечания');
  return labels.join(' · ')||'Нет пригодного отчёта';
 }
+function sourceEvidence(root,evidence,scope){
+ const data=evidence||{},section=el('div',null,'coverage-source-evidence');
+ const count=key=>Number.isSafeInteger(data[key])&&data[key]>=0?data[key]:0;
+ if(data.sheet_name)section.append(el('p','Лист отчёта: '+data.sheet_name,'muted small'));
+ if(data.coverage)section.append(el('p','Заявленный охват листа: '+range(data.coverage.start,data.coverage.end)+'. Границы не подтверждают полноту источника.','muted small'));
+ if(scope==='source')section.append(el('p','Признак нуля отчёта с общими замечаниями не доказывает ноль выбранной ячейки.','muted small'));
+ else section.append(el('p',data.explicit_zero===true?'Сохранён признак явного нуля. Это не подтверждает полноту источника.':data.explicit_zero===false?'Признак явного нуля: нет.':'Признак явного нуля не сохранён.','muted small'));
+ const missing=count('missing_day_entries');
+ section.append(el('p',missing?'Записи о пропусках дней источника: '+missing+'. Это не устанавливает пропуск у выбранного подразделения.':'Полнота источника не установлена.',missing?'warn small':'muted small'));
+ if(count('deferred_day_entries'))section.append(el('p','Отложенные замечания о пропусках дней: '+data.deferred_day_entries+'. В сохранённой диагностике отмечены как неактуальные.','muted small'));
+ if(count('unclassified_day_entries'))section.append(el('p','Записи о пропусках без достаточных сведений об актуальности или дате: '+data.unclassified_day_entries+'.','muted small'));
+ if(count('omitted_row_entries'))section.append(el('p',scope==='source'?'Исключённые строки в общих замечаниях: '+data.omitted_row_entries+'. Их связь с выбранным отчётом может быть неизвестна.':'Явно исключённые строки отчёта: '+data.omitted_row_entries+'. Сведения относятся к отчёту целиком.','warn small'));
+ if(count('invalid_fields'))section.append(el('p','Некорректных полей сохранённых сведений: '+data.invalid_fields+'. Эти поля не подтверждают полноту или ноль.','warn small'));
+ root.append(section);
+}
 async function render(root,s,active){
  const kind=s.type,pageSize=kind==='day'?31:12;
  const first=Date.parse(s.from+'T00:00:00Z'),last=Date.parse(s.to+'T00:00:00Z');
@@ -102,9 +117,15 @@ async function render(root,s,active){
     const result=await api.nativeReportQualityPage(s.revision,id,scope,offset,50);if(!current()||request!==sequence)return;
     if(!Array.isArray(result.issues)||result.issues.length>50)throw Error('Некорректная страница замечаний.');root.replaceChildren();
     if(scope==='source')root.append(el('p','Общие замечания источника могут относиться к другим датам и подразделениям.','muted small'));
+    sourceEvidence(root,result.evidence,scope);
     for(const issue of result.issues){
      const item=el('div',null,'coverage-issue');item.append(el('p',issue.reason||'Описание замечания не сохранено.'));
      const known=[];if(issue.organization)known.push('Подразделение: '+issue.organization);if(issue.date)known.push('Дата: '+date(issue.date));if(issue.sheet)known.push('Лист: '+issue.sheet);
+     if(Number.isSafeInteger(issue.source_row)&&issue.source_row>0)known.push('Строка: '+issue.source_row);
+     if(issue.scope==='source-period')item.append(el('p','Замечание периода источника. Его связь с выбранным подразделением может быть неизвестна.','muted small'));
+     if(issue.relevant===false)item.append(el('p','Сохранённая пометка: неактуально.','muted small'));
+     if(issue.relevant===true)item.append(el('p','Сохранённая пометка: актуально.','muted small'));
+     if(issue.skipped===true)item.append(el('p','Строка помечена как исключённая.','warn small'));
      const cells=[...(Array.isArray(issue.cells)?issue.cells:[]),issue.work_cell,issue.count_cell,issue.amount_cell].filter(Boolean);if(cells.length)known.push('Ячейки: '+[...new Set(cells)].join(', '));
      item.append(el('p',known.join(' · ')||'Лист, ячейки, дата и подразделение для этого замечания не сохранены.','muted small'));root.append(item);
     }
