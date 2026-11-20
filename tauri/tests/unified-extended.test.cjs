@@ -211,3 +211,41 @@ test('work view toggle keeps composition SQL request limited and uses existing c
  assert.equal(f.nodes.get('structurePanel').hidden,true);
  assert.equal(queries.length,1,'trends must not fetch composition rows');
 });
+
+test('department comparison dynamics include selected organizations beyond eight',async()=>{
+ const organizations=Array.from({length:10},(_,i)=>'Org '+i),plots=[],queries=[];
+ const f=fixture({
+  nativeAnalysisOrganizations:async()=>organizations.map(org=>({org,complete:true,missing:0,total:{count:2.5,amount:-10.75,average:-4.3}})),
+  nativeOrganizationTrends:async(_rev,_kind,_from,_to,orgs)=>{
+   queries.push(Array.from(orgs));return {granularity:'period',series:orgs.slice(0,8).map(organization=>({organization,points:[{start:'2024-01-02',missing:0,total:{count:2.5,amount:-10.75,average:-4.3}}]}))};
+  }
+ });
+ f.UI.drawChart=(...args)=>plots.push(args);f.UI.snapshot.org_names=organizations;
+ f.publish({organizations});f.nodes.get('comparisonMode').value='organizations';f.nodes.get('comparisonBaseOrg').value='Org 0';
+ f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ const chart=plots.filter(args=>args[4].orientation).at(-1);
+ assert.equal(chart[4].data[0].get('Org 9')?.amount,-10.75);
+ assert.deepEqual(queries,[organizations.slice(0,8),organizations.slice(8)]);
+});
+
+test('organization comparison overrides reset after a kind change and follow the shared interval',()=>{
+ const f=fixture();f.publish();f.nodes.get('comparisonMode').value='organizations';
+ f.nodes.get('comparisonPeriod').value='2024-01-03';f.nodes.get('comparisonPeriod').dispatch('change');
+ assert.equal(f.nodes.get('comparisonPeriodOverride').hidden,false);
+ f.publish({displayType:'week',from:'2024-01-08',to:'2024-01-14'});
+ f.publish({from:'2024-01-15',to:'2024-01-21'});
+ assert.equal(f.nodes.get('comparisonPeriod').value,'2024-01-21');
+ assert.equal(f.nodes.get('comparisonPeriodOverride').hidden,true);
+ f.nodes.get('comparisonPeriod').value='2024-01-14';f.nodes.get('comparisonPeriod').dispatch('change');
+ assert.equal(f.nodes.get('comparisonPeriodOverride').hidden,false);
+ f.nodes.get('comparisonPeriodReset').dispatch('click');
+ assert.equal(f.nodes.get('comparisonPeriod').value,'2024-01-21');
+ assert.equal(f.nodes.get('comparisonPeriodOverride').hidden,true);
+ f.nodes.get('comparisonScope').value='range';f.nodes.get('comparisonScope').dispatch('change');
+ assert.equal(f.nodes.get('comparisonPeriodOverride').hidden,false);
+ f.nodes.get('comparisonRangeStart').value='2024-01-01';f.nodes.get('comparisonRangeStart').dispatch('change');
+ f.nodes.get('comparisonPeriodReset').dispatch('click');
+ assert.equal(f.nodes.get('comparisonScope').value,'single');
+ assert.equal(f.nodes.get('comparisonRangeStart').value,'2024-01-15');
+ assert.equal(f.nodes.get('comparisonPeriodOverride').hidden,true);
+});

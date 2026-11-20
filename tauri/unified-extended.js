@@ -219,8 +219,13 @@ async function departmentComparison(task,positions){
   UI.drawChart([{type:s.displayType,start:s.from,end:visibleEnd(s)}],new Set(s.organizations),metric,plot,{chart:'bar',seriesType:'organizations',categories:s.organizations,data:[new Map(organizations.map(o=>[o.org,o.total]))]});
  }
  if(namePage){const state=task.s;state.positions=positions;const bar=UI.el('div',null,'change-pagination'),prev=UI.el('button','← Предыдущая','button secondary'),next=UI.el('button','Следующая →','button secondary');prev.type=next.type='button';prev.disabled=positions.length<=1;next.disabled=!namePage.next;prev.addEventListener('click',()=>comparison(positions.slice(0,-1)));next.addEventListener('click',()=>comparison([...positions,namePage.next]));bar.append(prev,UI.el('span','Страница '+positions.length+' · '+namePage.total_rows+' работ','muted small'),next);$('comparisonTable').append(bar);}
- const trends=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations,null,s.source==='daily'?s.displayType:null,s.selectedNames);
+ const trends=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(0,8),null,s.source==='daily'?s.displayType:null,s.selectedNames);
  if(!task.valid())return;
+ for(let offset=8;offset<s.organizations.length;offset+=8){
+  const page=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(offset,offset+8),null,s.source==='daily'?s.displayType:null,s.selectedNames);
+  if(!task.valid())return;
+  trends.series.push(...page.series);
+ }
  const first=trends.series?.[0]?.points||[],kind=trends.granularity==='period'?s.displayType:trends.granularity,periods=first.map(p=>({type:kind,start:p.start.length===7?p.start+'-01':p.start,end:periodEnd(p.start.length===7?p.start+'-01':p.start,kind)}));
  const data=first.map((p,i)=>new Map(trends.series.map(series=>[series.organization,series.points[i]?.missing===0?series.points[i].total:{count:null,amount:null,average:null}])));
  for(const metric of chosen){const plot=UI.el('div',null,'metric-plot');$('comparisonDynamicsPlots').append(plot);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'bar',orientation:orientation(),seriesType:'organizations',categories:s.organizations,data});}
@@ -283,7 +288,7 @@ async function patterns(mode,positions=[null]){
 function clearExtended(){for(const name of channels.keys())invalidate(name);for(const id of ['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis','contributionResults','contributionCheck','structureResults','usualResults','usualCoverage','regularityResults','regularityCoverage','changesResults','changesWarnings','changesSummary'])clear(id);$('analyticsDetails').hidden=true;$('changeDetails').hidden=true;}
 
 const localPeriods={
- comparison:['basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd'],
+ comparison:['basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd'],
  structure:['structureBase','structureCurrent'],
  changes:['changesFrom','changesTo']
 };
@@ -291,35 +296,40 @@ function periodExpected(id){
  if(!scope)return null;
  if(['basePeriod','baseRangeStart','structureBase'].includes(id))return scope.baseFrom||previous(scope.from,scope.displayType);
  if(id==='baseRangeEnd')return scope.baseTo||scope.baseFrom||previous(scope.from,scope.displayType);
- if(['currentRangeStart','changesFrom'].includes(id))return scope.from;
+ if(['currentRangeStart','comparisonRangeStart','changesFrom'].includes(id))return scope.from;
  return scope.to;
 }
 function updatePeriodOverrides(){
  for(const [name,ids] of Object.entries(localPeriods)){
   const indicator=$(name+'PeriodOverride');if(!indicator)continue;
-  const different=Boolean(scope)&&ids.some(id=>{
+  const organizations=name==='comparison'&&value('comparisonMode')==='organizations';
+  const mode=organizations?'comparisonScope':'periodComparisonScope';
+  const activeIds=name!=='comparison'?ids:organizations?
+   value(mode)==='range'?['comparisonRangeStart','comparisonRangeEnd']:['comparisonPeriod']:
+   value(mode)==='range'?['baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd']:['basePeriod','currentPeriod'];
+  const different=Boolean(scope)&&activeIds.some(id=>{
    const control=$(id);
    if(!control?.dataset.unifiedTouched)return false;
    const kind=name==='changes'?changesKind:scope.displayType,expected=periodExpected(id);
    const expectedInput=window.nativePeriodSelection?.fromIsoDate?.(expected,kind)||expected;
    return control.value!==expectedInput;
   });
-  indicator.hidden=!different&&!(name==='comparison'&&scope&&$('periodComparisonScope')?.dataset.unifiedTouched&&value('periodComparisonScope')!==(scope.overviewMode==='range'?'range':'single'))&&
+  indicator.hidden=!different&&!(name==='comparison'&&scope&&$(mode)?.dataset.unifiedTouched&&value(mode)!==(scope.overviewMode==='range'?'range':'single'))&&
     !(name==='changes'&&scope&&(changesKind!==scope.displayType||value('changesMethod')==='range'));
  }
 }
 function resetLocalPeriod(name){
  if(!scope)return;
  for(const id of localPeriods[name]||[])if($(id)?.dataset)delete $(id).dataset.unifiedTouched;
- if(name==='comparison'&&$('periodComparisonScope')?.dataset)delete $('periodComparisonScope').dataset.unifiedTouched;
+ if(name==='comparison')for(const id of ['periodComparisonScope','comparisonScope'])if($(id)?.dataset)delete $(id).dataset.unifiedTouched;
  if(name==='changes'){changesKind=scope.displayType;$('changesType').value=changesKind;$('changesMethod').value='previous';}
  resetScope(scope);
 }
 function resetScope(next){if(!next){scope=null;clearExtended();return;}scope=copyScope(next);for(const name of channels.keys())invalidate(name);$('analyticsDetails').hidden=true;$('changeDetails').hidden=true;
  const force=dateKind!==scope.displayType;dateKind=scope.displayType;
- if(force){for(const ids of Object.values(localPeriods))for(const id of ids)if($(id)?.dataset)delete $(id).dataset.unifiedTouched;if($('periodComparisonScope')?.dataset)delete $('periodComparisonScope').dataset.unifiedTouched;}
+ if(force){for(const ids of Object.values(localPeriods))for(const id of ids)if($(id)?.dataset)delete $(id).dataset.unifiedTouched;for(const id of ['periodComparisonScope','comparisonScope'])if($(id)?.dataset)delete $(id).dataset.unifiedTouched;}
  const before=scope.baseFrom||previous(scope.from,scope.displayType),beforeEnd=scope.baseTo||before;
- if(!$('periodComparisonScope')?.dataset.unifiedTouched)$('periodComparisonScope').value=scope.overviewMode==='range'?'range':'single';
+ for(const id of ['periodComparisonScope','comparisonScope'])if(!$(id)?.dataset.unifiedTouched)$(id).value=scope.overviewMode==='range'?'range':'single';
  for(const id of ['basePeriod','baseRangeStart','structureBase'])setDate(id,scope.displayType,before,force);
  setDate('baseRangeEnd',scope.displayType,beforeEnd,force);
  for(const id of ['currentPeriod','currentRangeEnd','comparisonPeriod','comparisonRangeEnd','structureCurrent','usualPeriod'])setDate(id,scope.displayType,scope.to,force);
@@ -354,7 +364,8 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
  $('workViewMode')?.addEventListener('change',workView);
  workView();
  const dateIds=['changesFrom','changesTo','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','structureBase','structureCurrent','usualPeriod'];for(const id of dateIds){for(const event of ['input','change'])$(id)?.addEventListener(event,()=>{$(id).dataset.unifiedTouched='true';updatePeriodOverrides();});}
- $('periodComparisonScope')?.addEventListener('change',()=>{$('periodComparisonScope').dataset.unifiedTouched='true';updatePeriodOverrides();});
+ for(const id of ['periodComparisonScope','comparisonScope'])$(id)?.addEventListener('change',()=>{$(id).dataset.unifiedTouched='true';updatePeriodOverrides();});
+ $('comparisonMode').addEventListener('change',updatePeriodOverrides);
  for(const name of Object.keys(localPeriods))$(name+'PeriodReset')?.addEventListener('click',()=>resetLocalPeriod(name));
  $('changesType')?.addEventListener('change',updatePeriodOverrides);
  $('changesMethod')?.addEventListener('change',updatePeriodOverrides);

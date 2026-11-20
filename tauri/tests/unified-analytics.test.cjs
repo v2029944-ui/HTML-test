@@ -236,3 +236,21 @@ test('stale coverage responses cannot populate a replaced period',async()=>{
  assert.equal(descendants(details).filter(n=>n.tagName==='TABLE').length,0);
  assert.doesNotMatch(f.nodes.get('overviewAlerts').textContent,/02\.01\.2024/);
 });
+
+test('department charts and CSV retain organizations after the first eight series',async()=>{
+ const organizations=Array.from({length:10},(_,i)=>'Org '+i),queries=[];
+ const f=fixture({
+  nativeOrganizationTrends:async(_rev,_kind,_from,_to,orgs)=>{
+   queries.push(Array.from(orgs));return {granularity:'period',series:orgs.slice(0,8).map(organization=>({organization,points:[{start:'2024-01-02',missing:0,total:{count:2.5,amount:-10.75,average:-4.3}}]}))};
+  },
+  nativeAnalysisOrganizations:async()=>organizations.map(org=>({org,complete:true,total:{count:2.5,amount:-10.75,average:-4.3}}))
+ });
+ f.UI.snapshot.org_names=organizations;f.UI.state.selectedOrganizations=new Set(organizations);f.UI.state.chartMetrics=new Set(['amount']);
+ await f.bootstrap();f.nodes.get('chartBreakdown').value='organizations';
+ f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ assert.equal(f.draws.at(-1)[4].data[0].get('Org 9')?.amount,-10.75);
+ f.buttons.find(button=>button.dataset.chart==='table').dispatch('click');await settle();
+ const table=f.tables.findLast(t=>t.root==='dataTable');
+ assert.equal(table.options.csvRows.length,10);assert.equal(table.options.csvRows[9][2],-10.75);
+ assert.ok(queries.every(orgs=>orgs.length<=8));
+});

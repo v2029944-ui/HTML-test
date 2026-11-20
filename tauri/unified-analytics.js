@@ -241,8 +241,14 @@ async function renderCharts(positions=seriesPositions){
 async function departmentCharts(base,isCurrent){
  const all=value('chartOrgScope')==='all',s={...base,selectedNames:all?[]:base.selectedNames},chosen=[...state.chartMetrics];
  if(!all&&!base.allNames&&!selectedRows.size)throw Error('Нет отмеченных работ. Выберите работы или учитывайте все выполненные работы.');
- const [trends,organizations]=await Promise.all([api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations,null,s.source==='daily'?s.displayType:null,s.selectedNames),api.nativeAnalysisOrganizations(s.revision,s.type,s.from,s.to,s.organizations,null,s.selectedNames)]);
- if(!isCurrent())return;for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id);
+ const [trends,organizations]=await Promise.all([api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(0,8),null,s.source==='daily'?s.displayType:null,s.selectedNames),api.nativeAnalysisOrganizations(s.revision,s.type,s.from,s.to,s.organizations,null,s.selectedNames)]);
+ if(!isCurrent())return;
+ for(let offset=8;offset<s.organizations.length;offset+=8){
+  const page=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(offset,offset+8),null,s.source==='daily'?s.displayType:null,s.selectedNames);
+  if(!isCurrent())return;
+  trends.series.push(...page.series);
+ }
+ for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id);
  const rawSeries=trends.series||[],first=rawSeries[0]?.points||[],keep=first.map((p,i)=>!$('hideEmptyPeriods').checked||!rawSeries.every(series=>confirmedZero(series.points[i]))),points=first.filter((p,i)=>keep[i]),periods=descriptors(points,trends.granularity,s);
  const data=first.map((p,i)=>new Map(rawSeries.map(series=>[series.organization,series.points[i]?.missing===0?series.points[i].total:{count:null,amount:null,average:null}]))).filter((p,i)=>keep[i]);
  if(state.chart==='table'){
