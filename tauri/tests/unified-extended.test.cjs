@@ -166,3 +166,24 @@ test('hidden advanced controls advertise an active KPI direction filter',async()
  f.nodes.get('changesDirection').value='all';f.nodes.get('changesDirection').dispatch('change');await settle();
  assert.doesNotMatch(f.nodes.get('changesActiveFilter').textContent,/снижение/);
 });
+
+test('import warnings are not mislabeled as missing comparisons',async()=>{
+ const p=page('Import note');
+ p.summary.totals.import_warning_pairs=4;
+ p.summary.totals.missing_pairs=0;
+ const f=fixture({unifiedChangesPage:async()=>p});f.publish();f.view('changes');await settle();
+ const message=f.nodes.get('changesWarnings').textContent;
+ assert.match(message,/Сопоставимых строк по текущим фильтрам: 1/);
+ assert.match(message,/Пар с замечаниями импорта: 4/);
+ assert.doesNotMatch(message,/Нет данных для сравнения: 0|не включены в сопоставление/);
+});
+test('missing report pairs are reported separately with formatted dates',async()=>{
+ const p=page('Missing');
+ p.summary.totals.missing_pairs=2;
+ p.missing_examples=[{org:'A',missing_base:true,base_start:'2024-01-01',missing_current:false}];
+ const f=fixture({unifiedChangesPage:async()=>p});f.publish();f.view('changes');await settle();
+ const message=f.nodes.get('changesWarnings').textContent;
+ assert.match(message,/Нет полной пары отчётов: 2/);
+ assert.match(message,/не включены в сопоставление/);
+ assert.match(message,/01\.01\.2024/);
+});

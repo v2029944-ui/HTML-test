@@ -119,8 +119,17 @@ async function changes(positions=[null]){
  try{const captured=changeContext(),result=await api.unifiedChangesPage(captured.request,captured.options,positions.at(-1));if(!task.valid())return;
   clear('changesResults');clear('changesWarnings');renderChangeSummary(result.summary,captured.options.metrics);
   const diagnostic=result.summary.totals;
-  if(diagnostic?.missing_pairs||diagnostic?.invalid_reports||diagnostic?.duplicate_issues||diagnostic?.overlap_issues||diagnostic?.import_warning_pairs){$('changesWarnings').append(UI.el('p','Нет данных для сравнения: '+diagnostic.missing_pairs+' пар подразделений и периодов. Замечаний импорта: '+diagnostic.import_warning_pairs+', некорректных отчётов: '+diagnostic.invalid_reports+', повторов: '+diagnostic.duplicate_issues+', пересечений: '+diagnostic.overlap_issues+'. Пропуски не считаются нулём.','warn small'));}
-  for(const pair of result.missing_examples||[])$('changesWarnings').append(UI.el('p',pair.org+': нет полного отчёта за '+[pair.missing_base?pair.base_start:null,pair.missing_current?pair.current_start:null].filter(Boolean).join(', '),'warn small'));
+  if(diagnostic?.missing_pairs||diagnostic?.invalid_reports||diagnostic?.duplicate_issues||diagnostic?.overlap_issues||diagnostic?.import_warning_pairs){
+   const problems=[];
+   if(diagnostic.missing_pairs>0)problems.push('Нет полной пары отчётов: '+diagnostic.missing_pairs+' (не включены в сопоставление).');
+   if(diagnostic.import_warning_pairs>0)problems.push('Пар с замечаниями импорта: '+diagnostic.import_warning_pairs+' (проверьте источник; замечание не означает автоматического исключения).');
+   if(diagnostic.invalid_reports>0)problems.push('Некорректных отчётов: '+diagnostic.invalid_reports+'.');
+   if(diagnostic.duplicate_issues>0)problems.push('Повторных отчётов: '+diagnostic.duplicate_issues+'.');
+   if(diagnostic.overlap_issues>0)problems.push('Пересекающихся отчётов: '+diagnostic.overlap_issues+'.');
+   const total=Number.isSafeInteger(result.total_rows)?result.total_rows:result.summary.rows;
+   $('changesWarnings').append(UI.el('p','Сопоставимых строк по текущим фильтрам: '+total+'. '+problems.join(' ')+' Пропуски не считаются нулём.','warn small'));
+  }
+  for(const pair of result.missing_examples||[])$('changesWarnings').append(UI.el('p',pair.org+': нет полного отчёта за '+[pair.missing_base?pair.base_start:null,pair.missing_current?pair.current_start:null].filter(Boolean).map(date=>periodLabel(date,captured.scope.displayType)).join(', '),'warn small'));
   if(!result.rows.length)clear('changesResults','Нет сопоставимых записей по выбранным условиям. Измените фильтры или проверьте наличие соседних отчётов.');
   const rows=[],raw=[];
   for(const row of result.rows)for(const metric of captured.options.metrics){const m=changeMeasure(row,metric),name=itemButton(row,{...captured.scope,from:row.baseStart,to:captured.scope.source==='daily'?periodEnd(row.currentStart,captured.scope.displayType):row.currentStart},row.org,'change');const direction=changeLabel(row,m),kind=m.smallBase?' · малая база':'';
