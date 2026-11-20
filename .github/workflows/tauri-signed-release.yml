@@ -172,6 +172,24 @@ jobs:
           if (!(Test-Path $exe) -or !(Test-Path "$exe.sig")) { throw 'Missing signed release files' }
           node tauri/check-update-signing.cjs "$exe.sig"
           if ($LASTEXITCODE -ne 0) { throw 'Signing key mismatch' }
+          # Verify the actual installer bytes with the configured updater public key.
+          @'
+          const fs = require('node:fs');
+          const crypto = require('node:crypto');
+          const exe = process.argv[2];
+          const unpack = text => text.startsWith('untrusted comment:') ? text : Buffer.from(text, 'base64').toString('utf8');
+          const publicText = process.env.ANALIZ_UPDATER_PUBLIC_KEY.trim();
+          const raw = Buffer.from(publicText, 'base64');
+          const key = raw.length === 42 ? raw : Buffer.from(unpack(publicText).trim().split(/\r?\n/)[1], 'base64');
+          const sig = Buffer.from(unpack(fs.readFileSync(exe + '.sig', 'utf8').trim()).trim().split(/\r?\n/)[1], 'base64');
+          const alg = sig.subarray(0, 2).toString();
+          if (key.length !== 42 || sig.length !== 74 || !['ED','Ed'].includes(alg) || !key.subarray(2,10).equals(sig.subarray(2,10))) throw Error('Invalid updater signature');
+          const bytes = fs.readFileSync(exe);
+          const payload = alg === 'ED' ? crypto.createHash('blake2b512').update(bytes).digest() : bytes;
+          const der = Buffer.concat([Buffer.from('302a300506032b6570032100','hex'),key.subarray(10)]);
+          if (!crypto.verify(null,payload,{key:der,format:'der',type:'spki'},sig.subarray(10))) throw Error('Invalid installer signature');
+          '@ | node - $exe
+          if ($LASTEXITCODE -ne 0) { throw 'Signed installer verification failed' }
           New-Item -ItemType Directory -Force 'tauri/test-artifacts' | Out-Null
           Copy-Item $exe 'tauri/test-artifacts/setup.exe'
           Copy-Item "$exe.sig" 'tauri/test-artifacts/setup.exe.sig'
