@@ -26,6 +26,9 @@ pub use report_calendar::ReportCalendar;
 #[path = "report_quality.rs"]
 mod report_quality;
 pub use report_quality::{QualityScope, ReportQualityPage};
+#[path = "unified_reports.rs"]
+mod unified_reports;
+pub use unified_reports::{UnifiedQualityFilter, UnifiedQualityPage, UnifiedCalendar};
 
 #[path = "backup.rs"]
 mod backup;
@@ -911,6 +914,7 @@ mod tests {
         let cancel = operation.job.cancellation();
         let mut stage = area.ingest_opened(path, file, Limits::default(), cancel, |_|{}).unwrap();
         stage.convert_legacy(&LegacyOptions {
+            period_dates: None,
             sheet:"xl/worksheets/sheet1.xml".into(),
             kind:rule.kind.clone(),
             start:rule.start.clone(),

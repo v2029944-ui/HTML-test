@@ -5,6 +5,7 @@ pub use prepared::{
     ImportMode, PrepareProgress, PreparedImport, PreparedReport, QualityCounts, SourceDiagnostics,
 };
 mod wide;
+mod catalog;
 pub use wide::{Coverage, ReportProvenance, SourceIssue, WideMapping, WideOptions, WideSheet};
 mod zip_index;
 use fs2::FileExt;

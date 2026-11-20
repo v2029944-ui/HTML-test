@@ -6,13 +6,11 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {prepareHtml}=require('../prepare.cjs');
 
-test('generated frontend preserves original HTML and inserts bridge before inline startup',()=>{
-  const html='<!doctype html><html><head></head><body><script>window.appReady=main();</script></body></html>';
-  const out=prepareHtml(html);
-  assert.equal(html.includes('tauri-bridge'),false);
-  assert.ok(out.indexOf('tauri-bridge.js')<out.indexOf('window.appReady=main();'));
-  assert.ok(out.indexOf('tauri-folder-importer.js')>out.indexOf('window.appReady=main();'));
-  assert.throws(()=>prepareHtml(out),/уже присутствуют/);
+test('generated frontend keeps canonical markup, retires inline bootstrap and rejects double preparation',()=>{
+ const source=fs.readFileSync(path.resolve(__dirname,'../../index.html'),'utf8'),out=prepareHtml(source);
+ assert.ok(out.indexOf('tauri-bridge.js')<out.indexOf('tauri-unified-original.js'));
+ assert.doesNotMatch(out,/window\.appReady=main\(\);|tauri-folder-importer/);
+ assert.throws(()=>prepareHtml(out),/уже присутствуют/);
 });
 
 test('bridge passes load, save and configured Excel directory operations to native commands',async()=>{
@@ -44,25 +42,16 @@ test('native command bridge is absent from the original browser-only HTML',()=>{
   assert.ok(html.includes('indexedDB.open(DB_NAME,DB_VERSION)'));
 });
 
-test('Tauri build copies the current HTML-test interface and current Excel importer without divergence',()=>{
-  const os=require('node:os');
-  const root=path.resolve(__dirname,'../..');
-  const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'tauri-parity-'));
-  try{
-    const {prepare}=require('../prepare.cjs');
-    const prepared=prepare({base:root,output:tmp});
-    const source=fs.readFileSync(path.join(root,'index.html'),'utf8');
-    const folderImporter=fs.readFileSync(path.join(root,'tauri/folder-importer.js'),'utf8');
-    const built=fs.readFileSync(path.join(tmp,'index.html'),'utf8');
-    const adapted=fs.readFileSync(path.join(tmp,'tauri-folder-importer.js'),'utf8');
-    assert.equal(built,prepareHtml(source),'Tauri must use the complete latest HTML');
-    assert.equal(prepared.sourceBytes,Buffer.byteLength(source,'utf8'));
-    assert.equal(adapted,folderImporter.replace(
-      'Резервная копия: reports.json.bak. Данные не находятся в браузере.',
-      'Используется SQLite. Исходный reports.json сохраняется после переноса; делайте отдельные резервные копии.'
-    ),'Tauri must use the complete latest Excel folder importer');
-    assert.ok(fs.existsSync(path.join(tmp,'tauri-bridge.js')));
-  }finally{fs.rmSync(tmp,{recursive:true,force:true});}
+test('Tauri build copies the current canonical interface and native XLSX controller',()=>{
+ const os=require('node:os'),root=path.resolve(__dirname,'../..'),tmp=fs.mkdtempSync(path.join(os.tmpdir(),'tauri-parity-'));
+ try{
+  const {prepare}=require('../prepare.cjs'),prepared=prepare({base:root,output:tmp}),source=fs.readFileSync(path.join(root,'index.html'),'utf8');
+  assert.equal(fs.readFileSync(path.join(tmp,'index.html'),'utf8'),prepareHtml(source));
+  assert.equal(prepared.sourceBytes,Buffer.byteLength(source,'utf8'));
+  assert.equal(fs.readFileSync(path.join(tmp,'tauri-unified-reports.js'),'utf8'),fs.readFileSync(path.join(root,'tauri/unified-reports.js'),'utf8'));
+  assert.ok(fs.existsSync(path.join(tmp,'tauri-bridge.js')));
+  assert.ok(!fs.existsSync(path.join(tmp,'tauri-folder-importer.js')));
+ }finally{fs.rmSync(tmp,{recursive:true,force:true});}
 });
 
 test('all HTML-test reporting period types are supported by native Tauri SQLite',()=>{

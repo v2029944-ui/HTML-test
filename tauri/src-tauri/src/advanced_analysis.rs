@@ -94,7 +94,7 @@ impl Calendar {
     }
 }
 
-fn prepare_changes(
+pub(super) fn prepare_changes(
     c: &Connection,
     s: &AnalysisScope,
     q: &ChangeQuery,
@@ -416,16 +416,39 @@ impl Storage {
         window: i32,
         after: Option<&str>,
     ) -> Result<PatternPage, String> {
+        self.patterns_filtered(revision,s,q,grouping,mode,window,after,None)
+    }
+
+    pub fn unified_pattern_page(
+        &self, revision:i64, s:&AnalysisScope, q:&ChangeQuery, grouping:Option<&str>,
+        mode:&str, window:i32, options:&UnifiedPatternOptions, after:Option<&str>,
+    )->Result<PatternPage,String> {
+        if options.search.len()>512 || !matches!(options.status.as_str(),"all"|"frequent"|"rare"|"rarer"|"disappeared"|"new"|"dormant")
+            || (mode=="usual" && options.status!="all") {return Err("Invalid pattern filters".into())}
+        self.patterns_filtered(revision,s,q,grouping,mode,window,after,Some(options))
+    }
+
+    fn patterns_filtered(
+        &self, revision:i64, s:&AnalysisScope, q:&ChangeQuery, grouping:Option<&str>,
+        mode:&str, window:i32, after:Option<&str>, options:Option<&UnifiedPatternOptions>,
+    )->Result<PatternPage,String> {
         if !matches!(mode, "usual" | "regularity") || !matches!(window, 4 | 8) {
             return Err("Invalid pattern mode or window".into());
         }
-        if let Some(key) = after {
+        if let Some(key) = after.filter(|_|options.is_none()) {
             key_bound(key)?;
         }
         let calendar = Calendar::new(s, q, grouping)?;
         let mut conn = self.connect()?;
         let tx = conn.transaction().map_err(err)?;
         workspace(&tx, revision, s)?;
+        let fingerprint=if let Some(options)=options {
+            super::unified_analytics::presentation_functions(&tx)?;
+            Some(super::unified_analytics::fingerprint(&tx,revision,s,json!([q,grouping,mode,window,options]))?)
+        }else{None};
+        let offset=if let Some(fingerprint)=fingerprint.as_deref() {
+            super::unified_analytics::page_offset(after,fingerprint)?
+        }else{0};
         calendar.facts(&tx, s, None)?;
         tx.execute_batch("CREATE TEMP TABLE adv_complete(label TEXT PRIMARY KEY) WITHOUT ROWID;
           CREATE TEMP TABLE adv_dates(label TEXT PRIMARY KEY,slot INTEGER,complete INTEGER) WITHOUT ROWID;
@@ -486,18 +509,17 @@ impl Storage {
                 d = prev;
             }
         }
-        let mut stmt=tx.prepare("SELECT key,name,kind FROM adv_keys WHERE ?1 IS NULL OR key>?1 ORDER BY key LIMIT 51").map_err(err)?;
-        let mut keys = stmt
-            .query_map([after], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                ))
-            })
-            .map_err(err)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(err)?;
+        // The filtered path streams one computed row into a temporary SQL
+        // table at a time. Filtering/sorting/summary/LIMIT then share one view;
+        // neither historical reports nor all computed rows enter a JS array.
+        if options.is_some() {tx.execute_batch("CREATE TEMP TABLE unified_patterns(key TEXT PRIMARY KEY,name TEXT,data TEXT) WITHOUT ROWID").map_err(err)?;}
+        let sql=if options.is_some() {"SELECT key,name,kind FROM adv_keys WHERE ?1 IS NULL ORDER BY key"}else{"SELECT key,name,kind FROM adv_keys WHERE ?1 IS NULL OR key>?1 ORDER BY key LIMIT 51"};
+        let mut stmt=tx.prepare(sql).map_err(err)?;
+        let mut iterator=stmt.query([if options.is_some(){None}else{after}]).map_err(err)?;
+        let mut keys=Vec::new();
+        if options.is_none() {
+          while let Some(r)=iterator.next().map_err(err)? {keys.push((r.get::<_,String>(0).map_err(err)?,r.get::<_,String>(1).map_err(err)?,r.get::<_,String>(2).map_err(err)?));}
+        }
         let next = if keys.len() > 50 {
             keys.pop();
             keys.last().map(|k| k.0.clone())
@@ -505,7 +527,12 @@ impl Storage {
             None
         };
         let mut rows = Vec::new();
-        for (key, name, kind) in keys {
+        let mut legacy_keys=keys.into_iter();
+        loop {
+            let next_key=if options.is_some() {
+                iterator.next().map_err(err)?.map(|r|Ok::<_,String>((r.get::<_,String>(0).map_err(err)?,r.get::<_,String>(1).map_err(err)?,r.get::<_,String>(2).map_err(err)?))).transpose()?
+            }else{legacy_keys.next()};
+            let Some((key,name,kind))=next_key else {break};
             let mut row = if usual {
                 let (bc,ba,ac,aa):(f64,f64,f64,f64)=tx.query_row("SELECT
                     coalesce(sum(count) FILTER(WHERE slot=0),0),coalesce(sum(amount) FILTER(WHERE slot=0),0),
@@ -535,10 +562,24 @@ impl Storage {
             };
             row["name"] = json!(name);
             row["kind"] = json!(kind);
-            rows.push(row);
+            if options.is_some() {
+                tx.execute("INSERT INTO unified_patterns VALUES(?1,?2,?3)",params![key,name,serde_json::to_string(&row).map_err(err)?]).map_err(err)?;
+            }else {rows.push(row);}
+        }
+        let mut total_rows=count_sql(&tx,"SELECT count(*) FROM adv_keys")?;
+        let mut next=next;
+        if let Some(options)=options {
+            let term=super::unified_analytics::normalized(&options.search);
+            tx.execute("DELETE FROM unified_patterns WHERE instr(classic_normalized(name),?1)=0 OR (?2<>'all' AND NOT EXISTS(SELECT 1 FROM json_each(json_extract(data,'$.statuses')) WHERE value=?2))",params![term,options.status]).map_err(err)?;
+            total_rows=count_sql(&tx,"SELECT count(*) FROM unified_patterns")?;
+            let order=if term.is_empty(){"key"}else{"(instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key"};
+            let mut query=tx.prepare(&format!("SELECT data FROM unified_patterns WHERE ?1 IS NOT NULL ORDER BY {order} LIMIT 51 OFFSET ?2")).map_err(err)?;
+            let mut result=query.query(params![term,offset]).map_err(err)?;
+            while let Some(r)=result.next().map_err(err)? {rows.push(serde_json::from_str(&r.get::<_,String>(0).map_err(err)?).map_err(err)?);}
+            next=if rows.len()>50 {rows.pop();Some(super::unified_analytics::next_cursor(fingerprint.as_deref().unwrap(),offset+50)?)}else{None};
         }
         Ok(PatternPage {
-            total_rows: count_sql(&tx, "SELECT count(*) FROM adv_keys")?,
+            total_rows,
             rows,
             next,
             used: if usual { previous } else { used },
@@ -579,6 +620,14 @@ impl Storage {
         metric: &str,
         after: Option<&ContributionCursor>,
     ) -> Result<Value, String> {
+        self.advanced_composition_limit(revision,s,selection,grouping,before,mode,metric,after,12)
+    }
+
+    pub fn advanced_composition_limit(
+        &self, revision:i64, s:&AnalysisScope, selection:&ChangeQuery, grouping:Option<&str>,
+        before:&RangeQuery, mode:&str, metric:&str, after:Option<&ContributionCursor>, structure_limit:usize,
+    )->Result<Value,String> {
+        if !matches!(structure_limit,10|12|20) {return Err("Structure limit must be 10 or 20".into());}
         let mut base = selection.clone();
         base.from = before.from.clone();
         base.to = before.to.clone();
@@ -648,8 +697,8 @@ impl Storage {
             )
             .map_err(err)?;
             let mut stmt=tx.prepare(&format!("WITH ranked AS (SELECT key,name,kind,{b} base,{a} current,row_number() OVER(ORDER BY abs({a}) DESC,name COLLATE classic_ru,encounter) n FROM an_comparison JOIN adv_encounter USING(key))
-                SELECT key,name,kind,base,current,n,0 FROM ranked WHERE n<=12 UNION ALL
-                SELECT NULL,'Остальные услуги ('||count(*)||')',NULL,sum(base),sum(current),13,1 FROM ranked WHERE n>12 HAVING count(*)>0 ORDER BY 6")).map_err(err)?;
+                SELECT key,name,kind,base,current,n,0 FROM ranked WHERE n<={structure_limit} UNION ALL
+                SELECT NULL,'Остальные услуги ('||count(*)||')',NULL,sum(base),sum(current),{others},1 FROM ranked WHERE n>{structure_limit} HAVING count(*)>0 ORDER BY 6",others=structure_limit+1)).map_err(err)?;
             let mut data = stmt.query([]).map_err(err)?;
             let mut cumulative = 0.;
             while let Some(r) = data.next().map_err(err)? {

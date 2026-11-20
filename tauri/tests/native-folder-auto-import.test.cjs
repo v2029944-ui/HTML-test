@@ -15,7 +15,7 @@ function mount(options={}){
   target.rules[name]={format:'legacy',type:'day',start:'2024-01-01',sheet:''};
  };
  add('one.xlsx');
- const window={confirm:()=>true,nativeWorkspaceRefresh:async()=>{calls.push('refresh');return true;},desktopAPI:{
+ const window={confirm:options.confirm||(()=>true),nativeWorkspaceRefresh:async()=>{calls.push('refresh');return true;},desktopAPI:{
   nativeFolderImportSession:async enabled=>{calls.push(['session',enabled]);return enabled?'session-1':null;},
   nativeFolderImportPreview:async request=>{calls.push(['preview',request]);return options.preview?options.preview(request,preview):preview;},
   nativeFolderImportApply:async(request,token)=>{calls.push(['apply',request,token]);return {reports:1,revision:request.revision+1};},
@@ -86,4 +86,19 @@ test('bounded passes drain more than 100 files and quarantine a corrupt file wit
  assert.ok(x.calls.includes('refresh'));
  await x.auto.updateSnapshot(x.snapshot);
  assert.equal(x.requests('preview').filter(r=>r.name==='bad.xlsx').length,1);
+});
+
+test('asynchronous consent keeps autoimport off until accepted, and cancellation cannot enable a stale lease',async()=>{
+ const consent=deferred(),x=mount({confirm:()=>consent.result});const opening=x.toggle(true);
+ assert.equal(x.calls.length,0);assert.equal(x.auto.isEnabled(),false);
+ await x.toggle(false);consent.resolve(true);await opening;
+ assert.deepEqual(x.requests('session'),[false]);assert.equal(x.requests('apply').length,0);assert.equal(x.auto.isEnabled(),false);
+ const denied=deferred(),y=mount({confirm:()=>denied.result});const pending=y.toggle(true);denied.resolve(false);await pending;
+ assert.equal(y.calls.length,0);assert.equal(y.e.sourceAutoImport.checked,false);
+ const accepted=deferred(),z=mount({confirm:()=>accepted.result});const start=z.toggle(true);accepted.resolve(true);await start;
+ assert.deepEqual(z.requests('session'),[true]);assert.equal(z.requests('apply').length,1);
+});
+test('rejected asynchronous consent leaves no enabled autoimport session',async()=>{
+ const x=mount({confirm:async()=>{throw Error('dialog failed');}});await x.toggle(true);
+ assert.equal(x.auto.isEnabled(),false);assert.equal(x.e.sourceAutoImport.checked,false);assert.ok(!x.requests('session').includes(true));assert.match(x.e.sourceAutoStatus.textContent,/Не удалось/);
 });

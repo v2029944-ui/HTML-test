@@ -24,6 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     )?;
     stage.convert_legacy(
         &LegacyOptions {
+            period_dates: None,
             sheet: "xl/worksheets/sheet1.xml".into(),
             kind: "day".into(),
             start: "2026-11-01".into(),

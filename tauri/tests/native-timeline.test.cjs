@@ -31,18 +31,7 @@ const point=(start,amount,count,missing=0)=>({
  start,periods:1,missing,
  total:missing?{amount:null,count:null}:{amount,count,average:null}
 });
-test('Tauri bundles native chart separately from standalone browser HTML',()=>{
- const root=path.resolve(__dirname,'../..'),out=fs.mkdtempSync(path.join(os.tmpdir(),'timeline-bundle-'));
- try{
-   prepare({base:root,output:out});
-   const html=fs.readFileSync(path.join(out,'native-workspace.html'),'utf8');
-   const copy=fs.readFileSync(path.join(out,'tauri-native-timeline.js'),'utf8');
-   assert.equal(copy,source);
-   assert.match(html,/tauri-native-timeline\.js/);
-   assert.ok(html.indexOf('tauri-native-timeline.js')<html.indexOf('tauri-native-workspace.js'));
-   assert.ok(!fs.readFileSync(path.join(root,'index.html'),'utf8').includes('tauri-native-timeline.js'));
- }finally{fs.rmSync(out,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 test('timeline never joins missing observations or displays them as zero',()=>{
  const {window,e}=mount();
  window.nativeTimeline.show({granularity:'period',points:[

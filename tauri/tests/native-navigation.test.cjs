@@ -23,42 +23,7 @@ function fake(){
  }});
  return {window,links,panels,status,events,scrolls};
 }
-test('six SQL sections remain in one application without full-history bootstrap',()=>{
- const root=path.resolve(__dirname,'../..'),tmp=fs.mkdtempSync(path.join(os.tmpdir(),'native-nav-'));
- try{
-  prepare({base:root,output:tmp});
-  const html=fs.readFileSync(path.join(tmp,'native-workspace.html'),'utf8');
-  for(const key of routes){
-   assert.match(html,new RegExp('data-nav-link="'+key+'"'));
-   assert.match(html,new RegExp('data-nav-panel="'+key+'"'));
-  }
-  for(const id of ['metricReports','reportRows','groupRows','divisionRows','sourceRuleSave',
-                    'legacyChoose','wideChoose','metricKindSelect','restoreSchedule',
-                    'sqlUpdateCheck','legacyWorkspaceLink']){
-   assert.match(html,new RegExp('id="'+id+'"'));
-  }
-  assert.match(html,/<details id="analysisMoreFilters">/);
-  assert.match(html,/id="analysisFilterScope"/);
-  assert.match(html,/id="analysisResultScope"/);
-  assert.match(html,/id="divisionShareStatus"/);
-  assert.match(html,/id="analysisUnitsNote"/);
-  assert.match(html,/Количество \/ объём/);
-  assert.ok(html.indexOf('id="analysisType"')<html.indexOf('id="metricReports"'),
-    'primary filters must appear before overview KPI');
-  const exportAt=html.indexOf('id="analysisExport"'),workSection=html.indexOf('>Группы и отдельные работы</h3>');
-  assert.ok(exportAt>workSection&&exportAt<workSection+1000,
-    'CSV action belongs beside the data it exports');
-  assert.ok(html.includes('class="primary-action" href="#excel"'));
-  assert.ok(html.includes('id="sqlMain" data-nav-panel="analysis"'));
-  assert.ok(html.indexOf('class="analytics-toolbar"')<html.indexOf('id="sqlOverview"'),
-    'the compact filter panel must be a sticky sibling of overview and analytics results');
-  assert.ok(html.includes('tauri-native-navigation.js'));
-  assert.equal(fs.readFileSync(path.join(tmp,'tauri-native-navigation.js'),'utf8'),script);
-  assert.ok(!script.includes('desktopAPI.load('));
-  assert.ok(!script.includes('load_data'));
-  assert.ok(!fs.readFileSync(path.join(root,'index.html'),'utf8').includes('tauri-native-navigation.js'));
- }finally{fs.rmSync(tmp,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 test('navigation defaults to analytics and keeps the other SQL sections in the DOM',()=>{
  const ui=fake();
  assert.equal(ui.panels.filter(p=>!p.hidden).length,1);

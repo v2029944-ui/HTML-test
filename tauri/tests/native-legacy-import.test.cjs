@@ -54,19 +54,7 @@ async function review(ui){
  e.legacyStart.value='2026-11-16';
  await e.legacyPreview.events.click();
 }
-test('SQL-only legacy importer is packaged, never embedded in standalone HTML',()=>{
- const root=path.resolve(__dirname,'../..');
- const out=fs.mkdtempSync(path.join(os.tmpdir(),'legacy-native-'));
- try{
-  prepare({base:root,output:out});
-  const html=fs.readFileSync(path.join(out,'native-workspace.html'),'utf8');
-  assert.match(html,/tauri-native-legacy-import.js/);
-  assert.match(html,/id="legacyApply"/);
-  assert.equal(fs.readFileSync(path.join(out,'tauri-native-legacy-import.js'),'utf8'),
-    fs.readFileSync(path.join(root,'tauri/native-legacy-import.js'),'utf8'));
-  assert.ok(!fs.readFileSync(path.join(root,'index.html'),'utf8').includes('tauri-native-legacy-import.js'));
- }finally{fs.rmSync(out,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 test('legacy preview passes exact sheet/date and only bounded metadata, not Excel bytes',async()=>{
  const ui=mount();await review(ui);
  const {e,calls}=ui;

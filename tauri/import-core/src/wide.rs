@@ -935,6 +935,7 @@ impl Stage<'_> {
                     };
                     self.db.execute("INSERT INTO converted_reports VALUES(?1,?2,?3,'day',?4,?4,0,0,0,0,?5,?6,?7,?8)",params![summary.reports+1,id,path,date,info.header,info.work,day.pair.q,day.pair.a])?;
                     let legacy = LegacyOptions {
+                        period_dates: None,
                         sheet: path.clone(),
                         kind: "day".into(),
                         start: date.clone(),

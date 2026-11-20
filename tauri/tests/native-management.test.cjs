@@ -112,7 +112,7 @@ test('catalog loads only on demand and supports create, edit, delete with revisi
  assert.equal(writes[2].action.kind,'create_catalog');
  assert.equal(confirmations.length,3);
 });
-test('management bridge tracks writes and the module is packaged only for the SQL workspace',async()=>{
+test('management bridge tracks revision-checked settings reads and writes',async()=>{
  const calls=[];
  const window={__TAURI__:{dialog:{open(){}},core:{invoke:async(command,args)=>{
   calls.push({command,args,saves:window.tauriOperations.saves,reads:window.tauriOperations.reads});
@@ -128,14 +128,6 @@ test('management bridge tracks writes and the module is packaged only for the SQ
   {command:'native_settings_edit',args:{revision:4,action},saves:1,reads:0}
  ]);
  assert.equal(window.tauriOperations.saves,0);
- const out=fs.mkdtempSync(path.join(require('node:os').tmpdir(),'sql-management-'));
- try{
-  require('../prepare.cjs').prepare({output:out});
-  assert.ok(fs.existsSync(path.join(out,'tauri-native-management.js')));
-  const html=fs.readFileSync(path.join(out,'native-workspace.html'),'utf8');
-  assert.ok(html.indexOf('tauri-native-management.js')<html.indexOf('tauri-native-workspace.js'));
-  assert.ok(!fs.readFileSync(path.join(out,'index.html'),'utf8').includes('tauri-native-management.js'));
- }finally{fs.rmSync(out,{recursive:true,force:true});}
 });
 
 test('report deletion requires affirmative confirmation and a backup destination',async()=>{

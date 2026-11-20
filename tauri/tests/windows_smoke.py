@@ -2,7 +2,7 @@
 import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib,sqlite3
 from pathlib import Path
 from contextlib import contextmanager, closing
-from playwright.sync_api import sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import expect, sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/'tests'))
 from test_daily_wide import wide_xlsx
@@ -13,12 +13,12 @@ from make_metric_xlsx import create_example
 def diagnostics(error):
     output=ROOT/'tauri/test-artifacts';output.mkdir(exist_ok=True)
     if (output/'windows-runtime.txt').exists():return
-    (output/'windows-error.txt').write_text(str(error),encoding='utf-8')
+    (output/'windows-error.txt').write_text(f'{type(error).__name__}: {error}',encoding='utf-8')
     # Record software/runtime facts only; never dump process environments or full command lines.
     script=r"""
     [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)
     $ErrorActionPreference='Continue'
-    Get-Process analiz-rabot-tauri,msedgewebview2 -ErrorAction SilentlyContinue | Select-Object ProcessName,Id,MainWindowTitle | ConvertTo-Json
+    Get-Process analiz-rabot-tauri,msedgewebview2 -ErrorAction SilentlyContinue | Select-Object ProcessName,Id,MainWindowTitle,MainWindowHandle,Responding | ConvertTo-Json
     Get-CimInstance Win32_Process -Filter "name='msedgewebview2.exe'" | ForEach-Object {
       $port='';if($_.CommandLine -match '--remote-debugging-port=(\d+)'){$port=$Matches[1]}
       [PSCustomObject]@{ProcessId=$_.ProcessId;RemoteDebuggingPort=$port}
@@ -36,6 +36,166 @@ def diagnostics(error):
     env=dict(os.environ,ANALIZ_SMOKE_SCREENSHOT=str(output/'windows-desktop-diagnostic.png'))
     result=subprocess.run(['powershell','-NoProfile','-Command',script],env=env,capture_output=True,encoding='utf-8',errors='replace',timeout=30)
     (output/'windows-runtime.txt').write_text((result.stdout or '')+'\n'+(result.stderr or ''),encoding='utf-8')
+
+def record_secondary_failure(error, description, action):
+    """Keep the original test failure when diagnostic capture or cleanup fails."""
+    try:
+        action()
+    except Exception as followup:
+        error.add_note(f'{description}: {type(followup).__name__}: {followup}')
+
+
+class NativeConfirmations:
+    """Drive only the installed test process's real, parented Win32 task dialogs."""
+
+    automation_script=r"""
+    [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)
+    $ErrorActionPreference='Stop'
+    Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+    $processId=[int]$env:ANALIZ_SMOKE_DIALOG_PID
+    $dialog=[System.Windows.Automation.AutomationElement]::FromHandle([IntPtr][long]$env:ANALIZ_SMOKE_DIALOG_HWND)
+    if ($null -eq $dialog -or $dialog.Current.ProcessId -ne $processId) {
+      throw 'UI Automation returned an unexpected dialog process'
+    }
+    $tree=[System.Windows.Automation.TreeScope]::Descendants
+    $nodes=$dialog.FindAll($tree,[System.Windows.Automation.Condition]::TrueCondition)
+    $inventory=@()
+    $body=@()
+    foreach ($node in $nodes) {
+      $info=$node.Current
+      if ($info.ProcessId -ne $processId) {continue}
+      $type=$info.ControlType.ProgrammaticName
+      $inventory += [PSCustomObject]@{type=$type;name=$info.Name;automationId=$info.AutomationId;enabled=$info.IsEnabled}
+      if ($type -ne 'ControlType.Button' -and $info.AutomationId -notlike 'CommandButton_*') {
+        $body += $info.Name
+        $body += $info.HelpText
+      }
+    }
+    $text=[regex]::Replace(($body -join ' '),'\s+',' ').Trim()
+    [PSCustomObject]@{matched=$text.Contains($env:ANALIZ_SMOKE_DIALOG_TEXT); controls=$inventory} |
+      ConvertTo-Json -Depth 4 -Compress
+    """
+
+    def __init__(self, pid, database):
+        import ctypes
+        from ctypes import wintypes
+
+        self.pid=pid
+        self.database=database
+        self.ctypes=ctypes
+        self.user32=ctypes.WinDLL('user32',use_last_error=True)
+        self.enum_callback=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
+        signatures={
+            'EnumWindows':(wintypes.BOOL,self.enum_callback,wintypes.LPARAM),
+            'GetWindow':(wintypes.HWND,wintypes.HWND,wintypes.UINT),
+            'GetWindowThreadProcessId':(wintypes.DWORD,wintypes.HWND,ctypes.POINTER(wintypes.DWORD)),
+            'GetClassNameW':(ctypes.c_int,wintypes.HWND,wintypes.LPWSTR,ctypes.c_int),
+            'IsWindowVisible':(wintypes.BOOL,wintypes.HWND),
+            'IsWindowEnabled':(wintypes.BOOL,wintypes.HWND),
+            'SendMessageTimeoutW':(ctypes.c_ssize_t,wintypes.HWND,wintypes.UINT,wintypes.WPARAM,
+                                    wintypes.LPARAM,wintypes.UINT,wintypes.UINT,ctypes.POINTER(ctypes.c_size_t)),
+        }
+        for name,(result,*arguments) in signatures.items():
+            function=getattr(self.user32,name)
+            function.restype=result
+            function.argtypes=arguments
+        self.pid_type=wintypes.DWORD
+
+    def windows(self):
+        windows=[]
+        @self.enum_callback
+        def collect(hwnd, _):
+            windows.append(hwnd)
+            return True
+        if not self.user32.EnumWindows(collect,0):
+            raise self.ctypes.WinError(self.ctypes.get_last_error())
+        return windows
+
+    def process(self, hwnd):
+        if not hwnd:return 0
+        pid=self.pid_type()
+        self.user32.GetWindowThreadProcessId(hwnd,self.ctypes.byref(pid))
+        return pid.value
+
+    def window_class(self, hwnd):
+        buffer=self.ctypes.create_unicode_buffer(256)
+        self.user32.GetClassNameW(hwnd,buffer,len(buffer))
+        return buffer.value
+
+    def inspect(self, dialog, prompt):
+        # The dialog plugin enables rfd common-controls-v6. TaskDialogIndirect
+        # exposes its content and buttons through UI Automation.
+        result=subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command',self.automation_script],
+            env=dict(os.environ,ANALIZ_SMOKE_DIALOG_PID=str(self.pid),ANALIZ_SMOKE_DIALOG_HWND=str(dialog),
+                     ANALIZ_SMOKE_DIALOG_TEXT=prompt),
+            capture_output=True,encoding='utf-8',errors='replace',timeout=15)
+        if result.returncode:
+            raise RuntimeError(f'Native dialog UI Automation failed ({result.returncode}): {result.stderr.strip()}')
+        return json.loads(result.stdout)
+
+    def find_dialog(self, expected):
+        deadline=time.monotonic()+15
+        owned=[]
+        while time.monotonic()<deadline:
+            owned=[];matches=[]
+            for hwnd in self.windows():
+                if self.process(hwnd)!=self.pid:
+                    continue
+                owner=self.user32.GetWindow(hwnd,4)  # GW_OWNER
+                facts={'hwnd':hwnd,'class':self.window_class(hwnd),'owner':owner,'owner_pid':self.process(owner),
+                       'visible':bool(self.user32.IsWindowVisible(hwnd)),'enabled':bool(self.user32.IsWindowEnabled(hwnd))}
+                owned.append(facts)
+                if facts['class']!='#32770' or not facts['visible'] or facts['owner_pid']!=self.pid:
+                    continue
+                facts['controls']=self.inspect(hwnd,expected)
+                if facts['controls']['matched']:
+                    matches.append((hwnd,owner))
+            if matches:
+                assert len(matches)==1,('Multiple owned dialogs match',expected,owned)
+                return matches[0]
+            time.sleep(.05)
+        raise AssertionError(f'Native confirmation did not appear for {expected!r}; owned windows and controls: {owned}')
+
+    def answer(self, dialog, owner, prompt, button_id):
+        expected_label={1:'OK',2:'Cancel'}[button_id]
+        result=self.inspect(dialog,prompt)
+        commands=[control for control in result['controls']
+                  if control['automationId']==f'CommandButton_{button_id}']
+        assert (result['matched'] and len(commands)==1 and commands[0]['name']==expected_label
+                and commands[0]['enabled'] is True),('Unexpected native dialog command',expected_label,result)
+        assert self.process(dialog)==self.pid and self.user32.GetWindow(dialog,4)==owner
+        assert self.process(owner)==self.pid and not self.user32.IsWindowEnabled(owner)
+        assert (self.window_class(dialog)=='#32770' and self.user32.IsWindowVisible(dialog)
+                and self.user32.IsWindowEnabled(dialog)),result
+        # Documented Task Dialog command with a numeric button ID and no pointer data.
+        tdm_click_button=0x0400+102  # WM_USER + 102
+        message_result=self.ctypes.c_size_t()
+        if not self.user32.SendMessageTimeoutW(dialog,tdm_click_button,button_id,0,0x0002,3_000,
+                                               self.ctypes.byref(message_result)):
+            raise RuntimeError(f'Task Dialog did not accept {expected_label}: {result}') from self.ctypes.WinError(
+                self.ctypes.get_last_error())
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            if not self.user32.IsWindowVisible(dialog) and self.user32.IsWindowEnabled(owner):
+                return
+            time.sleep(.05)
+        raise RuntimeError(f'Native confirmation stayed open after {expected_label}: {result}')
+
+    def revision(self):
+        with closing(sqlite3.connect(self.database.as_uri()+'?mode=ro',uri=True)) as database:
+            return database.execute('SELECT revision FROM storage_revision WHERE singleton=1').fetchone()[0]
+
+    def cancel_then_accept(self, trigger, prompt):
+        revision=self.revision()
+        for button_id in (2,1):  # IDCANCEL then IDOK
+            trigger.click()
+            dialog,owner=self.find_dialog(prompt)
+            assert self.revision()==revision,('Storage changed before native confirmation',prompt)
+            self.answer(dialog,owner,prompt,button_id)
+            if button_id==2:
+                expect(trigger).to_be_enabled(timeout=30_000)
+                assert self.revision()==revision,('Cancelled native confirmation changed storage',prompt)
+
 
 def wait_for_webview_page(browser, timeout_ms=60_000):
     """Wait for the installed WebView2 app page, not just the DevTools endpoint.
@@ -71,26 +231,455 @@ def wait_for_app_state(page, expression, description, timeout_ms=30_000):
         page.wait_for_timeout(min(100,remaining*1000))
 
 def navigate(page, section):
-    """Use the same right-hand management menu as an installed-app user."""
-    link=page.locator('[data-nav-link="'+section+'"]')
-    if not link.is_visible():
+    """Open a canonical tab, using the same menu as an installed-app user."""
+    tab=page.locator(f'.tabs .tab[data-view="{section}"]')
+    if not tab.is_visible():
         page.locator('#managementToggle').click()
-    link.click()
-    assert page.evaluate('!document.querySelector("#managementNav").open')
+    tab.click()
+    assert page.locator(f'#{section}.view.active').is_visible()
+    assert tab.get_attribute('aria-current')=='page'
+    assert not page.evaluate('document.querySelector("#managementNav").open')
 
-def reveal_table(page, selector):
-    """Read visible exact values only after opening their details disclosure."""
-    for details in page.locator('details').filter(has=page.locator(selector)).all():
-        if not details.evaluate('(el) => el.open'):
-            details.locator(':scope > summary').click()
+
+def api(page, method, *args):
+    return page.evaluate('({method,args}) => window.desktopAPI[method](...args)',
+                         {'method':method,'args':args})
+
+
+def invoke(page, command, args=None):
+    return page.evaluate('({command,args}) => window.__TAURI__.core.invoke(command,args)',
+                         {'command':command,'args':args or {}})
+
+
+def assert_rejected(action, description, *messages):
+    try:
+        action()
+    except PlaywrightError as error:
+        if messages:
+            assert any(message in str(error).lower() for message in messages),str(error)
+    else:
+        raise AssertionError(description)
+
+
+def wait_for_text(page, selector, text, timeout_ms=30_000):
+    wait_for_app_state(page,
+        'document.querySelector('+json.dumps(selector)+')?.textContent.includes('+json.dumps(text)+')',
+        f'{selector} contains {text}',timeout_ms)
+
+
+def ready(page, count):
+    wait_for_app_state(page,'Boolean(window.appReady)', 'Unified SQLite startup',90_000)
+    assert page.evaluate('window.appReady') is True
+    assert page.evaluate('''() => {
+      return ['/','/index.html'].includes(location.pathname)
+        && document.querySelector('meta[name="analiz-unified-sql"]')?.content==='true'
+        && typeof window.__TAURI__.core.invoke==='function'
+        && !('load' in window.desktopAPI) && !('save' in window.desktopAPI)
+        && Object.isFrozen(window.unifiedOriginal.state.reports)
+        && window.unifiedOriginal.state.reports.length===0
+        && !document.querySelector('#legacyWorkspaceLink,#openNativeWorkspace,#sqlStartupPreference');
+    }''')
+    assert page.locator('#dashboard.view.active').is_visible()
+    assert api(page,'nativeSettingsBootstrap')['reports']==count
+    wait_for_text(page,'#unifiedIndexStatus',f'Отчётов: {count} · Локальная база SQLite',90_000)
+
+
+def check_runtime(page):
+    expected_version=json.loads((ROOT/'tauri/package.json').read_text(encoding='utf-8'))['version']
+    wait_for_text(page,'#appVersion','Версия '+expected_version)
+    navigate(page,'storage')
+    page.locator('#appearanceTheme').select_option('dark')
+    page.locator('#appearancePalette').select_option('paper')
+    page.locator('#appearanceDesign').select_option('compact')
+    page.locator('#appearanceSize').select_option('large')
+    assert page.evaluate('''() => {
+      const {theme,palette,design,uiSize}=document.documentElement.dataset;
+      return [theme,palette,design,uiSize].join('/')==='dark/paper/compact/large';
+    }''')
+    page.locator('#appearanceTheme').select_option('system')
+    page.locator('#appearancePreset').select_option('minimal')
+    page.locator('#appearanceSize').select_option('standard')
+    navigate(page,'dashboard')
+    menu=page.locator('#managementToggle')
+    menu.focus();menu.press('Enter')
+    assert page.locator('#managementNav').evaluate('el => el.open')
+    menu.press('Escape')
+    assert not page.locator('#managementNav').evaluate('el => el.open')
+    assert menu.evaluate('el => document.activeElement===el')
+    select=page.locator('#periodType')
+    select.focus();select.press('Enter');select.press('Escape')
+    assert select.evaluate('el => document.activeElement===el')
+    dropdown=page.locator('#categoryFilter > summary')
+    dropdown.focus();dropdown.press('Enter')
+    assert page.locator('#categoryFilter').evaluate('el => el.open')
+    dropdown.press('Enter')
+    assert not page.locator('#categoryFilter').evaluate('el => el.open')
+
+
+def set_folder(page, folder, filenames):
+    invoke(page,'set_folder',{'folder':str(folder)})
+    page.locator('#sourceFolderRefresh').click()
+    expected=json.dumps(sorted(filenames),ensure_ascii=False,separators=(',',':'))
+    wait_for_app_state(page,
+        'JSON.stringify(Array.from(document.querySelectorAll("#sourceFolderRows tr td:first-child"),x=>x.textContent).sort()) === '+json.dumps(expected),
+        'Source metadata follows the connected Excel folder')
+    wait_for_text(page,'#sourceFolderLocation',folder.name)
+    listing=api(page,'list')
+    assert set(file['name'] for file in listing['files'])==set(filenames)
+    return listing
+
+
+def import_year(page, workbook, confirmations):
+    page.get_by_role('button',name='Показать файлы папки',exact=True).click()
+    page.locator('#sourceManualFile').select_option(label=workbook.name)
+    page.get_by_role('button',name='Открыть для проверки',exact=True).click()
+    wait_for_text(page,'#excelFileStatus',workbook.name)
+    page.locator('#importFormat').select_option('daily-wide')
+    page.locator('#dailyYear').fill('2024')
+    page.locator('#inspectFile').click()
+    wait_for_text(page,'#unifiedImportStatus','Проверка завершена',90_000)
+    assert page.locator('#importPreview .kpi').first.locator('strong').inner_text()=='366'
+    assert page.locator('#importPreview tbody tr').count()<=50
+    assert api(page,'nativeSettingsBootstrap')['reports']==0
+    page.locator('#unifiedAcceptQuality').check()
+    confirmations.cancel_then_accept(page.locator('#saveImport'),
+        'Повторно проверить Excel и атомарно сохранить 366 отчётов')
+    wait_for_text(page,'#unifiedImportStatus','Сохранено: 366 отчётов',120_000)
+    wait_for_text(page,'#unifiedIndexStatus','Отчётов: 366',90_000)
+    assert api(page,'nativeSettingsBootstrap')['reports']==366
+    assert page.evaluate('window.unifiedOriginal.state.reports.length===0')
+
+
+def check_report_views(page):
+    page.locator('#uploadedReports > summary').click()
+    wait_for_text(page,'#unifiedReportsPage','1–50 из 366')
+    rows=page.locator('#reports .calendar-source')
+    assert rows.count()==50
+    first=rows.first.locator('strong').inner_text()
+    assert '2024-12-31' in first
+    page.locator('#unifiedReportsNext').click()
+    wait_for_text(page,'#unifiedReportsPage','51–100 из 366')
+    assert rows.count()==50
+    assert rows.first.locator('strong').inner_text()!=first
+    page.locator('#unifiedReportsPrev').click()
+    wait_for_text(page,'#unifiedReportsPage','1–50 из 366')
+    assert rows.first.locator('strong').inner_text()==first
+    snapshot=api(page,'nativeSettingsBootstrap')
+    daily=api(page,'managementReportSummary',snapshot['revision'],{'report_type':'day'})
+    assert daily['reports']==366 and abs(daily['amount']-7320)<.001,daily
+    assert api(page,'managementReportPage',snapshot['revision'],{'report_type':'week'},None,50)==[]
+    wait_for_app_state(page,'document.querySelectorAll("#reportCalendar > button").length===12','Calendar loaded')
+    year=int(page.locator('#calendarRange').inner_text().split()[0])
+    for current in range(year,2024,-1):
+        page.locator('#calendarPrev').click()
+        wait_for_app_state(page,
+            f'document.querySelector("#calendarRange").textContent.startsWith("{current-1} год") && '
+            'document.querySelectorAll("#reportCalendar > button").length===12', 'Previous calendar year',60_000)
+    assert page.locator('#reportCalendar > button').count()==12
+    month=page.locator('#reportCalendar [data-month="2024-02"]')
+    month.click()
+    leap=page.locator('#calendarDetails .calendar-day[aria-label^="2024-02-29:"]')
+    assert page.locator('#calendarDetails .calendar-day').count()==29
+    assert leap.count()==1
+    assert 'Дней: 29 · Пропусков: 0' in month.inner_text()
+    leap.click()
+    detail=page.locator('#calendarDetails .calendar-day-details')
+    assert detail.get_by_role('heading',name='2024-02-29',exact=True).is_visible()
+    detail.locator('.calendar-source').wait_for()
+    assert detail.locator('.calendar-source').count()==1
+    assert '2024-02-29' in detail.locator('.calendar-source strong').inner_text()
+    detail.get_by_role('button',name='Закрыть подробности дня',exact=True).click()
+    assert leap.evaluate('el => document.activeElement===el')
+    page.get_by_role('button',name='Закрыть подробности месяца',exact=True).click()
+    assert month.evaluate('el => document.activeElement===el')
+
+
+def check_metrics(page, temporary):
+    navigate(page,'upload')
+    page.locator('#additionalMetrics > summary').click()
+    page.locator('#metricKindSelect option').first.wait_for(state='attached')
+    assert page.locator('#metricKindSelect option').count()==2
+    expect(page.locator('#metricKindChooseXlsx')).to_be_enabled()
+    assert len(api(page,'nativeMetricKinds'))==2
+    example=ROOT/'tauri/examples/labor-report.json'
+    metric=api(page,'nativeMetricPreview',str(example))
+    assert metric['kind']=='labor' and metric['rowCount']==2
+    assert metric['values']['hours']==12 and abs(metric['values']['units_per_hour']-19/12)<1e-8
+    assert api(page,'nativeMetricApply',str(example),metric['reviewToken'])['rowCount']==2
+    assert_rejected(lambda:api(page,'nativeMetricApply',str(example),metric['reviewToken']),
+                    'Generic metric report duplicate was accepted')
+    metric_xlsx=temporary/'metric-labor-demo.xlsx'
+    create_example(metric_xlsx)
+    day='2026-11-18'
+    arguments=[str(metric_xlsx),'labor_simple',day,day]
+    mapped=api(page,'nativeMetricXlsxPreview',*arguments)
+    assert mapped['rowCount']==2 and mapped['values']['hours']==12 and mapped['values']['units']==19
+    assert api(page,'nativeMetricXlsxApply',*arguments,mapped['reviewToken'])['rowCount']==2
+    summary=api(page,'nativeMetricSummary','labor',day,day)
+    assert summary['reportCount']==2 and summary['values']['hours']==24 and summary['values']['units']==38
+    assert abs(summary['values']['units_per_hour']-38/24)<1e-8
+    assert_rejected(lambda:api(page,'nativeMetricXlsxApply',*arguments,mapped['reviewToken']),
+                    'Metric XLSX mapping accepted a repeated source')
+
+
+def dashboard_month(page):
+    navigate(page,'dashboard')
+    page.locator('#unifiedSource').select_option('daily')
+    page.locator('#periodType').select_option('month')
+    wait_for_app_state(page,'document.getElementById("overviewPeriod").type==="month"','Monthly period input')
+    page.locator('#overviewPeriod').fill('2024-02')
+    wait_for_app_state(page,
+        'window.unifiedUI.scope?.from==="2024-02-01" && window.unifiedUI.scope?.to==="2024-02-29" '
+        '&& document.querySelectorAll("#overviewKpis .kpi").length===4','February SQLite dashboard')
+    wait_for_text(page,'#overviewKpis',page.evaluate('window.unifiedUI.fmt(580,"amount")'))
+
+
+def check_analytics(page, temporary, output):
+    dashboard_month(page)
+    snapshot=api(page,'nativeSettingsBootstrap')
+    revision,orgs=snapshot['revision'],snapshot['org_names']
+    assert len(orgs)==4,snapshot
+    for start,end,unit,days,amount in (
+        ('2024-01-01','2024-12-31','year',366,7320),
+        ('2024-02-01','2024-02-29','month',29,580),
+    ):
+        rollup=api(page,'nativeDailyRollup',revision,start,end,unit,orgs,None,50)
+        assert rollup['granularity']==unit and rollup['next_cursor'] is None,rollup
+        assert len(rollup['points'])==1,rollup
+        point=rollup['points'][0]
+        # The observed CTE counts an_valid rows, keyed by (organization, day).
+        assert point['start']==start and point['days']==days and point['available_reports']==days*len(orgs),rollup
+        assert point['complete'] and point['missing']==0 and point['total']['amount']==amount,rollup
+    absent=api(page,'nativeDailyRollup',revision,'2024-02-01','2024-02-29','month',orgs,None,50,'Отсутствующая работа')
+    assert len(absent['points'])==1,absent
+    point=absent['points'][0]
+    assert point['days']==29 and point['available_reports']==29*len(orgs),absent
+    assert point['complete'] and point['missing']==0 and point['total']['amount']==0,absent
+
+    page.locator('#advancedAnalytics > summary').click()
+    page.locator('#chartBreakdown').select_option('organizations')
+    wait_for_text(page,'#chartsContainer','Для динамики подразделений выберите несколько периодов.')
+    page.locator('[data-chart="bar"]').click()
+    wait_for_app_state(page,'document.querySelector("#chartsContainer svg")!==null','SQLite single-period department bar chart')
+    organization=page.locator('#orgFilter input')
+    assert organization.count()==4
+    if not organization.first.is_visible():
+        page.locator('#orgFilter summary').click()
+    organization.nth(1).uncheck();organization.nth(3).uncheck()
+    wait_for_app_state(page,
+        'window.unifiedUI.scope?.organizations.length===2 && document.querySelectorAll("#overviewOrganizations .overview-unit").length===2',
+        'Two-organization SQLite dashboard')
+    wait_for_text(page,'#overviewKpis',page.evaluate('window.unifiedUI.fmt(290,"amount")'))
+    organization.nth(1).check();organization.nth(3).check()
+    wait_for_app_state(page,'window.unifiedUI.scope?.organizations.length===4','Restore all organizations')
+    if page.locator('#orgFilter summary').count() and page.locator('#orgFilter summary').is_visible():
+        page.locator('#orgFilter summary').click()
+    page.locator('#advancedAnalytics > summary').click()
+
+    # Verify the canonical dashboard at both desktop and phone CSS viewports.
+    original=page.viewport_size or page.evaluate('({width:innerWidth,height:innerHeight})')
+    try:
+        for width,height in ((1280,720),(1366,768),(390,844),(320,568)):
+            page.set_viewport_size({'width':width,'height':height})
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth+1'),(width,height)
+            assert page.locator('#overviewKpis .kpi').count()==4
+            page.screenshot(path=str(output/f'windows-sql-{width}x{height}.png'))
+        page.set_viewport_size({'width':1280,'height':720})
+        for scale in ('1.25','1.5','2'):
+            geometry=page.evaluate('''scale => {
+              const html=document.documentElement;
+              html.style.zoom=scale;
+              return {viewport:innerWidth,page:html.scrollWidth,scale,
+                overview:document.querySelector('#overviewPanel').getBoundingClientRect().right,
+                periods:document.querySelector('.period-toolbar').getBoundingClientRect().right};
+            }''',scale)
+            assert max(geometry['page'],geometry['overview'],geometry['periods'])<=geometry['viewport']+2,geometry
+            if scale=='2':
+                page.screenshot(path=str(output/'windows-sql-zoom-200.png'))
+    finally:
+        page.evaluate("document.documentElement.style.removeProperty('zoom')")
+        page.set_viewport_size(original)
+
+    # The real analysis commands must keep missing weeks out of all totals.
+    start,end='2025-01-06','2025-01-13'
+    summary=api(page,'nativeAnalysisRange',revision,'week',start,end,orgs)
+    assert not summary['complete'] and summary['missing']>0 and summary['total']['amount'] is None
+    timeline=api(page,'nativeAnalysisTimeline',revision,'week',start,end,orgs)
+    assert len(timeline['points'])==2 and all(p['total']['amount'] is None for p in timeline['points'])
+    trends=api(page,'nativeOrganizationTrends',revision,'week',start,end,orgs)
+    assert len(trends['series'])==4 and all(p['total']['amount'] is None for s in trends['series'] for p in s['points'])
+    rank=api(page,'nativeAnalysisRanking',revision,'week',start,end,orgs,None,'amount','all')
+    assert not rank['complete'] and rank['rows']==[]
+    range_page=api(page,'nativeAnalysisRangePage',revision,'week',start,end,orgs)
+    assert range_page==[]
+    comparison=api(page,'nativeAnalysisCompare',revision,'week',start,end,start,end,orgs)
+    assert comparison['summary']['after']['total']['amount'] is None
+    assert comparison['summary']['before']['total']['amount'] is None
+    export_path=temporary/'analysis-empty-week.csv'
+    args=[revision,'week',start,end,orgs,None,str(export_path)]
+    api(page,'nativeExportRangeCsv',*args)
+    exported=export_path.read_bytes()
+    assert exported.startswith(b'\xef\xbb\xbf"key";"name";"kind";"count";"amount";"average";"active"')
+    assert b'\r\n' in exported
+    assert_rejected(lambda:api(page,'nativeExportRangeCsv',*args),'Native CSV export overwrote a file','already exists')
+    assert export_path.read_bytes()==exported
+
+    page.locator('#periodType').select_option('week')
+    wait_for_app_state(page,'document.getElementById("overviewPeriod").type==="week"','Weekly period input')
+    page.locator('#overviewPeriod').fill('2025-W02')
+    wait_for_app_state(page,'window.unifiedUI.scope?.from==="2025-01-06"','Missing weekly range is selected')
+    notice=page.get_by_role('button',name='Понятно, замечание известно',exact=True)
+    notice.wait_for()
+    amount=page.locator('#overviewKpis .kpi').first.locator('strong')
+    assert amount.inner_text()=='—'
+    notice.click()
+    assert not notice.is_visible() and amount.inner_text()=='—'
+    dashboard_month(page)
+
+
+def check_extended(page):
+    assert page.locator('#printSummary').is_enabled()
+    page.emulate_media(media='print')
+    try:
+        assert page.evaluate('getComputedStyle(document.body).backgroundColor')=='rgb(255, 255, 255)'
+        assert not page.locator('main').is_visible()
+    finally:
+        page.emulate_media(media='screen')
+    page.locator('#advancedAnalytics > summary').click()
+    wait_for_text(page,'#comparisonCoverage','Второй интервал: Полные данные',90_000)
+    page.locator('#contributions > summary').click()
+    wait_for_text(page,'#contributionCheck','совпадает',90_000)
+    page.locator('#structurePanel > summary').click()
+    wait_for_text(page,'#structureResults','Итог:',90_000)
+    for control,result in (('usualPanel','usualCoverage'),('regularityPanel','regularityCoverage')):
+        page.locator(f'#{control} > summary').click()
+        wait_for_text(page,f'#{result}','Полных периодов:',90_000)
+    navigate(page,'changes')
+    page.locator('#changesType').select_option('month')
+    page.locator('#changesTo').fill('2024-02')
+    wait_for_text(page,'#changesPage','Страница 1',90_000)
+    assert page.locator('#changesSummary .kpi').count()>=4
+    assert page.locator('#changesResults tbody tr').count()<=100
+
+
+def check_groups(page, confirmations):
+    navigate(page,'groups')
+    def create():
+        page.locator('#createGroup').click()
+        page.locator('#groupName').fill('Группа CI')
+        work=page.locator('#groupEditor label.work-row').filter(has_text='Альфа')
+        work.wait_for()
+        assert work.count()==1
+        work.locator('input').check()
+        page.locator('#saveGroup').click()
+        group=page.locator('#groupList details').filter(has_text='Группа CI')
+        group.locator('summary').click(timeout=90_000)
+        assert api(page,'nativeSettingsBootstrap')['memberships']==1
+        return group
+    group=create()
+    member=group.locator('.group-member').filter(has_text='Альфа')
+    member.locator('select').select_option('',timeout=90_000)
+    wait_for_text(page,'#flash','Работа перенесена.',90_000)
+    snapshot=api(page,'nativeSettingsBootstrap')
+    assert snapshot['memberships']==0 and snapshot['groups']==0,snapshot
+    assert group.count()==0
+    # Removing the final member intentionally removes its source group.
+    # Recreate it to verify the separate explicit-delete confirmation path.
+    group=create()
+    confirmations.cancel_then_accept(group.get_by_role('button',name='Удалить группу',exact=True),
+        'Удалить группу «Группа CI»? Исходные работы останутся.')
+    wait_for_text(page,'#flash','Группа удалена.',90_000)
+    assert api(page,'nativeSettingsBootstrap')['groups']==0
+
+
+def backup_contents(path):
+    with closing(sqlite3.connect(path)) as database:
+        assert database.execute('PRAGMA quick_check').fetchone()==('ok',)
+        reports=database.execute('SELECT id,json FROM reports ORDER BY id').fetchall()
+        settings=database.execute('SELECT json FROM kv WHERE name=\'settings\'').fetchone()
+        metrics=database.execute('SELECT COUNT(*) FROM metric_report_docs').fetchone()[0]
+    return reports,settings,metrics
+
+
+def check_backup_and_replace(page, temporary, snapshot):
+    revision=api(page,'nativeBackupSqlite',str(snapshot))
+    assert isinstance(revision,int) and snapshot.is_file()
+    original=backup_contents(snapshot)
+    assert len(original[0])==366 and original[1] is not None and original[2]==2
+    before=snapshot.read_bytes()
+    assert_rejected(lambda:api(page,'nativeBackupSqlite',str(snapshot)),
+                    'Native backup overwrote an existing SQLite file','already exists')
+    assert snapshot.read_bytes()==before
+
+    replacement=temporary/'replacement.xlsx'
+    replacement.write_bytes(wide_xlsx(2024,works_per_org=2))
+    original_file=replacement.read_bytes()
+    orgs=api(page,'nativeSettingsBootstrap')['org_names']
+    options={'year':2024,'sheets':[],'mappings':{},'organizations':orgs}
+    preview=api(page,'nativeWideImportPreview',str(replacement),options)
+    assert preview['reportCount']==366 and preview['rowCount']>0 and preview['conflicts']['replacements']==366
+    token=preview['reviewToken']
+    assert len(token)==64
+    flags={'replaceExact':True,'acceptCrossType':True,'acceptQuality':True}
+    assert_rejected(lambda:api(page,'nativeWideImportApply',str(replacement),options,token,flags),
+                    'Native import replaced reports without a backup destination','backup')
+    assert api(page,'nativeRevision')==revision
+    before_replace=temporary/'before-native-import.sqlite3'
+    receipt=api(page,'nativeWideImportApply',str(replacement),options,token,flags|{'backupDestination':str(before_replace)})
+    assert backup_contents(before_replace)==original
+    assert receipt['replaced']==366 and receipt['reports']==366 and receipt['revision']>preview['revision']
+    assert replacement.read_bytes()==original_file
+    assert page.evaluate('window.unifiedUI.refresh()')['reports']==366
+    updated=api(page,'managementReportSummary',receipt['revision'],{'report_type':'day'})
+    assert updated['reports']==366 and abs(updated['amount']-14640)<.001,updated
+    return original
+
+
+def check_folder_rule_and_revocation(page, workbook, confirmations):
+    navigate(page,'upload')
+    wait_for_app_state(page,'typeof window.nativeFolderReady!=="undefined"','Native folder controller startup')
+    page.evaluate('window.nativeFolderReady')
+    assert not page.locator('#sourceAutoImport').is_checked()
+    listing=api(page,'list')
+    assert {file['name'] for file in listing['files']}=={workbook.name}
+    row=page.locator('#sourceFolderRows tr').filter(has_text=workbook.name)
+    row.get_by_role('button',name='Настроить правило для '+workbook.name,exact=True).click()
+    page.locator('#sourceRuleFormat').select_option('daily-wide')
+    page.locator('#sourceRuleYear').fill('2024')
+    confirmations.cancel_then_accept(page.locator('#sourceRuleSave'),
+        f'Сохранить правило для «{workbook.name}»?')
+    wait_for_text(page,'#sourceRuleStatus','Правило сохранено',90_000)
+    rule=api(page,'list')['rules'][workbook.name]
+    assert rule['format']=='daily-wide' and rule['year']==2024
+    assert api(page,'nativeSettingsBootstrap')['reports']==366
+
+    auto_probe=workbook.with_name('auto-probe.xlsx')
+    auto_probe.write_bytes(daily_workbook_bytes())
+    listing=api(page,'list')
+    file=next(item for item in listing['files'] if item['name']==auto_probe.name)
+    assert file['nativeSignature']
+    api(page,'nativeSetRuleChecked',file['name'],{'type':'day','start':'2025-01-01','sheet':'','format':'legacy'},
+        listing['revision'],listing['folder'],file['nativeSignature'])
+    current=api(page,'list')
+    source=next(item for item in current['files'] if item['name']==auto_probe.name)
+    session=api(page,'nativeFolderImportSession',True)
+    request={'session':session,'folder':current['folder'],'revision':current['revision'],
+             'name':source['name'],'signature':source['nativeSignature']}
+    try:
+        review=api(page,'nativeFolderImportPreview',request)
+        assert review['reportCount']==6 and review['conflicts']['new_reports']==6,review
+    finally:
+        api(page,'nativeFolderImportSession',False)
+    assert_rejected(lambda:api(page,'nativeFolderImportApply',request,review['reviewToken']),
+                    'A revoked folder session allowed a native commit','выключен','сеанс')
+    assert api(page,'nativeSettingsBootstrap')['reports']==366
+    auto_probe.unlink()
 
 @contextmanager
 def windows_test_workspace():
     """Release only this test's WebView2 workers before deleting their temporary profile."""
     workspace=Path(tempfile.mkdtemp(prefix='analiz-webview2-'))
-    try:
-        yield workspace
-    finally:
+    def cleanup_workspace():
         cleanup_script=r"""
         $token=$env:ANALIZ_SMOKE_PROFILE_TOKEN
         if(-not $token.StartsWith('analiz-webview2-')){throw 'Invalid test profile token'}
@@ -112,6 +701,15 @@ def windows_test_workspace():
             except PermissionError as error:
                 if getattr(error,'winerror',None) not in (5,32,33) or time.monotonic()>=deadline:raise
                 time.sleep(.2)
+
+    try:
+        yield workspace
+    except BaseException as error:
+        record_secondary_failure(error,'Temporary WebView2 workspace cleanup failed',cleanup_workspace)
+        raise
+    else:
+        cleanup_workspace()
+
 
 def run():
     if sys.platform!='win32' or os.environ.get('GITHUB_ACTIONS')!='true':raise RuntimeError('Run only on an isolated Windows GitHub Actions runner')
@@ -168,961 +766,157 @@ def run():
                     except (OSError,ValueError):time.sleep(.5)
                 raise RuntimeError('WebView2 DevTools endpoint did not become available')
             except BaseException as error:
-                try:diagnostics(error)
-                finally:
-                    if process.poll() is None:subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],check=True,capture_output=True)
+                record_secondary_failure(error,'Runtime diagnostics failed',lambda:diagnostics(error))
+                record_secondary_failure(error,'Installed process cleanup failed',lambda:force_stop(process))
                 raise
-        def stop(process):
+        def force_stop(process):
             if process.poll() is not None:return
-            # Simulate closing the application window, not crashing its WebView2 storage process.
-            close_script="$app=Get-Process -Id $env:ANALIZ_SMOKE_PID -ErrorAction Stop; if(-not $app.CloseMainWindow()){throw 'Application window refused a normal close request'}"
-            try:
-                subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command',close_script],
-                    env=dict(env,ANALIZ_SMOKE_PID=str(process.pid)),check=True,capture_output=True,timeout=15)
-                process.wait(timeout=30)
-            finally:
-                # This is failure cleanup only; an unsuccessful normal close still fails the test.
-                if process.poll() is None:subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],check=True,capture_output=True)
+            stopped=subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],capture_output=True,timeout=15)
+            if stopped.returncode!=0 and process.poll() is None:
+                stopped.check_returncode()
+            process.wait(timeout=15)
+        def stop(process):
+            if process.poll() is not None:
+                raise RuntimeError(f'Application exited before a normal close could be requested: {process.returncode}')
+            # Retry only a normal window close while Windows locates the main HWND.
+            close_script=r"""
+            [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)
+            $ErrorActionPreference='Stop'
+            $deadline=(Get-Date).AddSeconds(8)
+            do {
+              $app=Get-Process -Id $env:ANALIZ_SMOKE_PID
+              if($app.CloseMainWindow()){exit 0}
+              Start-Sleep -Milliseconds 250
+            } while((Get-Date) -lt $deadline)
+            throw ('Application refused a normal close request (HWND {0}, responding {1})' -f $app.MainWindowHandle,$app.Responding)
+            """
+            closed=subprocess.run(['powershell','-NoProfile','-NonInteractive','-Command',close_script],
+                env=dict(env,ANALIZ_SMOKE_PID=str(process.pid)),capture_output=True,encoding='utf-8',errors='replace',timeout=15)
+            if closed.returncode:
+                raise RuntimeError(f'Application window close failed ({closed.returncode}): {closed.stderr.strip()}')
+            exit_code=process.wait(timeout=30)
+            if exit_code!=0:
+                raise RuntimeError(f'Application exited with status {exit_code} after the normal close request')
         with sync_playwright() as pw:
-            process,engine=start();browser=None
-            try:
-                browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227')
-                page=wait_for_webview_page(browser);errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-                wait_for_app_state(page,
-                    'Boolean(window.nativeWorkspaceReady) && window.nativeWorkspaceNavigation?.active() === "analysis"',
-                    'Default SQLite analysis startup')
-                assert page.evaluate('window.nativeWorkspaceReady')
-                assert page.evaluate("typeof window.appReady === 'undefined'")
-                assert page.locator('#metricReports').inner_text()=='0'
-                assert page.locator('#sqlStartupPreference').is_checked()
-                assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") is None
-                report['checks'].append('Default startup opens SQLite analysis without loading the classic Excel view or report history')
-                expected_version=json.loads(Path('tauri/package.json').read_text(encoding='utf-8'))['version']
-                wait_for_app_state(page,
-                    'document.querySelector("#appVersion")?.textContent === '+json.dumps('Версия '+expected_version),
-                    'Installed version comes from Tauri runtime')
-                wait_for_app_state(page,'!window.tauriOperations.reads && !window.tauriOperations.saves','Initial tracked SQLite operations finish')
-                page.evaluate("""() => {
-                    const core=window.__TAURI__.core;
-                    const gate=new Promise(resolve=>window.__releaseSmokeRead=resolve);
-                    window.__TAURI__.core={...core,invoke:(command,args)=>command==='native_settings_bootstrap'
-                        ?gate.then(()=>core.invoke(command,args)):core.invoke(command,args)};
-                    window.__smokeActivityRefresh=window.nativeWorkspaceRefresh().finally(()=>{
-                        window.__TAURI__.core=core;
-                    });
-                }""")
-                assert page.locator('#appActivity').is_visible()
-                assert 'Загрузка' in page.locator('#appActivityText').inner_text()
-                page.evaluate('window.__releaseSmokeRead()')
-                assert page.evaluate('window.__smokeActivityRefresh')
-                wait_for_app_state(page,'!window.tauriOperations.reads && !window.tauriOperations.saves','Tracked refresh releases the loading indicator')
-                assert not page.locator('#appActivity').is_visible()
-                navigate(page, 'backup')
-                page.locator('#appearanceTheme').select_option('dark')
-                page.locator('#appearancePalette').select_option('paper')
-                page.locator('#appearanceDesign').select_option('compact')
-                page.locator('#appearanceSize').select_option('large')
-                assert page.evaluate('({...document.documentElement.dataset})') == dict(theme='dark',palette='paper',design='compact',uiSize='large')
-                page.emulate_media(media='print')
-                assert page.locator('#nativeContent').is_visible()
-                print_ink=page.evaluate('({bg:getComputedStyle(document.body).backgroundColor,text:getComputedStyle(document.body).color,panel:getComputedStyle(document.querySelector("#sqlBackup")).backgroundColor})')
-                assert print_ink==dict(bg='rgb(255, 255, 255)',text='rgb(17, 17, 17)',panel='rgb(255, 255, 255)'),print_ink
-                page.emulate_media(media='screen')
-                assert page.evaluate("""document.fonts.ready.then(()=>document.fonts.check('16px "Inter"'))""")
-
-                page.locator('#appearanceTheme').select_option('system')
-                page.locator('#appearancePreset').select_option('minimal')
-                page.locator('#appearanceSize').select_option('standard')
-                report['checks'].append('Runtime installed version, real deferred IPC loading indicator, classic independent appearance and right-hand menu')
-                # Explicit classic navigation remains available for the existing
-                # Excel import fixture and compatibility checks below.
-                navigate(page, 'backup')
-                page.locator('#legacyWorkspaceLink').click()
-                wait_for_app_state(page, 'Boolean(window.appReady)', 'Explicit classic navigation');page.evaluate('window.appReady')
-                assert page.evaluate('!!window.__TAURI__.core.invoke')
-                data=page.evaluate('window.desktopAPI.load()')
-                if data['reports']:raise RuntimeError('CI data folder is not empty; refusing to overwrite reports')
-                report['webview2']=engine.get('Browser');report['customizableSelect']=page.evaluate("CSS.supports('appearance','base-select')");report['checks'].append('real WebView2 launch')
-                page.locator('#reportsShortcut').click()
-                excel=tmp/'synthetic-year.xlsx';excel.write_bytes(wide_xlsx(2024))
-                page.locator('#excelFile').set_input_files(str(excel));wait_for_app_state(page, 'state.workbook!==null', 'Excel workbook loading')
-                page.locator('#inspectFile').click();wait_for_app_state(page, 'state.pending.length===366', 'Preview of 366 daily reports')
-                page.locator('#saveImport').click();wait_for_app_state(page, 'state.reports.length===366', 'Saving 366 daily reports')
-                loaded=page.evaluate('window.desktopAPI.load()');assert len(loaded['reports'])==366
-                assert abs(sum(r['amount'] for r in loaded['reports'])-7320)<.001
-                report['checks'].append('Excel import and 366 reports persisted through native SQLite')
-                # D4a read-only SQLite browsing must operate through the actual
-                # installed Tauri IPC, not an in-memory JS model or mocked bridge.
-                native=page.locator('section[aria-label="Постраничный просмотр SQLite"]')
-                native.get_by_role('button',name='Открыть список отчётов').click()
-                inspector_css='section[aria-label="Постраничный просмотр SQLite"]'
-                wait_for_app_state(page,
-                    'document.querySelectorAll('+json.dumps(inspector_css+' tbody tr')+').length === 100',
-                    'First bounded SQLite metadata page')
-                assert native.locator('tbody tr').count()==100
-                original_id=native.locator('tbody tr').first.locator('td').nth(4).inner_text()
-                native.get_by_role('button',name='Далее').click()
-                wait_for_app_state(page,
-                    'document.querySelector('+json.dumps(inspector_css+' tbody tr td:last-child')+')?.textContent !== '+json.dumps(original_id),
-                    'Second bounded SQLite metadata page')
-                assert native.locator('tbody tr').count()==100
-                native.get_by_role('button',name='Назад').click()
-                wait_for_app_state(page,
-                    'document.querySelector('+json.dumps(inspector_css+' tbody tr td:last-child')+')?.textContent === '+json.dumps(original_id),
-                    'SQLite keyset back navigation')
-                native.get_by_label('Фильтр типа отчёта в SQLite').select_option('week')
-                wait_for_app_state(page,
-                    'document.querySelector('+json.dumps(inspector_css+' [role="status"]')+')?.textContent.includes("записей на странице: 0")',
-                    'SQLite type-filtered empty report page')
-                assert native.locator('tbody tr').count()==0
-                native.get_by_label('Фильтр типа отчёта в SQLite').select_option('day')
-                wait_for_app_state(page,
-                    'document.querySelectorAll('+json.dumps(inspector_css+' tbody tr')+').length === 100',
-                    'SQLite daily reports re-filtered page')
-                report['checks'].append('native SQLite revision-checked pagination and period filter')
-                page.locator('[data-view=dashboard]').click()
-                page.locator('#periodType').click();page.keyboard.press('End');page.keyboard.press('Enter')
-                assert page.locator('#periodType').input_value()=='day'
-                page.locator('#orgFilter summary').click();checkbox=page.locator('#orgFilter input').first;was=checkbox.is_checked()
-                checkbox.focus();page.keyboard.press('Space');assert page.locator('#orgFilter input').first.is_checked()!=was
-                page.keyboard.press('Escape');report['checks'].append('native and multiple dropdown keyboard input')
-                page.locator('#reportsShortcut').click()
-                page.locator('#calendarYearSelect').select_option('2024');page.locator('#calendarType').select_option('day')
-                page.locator('[data-month="2024-02"]').click();assert page.locator('#calendarDetails button[data-date]').count()==29
-                report['checks'].append('leap February calendar')
-                # D4b: the alternate SQL-only page must render without starting
-                # the original in-memory report model. Exercise real Tauri IPC.
-                page.locator('#reportsShortcut').click()
-                page.locator('#openNativeWorkspace').click()
-                wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)','Native SQLite workspace startup')
-                page.evaluate('window.nativeWorkspaceReady')
-                # P1.6: measure the first screen, including real SQL KPI
-                # and filter layout, at desktop and phone CSS viewport sizes.
-                # This is an isolated test WebView, not the released installer.
-                previous_viewport=page.evaluate('({width:innerWidth,height:innerHeight})')
+            @contextmanager
+            def installed_page():
+                process,engine=start();browser=page=None
                 try:
-                    for width,height in ((1280,720),(1366,768),(390,844),(320,568)):
-                        page.set_viewport_size({'width':width,'height':height})
-                        geometry=page.evaluate('''() => {
-                          const rect = id => {
-                            const box = document.getElementById(id).getBoundingClientRect();
-                            return {top:box.top,bottom:box.bottom,width:box.width};
-                          };
-                          return {
-                            viewport:innerWidth,
-                            scrollWidth:document.documentElement.scrollWidth,
-                            filters:rect('analysisType'),
-                            kpi:rect('metricReports'),
-                            nextBlock:rect('sqlAnalysis'),
-                            active:document.querySelector('[data-nav-link="analysis"]')?.getAttribute('aria-current')
-                          };
-                        }''')
-                        if width>=1280:
-                            if not (geometry['filters']['bottom']<height and
-                                    geometry['kpi']['bottom']<height and
-                                    geometry['nextBlock']['top']<height):
-                                raise RuntimeError(f'SQL first viewport {width}x{height} hides filters, KPI or the next result panel: {geometry}')
-                        elif geometry['scrollWidth']>width+1:
-                            raise RuntimeError(f'SQL phone viewport has page-level horizontal scrolling at {width}x{height}: {geometry}')
-                        page.screenshot(path=str(output/f'windows-sql-{width}x{height}.png'),full_page=False)
-                    report['checks'].append('Measured SQL first screen at 1280x720, 1366x768, 390x844, 320x568')
-                    # Issue #64: large UI scaling must not force the whole
-                    # SQL screen to scroll horizontally. Tables may scroll
-                    # internally by design, but the page itself must fit.
-                    page.set_viewport_size({'width':1280,'height':720})
-                    for scale in ('1.25','1.5','2'):
-                        zoom=page.evaluate('''scale => {
-                          const html=document.documentElement;
-                          const before=html.style.zoom;
-                          html.style.zoom=scale;
-                          const output={
-                            scale,
-                            viewport:innerWidth,
-                            page:html.scrollWidth,
-                            toolbar:document.querySelector('.analytics-toolbar').getBoundingClientRect().right,
-                            panel:document.querySelector('#sqlOverview').getBoundingClientRect().right,
-                            chart:document.querySelector('#timelineChart').getBoundingClientRect().right,
-                            controls:document.querySelector('.analytics-toolbar .controls').getBoundingClientRect().right
-                          };
-                          html.style.zoom=before;
-                          return output;
-                        }''',scale)
-                        if zoom['page']>zoom['viewport']+2 or zoom['panel']>zoom['viewport']+2 or zoom['controls']>zoom['viewport']+2:
-                            raise RuntimeError(f'SQL zoom {scale} produces horizontal overflow: {zoom}')
-                        if scale=='2':
-                            page.screenshot(path=str(output/'windows-sql-zoom-200.png'),full_page=False)
-                    report['checks'].append('SQL zoomed cards and calendar controls remain within page width at 125, 150 and 200 percent')
-                finally:
-                    page.set_viewport_size(previous_viewport)
-                # The native SQL workspace is now one application with sections.
-                # Switching sections must not initialize the full-history UI.
-                wait_for_app_state(page,'Boolean(window.nativeWorkspaceNavigation)',
-                    'Native workspace navigation startup')
-                assert page.locator('[data-nav-link="analysis"]').get_attribute('aria-current') == 'page'
-                navigate(page, 'excel')
-                wait_for_app_state(page,
-                    'document.querySelector("#sqlSources")?.offsetParent !== null && document.querySelector("#sqlAnalysis")?.offsetParent === null',
-                    'SQL source section after tab navigation')
-                assert page.locator('#sqlSources').is_visible()
-                assert not page.locator('#sqlAnalysis').is_visible()
-                assert page.evaluate("typeof window.appReady === 'undefined'")
-                report['checks'].append('Unified SQL navigation preserves bounded loading and Excel controls')
-                # SQL source panel must only enumerate Excel metadata via Rust.
-                wait_for_app_state(page, 'Boolean(window.nativeFolderReady)', 'SQL source folder startup')
+                    browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227')
+                    page=wait_for_webview_page(browser)
+                    errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+                    yield page,engine,process.pid
+                    assert not errors,errors
+                    stop(process)
+                    if browser.is_connected():browser.close()
+                except BaseException as error:
+                    if page and not page.is_closed():
+                        record_secondary_failure(error,'WebView2 screenshot failed',lambda:page.screenshot(
+                            path=str(output/'windows-webview2.png'),timeout=10_000))
+                    record_secondary_failure(error,'Build progress report failed',lambda:(output/'build-info.json').write_text(
+                        json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8'))
+                    record_secondary_failure(error,'Runtime diagnostics failed',lambda:diagnostics(error))
+                    record_secondary_failure(error,'Installed process cleanup failed',lambda:force_stop(process))
+                    if browser and browser.is_connected():
+                        record_secondary_failure(error,'DevTools disconnect failed',browser.close)
+                    raise
+
+            source_folder=tmp/'excel-sources';source_folder.mkdir()
+            workbook=source_folder/'synthetic-year.xlsx';workbook.write_bytes(wide_xlsx(2024))
+            original_xlsx=workbook.read_bytes()
+            other_folder=tmp/'other-source';other_folder.mkdir()
+            legacy_source=other_folder/'ordinary.xlsx';legacy_source.write_bytes(daily_workbook_bytes())
+            snapshot=tmp/'online-backup.sqlite3'
+            with installed_page() as (page,engine,pid):
+                ready(page,0)
+                confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
+                entry_url=page.url
+                check_runtime(page)
+                report['webview2']=engine.get('Browser')
+                report['customizableSelect']=page.evaluate("CSS.supports('appearance','base-select')")
+                report['checks'].append('Installed canonical index starts on SQLite, reports runtime version and keyboard/appearance controls')
+                navigate(page,'upload')
+                wait_for_app_state(page,'typeof window.nativeFolderReady!=="undefined"','Native Excel folder controller startup')
                 page.evaluate('window.nativeFolderReady')
-                page.evaluate('async folder => window.__TAURI__.core.invoke("set_folder", {folder})', str(tmp))
-                page.locator('#sourceFolderRefresh').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#sourceFolderRows tr td")?.textContent === "synthetic-year.xlsx"',
-                    'SQL source folder metadata')
-                assert page.locator('#sourceFolderRows tr').count()==1
-                assert '1' in page.locator('#sourceFolderCount').inner_text()
-                # set_folder changed the SQLite config revision; reload the bounded
-                # read model so subsequent range queries do not use a stale revision.
-                assert page.evaluate('window.nativeWorkspaceRefresh()') is True
-                assert page.evaluate("typeof window.appReady === 'undefined'")
-                report['checks'].append('SQL-only folder metadata, no full-history bootstrap or implicit import')
-                # Read-only end-to-end native ordinary Excel preview; tests real Rust parser
-                # without adding or replacing user reports or loading XLSX bytes in JS.
-                legacy_source=tmp/'legacy-preview.xlsx'
-                legacy_source.write_bytes(daily_workbook_bytes())
-                sheets=page.evaluate('source => window.desktopAPI.nativeLegacyImportSheets(source)',str(legacy_source))
+                set_folder(page,source_folder,[workbook.name])
+                set_folder(page,other_folder,[legacy_source.name])
+                orgs=api(page,'nativeSettingsBootstrap')['org_names']
+                sheets=api(page,'nativeLegacyImportSheets',str(legacy_source))
                 assert 'xl/worksheets/sheet1.xml' in sheets,sheets
-                legacy_options={'sheet':'xl/worksheets/sheet1.xml','kind':'week',
-                                'start':'2026-11-09','organizations':['СМУ16','АВТО','ТРАК','ЦЕНТР']}
-                legacy_preview=page.evaluate(
-                    'args => window.desktopAPI.nativeLegacyImportPreview(args.source,args.options)',
-                    {'source':str(legacy_source),'options':legacy_options})
-                assert legacy_preview['reportCount']>=1
-                assert len(legacy_preview['reviewToken'])==64
-                assert legacy_preview['sampleReports']
-                assert page.evaluate("typeof window.appReady === 'undefined'")
-                report['checks'].append('read-only streamed Rust legacy XLSX preview with real cells')
-                # SQL is the default. Explicit classic opt-out and returning
-                # to SQL must still save the selected route.
-                assert page.locator('#sqlStartupPreference').is_checked()
-                navigate(page, 'backup')
-                page.locator('#sqlStartupPreference').uncheck()
-                assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") == 'classic'
-                page.locator('#sqlStartupPreference').check()
-                assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") == 'sql'
-                if page.evaluate("typeof window.appReady !== 'undefined'"):
-                    raise RuntimeError('Native workspace unexpectedly imported legacy full-history bootstrap')
-                # Declarative report families are separate from classic reports.
-                wait_for_app_state(page,'Boolean(window.metricKindWorkspaceReady)',
-                    'Declarative metric-kind workspace startup')
-                page.evaluate('window.metricKindWorkspaceReady')
-                assert page.locator('#metricKindSelect option').count()==2
-                example=Path(__file__).resolve().parents[1]/'examples'/'labor-report.json'
-                metric_preview=page.evaluate(
-                    'async source => window.__TAURI__.core.invoke("native_metric_preview",{source})',
-                    str(example))
-                assert metric_preview['kind']=='labor'
-                assert metric_preview['rowCount']==2
-                assert metric_preview['values']['hours']==12
-                assert abs(metric_preview['values']['units_per_hour']-19/12)<1e-8
-                metric_receipt=page.evaluate(
-                    'async data => window.__TAURI__.core.invoke("native_metric_apply",data)',
-                    {'source':str(example),'reviewToken':metric_preview['reviewToken']})
-                assert metric_receipt['rowCount']==2
-                navigate(page, 'metrics')
-                assert page.locator('#sqlMetricKinds').is_visible()
-                page.locator('#metricKindCalculate').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#metricKindCount")?.textContent.includes("Отчётов: 1")',
-                    'Declarative metrics in installed SQL workspace')
-                assert page.locator('#metricKindTotals .metric').count()==3
-                try:
-                    page.evaluate(
-                        'async data => window.__TAURI__.core.invoke("native_metric_apply",data)',
-                        {'source':str(example),'reviewToken':metric_preview['reviewToken']})
-                except Exception:
-                    pass
-                else:
-                    raise RuntimeError('Generic metric report duplicate was accepted')
-                report['checks'].append('Declarative report families, ratios of sums, IPC, no-overwrite')
-                assert page.locator('#metricXlsxProfile option').count()==2
-                metric_xlsx=tmp/'metric-labor-demo.xlsx'
-                create_example(metric_xlsx)
-                mapped=page.evaluate(
-                    'async args => window.__TAURI__.core.invoke("native_metric_xlsx_preview",args)',
-                    {'source':str(metric_xlsx),'profile':'labor_simple',
-                     'start':'2026-11-18','end':'2026-11-18'})
-                assert mapped['kind']=='labor'
-                assert mapped['rowCount']==2
-                assert mapped['values']['hours']==12
-                assert mapped['values']['units']==19
-                assert abs(mapped['values']['units_per_hour']-19/12)<1e-8
-                saved_xlsx=page.evaluate(
-                    'async args => window.__TAURI__.core.invoke("native_metric_xlsx_apply",args)',
-                    {'source':str(metric_xlsx),'profile':'labor_simple','start':'2026-11-18',
-                     'end':'2026-11-18','reviewToken':mapped['reviewToken']})
-                assert saved_xlsx['rowCount']==2
-                calculated=page.evaluate(
-                    'async args => window.__TAURI__.core.invoke("native_metric_summary",args)',
-                    {'kind':'labor','start':'2026-11-18','end':'2026-11-18'})
-                assert calculated['reportCount']==2
-                assert calculated['values']['hours']==24
-                assert calculated['values']['units']==38
-                try:
-                    page.evaluate(
-                        'async args => window.__TAURI__.core.invoke("native_metric_xlsx_apply",args)',
-                        {'source':str(metric_xlsx),'profile':'labor_simple','start':'2026-11-18',
-                         'end':'2026-11-18','reviewToken':mapped['reviewToken']})
-                except Exception:
-                    pass
-                else:
-                    raise RuntimeError('XLSX declarative mapping accepted repeated source')
-                report['checks'].append('Profile-driven XLSX import, ratio of sums, no double-counting')
-                assert page.locator('#metricReports').inner_text()=='366'
-                assert page.locator('#reportRows tr').count()==100
-                assert page.locator('#metricGroups').inner_text()=='0'
-                first_native=page.locator('#reportRows tr').first.get_attribute('data-report-id')
-                navigate(page, 'reports')
-                assert page.locator('#sqlReports').is_visible()
-                wait_for_app_state(page,'document.querySelectorAll("#reportCalendar>button").length===12','Metadata calendar shows twelve months')
-                february=page.locator('#reportCalendar>button').nth(1)
-                february.click()
-                assert page.locator('#calendarDetails [data-date]').count()==29
-                page.locator('#calendarDetails [data-date="2024-02-29"]').click()
-                wait_for_app_state(page,'document.querySelectorAll("#reportRows tr").length===1','Calendar day opens a bounded report list')
-                assert page.locator('#reportRows tr td').first.inner_text()=='29.02.2024'
-                page.locator('#reportClearSelection').click()
-                wait_for_app_state(page,'document.querySelectorAll("#reportRows tr").length===100','All periods restore paged report navigation')
-                page.get_by_role('button',name='Закрыть дни месяца',exact=True).click()
-                assert not page.locator('#calendarDetails').is_visible()
-                assert february.evaluate('(button)=>document.activeElement===button')
-                report['checks'].append('Classic twelve-month SQLite metadata calendar, leap days, close focus and bounded report selection')
-                page.locator('#reportNext').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#reportRows tr")?.getAttribute("data-report-id") !== '+json.dumps(first_native),
-                    'Native SQL next page')
-                assert page.locator('#reportRows tr').count()==100
-                assert page.locator('#reportPageInfo').inner_text()=='Страница 2'
-                page.locator('#reportBack').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#reportRows tr")?.getAttribute("data-report-id") === '+json.dumps(first_native),
-                    'Native SQL previous page')
-                assert page.locator('#reportPageInfo').inner_text()=='Страница 1'
-                assert page.locator('#sqlDailyRollups').is_visible()
-                page.locator('#dailyRollupGranularity').select_option('year')
-                assert page.locator('#dailyRollupFrom').get_attribute('type')=='number'
-                page.locator('#dailyRollupFrom').fill('2024')
-                page.locator('#dailyRollupTo').fill('2024')
-                page.locator('#dailyRollupPrepare').click()
-                # This fixture durably indexes 366 reports in batches of 20.
-                # A Windows runner reached 340 at the generic 30-second limit;
-                # allow this bulk preparation longer while retaining the exact
-                # completion and subsequent 366-source rollup assertions.
-                wait_for_app_state(page,
-                    'document.querySelector("#dailyRollupRun")?.disabled === false',
-                    'Daily report index preparation for calendar rollup', timeout_ms=90_000)
-                page.locator('#dailyRollupRun').click()
-                wait_for_app_state(page,
-                    'document.querySelectorAll("#dailyRollupRows tr").length === 1',
-                    '2024 calendar rollup from indexed day sources')
-                assert page.locator('#dailyRollupRows tr').first.locator('td').first.inner_text()=='2024'
-                assert page.locator('#dailyRollupRows tr').first.locator('td').nth(1).inner_text()=='366'
-                assert page.locator('#dailyRollupRows tr').count()<=60
-                wait_for_app_state(page,
-                    'document.querySelectorAll("#dailySourceKpis .comparison-metric").length === 5 && document.querySelector("#dailySourceChart svg") !== null',
-                    'KPI and monthly chart derived only from 366 daily reports')
-                # innerText is empty inside a closed details element in WebView2.
-                # Open the exact-values table as a user would before reading cells.
-                source_details=page.locator('details').filter(has=page.locator('#dailySourceRows'))
-                if not source_details.evaluate('(el) => el.open'):
-                    source_details.locator('summary').click()
-                assert page.locator('#dailySourceRows tr').count()==12
-                assert page.locator('#dailySourceRows tr').first.locator('td').first.inner_text()=='2024-01'
-                assert page.locator('#dailySourceKpis .comparison-metric').first.locator('strong').inner_text()!='—'
-                assert 'календарные месяцы' in page.locator('#dailySourceStatus').inner_text()
-                assert 'дневные' in page.locator('#dailyRollupScope').inner_text().lower()
-                report['checks'].append('SQL day-source KPIs and chart match the calendar scope, without weekly or monthly imports')
-                # Issue #64: the same exact work-name filter must affect the
-                # SQL calendar, KPI cards and graph, then restore the baseline.
-                baseline_amount=page.locator('#dailySourceKpis .comparison-metric').nth(1).locator('strong').inner_text()
-                navigate(page, 'analysis')
-                assert page.locator('#sqlAnalysis').is_visible()
-                if not page.locator('#analysisMoreFilters').evaluate('(el) => el.open'):
-                    page.locator('#analysisMoreFilters summary').click()
-                page.locator('#analysisNameSearch').fill('Альфа')
-                page.locator('#analysisNameSearchRun').click()
-                wait_for_app_state(page,
-                    'Array.from(document.querySelector("#analysisName")?.options || []).some(o => o.value === "Альфа")',
-                    'Bounded SQLite work-name search includes synthetic daily work')
-                page.locator('#analysisName').select_option('Альфа')
-                page.locator('#analysisNameAdd').click()
-                assert 'Альфа' in page.locator('#analysisFilterScope').inner_text()
-                navigate(page, 'reports')
-                assert 'Альфа' in page.locator('#dailyRollupScope').inner_text()
-                page.locator('#dailyRollupRun').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#dailySourceStatus")?.textContent.includes("календарные месяцы") && document.querySelectorAll("#dailySourceKpis .comparison-metric").length === 5',
-                    'Day-source KPI and graph recomputed for the chosen work')
-                filtered_amount=page.locator('#dailySourceKpis .comparison-metric').nth(1).locator('strong').inner_text()
-                if filtered_amount == '—':
-                    raise RuntimeError('Exact work filter lost the valid daily-source amount')
-                # This workbook can contain only one raw work name. The true
-                # coverage distinction is a selected *absent* work, which must
-                # produce verified zero instead of a fabricated missing day.
-                absent_work=page.evaluate('''async () => {
-                  const metadata=await window.desktopAPI.nativeSettingsBootstrap();
-                  return window.desktopAPI.nativeAnalysisRange(
-                    metadata.revision,'day','2024-01-01','2024-12-31',
-                    metadata.org_names,'__sql_smoke_absent_work__');
-                }''')
-                assert absent_work['complete'] is True
-                assert absent_work['missing']==0
-                assert absent_work['total']['amount']==0
-                assert absent_work['total']['count']==0
-                assert page.locator('#dailySourceRows tr').count()==12
-                assert page.locator('#dailySourceChart svg').count()==1
-                navigate(page, 'analysis')
-                page.locator('#analysisNameReset').click()
-                assert 'все' in page.locator('#analysisFilterScope').inner_text()
-                navigate(page, 'reports')
-                page.locator('#dailyRollupRun').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#dailySourceStatus")?.textContent.includes("календарные месяцы") && document.querySelectorAll("#dailySourceKpis .comparison-metric").length === 5',
-                    'Day-source KPI restores original scope after filter reset')
-                assert page.locator('#dailySourceKpis .comparison-metric').nth(1).locator('strong').inner_text()==baseline_amount
-                report['checks'].append('SQL exact work-name selection preserves coverage and resets cleanly')
-
-                assert page.evaluate("typeof window.appReady === 'undefined'")
-                report['checks'].append('SQL 2024 annual calendar is computed from daily reports only')
-                page.locator('#dailyRollupRows tr').first.locator('button').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#dailyRollupDetailPanel")?.hidden === false && document.querySelectorAll("#dailyRollupDetailRows tr").length === 60',
-                    'SQL annual calendar shows first 60 real daily periods')
-                assert page.locator('#dailyRollupDetailRows tr').first.locator('td').first.inner_text()=='2024-01-01'
-                assert page.locator('#dailyRollupDetailNext').is_enabled()
-                page.locator('#dailyRollupDetailNext').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#dailyRollupDetailPage")?.textContent === "Страница 2"',
-                    'SQL daily calendar details next keyset page')
-                assert page.locator('#dailyRollupDetailRows tr').first.locator('td').first.inner_text()=='2024-03-01'
-                page.locator('#dailyRollupDetailBack').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#dailyRollupDetailPage")?.textContent === "Страница 1"',
-                    'SQL daily calendar details previous keyset page')
-                assert page.locator('#dailyRollupDetailRows tr').first.locator('td').first.inner_text()=='2024-01-01'
-                page.locator('#dailyRollupDetailClose').click()
-                assert page.locator('#dailyRollupDetailPanel').is_hidden()
-                assert page.locator('#dailyRollupRows tr').count()==1
-                report['checks'].append('SQL annual-to-day detail pages bound to exact SQLite dates with explicit close')
-                page.locator('#nativeReportType').select_option('week')
-                wait_for_app_state(page,
-                    'document.querySelector("#reportStatus")?.textContent.includes("На странице: 0")',
-                    'Native SQLite filter without week reports')
-                assert page.locator('#reportRows tr').count()==0
-                # Exercise the new SQL settings UI on synthetic CI data only.
-                page.evaluate('window.confirm = () => true')
-                navigate(page, 'groups')
-                page.locator('#managementGroupName').fill('CI SQL group')
-                page.locator('#managementGroupCreate').click()
-                group_open=page.get_by_role('button',name='Открыть состав группы CI SQL group',exact=True)
-                group_open.wait_for(state='visible')
-                wait_for_app_state(page,'!document.querySelector("#managementGroupCreate").disabled','SQL group publication finished')
-                group_open.click()
-                page.locator('#managementMemberName').fill('CI SQL work')
-                page.locator('#managementMemberAdd').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#managementMemberRows")?.textContent.includes("CI SQL work")',
-                    'SQL group member committed and reread through bounded IPC')
-                page.get_by_role('button',name='Исключить CI SQL work',exact=True).click()
-                wait_for_app_state(page,
-                    'document.querySelectorAll("#managementMemberRows tr").length === 0 && !document.querySelector("#managementMemberAdd").disabled',
-                    'SQL group member removal')
-                page.get_by_role('button',name='Удалить группу CI SQL group',exact=True).click()
-                wait_for_app_state(page,
-                    '!Array.from(document.querySelectorAll("#groupRows button")).some(b => b.getAttribute("aria-label") === "Открыть состав группы CI SQL group") && !document.querySelector("#managementGroupCreate").disabled',
-                    'SQL group removal')
-                report['checks'].append('Installed SQL group create/member add/member remove/group delete with confirmation')
-                navigate(page, 'analysis')
-                page.locator('#analysisSource').select_option('daily')
-                page.locator('#analysisType').select_option('month')
-                page.locator('#analysisFrom').fill('2024-02')
-                page.locator('#analysisTo').fill('2024-02')
-                page.locator('#analysisPrepare').click()
-                wait_for_app_state(page,'!document.querySelector("#analysisRun").disabled','Daily-source month index')
-                page.locator('#analysisRun').click()
-                wait_for_app_state(page,
-                    'document.querySelectorAll("#timelineRows tr").length === 1 && document.querySelector("#timelineRows tr td")?.textContent === "2024-02" && !document.querySelector("#analysisRun").disabled && document.querySelector("#analysisResultScope")?.textContent.includes("только дневные")',
-                    'Daily-source selected month produces one SQL month bucket')
-                assert 'только дневные' in page.locator('#analysisResultScope').inner_text()
-                assert page.locator('#analysisValues').inner_text().find('Полная')>=0
-                assert page.locator('#timelineRows tr td').nth(1).text_content()=='29'
-                page.locator('#hideEmptyPeriods').check()
-                reveal_table(page, '#timelineRows')
-                assert page.locator('#timelineRows tr').count()==1
-                page.locator('#hideEmptyPeriods').uncheck()
-                report['checks'].append('Daily-source KPI and monthly SQL bucket cover all leap-February days')
-                # Exercise the real native commands for every specialized view
-                # against one captured complete daily-source calendar month.
-                navigate(page, 'changes')
-                page.locator('#comparisonBeforeFrom').fill('2024-01')
-                page.locator('#comparisonBeforeTo').fill('2024-01')
-                for mode in ['changes', 'usual', 'regularity', 'structure', 'contributions']:
-                    page.locator('#advancedMode').select_option(mode)
-                    wait_for_app_state(page,
-                        '!document.querySelector("#advancedRun").disabled',
-                        'Advanced SQL view is ready: '+mode)
-                    page.locator('#advancedRun').click()
-                    wait_for_app_state(page,
-                        '!document.querySelector("#advancedRun").disabled && document.querySelectorAll("#advancedRows tr").length > 0',
-                        'Advanced native SQL result: '+mode)
-                    assert 'Ошибка' not in page.locator('#advancedStatus').inner_text()
-                    assert 'дневные отчёты' in page.locator('#advancedContext').inner_text()
-                    assert '2024-02-01' in page.locator('#advancedContext').inner_text()
-                    assert 'из ' in page.locator('#advancedPage').inner_text()
-                page.emulate_media(media='print')
-                assert page.locator('#advancedPage').is_visible()
-                assert page.locator('#advancedContext').is_visible()
-                assert page.locator('#advancedRows').is_visible()
-                page.emulate_media(media='screen')
-                report['checks'].append('All five advanced SQL analyses use the daily-source scope; printed page retains row bounds and context')
-                if not page.locator('#analysisMoreFilters').evaluate('(el) => el.open'):
-                    page.locator('#analysisMoreFilters summary').click()
-                navigate(page, 'analysis')
-                organization_choices=page.locator('#analysisOrganizationChoices label')
-                assert organization_choices.count()==4
-                wait_for_app_state(page,'document.querySelectorAll("#organizationTrendsLegend>span").length===4','All division colors before subset filtering')
-                division_colors=page.locator('#organizationTrendsLegend').evaluate("el=>Object.fromEntries([...el.children].map(row=>[row.children[1].textContent,getComputedStyle(row.children[0]).backgroundColor]))")
-                chosen_orgs=[organization_choices.nth(i).locator('span').text_content() for i in (0,2)]
-                for i in (1,3):
-                    organization_choices.nth(i).locator('input').uncheck()
-                assert page.locator('#analysisOrganization').input_value()=='__custom__'
-                assert ', '.join(chosen_orgs) in page.locator('#analysisFilterScope').inner_text()
-                page.locator('#analysisRun').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#analysisResultScope")?.textContent.includes("(2 из 4)") && document.querySelectorAll("#divisionRows tr").length === 2',
-                    'SQLite analysis and division totals are scoped to two of four organizations')
-                assert set(page.locator('#divisionRows tr td:first-child').all_text_contents())==set(chosen_orgs)
-                wait_for_app_state(page,'document.querySelectorAll("#organizationTrendsLegend>span").length===2','Selected division colors remain stable')
-                subset_colors=page.locator('#organizationTrendsLegend').evaluate("el=>Object.fromEntries([...el.children].map(row=>[row.children[1].textContent,getComputedStyle(row.children[0]).backgroundColor]))")
-                assert subset_colors=={name:division_colors[name] for name in chosen_orgs}
-
-                page.locator('#analysisOrganization').select_option('*')
-                assert 'все из настроек (4)' in page.locator('#analysisFilterScope').inner_text()
-                report['checks'].append('SQL organization subset narrows division results and resets to all')
-                page.locator('#analysisSource').select_option('imported')
-                # D4c: a type with no reports can be indexed without loading
-                # history, then its incomplete SQL range must have NULL totals.
-                navigate(page, 'analysis')
-                assert page.locator('#sqlAnalysis').is_visible()
-                page.locator('#analysisType').select_option('week')
-                assert page.locator('#analysisFrom').get_attribute('type')=='week'
-                assert page.locator('#analysisTo').get_attribute('type')=='week'
-                page.locator('#analysisFrom').fill('2026-W45')
-                page.locator('#analysisTo').fill('2026-W46')
-                page.locator('#analysisPrepare').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#analysisRun")?.disabled === false',
-                    'Bounded SQL analysis index preparation')
-                page.locator('#analysisRun').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#analysisStatus")?.textContent.includes("не все периоды")',
-                    'SQL incomplete-range detection')
-                assert page.locator('#analysisValues .metric').count()==9
-                assert page.locator('#analysisValues .metric').nth(3).locator('strong').inner_text()=='—'
-                assert page.locator('#analysisValues .metric').nth(4).locator('strong').inner_text()=='—'
-                assert page.locator('#analysisCoverageNotice').is_visible()
-                assert 'Подтверждение скрывает' in page.locator('#analysisCoverageText').inner_text()
-                page.locator('#analysisAcknowledge').click()
-                assert page.locator('#analysisCoverageNotice').is_hidden()
-                assert 'Замечание подтверждено' in page.locator('#analysisStatus').inner_text()
-                # Acknowledging the warning must not materialize missing values.
-                assert page.locator('#analysisValues .metric').nth(4).locator('strong').inner_text()=='—'
-                report['checks'].append('SQL acknowledgement suppresses only the known warning, not absent totals')
-                # D4d comparison derives complete/incomplete per-division rows
-                # through bounded D2 SQL, not through JS history data.
-                wait_for_app_state(page,
-                    'document.querySelectorAll("#divisionRows tr").length > 0',
-                    'Native organization summary table')
-                assert all(row.locator('td').nth(4).inner_text()=='—'
-                    for row in page.locator('#divisionRows tr').all())
-                assert all(row.locator('td').nth(2).inner_text()!='0'
-                    for row in page.locator('#divisionRows tr').all())
-                # The graphical SQL layer must use the same missing-period evidence.
-                wait_for_app_state(page,
-                    'document.querySelector("#timelineStatus")?.textContent.includes("Ни одной полной точки")',
-                    'SQL timeline has no fabricated zero observations')
-                reveal_table(page, '#timelineRows')
-                assert page.locator('#timelineRows tr').count()==2
-                assert page.locator('#timelineChart svg').count()==0
-                assert all(row.locator('td').nth(4).inner_text()=='—'
-                    for row in page.locator('#timelineRows tr').all())
-                report['checks'].append('Native timeline preserves missing weekly periods')
-                wait_for_app_state(page,
-                    'document.querySelector("#rankingStatus")?.textContent.includes("Рейтинг скрыт")',
-                    'Native ranking excludes incomplete week ranges')
-                assert page.locator('#rankingBars li').count()==0
-                assert page.locator('#rankingMetric').is_enabled()
-                report['checks'].append('SQL ranking excludes incomplete weekly ranges')
-                wait_for_app_state(page,
-                    'document.querySelector("#organizationTrendsStatus")?.textContent.includes("Нет подтверждённых точек")',
-                    'Native division trends hide missing weekly values')
-                reveal_table(page, '#organizationTrendsRows')
-                assert page.locator('#organizationTrendsRows tr').count()>0
-                assert page.locator('#organizationTrendsRows tr').count()<=992
-                assert page.locator('#organizationTrendsChart svg').count()==0
-                assert all(row.locator('td').nth(5).inner_text()=='—'
-                    for row in page.locator('#organizationTrendsRows tr').all())
-                report['checks'].append('Division trend lines are missing when selected weeks are absent')
-
-
-                report['checks'].append('D2 incomplete SQL range keeps missing totals null')
-                report['checks'].append('Native division comparison preserves unknown incomplete amounts')
-                # D4e: the group/work keyset API must also run on the real
-                # installed app; an empty weekly range produces no fake zeros.
-                wait_for_app_state(page,
-                    'document.querySelector("#workStatus")?.textContent.includes("На странице: 0")',
-                    'Native SQL group/work breakdown for absent weekly reports')
-                assert page.locator('#workRows tr').count()==0
-                assert page.locator('#workNext').is_disabled()
-                assert page.locator('#sqlWorkTrends').is_visible()
-                assert page.locator('#workTrendMetric').is_disabled()
-                assert page.locator('#workTrendChart svg').count()==0
-                reveal_table(page, '#workTrendRows')
-                assert page.locator('#workTrendRows tr').count()==0
-                assert page.locator('#workTrendSelected').inner_text()=='Позиция не выбрана.'
-                report['checks'].append('SQL work/group trend controls start empty without fabricated data')
-                navigate(page, 'changes')
-                page.locator('#comparisonBeforeFrom').fill('2026-W45')
-                page.locator('#comparisonBeforeTo').fill('2026-W46')
-                wait_for_app_state(page,
-                    'document.querySelector("#comparisonRun")?.disabled === false',
-                    'Native comparison becomes available after choosing baseline dates')
-                page.locator('#comparisonRun').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#comparisonStatus")?.textContent.includes("есть пропуски")',
-                    'Both incomplete SQL ranges keep comparison changes unknown')
-                assert page.locator('#comparisonMetrics .comparison-metric').count()==2
-                assert page.locator('#comparisonDivisionRows tr').count()==4
-                assert all(row.locator('td').nth(3).inner_text()=='—'
-                    for row in page.locator('#comparisonDivisionRows tr').all())
-                assert page.locator('#comparisonRankRows li').count()==0
-                assert 'скрыта' in page.locator('#comparisonRankStatus').inner_text()
-                report['checks'].append('SQL comparison refuses fabricated deltas for incomplete baseline')
-
-                report['checks'].append('Native work/group keyset breakdown is empty for missing weekly data')
-                # D4f: export uses an on-disk CSV from SQLite, not report JSON,
-                # and must reject an existing output path without replacement.
-                export_path=tmp/'analysis-empty-week.csv'
-                if export_path.exists():
-                    raise RuntimeError('CSV export test destination unexpectedly exists')
-                export_call="""
-                  async path => {
-                    const snapshot=await window.desktopAPI.nativeSettingsBootstrap();
-                    return window.__TAURI__.core.invoke('native_export_range_csv',{
-                      revision:snapshot.revision, reportType:'week',
-                      from:'2026-11-02', to:'2026-11-09',
-                      organizations:snapshot.org_names, organization:null,
-                      destination:path
-                    });
-                  }
-                """
-                page.evaluate(export_call,str(export_path))
-                exported=export_path.read_bytes()
-                assert exported.startswith(b'\xef\xbb\xbf"key";"name";"kind";"count";"amount";"average";"active"')
-                assert b'\r\n' in exported
-                try:
-                    page.evaluate(export_call,str(export_path))
-                except Exception as error:
-                    assert 'already exists' in str(error)
-                else:
-                    raise RuntimeError('Native SQL export overwrote an existing CSV')
-                assert export_path.read_bytes()==exported
-                report['checks'].append('Native SQL CSV export with UTF-8 BOM and no-overwrite guarantee')
-                snapshot=tmp/'online-backup.sqlite3'
-                backup_call="async path=>window.__TAURI__.core.invoke('native_backup_sqlite',{destination:path})"
-                stored_rev=page.evaluate(backup_call,str(snapshot))
-                assert isinstance(stored_rev,int)
-                assert snapshot.is_file()
-                with closing(sqlite3.connect(str(snapshot))) as backed_up:
-                    assert backed_up.execute('PRAGMA quick_check').fetchone()[0]=='ok'
-                    assert backed_up.execute('SELECT COUNT(*) FROM reports').fetchone()[0]==366
-                    assert backed_up.execute('SELECT COUNT(*) FROM metric_report_docs').fetchone()[0]==2
-                    assert backed_up.execute("SELECT json FROM kv WHERE name='settings'").fetchone() is not None
-                previous=snapshot.read_bytes()
-                try:
-                    page.evaluate(backup_call,str(snapshot))
-                except Exception as error:
-                    assert 'already exists' in str(error)
-                else:
-                    raise RuntimeError('Online backup overwrote existing SQLite')
-                assert snapshot.read_bytes()==previous
-                report['checks'].append('Online SQLite backup includes WAL and refuses overwrites')
-                # E1: native wide import must be inspected and explicitly
-                # approved; repeat preparation validates same source/DB content
-                # before publishing new report documents atomically.
-                native_options={'year':2024,'sheets':[],'mappings':{},
-                    'organizations':['СМУ16','АВТО','ТРАК','ЦЕНТР']}
-                native_preview=page.evaluate(
-                    'async args => window.__TAURI__.core.invoke("native_wide_import_preview",args)',
-                    {'source':str(excel),'options':native_options})
-                assert native_preview['reportCount']==366
-                assert native_preview['rowCount']>0
-                assert native_preview['conflicts']['replacements']==366
-                token=native_preview['reviewToken']
-                assert len(token)==64
-                direct_apply='async args => window.__TAURI__.core.invoke("native_wide_import_apply",args)'
-                refused={'source':str(excel),'options':native_options,'reviewToken':token,
-                         'confirmation':{'replaceExact':True,'acceptCrossType':True,'acceptQuality':True}}
-                try:
-                    page.evaluate(direct_apply,refused)
-                except Exception as error:
-                    assert 'backup' in str(error).lower(),str(error)
-                else:
-                    raise RuntimeError('Native IPC replaced reports without a backup destination')
-                before_native=tmp/'before-native-import.sqlite3'
-                approved={'source':str(excel),'options':native_options,'reviewToken':token,
-                          'confirmation':{'replaceExact':True,'acceptCrossType':True,
-                                          'acceptQuality':True,'backupDestination':str(before_native)}}
-                receipt=page.evaluate(direct_apply,approved)
-                assert before_native.is_file()
-                with closing(sqlite3.connect(str(snapshot))) as original_copy:
-                    expected_rows=original_copy.execute(
-                        'SELECT id,json FROM reports ORDER BY id').fetchall()
-                    expected_kv=original_copy.execute(
-                        'SELECT name,json FROM kv ORDER BY name').fetchall()
-                assert len(expected_rows)==366
-                with closing(sqlite3.connect(str(before_native))) as restored_copy:
-                    assert restored_copy.execute('PRAGMA quick_check').fetchone()[0]=='ok'
-                    assert restored_copy.execute('SELECT COUNT(*) FROM reports').fetchone()[0]==366
-                    actual_rows=restored_copy.execute(
-                        'SELECT id,json FROM reports ORDER BY id').fetchall()
-                    actual_kv=restored_copy.execute(
-                        'SELECT name,json FROM kv ORDER BY name').fetchall()
-                    assert actual_rows==expected_rows, 'Backup differs from pre-import reports'
-                    assert actual_kv==expected_kv, 'Backup differs from pre-import settings'
-                report['checks'].append('Native import IPC refuses replacement without verified SQLite backup')
-                assert receipt['reports']==366
-                assert receipt['replaced']==366
-                assert receipt['revision']>native_preview['revision']
-                updated=page.evaluate('window.desktopAPI.load()')
-                assert len(updated['reports'])==366
-                assert all(r.get('sourceFormat')=='daily-wide' for r in updated['reports'])
-                report['checks'].append('reviewed native wide XLSX preview and atomic 366-report replacement')
-                assert page.evaluate('window.nativeWorkspaceRefresh()')
-                navigate(page, 'reports')
-                source_anchor=next(row for row in updated['reports'] if 'sourceIssues' in row)
-                # The earlier empty-week scenario intentionally left this filter
-                # on week. The replacement above contains daily reports only.
-                page.locator('#nativeReportType').select_option('day')
-                wait_for_app_state(page,
-                    'document.querySelectorAll("#reportRows tr").length > 1 && document.querySelector("#reportRows tr td:nth-child(3)")?.textContent === "День"',
-                    'Daily report rows after replacing the wide source')
-                row=page.locator('#reportRows tr:not([data-report-id="'+source_anchor['id']+'"])').first
-                quality=row.get_by_role('button',name='Замечания к отчёту',exact=False)
-                quality.click()
-                wait_for_app_state(page,
-                    '!document.querySelector("#reportQualitySource")?.hidden',
-                    'Saved report issues load the native source link')
-                assert page.locator('#reportQualityDialog').is_visible()
-                page.locator('#reportQualitySource').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#reportQualityStatus")?.textContent.startsWith("На странице:") || '
-                    'document.querySelector("#reportQualityStatus")?.textContent.startsWith("Сохранённых замечаний нет")',
-                    'Saved shared source issues through Tauri IPC')
-                assert source_anchor['id'] in page.locator('#reportQualityAnchor').inner_text()
-                assert page.locator('#reportQualityRows tr').count()==min(50,len(source_anchor['sourceIssues']))
-                page.keyboard.press('Escape')
-                assert not page.locator('#reportQualityDialog').is_visible()
-                assert quality.evaluate('(button) => document.activeElement === button')
-                report['checks'].append('Saved report quality, shared SQLite anchor, bounded rows and keyboard focus')
-                report['checks'].append('SQL-only native page, bounded report navigation, settings bootstrap')
-                navigate(page, 'backup')
-                page.locator('#legacyWorkspaceLink').click()
-                wait_for_app_state(page,'Boolean(window.appReady)','Legacy workspace after native route')
-                page.evaluate('window.appReady')
-                assert page.evaluate('state.reports.length')==366
-                page.locator('#reportsShortcut').click()
+                preview=api(page,'nativeLegacyImportPreview',str(legacy_source),{
+                    'sheet':'xl/worksheets/sheet1.xml','kind':'day','start':'2025-01-01','organizations':orgs})
+                assert preview['reportCount']==6 and len(preview['reviewToken'])==64 and preview['sampleReports']
+                assert api(page,'nativeSettingsBootstrap')['reports']==0
+                set_folder(page,source_folder,[workbook.name])
+                assert not page.locator('#sourceAutoImport').is_checked()
+                assert page.evaluate('window.unifiedUI.refresh()')['reports']==0
+                report['checks'].append('Changing the connected folder replaces metadata without importing; ordinary XLSX preview streams through Rust')
+                import_year(page,workbook,confirmations)
+                assert workbook.read_bytes()==original_xlsx
+                check_report_views(page)
+                report['checks'].append('Native Excel confirmation blocks writes, Cancel preserves SQLite, and OK imports 366 reports with 50-card pagination and a 29-day calendar')
+                check_analytics(page,tmp,output)
+                report['checks'].append('Daily-source annual and February totals, exact work and organization filters, missing-week analytics, 200% zoom and responsive widths, and protected UTF-8 CSV')
+                check_extended(page)
+                report['checks'].append('Canonical changes, usual level, regularity, structure and contribution views use the current SQLite selection; print uses the dedicated layout')
+                check_groups(page,confirmations)
+                report['checks'].append('Group creation, member assignment and removal, and native Cancel/OK for explicit deletion')
+                check_metrics(page,tmp)
+                report['checks'].append('Installed native metric imports and ratio-of-sums queries refuse repeated JSON and XLSX sources')
+                original=check_backup_and_replace(page,tmp,snapshot)
+                assert workbook.read_bytes()==original_xlsx
+                report['checks'].append('SQLite online backup quick-check, no overwrite, and atomic 366-report replacement with a verified pre-import backup')
+                navigate(page,'upload')
+                wait_for_text(page,'#qualitySummary','Найдено:',90_000)
+                assert page.locator('#qualityTable tbody tr').count()<=50
+                assert page.locator('#uploadedReports > summary').is_visible()
+                assert page.url==entry_url
                 page.screenshot(path=str(output/'windows-webview2.png'))
-                assert not errors,errors
-                before_restart=page.evaluate("({view:document.querySelector('.view.active').id,saved:localStorage.getItem('work-reports-view-v1')})")
-                report['navigation_before_restart']=before_restart
+                page.evaluate("localStorage.setItem('work-reports-view-v1','upload'); localStorage.setItem('analiz-sql-startup-v1','classic')")
+                report['navigation_before_restart']=page.locator('.view.active').get_attribute('id')
                 (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
-                assert before_restart=={'view':'upload','saved':'upload'},before_restart
-                # Reproduce an installed 1.6.0 profile: remembered classic Excel
-                # view, with no explicit startup preference. It must now use SQL.
-                page.evaluate("localStorage.removeItem('analiz-sql-startup-v1')")
-                assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") is None
-            except BaseException as error:
-                diagnostics(error);raise
-            finally:
-                try:stop(process)
-                finally:
-                    if browser and browser.is_connected():browser.close()
-            process,_=start();browser=None
-            try:
-                browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227');page=wait_for_webview_page(browser)
-                # The lightweight launcher must go straight to SQLite on restart:
-                # no full-history window.appReady and no legacy frontend bootstrap.
-                wait_for_app_state(page, 'Boolean(window.nativeWorkspaceReady)', 'SQL-first application restart')
-                page.evaluate('window.nativeWorkspaceReady')
-                if page.evaluate("typeof window.appReady !== 'undefined'"):
-                    raise RuntimeError('SQL-first startup loaded the classic history')
-                assert page.locator('#metricReports').inner_text()=='366'
-                assert page.locator('#sqlStartupPreference').is_checked()
-                assert page.evaluate("window.nativeWorkspaceNavigation.active()")=='analysis'
-                report['checks'].append('Default SQL restart ignores a remembered classic Excel view without loading full report history')
-                # Switch the next launch back to classic; imports must remain accessible.
-                navigate(page, 'backup')
-                page.locator('#sqlStartupPreference').uncheck()
-                assert page.evaluate("localStorage.getItem('analiz-sql-startup-v1')") == 'classic'
-                navigate(page, 'backup')
-                page.locator('#legacyWorkspaceLink').click()
-                wait_for_app_state(page, 'Boolean(window.appReady)', 'Classic interface after SQL-first restart')
-                page.evaluate('window.appReady')
-                assert len(page.evaluate('window.desktopAPI.load()')['reports'])==366
-                restored=page.evaluate("({view:document.querySelector('.view.active').id,saved:localStorage.getItem('work-reports-view-v1')})")
-                report['navigation_after_restart']=restored
-                (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
-                assert restored=={'view':'upload','saved':'upload'},restored
-                report['checks'].append('SQLite and last view survive application restart')
-                # Save an Excel rule through real WebView2 + Rust IPC, after all
-                # classic autoimport assertions so the new rule cannot alter them.
-                page.locator('#openNativeWorkspace').click()
-                # Finish both independent SQL startup tasks before editing a
-                # rule. Folder listing can finish before the bounded SQLite
-                # bootstrap; a save during bootstrap cannot refresh the page.
-                wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)',
-                    'SQL workspace ready before rule edit')
-                page.evaluate('window.nativeWorkspaceReady')
-                wait_for_app_state(page,'Boolean(window.nativeFolderReady)', 'SQL folder rule editor startup')
-                page.evaluate('window.nativeFolderReady')
-                navigate(page, 'excel')
-                assert page.locator('#sqlSources').is_visible()
-                # Re-establish the isolated test folder after the classic UI
-                # round-trip, then await metadata instead of assuming it survived.
-                page.evaluate('async folder => window.__TAURI__.core.invoke("set_folder", {folder})', str(tmp))
-                page.locator('#sourceFolderRefresh').click()
-                # Both synthetic-year.xlsx and metric-labor-demo.xlsx remain
-                # in the test folder; target the intended source by name rather
-                # than assuming the yearly workbook sorts first.
-                wait_for_app_state(page,
-                    'Array.from(document.querySelectorAll("#sourceFolderRows tr td:first-child")).some(td => td.textContent === "synthetic-year.xlsx")',
-                    'SQL editor source metadata')
-                year_row=page.locator('#sourceFolderRows tr').filter(has_text='synthetic-year.xlsx')
-                assert year_row.count()==1
-                year_row.locator('button').click()
-                page.locator('#sourceRuleFormat').select_option('daily-wide')
-                page.locator('#sourceRuleYear').fill('2024')
-                page.evaluate('window.confirm = () => true')  # Test only; real UI requires confirmation.
-                page.locator('#sourceRuleSave').click()
-                wait_for_app_state(page,
-                    'document.querySelector("#sourceRuleStatus")?.textContent.includes("Правило сохранено")',
-                    'SQLite rule saved with revision check')
-                listing=page.evaluate('window.desktopAPI.list()')
-                assert listing['rules']['synthetic-year.xlsx']['format']=='daily-wide'
-                assert listing['rules']['synthetic-year.xlsx']['year']==2024
-                # Verify the persisted report count in SQLite, then await its
-                # propagation to the SQL view. Do not silently accept a smaller
-                # number or an incomplete asynchronous refresh.
-                actual_reports=page.evaluate('window.desktopAPI.nativeSettingsBootstrap()')['reports']
-                assert actual_reports==366,('SQLite report count changed after rule edit',actual_reports)
-                wait_for_app_state(page,
-                    'document.querySelector("#metricReports")?.textContent === "366"',
-                    'SQL report count after editing rule')
-                assert page.evaluate("typeof window.appReady === 'undefined'")
-                report['checks'].append('SQL-only Excel rule write with native revision and file validation')
-                # Validate Windows handle/path authorization without committing
-                # any extra reports into the 366-report recovery fixture.
-                auto_probe=tmp/'auto-probe.xlsx'
-                auto_probe.write_bytes(daily_workbook_bytes())
-                auto_request=page.evaluate('''async () => {
-                  const listing=await window.desktopAPI.list();
-                  const file=listing.files.find(f => f.name==='auto-probe.xlsx');
-                  if(!file?.nativeSignature)throw Error('Native file signature is missing');
-                  await window.desktopAPI.nativeSetRuleChecked(file.name,
-                    {type:'day',start:'2025-01-01',sheet:'',format:'legacy'},
-                    listing.revision,listing.folder,file.nativeSignature);
-                  const current=await window.desktopAPI.list();
-                  const source=current.files.find(f => f.name==='auto-probe.xlsx');
-                  const session=await window.desktopAPI.nativeFolderImportSession(true);
-                  return {session,folder:current.folder,revision:current.revision,
-                    name:source.name,signature:source.nativeSignature};
-                }''')
-                try:
-                    auto_review=page.evaluate('request => window.desktopAPI.nativeFolderImportPreview(request)',auto_request)
-                    assert auto_review['reportCount']==6,auto_review
-                    assert auto_review['conflicts']['new_reports']==6,auto_review
-                finally:
-                    page.evaluate('window.desktopAPI.nativeFolderImportSession(false)')
-                try:
-                    page.evaluate('''args => window.desktopAPI.nativeFolderImportApply(args.request,args.token)''',
-                        {'request':auto_request,'token':auto_review['reviewToken']})
-                except Exception as error:
-                    assert 'выключен' in str(error) or 'сеанс' in str(error),str(error)
-                else:
-                    raise RuntimeError('Revoked folder session allowed a native commit')
-                assert page.evaluate('window.desktopAPI.nativeSettingsBootstrap()')['reports']==366
-                report['checks'].append('Checked native folder preview follows Windows handles; revoked session cannot commit')
 
-                # P0.3: schedule recovery from a real Online Backup while the
-                # installed app is running. It must not change the active DB.
-                reviewed=page.evaluate(
-                    'async source => window.__TAURI__.core.invoke("native_restore_preview",{source})',
-                    str(snapshot))
-                assert reviewed['reportCount']==366
-                assert len(reviewed['verification'])==64
-                requested=page.evaluate(
-                    'async args => window.__TAURI__.core.invoke("native_restore_schedule",args)',
-                    {'source':str(snapshot),'verification':reviewed['verification']})
+            with installed_page() as (page,_,pid):
+                ready(page,366)
+                confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
+                report['navigation_after_restart']=page.locator('.view.active').get_attribute('id')
+                assert report['navigation_before_restart']=='upload' and report['navigation_after_restart']=='dashboard'
+                assert api(page,'list')['folder']
+                check_folder_rule_and_revocation(page,workbook,confirmations)
+                report['checks'].append('Normal restart preserves native SQLite and opens the canonical dashboard despite obsolete preferences; folder rule and revoked session are verified')
+                data_file=Path(api(page,'info')['dataFile'])
+                safety_before=set(data_file.parent.glob('.analiz-restore-safety-*.sqlite3'))
+                reviewed=api(page,'nativeRestorePreview',str(snapshot))
+                assert reviewed['reportCount']==366 and len(reviewed['verification'])==64
+                requested=api(page,'nativeRestoreSchedule',str(snapshot),reviewed['verification'])
                 assert requested=={'reportCount':366,'restartRequired':True},requested
-                still_live=page.evaluate('window.desktopAPI.load()')
-                assert len(still_live['reports'])==366
-                assert all(row.get('sourceFormat')=='daily-wide' for row in still_live['reports'])
-                report['checks'].append('Restore scheduled without mutating running SQLite')
-            except BaseException as error:
-                diagnostics(error);raise
-            finally:
-                try:stop(process)
-                finally:
-                    if browser and browser.is_connected():browser.close()
-            # The next real process starts with no SQLite handles from the
-            # previous instance. The staged copy must be activated before
-            # the WebView can read reports.
-            process,_=start();browser=None
-            try:
-                browser=pw.chromium.connect_over_cdp('http://127.0.0.1:9227')
-                page=wait_for_webview_page(browser)
-                wait_for_app_state(page,'Boolean(window.appReady)','Restore startup after full close')
-                page.evaluate('window.appReady')
-                actual=page.evaluate('window.desktopAPI.load()')
-                with closing(sqlite3.connect(str(snapshot))) as expected_db:
-                    expected_reports=[
-                        json.loads(row[0]) for row in expected_db.execute(
-                            'SELECT json FROM reports ORDER BY period_start,id')
-                    ]
-                assert actual['reports']==expected_reports, 'Recovery did not restore backup reports'
-                info=page.evaluate(
-                    'window.__TAURI__.core.invoke("native_restore_launch_info")')
-                assert info and info['restored'] is True,info
-                assert 'Восстановление выполнено' in info['message']
-                page.locator('#reportsShortcut').click()
-                page.locator('#openNativeWorkspace').click()
-                wait_for_app_state(page,'Boolean(window.nativeWorkspaceReady)',
-                    'SQL workspace after recovered startup')
-                navigate(page, 'backup')
-                assert page.locator('#sqlBackup').is_visible()
-                wait_for_app_state(page,
-                    "() => document.getElementById('restoreStatus')?.textContent.includes('Восстановление выполнено')",
-                    'User-facing recovery confirmation')
-                report['checks'].append(
-                    'Installed Windows app restores SQLite on startup with retained backup and UI status')
-            except BaseException as error:
-                diagnostics(error);raise
-            finally:
-                try:stop(process)
-                finally:
-                    if browser and browser.is_connected():browser.close()
+                verify_live=tmp/'still-live.sqlite3'
+                api(page,'nativeBackupSqlite',str(verify_live))
+                still_live=backup_contents(verify_live)
+                assert len(still_live[0])==366 and still_live[0]!=original[0]
+                assert api(page,'list')['rules'][workbook.name]['year']==2024
+                report['checks'].append('Pending restore leaves the changed live SQLite and its Excel rules in place until restart')
+
+            with installed_page() as (page,_,_):
+                ready(page,366)
+                restored=tmp/'after-restore.sqlite3'
+                api(page,'nativeBackupSqlite',str(restored))
+                assert backup_contents(restored)==original,'Recovery did not restore the backed-up reports, settings and metric data'
+                assert workbook.name not in api(page,'list')['rules']
+                retained=set(data_file.parent.glob('.analiz-restore-safety-*.sqlite3'))-safety_before
+                assert len(retained)==1,'No unique protection copy for the replaced SQLite database'
+                assert backup_contents(retained.pop())==still_live
+                info=api(page,'nativeRestoreLaunchInfo')
+                assert info and info['restored'] is True and 'Восстановление выполнено' in info['message'],info
+                navigate(page,'storage')
+                page.locator('#storage').get_by_text('Восстановление выполнено',exact=False).wait_for()
+                assert workbook.read_bytes()==original_xlsx
+                report['checks'].append('Installed restart restores exactly the SQLite backup, retains the replaced data and displays confirmation')
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(report,ensure_ascii=False),flush=True)
 
 if __name__=='__main__':
     try:run()
     except BaseException as error:
-        diagnostics(error)
+        record_secondary_failure(error,'Runtime diagnostics failed',lambda:diagnostics(error))
         raise

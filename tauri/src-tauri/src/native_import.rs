@@ -18,6 +18,7 @@ pub struct NativeWideReview {
     pub revision: i64,
     pub report_count: u64,
     pub row_count: u64,
+    pub catalog_entries: u64,
     pub conflicts: ImportCounts,
     pub quality: QualityCounts,
     pub diagnostics: SourceDiagnostics,
@@ -76,8 +77,11 @@ fn review<T: serde::Serialize>(
     preview: &ImportPreview,
     options: &T,
     domain: &[u8],
+    organizations: &[String],
 ) -> Result<NativeWideReview,String> {
+    let catalog_entries=prepared.visit_catalog(organizations,&AtomicBool::new(false),|_,_|Ok(())).map_err(|e|e.to_string())?;
     let mut hash=Sha256::new();
+    hash.update(catalog_entries.to_le_bytes());
     let identity=preview.review_identity();
     hash.update(domain);
     hash.update(serde_json::to_vec(&(
@@ -133,7 +137,7 @@ fn review<T: serde::Serialize>(
         source_name:prepared.source_name().to_string(),
         source_hash:prepared.source_hash().to_string(),
         revision:preview.revision(),
-        report_count:reports,row_count:rows,
+        report_count:reports,row_count:rows,catalog_entries,
         conflicts:preview.counts().clone(),
         quality:prepared.quality().clone(),
         diagnostics:prepared.source_diagnostics().clone(),
@@ -151,7 +155,7 @@ pub async fn native_wide_import_preview(
     tauri::async_runtime::spawn_blocking(move || {
         let storage=app.state::<Storage>();
         with_prepared(&storage,&source,options,|prepared,preview,options| {
-            review(prepared,preview,options,b"wide-manual-review-v1\0")
+            review(prepared,preview,options,b"wide-manual-review-v1\0",&options.organizations)
         })
     }).await.map_err(|e|e.to_string())?
 }
@@ -169,7 +173,7 @@ pub async fn native_wide_import_apply(
         }
         let storage=app.state::<Storage>();
         with_prepared(&storage,&source,options,|prepared,preview,options| {
-            let current=review(prepared,preview,options,b"wide-manual-review-v1\0")?;
+            let current=review(prepared,preview,options,b"wide-manual-review-v1\0",&options.organizations)?;
             if current.review_token!=review_token {
                 return Err("Source, report quality, conflicts or database changed. Preview again.".into());
             }
@@ -270,7 +274,7 @@ pub async fn native_legacy_import_preview(
     tauri::async_runtime::spawn_blocking(move || {
         let storage=app.state::<Storage>();
         with_legacy_prepared(&storage,&source,options,|prepared,preview,options| {
-            review(prepared,preview,options,b"legacy-manual-review-v1\0")
+            review(prepared,preview,options,b"legacy-manual-review-v1\0",&options.organizations)
         })
     }).await.map_err(|e|e.to_string())?
 }
@@ -289,7 +293,7 @@ pub async fn native_legacy_import_apply(
         }
         let storage=app.state::<Storage>();
         with_legacy_prepared(&storage,&source,options,|prepared,preview,options| {
-            let current=review(prepared,preview,options,b"legacy-manual-review-v1\0")?;
+            let current=review(prepared,preview,options,b"legacy-manual-review-v1\0",&options.organizations)?;
             if current.review_token!=review_token {
                 return Err("Excel, report quality, conflicts or SQLite changed. Preview again.".into());
             }
@@ -351,37 +355,23 @@ fn with_folder_prepared<T>(
     let operation = store.begin_folder_import(window, request)?;
     let cancel = operation.job.cancellation();
     let (rule, source, file) = store.checked_folder_import(request)?;
-    // Persisted sheet names are workbook display names and mapping coordinates
-    // are zero-based. Require manual review until the two representations can
-    // be converted without guessing which sheet or cells were selected.
-    if !rule.sheet.is_empty()
-        || rule.sheets.as_ref().is_some_and(|items| !items.is_empty())
-        || rule.mappings.as_ref().is_some_and(|items| !items.is_empty())
-        || !matches!(rule.format.as_deref(), Some("legacy" | "daily-wide"))
-        || rule.format.as_deref() == Some("daily-wide") && !rule.start.is_empty()
-    {
-        return Err("Настройки листа, столбцов или формата требуют ручной проверки.".into());
+    if !matches!(rule.format.as_deref(), None | Some("legacy" | "daily-wide" | "auto")) {
+        return Err("Выберите формат импорта файла.".into());
     }
     let organizations = store.folder_import_organizations(request.revision)?;
     let area = StageArea::open(store.root().join("native-import-stages")).map_err(|e|e.to_string())?;
     let mut stage = area.ingest_opened(source, file, Limits::default(), cancel, |_|{})
         .map_err(|e|e.to_string())?;
-    if rule.format.as_deref() == Some("daily-wide") {
-        let options = WideOptions {
-            year: rule.year.map(i32::from), organizations, ..WideOptions::default()
-        };
-        // Wide conversion takes a shared cancellation flag.
-        stage.convert_wide(&options, operation.job.cancellation_handle(), |_|{}).map_err(|e|e.to_string())?;
+    let wide_options=rule.native_wide_options(organizations.clone())?;
+    let wide=rule.format.as_deref()==Some("daily-wide") ||
+        rule.format.as_deref()==Some("auto") && !stage.detect_wide(&wide_options,operation.job.cancellation_handle()).map_err(|e|e.to_string())?.is_empty();
+    if wide {
+        stage.convert_wide(&wide_options,operation.job.cancellation_handle(),|_|{}).map_err(|e|e.to_string())?;
     } else {
-        let sheets = stage.worksheet_components().map_err(|e|e.to_string())?;
-        let [sheet] = sheets.as_slice() else {
-            return Err("Несколько листов Excel требуют ручного выбора.".into());
-        };
-        let options = LegacyOptions {
-            sheet: sheet.clone(), kind:rule.kind.clone(), start:rule.start.clone(),
-            organizations, mappings:None,
-        };
-        stage.convert_legacy(&options, cancel, |_|{}).map_err(|e|e.to_string())?;
+        let book=stage.sheet_names().map_err(|e|e.to_string())?;
+        let sheet=rule.native_legacy_sheet(&book)?;
+        let options=LegacyOptions{period_dates:None,sheet,kind:rule.kind.clone(),start:rule.start.clone(),organizations,mappings:None};
+        stage.convert_legacy(&options,cancel,|_|{}).map_err(|e|e.to_string())?;
     }
     let prepared = stage.prepare_with_mode(analiz_import_core::ImportMode::Folder, cancel, |_|{})
         .map_err(|e|e.to_string())?;
@@ -409,7 +399,7 @@ pub async fn native_folder_import_preview(
     tauri::async_runtime::spawn_blocking(move || {
         let store = window.state::<Storage>();
         with_folder_prepared(&store, window.label(), &request, |prepared, preview, _, rule| {
-            review(prepared, preview, &(&request, rule), b"folder-auto-review-v1\0")
+            review(prepared, preview, &(&request, rule), b"folder-auto-review-v1\0", &store.folder_import_organizations(request.revision)?)
         })
     }).await.map_err(|e|e.to_string())?
 }
@@ -426,7 +416,7 @@ pub async fn native_folder_import_apply(
     tauri::async_runtime::spawn_blocking(move || {
         let store = window.state::<Storage>();
         with_folder_prepared(&store, window.label(), &request, |prepared, preview, job, rule| {
-            let current = review(prepared, preview, &(&request, rule), b"folder-auto-review-v1\0")?;
+            let current = review(prepared, preview, &(&request, rule), b"folder-auto-review-v1\0", &store.folder_import_organizations(request.revision)?)?;
             if current.review_token != review_token || !is_clean_new_folder_review(&current) {
                 return Err("Изменения, пересечения, замены и замечания требуют ручной проверки.".into());
             }

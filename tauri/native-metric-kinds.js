@@ -1,4 +1,4 @@
-// Tauri SQL workspace: declarative metric kinds and profile-driven XLSX mapping.
+// Unified Tauri workspace: additional metric kinds with profile-driven XLSX mapping.
 // Existing day/week/month analytics and legacy reports remain separate.
 (function(){
 'use strict';
@@ -6,6 +6,9 @@ const api=window.desktopAPI,$=id=>document.getElementById(id);
 if(!api?.nativeMetricKinds)return;
 const userError=window.analizUserError||(()=>'Операция не выполнена. Перезапустите программу и повторите действие.');
 let kinds=[],profiles=[],source=null,review=null,format=null,xlsxArgs=null,busy=false;
+const ui=window.unifiedUI;
+const currentRevision=()=>ui?.revision??null;
+const parameters=()=>JSON.stringify([$('metricKindSelect').value,$('metricKindFrom').value,$('metricKindTo').value,$('metricXlsxProfile').value]);
 const make=(tag,value)=>{
  const e=document.createElement(tag);
  if(value!==undefined)e.textContent=String(value);
@@ -39,6 +42,13 @@ function render(values,kind,container){
   el.append(box);
  }
 }
+if(typeof ui?.onSnapshot==='function')ui.onSnapshot(()=>{
+ clearReview();
+ $('metricKindTotals').replaceChildren();
+ $('metricKindCount').textContent='Данные изменились. Повторите расчёт.';
+ status('База обновилась. Перед импортом повторно проверьте источник.');
+ controls();
+});
 function findKind(id){return kinds.find(k=>k.id===id);}
 function showPreview(result){
  if(!result||!findKind(result.kind)||typeof result.reviewToken!=='string'||
@@ -51,7 +61,7 @@ function showPreview(result){
 }
 async function calculate(){
  if(busy||!kinds.length)return;
- const id=$('metricKindSelect').value,kind=findKind(id);
+ const id=$('metricKindSelect').value,kind=findKind(id),revision=currentRevision();
  if(!kind)return;
  const from=$('metricKindFrom').value||'0001-01-01';
  const to=$('metricKindTo').value||'9999-12-31';
@@ -59,6 +69,7 @@ async function calculate(){
  busy=true;controls();
  try{
   const summary=await api.nativeMetricSummary(id,from,to);
+  if(currentRevision()!==revision)throw Error('Данные изменились. Повторите расчёт.');
   render(summary.values,kind,'metricKindTotals');
   $('metricKindCount').textContent='Отчётов: '+summary.reportCount+
     '. Строк: '+summary.rowCount+'. Суммы по загруженным данным, без проверки полноты периодов.';
@@ -70,6 +81,7 @@ async function calculate(){
 }
 $('metricKindCalculate').addEventListener('click',calculate);
 $('metricKindSelect').addEventListener('change',()=>{
+ clearReview();controls();
  $('metricKindTotals').replaceChildren();$('metricKindCount').textContent='Нажмите «Рассчитать».';
 });
 $('metricXlsxProfile').addEventListener('change',()=>{
@@ -90,7 +102,8 @@ $('metricKindChoose').addEventListener('click',async()=>{
   const selected=await api.chooseMetricJson();
   if(!selected){status('Выбор JSON отменён.');return;}
   $('metricKindFile').textContent='Проверяется JSON: '+selected.split(/[\\/]/).pop();
-  const result=await api.nativeMetricPreview(selected);
+  const revision=currentRevision(),result=await api.nativeMetricPreview(selected);
+  if(currentRevision()!==revision)throw Error('База изменилась во время проверки файла.');
   showPreview(result);
   source=selected;format='json';
  }catch(err){
@@ -111,7 +124,8 @@ $('metricKindChooseXlsx').addEventListener('click',async()=>{
   const selected=await api.chooseMetricXlsx();
   if(!selected){status('Выбор XLSX отменён.');return;}
   $('metricKindFile').textContent='Проверяется XLSX: '+selected.split(/[\\/]/).pop();
-  const result=await api.nativeMetricXlsxPreview(selected,profile,start,end);
+  const revision=currentRevision(),result=await api.nativeMetricXlsxPreview(selected,profile,start,end);
+  if(currentRevision()!==revision)throw Error('База изменилась во время проверки файла.');
   showPreview(result);
   source=selected;format='xlsx';xlsxArgs={profile,start,end};
  }catch(err){
@@ -120,19 +134,26 @@ $('metricKindChooseXlsx').addEventListener('click',async()=>{
 });
 $('metricKindApply').addEventListener('click',async()=>{
  if(busy||!review||!source)return;
- if(!window.confirm('Добавить отчёт «'+review.reportId+'» в SQLite без перезаписи существующих?'))return;
+ const captured={review,source,format,xlsxArgs,revision:currentRevision(),parameters:parameters()};
  busy=true;controls();
  try{
-  const receipt=format==='xlsx'
-   ?await api.nativeMetricXlsxApply(source,xlsxArgs.profile,xlsxArgs.start,xlsxArgs.end,review.reviewToken)
-   :await api.nativeMetricApply(source,review.reviewToken);
-  const importedKind=review.kind;
+  const accepted=await window.confirm('Добавить отчёт «'+captured.review.reportId+'» в SQLite без перезаписи существующих?');
+  if(accepted!==true){status('Импорт отменён. Проверенные данные не записаны.');return;}
+  if(review!==captured.review||source!==captured.source||format!==captured.format||
+     xlsxArgs!==captured.xlsxArgs||currentRevision()!==captured.revision||
+     parameters()!==captured.parameters)throw Error('Параметры или база изменились. Проверьте файл заново.');
+  const receipt=captured.format==='xlsx'
+   ?await api.nativeMetricXlsxApply(captured.source,captured.xlsxArgs.profile,captured.xlsxArgs.start,captured.xlsxArgs.end,captured.review.reviewToken)
+   :await api.nativeMetricApply(captured.source,captured.review.reviewToken);
+  const importedKind=captured.review.kind;
   clearReview();
   $('metricKindSelect').value=importedKind;
   $('metricKindTotals').replaceChildren();
   $('metricKindCount').textContent='Отчёт добавлен. Нажмите «Рассчитать» для обновления итогов.';
   $('metricKindFile').textContent='Импортирован отчёт: '+receipt.reportId;
-  status('Отчёт добавлен: '+receipt.reportId+'. Строк: '+receipt.rowCount+'.');
+  const saved='Отчёт добавлен: '+receipt.reportId+'. Строк: '+receipt.rowCount+'.';
+  try{await ui?.refresh?.();status(saved);}
+  catch(err){status(saved+' Не удалось обновить экран: '+userError(err)+'. Обновите данные.',true);}
  }catch(err){
   clearReview();
   status('Импорт отклонён: '+userError(err)+'. Выберите файл заново.',true);

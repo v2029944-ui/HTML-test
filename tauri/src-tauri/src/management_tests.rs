@@ -1,6 +1,108 @@
 use super::*;
 use std::sync::Arc;
 use tempfile::tempdir;
+
+#[test]
+fn unified_group_edits_move_exclusively_and_publish_once() {
+    let dir = tempdir().unwrap();
+    let s = Storage::new(dir.path().into()).unwrap();
+    let rev = management_setup(&s, &management_data());
+    let groups = s.management_group_page(rev, "", None, 50).unwrap();
+    let target = groups[2].handle;
+    let receipt = s.unified_save_group(rev, Some(target), "ignored", "Changed", &["Shared".into(), "one".into()]).unwrap();
+    let data = s.load().unwrap();
+    let groups = data["settings"]["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0],management_data()["settings"]["groups"][0],"Unrelated empty group and extension fields must survive a group edit");
+    assert_eq!(groups[1]["id"], "other");
+    assert_eq!(groups[1]["name"], "Changed");
+    assert_eq!(groups[1]["works"], json!(["Shared", "one"]));
+    assert!(s.unified_assign_work(rev, "Shared", None).is_err());
+    s.unified_assign_work(receipt.revision, "Shared", None).unwrap();
+    assert_eq!(s.load().unwrap()["settings"]["groups"][1]["works"], json!(["one"]));
+    assert_eq!(data["reports"], management_data()["reports"]);
+}
+
+#[test]
+fn unified_assignment_only_removes_sources_emptied_by_the_move() {
+    let dir=tempdir().unwrap();let s=Storage::new(dir.path().into()).unwrap();
+    let original=json!({"reports":[],"settings":{"orgNames":["A","B","C","D"],"catalog":[],"groups":[
+        {"id":"source","name":"Source","works":["alpha"]},
+        {"id":"untouched","name":"Unrelated empty B","works":[],"unknown":{"nested":[true,"preserve"]}},
+        {"id":"target","name":"Target","works":["beta"],"color":"blue"}
+    ]}});
+    let rev=management_setup(&s,&original);let target=s.management_group_page(rev,"",None,50).unwrap().into_iter().find(|g|g.id=="target").unwrap();
+    s.unified_assign_work(rev,"alpha",Some(target.handle)).unwrap();
+    let after=s.load().unwrap();let groups=after["settings"]["groups"].as_array().unwrap();
+    assert_eq!(groups.len(),2);assert_eq!(groups[0],original["settings"]["groups"][1]);assert_eq!(groups[1]["works"],json!(["beta","alpha"]));assert_eq!(groups[1]["color"],"blue");
+    assert_eq!(after["reports"],original["reports"]);
+}
+
+#[test]
+fn unified_group_json_round_trips_empty_groups_and_extension_metadata() {
+    let dir=tempdir().unwrap();let s=Storage::new(dir.path().join("data")).unwrap();
+    let original=json!({"reports":[],"settings":{"orgNames":["A","B","C","D"],"catalog":[],"unknown":{"keep":true},"groups":[
+        {"id":"empty","name":"Empty","works":[],"unknown":{"nested":[true,{"text":"preserve"}]},"color":"red"},
+        {"id":"active","name":"Active","works":["alpha","beta"],"extra":[null,2,false],"visible":true}
+    ]}});
+    let rev=management_setup(&s,&original);let destination=dir.path().join("groups.json");s.unified_groups_export(rev,&destination).unwrap();
+    let exported:Value=serde_json::from_slice(&std::fs::read(&destination).unwrap()).unwrap();assert_eq!(exported["groups"],original["settings"]["groups"]);
+    let review=s.unified_groups_preview(rev,&destination).unwrap();assert_eq!(review.groups,2);assert_eq!(review.works,2);
+    s.unified_groups_import(rev,&destination,&review.hash,true).unwrap();let after=s.load().unwrap();assert_eq!(after,original);
+}
+
+#[test]
+fn unified_search_is_bounded_russian_case_insensitive_prefix_first() {
+    let dir = tempdir().unwrap();
+    let s = Storage::new(dir.path().into()).unwrap();
+    let rev = management_setup(&s, &json!({"reports":[],"settings":{"orgNames":["А","Б","В","Г"],"groups":[],"catalog":[{"work":"Я ремонт","organization":"А"},{"work":"РЕМОНТ двигателя","organization":"Б"},{"work":"Ремонт блока","organization":"А"}]}}));
+    let page = s.unified_management_page(rev, "works", "ремонт", None, 0, 1).unwrap();
+    assert_eq!(page.total, 3);
+    assert_eq!(page.rows.len(), 1);
+    assert_eq!(page.rows[0].name, "Ремонт блока");
+    let page = s.unified_management_page(rev, "works", "РЕМОНТ", None, 2, 1).unwrap();
+    assert_eq!(page.rows[0].name, "Я ремонт");
+}
+
+#[test]
+fn unified_group_json_requires_review_confirmation_revision_and_keeps_reports() {
+    let dir=tempdir().unwrap();let s=Storage::new(dir.path().join("data")).unwrap();let rev=management_setup(&s,&management_data());
+    let source=dir.path().join("groups.json");std::fs::write(&source,r#"{"format":"work-groups","version":1,"groups":[{"id":"a","name":"Новая","works":["one","Shared"]}]}"#).unwrap();
+    let review=s.unified_groups_preview(rev,&source).unwrap();assert_eq!(review.groups,1);assert_eq!(review.works,2);
+    assert!(s.unified_groups_import(rev,&source,&review.hash,false).is_err());
+    assert_eq!(s.revision().unwrap(),rev);
+    let destination=dir.path().join("export.json");s.unified_groups_export(rev,&destination).unwrap();assert!(s.unified_groups_export(rev,&destination).is_err());
+    let receipt=s.unified_groups_import(rev,&source,&review.hash,true).unwrap();
+    assert!(s.unified_groups_import(rev,&source,&review.hash,true).is_err());
+    assert_eq!(s.load().unwrap()["reports"],management_data()["reports"]);
+    let before=s.load().unwrap();std::fs::write(&source,r#"{"format":"work-groups","version":1,"groups":[]}"#).unwrap();
+    assert!(s.unified_groups_import(receipt.revision,&source,&review.hash,true).is_err());assert_eq!(s.load().unwrap(),before);
+}
+
+#[test]
+fn unified_report_and_second_sheet_catalog_publish_or_roll_back_together() {
+    use std::io::Write;
+    let dir=tempdir().unwrap();let source=dir.path().join("report.xlsx");
+    let mut zip=zip::ZipWriter::new(std::fs::File::create(&source).unwrap());
+    for (name,xml) in [
+        ("xl/workbook.xml",r#"<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Отчет" r:id="r1"/><sheet name="Каталог" r:id="r2"/></sheets></workbook>"#),
+        ("xl/_rels/workbook.xml.rels",r#"<Relationships><Relationship Id="r1" Target="worksheets/sheet1.xml"/><Relationship Id="r2" Target="worksheets/sheet2.xml"/></Relationships>"#),
+        ("xl/worksheets/sheet1.xml",r#"<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Работа</t></is></c><c r="B1" t="inlineStr"><is><t>Количество</t></is></c><c r="C1" t="inlineStr"><is><t>Сумма</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>A</t></is></c><c r="B2"><v>1</v></c><c r="C2"><v>10</v></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>Новая работа</t></is></c><c r="B3"><v>1</v></c><c r="C3"><v>10</v></c></row><row r="4"><c r="A4" t="inlineStr"><is><t>Итого</t></is></c><c r="B4"><v>1</v></c><c r="C4"><v>10</v></c></row></sheetData></worksheet>"#),
+        ("xl/worksheets/sheet2.xml",r#"<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Подразделение</t></is></c><c r="B1" t="inlineStr"><is><t>Услуга</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>A</t></is></c><c r="B2" t="inlineStr"><is><t>Справочная услуга</t></is></c></row></sheetData></worksheet>"#),
+    ] {zip.start_file(name,zip::write::SimpleFileOptions::default()).unwrap();zip.write_all(xml.as_bytes()).unwrap();}zip.finish().unwrap();
+    let area=analiz_import_core::StageArea::open(dir.path().join("xlsx-stage")).unwrap();let cancel=std::sync::atomic::AtomicBool::new(false);
+    let mut stage=area.ingest(&source,analiz_import_core::Limits::default(),&cancel,|_|{}).unwrap();
+    let conversion=stage.convert_legacy(&analiz_import_core::LegacyOptions{period_dates:None,sheet:"xl/worksheets/sheet1.xml".into(),kind:"day".into(),start:"2026-11-02".into(),organizations:["A".into(),"B".into(),"C".into(),"D".into()],mappings:None},&cancel,|_|{}).unwrap();
+    assert_eq!(conversion.rows,1,"Fixture must contain a recognized organization total and one real work row");
+    let prepared=stage.prepare(&cancel,|_|{}).unwrap();let s=Storage::new(dir.path().join("live")).unwrap();let rev=management_setup(&s,&management_data());let before=s.load().unwrap();let preview=s.preview_import(&prepared).unwrap();
+    let conn=s.connect().unwrap();conn.execute_batch("CREATE TRIGGER reject_catalog_publish BEFORE INSERT ON kv WHEN NEW.name='settings' BEGIN SELECT RAISE(ABORT,'catalog publication rejected');END;").unwrap();drop(conn);
+    let confirmation=ImportConfirmation{accept_quality:true,..Default::default()};
+    let error=s.apply_import(&prepared,&preview,confirmation,&ImportJob::new(),|_|{}).unwrap_err();assert!(error.contains("catalog publication rejected"),"{error}");assert_eq!(s.load().unwrap(),before);assert_eq!(s.revision().unwrap(),rev);assert!(s.committed_import(prepared.operation_id()).unwrap().is_none());
+    s.connect().unwrap().execute_batch("DROP TRIGGER reject_catalog_publish").unwrap();
+    let receipt=s.apply_import(&prepared,&preview,confirmation,&ImportJob::new(),|_|{}).unwrap();assert_eq!(receipt.reports,1);
+    let after=s.load().unwrap();assert_eq!(after["reports"].as_array().unwrap().len(),2);assert_eq!(after["settings"]["unknown"],before["settings"]["unknown"]);assert!(after["settings"]["catalog"].as_array().unwrap().iter().any(|r|r["work"]=="Справочная услуга"));
+    assert_eq!(s.apply_import(&prepared,&preview,confirmation,&ImportJob::new(),|_|{}).unwrap(),receipt);
+}
 fn management_data() -> Value {
     json!({"reports":[{"id":"keep","type":"day","start":"2026-11-01","end":"2026-11-01","amount":30,"organizations":["A","B"],"warnings":[{"unknown":[1,2]}],"rows":[{"organization":"A","work":"Report only","count":2,"amount":30}]}],"settings":{"orgNames":["A","B","C","D"],"unknown":{"a":[{"preserve":true},[1,2,3]],"label":"escaped \"x\""},"groups":[{"id":"dup","name":"Empty","works":[],"unknown":{"nested":[1,2]}},{"id":"dup","name":"First","works":["one","one","Shared"],"color":"red"},{"id":"other","name":"Second","works":["Shared","group only"]}],"catalog":[{"work":"Catalog only","organization":"B","unknown":{"x":[1,2]}},{"work":"one","organization":"A"}]}})
 }

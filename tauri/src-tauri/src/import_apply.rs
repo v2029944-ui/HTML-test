@@ -404,7 +404,7 @@ impl Storage {
                 return Err(e);
             }
         };
-        let mut conn = self.import_connection()?;
+        let conn = self.import_connection()?;
         // Durable receipt wins over stale revision, missing stage/source, and a late cancel.
         if let Some(done) = receipt(&conn, prepared.operation_id())? {
             job.completed();
@@ -415,10 +415,33 @@ impl Storage {
         }
         job.check()?;
         prepared.validate(&job.cancelled).map_err(err)?;
-        apply_in_connection(&mut conn, prepared, preview, confirmation, job, progress)
+        let catalog=match self.unified_prepare_import_catalog(&conn,prepared,preview.revision,job.cancellation_handle()) {
+            Ok(catalog)=>catalog,
+            Err(error)=>{
+                // A concurrent caller may have completed this exact operation
+                // after our first probe while catalog settings were staged.
+                if matches!(std::fs::canonicalize(self.db_path()),Ok(database) if database==preview.database) {
+                    if let Ok(Some(done))=receipt(&conn,prepared.operation_id()) {
+                        job.completed();
+                        return Ok(done);
+                    }
+                }
+                return Err(error);
+            },
+        };
+        let result=(|| {
+            if let Some(settings)=&catalog {settings.attach(&conn)?;}
+            with_sql_cancel(&conn,&job.cancelled,||apply_in_connection_inner(&conn,prepared,preview,confirmation,job,progress,catalog.as_ref()))
+        })();
+        // Release the attached private database before Stage::drop removes it
+        // (Windows does not permit unlinking an open SQLite file).
+        drop(conn);
+        drop(catalog);
+        result
     }
 }
 /// Shared actual publication path, allowing real constrained SQLite connections in unit tests.
+#[cfg(test)]
 fn apply_in_connection(
     conn: &mut Connection,
     prepared: &PreparedImport<'_>,
@@ -428,7 +451,7 @@ fn apply_in_connection(
     progress: impl FnMut(ImportProgress),
 ) -> Result<ImportReceipt, String> {
     with_sql_cancel(conn, &job.cancelled, || {
-        apply_in_connection_inner(conn, prepared, preview, confirmation, job, progress)
+        apply_in_connection_inner(conn, prepared, preview, confirmation, job, progress,None)
     })
 }
 fn apply_in_connection_inner(
@@ -438,6 +461,7 @@ fn apply_in_connection_inner(
     confirmation: ImportConfirmation,
     job: &ImportJob,
     mut progress: impl FnMut(ImportProgress),
+    catalog:Option<&super::management::PreparedCatalogSettings>,
 ) -> Result<ImportReceipt, String> {
     if std::fs::canonicalize(conn.path().ok_or("Import requires a file database")?).map_err(err)?
         != preview.database
@@ -512,14 +536,30 @@ fn apply_in_connection_inner(
     // replacement must therefore remove its non-anchor days first.
     let diagnostic_anchor = prepared.next_report(0).map_err(err)?
         .and_then(|first| first.provenance.map(|_| first.id));
-    // Delete one owned report at a time so cancellation stays observable and all
-    // removals (including absent days) remain inside the same rollback boundary.
-    if prepared.mode() == ImportMode::Folder {
+    let deletion_plan=if prepared.mode()==ImportMode::Folder {
+        Some("import_source_plan")
+    } else if confirmation.replace_exact {
+        // Plan ALL old exact matches before removing an anchor. Incoming report
+        // order must not make a complete manual replacement look like a partial
+        // source deletion to the diagnostic-link guard.
+        tx.execute_batch("CREATE TEMP TABLE IF NOT EXISTS import_exact_plan(report_id TEXT PRIMARY KEY) WITHOUT ROWID;DELETE FROM temp.import_exact_plan;").map_err(err)?;
+        let mut after=0;
+        while let Some(report)=prepared.next_report(after).map_err(err)? {
+            job.check()?;
+            tx.execute("INSERT OR IGNORE INTO temp.import_exact_plan SELECT id FROM reports WHERE report_type=?1 AND period_start=?2 AND period_end=?3",params![report.kind,report.start,report.end]).map_err(err)?;
+            after=report.ordinal;
+        }
+        Some("import_exact_plan")
+    } else {None};
+    // Delete one planned old report at a time, non-anchors before anchors. The
+    // existing trigger still rejects an anchor with any UNPLANNED survivor and
+    // the transaction restores all preceding deletions on that error or cancel.
+    if let Some(plan)=deletion_plan {
         loop {
             job.check()?;
             let target: Option<String> = tx
                 .query_row(
-                    "SELECT p.report_id FROM temp.import_source_plan p LEFT JOIN report_source_diagnostic_links l ON l.report_id=p.report_id ORDER BY CASE WHEN l.anchor_id=p.report_id THEN 1 ELSE 0 END, p.report_id LIMIT 1",
+                    &format!("SELECT p.report_id FROM temp.{plan} p LEFT JOIN report_source_diagnostic_links l ON l.report_id=p.report_id ORDER BY CASE WHEN l.anchor_id=p.report_id THEN 1 ELSE 0 END, p.report_id LIMIT 1"),
                     [],
                     |r| r.get(0),
                 )
@@ -531,7 +571,7 @@ fn apply_in_connection_inner(
             tx.execute("DELETE FROM reports WHERE id=?1", [&target])
                 .map_err(err)?;
             tx.execute(
-                "DELETE FROM temp.import_source_plan WHERE report_id=?1",
+                &format!("DELETE FROM temp.{plan} WHERE report_id=?1"),
                 [&target],
             )
             .map_err(err)?;
@@ -548,13 +588,6 @@ fn apply_in_connection_inner(
             || report.bytes > i32::MAX as u64
         {
             return Err("Invalid or empty prepared report.".into());
-        }
-        if prepared.mode() == ImportMode::Manual && confirmation.replace_exact {
-            tx.execute(
-                "DELETE FROM reports WHERE report_type=?1 AND period_start=?2 AND period_end=?3",
-                params![report.kind, report.start, report.end],
-            )
-            .map_err(err)?;
         }
         tx.execute("INSERT INTO reports(id,report_type,period_start,period_end,source_name,json) VALUES(?1,?2,?3,?4,?5,zeroblob(?6))", params![report.id, report.kind, report.start, report.end, prepared.source_name(), report.bytes]).map_err(err)?;
         let rowid = tx.last_insert_rowid();
@@ -672,6 +705,7 @@ fn apply_in_connection_inner(
     if reports != prepared.report_count() || all_rows != prepared.row_count() {
         return Err("Prepared report manifest mismatch.".into());
     }
+    if let Some(settings)=catalog {settings.publish(&tx,preview.revision,&job.cancelled)?;}
     // Detect source/index changes during I/O; external filesystem changes after this
     // observation cannot be synchronized with SQLite and are not claimed atomic.
     prepared

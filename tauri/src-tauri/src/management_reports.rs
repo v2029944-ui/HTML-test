@@ -194,6 +194,36 @@ fn ready(c: &Connection, rev: i64, f: &ManagementReportFilter) -> Result<(), Str
     }
 }
 impl Storage {
+    /// Analysis accepts legacy rows without a string organization, but their
+    /// organization-filtered projection cannot certify a complete raw index.
+    pub fn index_unified_startup_report(
+        &self,
+        header: &ReportHeader,
+        revision: i64,
+        job: &ManagementJob,
+    ) -> Result<(), String> {
+        let raw_rows_compatible = self.analysis_index_report_for_startup(&header.id, revision)?;
+        let raw_index_exists: bool = {
+            let conn = self.management_connect()?;
+            let tx = conn.unchecked_transaction().map_err(err)?;
+            check_revision(&tx, revision)?;
+            tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM report_row_index WHERE report_id=?1)",
+                [&header.id],
+                |row| row.get(0),
+            ).map_err(err)?
+        };
+        if !raw_index_exists {
+            if !raw_rows_compatible || !valid_date(&header.period_start) || !valid_date(&header.period_end) {
+                return Ok(());
+            }
+            // A restored report with well-formed raw rows can have invalid
+            // calendar bounds. Index its raw rows independently for management.
+            self.index_report(&header.id, revision)?;
+        }
+        self.management_index_report(&header.id, revision, job)
+    }
+
     pub fn management_index_report(
         &self,
         id: &str,
@@ -364,3 +394,7 @@ impl Storage {
         Ok(out)
     }
 }
+
+#[cfg(test)]
+#[path = "unified_startup_tests.rs"]
+mod unified_startup_tests;

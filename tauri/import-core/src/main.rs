@@ -142,6 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 .nth(5)
                 .unwrap_or_else(|| "xl/worksheets/sheet1.xml".into());
             let cfg = LegacyOptions {
+                period_dates: None,
                 sheet,
                 kind: kind.clone(),
                 start: first,

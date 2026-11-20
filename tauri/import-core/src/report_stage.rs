@@ -21,6 +21,10 @@ pub struct LegacyOptions {
     pub start: String,
     pub organizations: [String; 4],
     pub mappings: Option<Vec<TripleMapping>>,
+    /// Full set-ordered list of explicitly chosen dates. Omission retains the
+    /// sequential dates derived from start; partial lists are rejected.
+    #[serde(default)]
+    pub period_dates: Option<Vec<String>>,
 }
 #[derive(Clone, Copy, Default, Debug)]
 pub struct ConversionSummary {
@@ -290,6 +294,74 @@ pub(crate) fn page_limit(n: usize) -> Result<()> {
         Err(fail("report page limit is 1..100"))
     }
 }
+fn legacy_periods(
+    cfg: &LegacyOptions,
+    start: NaiveDate,
+    count: usize,
+) -> Result<Vec<(NaiveDate, NaiveDate)>> {
+    if count > 684
+        || cfg
+            .period_dates
+            .as_ref()
+            .is_some_and(|dates| dates.len() != count)
+    {
+        return Err(fail(
+            "Число дат должно совпадать с числом наборов столбцов.",
+        ));
+    }
+    let mut periods: Vec<(NaiveDate, NaiveDate)> = Vec::with_capacity(count);
+    for i in 0..count {
+        let first = if let Some(dates) = &cfg.period_dates {
+            let raw = &dates[i];
+            let parsed = NaiveDate::parse_from_str(raw, "%Y-%m-%d").map_err(|_| {
+                fail(&format!(
+                    "Набор {}: укажите корректную дату периода.",
+                    i + 1
+                ))
+            })?;
+            if raw.len() != 10 || parsed.to_string() != *raw {
+                return Err(fail(&format!(
+                    "Набор {}: укажите дату в формате YYYY-MM-DD.",
+                    i + 1
+                )));
+            }
+            parsed
+        } else {
+            match cfg.kind.as_str() {
+                "month" => start.checked_add_months(Months::new(i as u32)),
+                "week" => start.checked_add_signed(Duration::days(i as i64 * 7)),
+                _ => start.checked_add_signed(Duration::days(i as i64)),
+            }
+            .ok_or_else(|| fail("Дата периода вне диапазона."))?
+        };
+        if cfg.kind == "month" && first.day() != 1 {
+            return Err(fail(&format!(
+                "Набор {}: месячный период должен начинаться первого числа.",
+                i + 1
+            )));
+        }
+        let end = match cfg.kind.as_str() {
+            "week" => first.checked_add_signed(Duration::days(6)),
+            "month" => first
+                .checked_add_months(Months::new(1))
+                .and_then(|date| date.checked_sub_signed(Duration::days(1))),
+            _ => Some(first),
+        }
+        .ok_or_else(|| fail("Дата периода вне диапазона."))?;
+        if first.year() > 9999 || end.year() > 9999 {
+            return Err(fail("Дата периода вне диапазона."));
+        }
+        if periods.iter().any(|(a, b)| *a <= end && *b >= first) {
+            return Err(fail(&format!(
+                "Даты наборов пересекаются. Проверьте период {}.",
+                i + 1
+            )));
+        }
+        periods.push((first, end));
+    }
+    Ok(periods)
+}
+
 impl Stage<'_> {
     pub fn convert_legacy(
         &mut self,
@@ -305,6 +377,10 @@ impl Stage<'_> {
                 .iter()
                 .any(|s| s.trim_matches(js_space).is_empty() || s.encode_utf16().count() > 240)
             || cfg.mappings.as_ref().is_some_and(|m| m.len() > 684)
+            || cfg
+                .period_dates
+                .as_ref()
+                .is_some_and(|dates| dates.len() > 684 || dates.iter().any(|date| date.len() != 10))
         {
             return Err(fail("Некорректные или слишком большие параметры импорта."));
         }
@@ -352,29 +428,14 @@ impl Stage<'_> {
                 return Err(fail("Некорректное сопоставление столбцов."));
             }
         }
+        let periods = legacy_periods(cfg, start, mappings.len())?;
         self.db.execute_batch(SCHEMA)?;
         self.db.execute_batch("BEGIN IMMEDIATE;DELETE FROM converted_reports;DELETE FROM converted_rows;DELETE FROM converted_issues;DELETE FROM converted_totals;DELETE FROM converted_organizations;DELETE FROM manifest WHERE name='conversion_complete';")?;
         let result = (|| {
             let mut summary = ConversionSummary::default();
             for (i, mapping) in mappings.iter().enumerate() {
                 check_cancel(cancel)?;
-                let first = match cfg.kind.as_str() {
-                    "month" => start.checked_add_months(Months::new(i as u32)),
-                    "week" => start.checked_add_signed(Duration::days(i as i64 * 7)),
-                    _ => start.checked_add_signed(Duration::days(i as i64)),
-                }
-                .ok_or_else(|| fail("Дата периода вне диапазона."))?;
-                let end = match cfg.kind.as_str() {
-                    "week" => first.checked_add_signed(Duration::days(6)),
-                    "month" => first
-                        .checked_add_months(Months::new(1))
-                        .and_then(|d| d.checked_sub_signed(Duration::days(1))),
-                    _ => Some(first),
-                }
-                .ok_or_else(|| fail("Дата периода вне диапазона."))?;
-                if first.year() > 9999 || end.year() > 9999 {
-                    return Err(fail("Дата периода вне диапазона."));
-                }
+                let (first, end) = periods[i];
                 let id = format!("legacy-{}", i + 1);
                 self.db.execute(
                     "INSERT INTO converted_reports VALUES(?1,?2,?3,?4,?5,?6,0,0,0,0,?7,?8,?9,?10)",

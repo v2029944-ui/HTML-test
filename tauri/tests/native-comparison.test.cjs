@@ -42,17 +42,7 @@ function dashboard(){
   ]
  };
 }
-test('comparison renderer is Tauri-only, not browser index.html',()=>{
- const root=path.resolve(__dirname,'../..'),out=fs.mkdtempSync(path.join(os.tmpdir(),'native-comparison-'));
- try{
-  prepare({base:root,output:out});
-  const html=fs.readFileSync(path.join(out,'native-workspace.html'),'utf8');
-  assert.equal(fs.readFileSync(path.join(out,'tauri-native-comparison.js'),'utf8'),script);
-  assert.match(html,/id="sqlComparison"/);
-  assert.ok(html.indexOf('tauri-native-comparison.js')<html.indexOf('tauri-native-workspace.js'));
-  assert.ok(!fs.readFileSync(path.join(root,'index.html'),'utf8').includes('tauri-native-comparison.js'));
- }finally{fs.rmSync(out,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 test('render finite signed changes and undefined percentage when baseline is zero',()=>{
  const {window,e}=mount();
  window.nativeComparison.show(dashboard());

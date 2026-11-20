@@ -8,6 +8,12 @@ use std::io::{BufReader, Read, Write};
 #[path = "advanced_analysis.rs"]
 mod advanced_analysis;
 pub use advanced_analysis::*;
+#[path = "unified_analytics.rs"]
+mod unified_analytics;
+pub use unified_analytics::*;
+#[path = "unified_group_audit.rs"]
+mod unified_group_audit;
+pub use unified_group_audit::*;
 const BOUND: usize = 65536;
 
 pub(super) fn initialize(c: &Connection) -> Result<(), String> {
@@ -880,12 +886,23 @@ impl Storage {
     pub fn analysis_index_report(&self, id: &str, expected: i64) -> Result<(), String> {
         self.analysis_index_report_before_publish(id, expected, || {})
     }
+    /// Startup needs to know whether the same streamed report is eligible for
+    /// a complete raw index. Invalid period bounds remain quality findings,
+    /// while otherwise valid rows can still be indexed for bounded browsing.
+    pub fn analysis_index_report_for_startup(&self,id:&str,expected:i64)->Result<bool,String> {
+        self.analysis_index_report_with_raw_eligibility(id,expected,||{})
+    }
     pub(super) fn analysis_index_report_before_publish(
         &self,
         id: &str,
         expected: i64,
         before: impl FnOnce(),
     ) -> Result<(), String> {
+        self.analysis_index_report_with_raw_eligibility(id,expected,before).map(|_|())
+    }
+    fn analysis_index_report_with_raw_eligibility(
+        &self,id:&str,expected:i64,before:impl FnOnce(),
+    )->Result<bool,String> {
         bounded(id)?;
         let mut c = self.connect()?;
         c.execute_batch("PRAGMA temp_store=FILE;PRAGMA temp.cache_size=-2048;CREATE TEMP TABLE an_row(n INTEGER PRIMARY KEY,org TEXT,work TEXT,count REAL,amount REAL);CREATE TEMP TABLE an_org(org TEXT PRIMARY KEY) WITHOUT ROWID;CREATE TEMP TABLE an_omitted(singleton INTEGER PRIMARY KEY);").map_err(err)?;
@@ -913,6 +930,7 @@ impl Storage {
             },
         )?;
         let valid = valid_bounds(&kind, &start, &stop) && rows_valid;
+        let raw_eligible=rows_valid&&!tx.query_row("SELECT EXISTS(SELECT 1 FROM temp.an_omitted)",[],|r|r.get::<_,bool>(0)).map_err(err)?;
         before();
         check_revision(&tx, expected)?;
         tx.execute("DELETE FROM analysis_reports WHERE report_id=?1", [id])
@@ -952,7 +970,8 @@ impl Storage {
             ],
         )
         .map_err(err)?;
-        tx.commit().map_err(err)
+        tx.commit().map_err(err)?;
+        Ok(raw_eligible)
     }
     pub fn analysis_index_settings(&self, expected: i64) -> Result<(), String> {
         let mut c = self.connect()?;
@@ -1657,21 +1676,25 @@ impl Storage {
         workspace(&tx, expected, s)?;
         org_check(&tx, s, organization)?;
         fill_range(&tx, s, q, 1)?;
-        // Resolve the identity against the same selected range as the detail
-        // table. A caller cannot retrieve arbitrary labels from other scopes.
-        let (name, kind): (String, String) = if let Some(org) = organization {
+        // The paged picker covers globally known identities, including works
+        // absent throughout this range. Resolve identity independently of its
+        // activity; coverage below decides whether absence is zero or unknown.
+        // A fabricated key and a key outside an explicit name selection still
+        // fail instead of becoming a made-up zero-valued service.
+        let descriptor: Option<(String,String)> = if let Some(work)=key.strip_prefix("work:") {
             tx.query_row(
-                "SELECT name,kind FROM temp.an_values WHERE slot=1 AND org=?1 AND key=?2",
-                params![org, key],
-                |row| Ok((row.get(0)?,row.get(1)?)),
+                "SELECT x.work,'work' FROM report_rows x WHERE x.work=?1
+                 AND NOT EXISTS(SELECT 1 FROM analysis_groups g WHERE g.work=x.work)
+                 GROUP BY x.work LIMIT 1",[work],|r|Ok((r.get(0)?,r.get(1)?)),
             ).optional().map_err(err)?
-        } else {
-            tx.query_row(
-                "SELECT name,kind FROM temp.an_combined WHERE slot=1 AND key=?1",
-                [key],
-                |row| Ok((row.get(0)?,row.get(1)?)),
-            ).optional().map_err(err)?
-        }.ok_or("Selected work/group not found in analysis scope")?;
+        } else if key.starts_with("group:") {
+            tx.query_row("SELECT name,'group' FROM analysis_groups WHERE key=?1 GROUP BY name LIMIT 1",[key],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(err)?
+        } else {None};
+        let (name,kind)=descriptor.ok_or("Selected work/group not found in analysis scope")?;
+        if let Some(filter)=s.names.as_deref() {
+            let selected:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM analysis_filter_items WHERE id=?1 AND item=?2)",params![filter,name],|r|r.get(0)).map_err(err)?;
+            if !selected {return Err("Selected work/group not found in analysis scope".into());}
+        }
         let count: i64 = tx.query_row(
             "SELECT COUNT(*) FROM temp.an_periods WHERE slot=1",
             [], |row| row.get(0),

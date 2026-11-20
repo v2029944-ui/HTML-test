@@ -67,7 +67,7 @@ function openEditor(file,rule){
     rule.mappings&&typeof rule.mappings==='object'&&Object.keys(rule.mappings).length>0);
   if(advanced){
     invalidate();
-    ruleMessage('Этот файл использует расширенную настройку листов и столбцов. Для изменения откройте классический интерфейс.',true);
+    ruleMessage('Этот файл использует расширенную настройку листов и столбцов. Откройте файл для проверки в форме «Импорт Excel», измените настройки и нажмите «Запомнить настройки файла для автоимпорта».',true);
     return;
   }
   selected={name:file.name,signature:file.nativeSignature,folder,revision};
@@ -168,10 +168,11 @@ fields.save.addEventListener('click',async()=>{
   let rule;
   try{rule=makeRule();}catch(error){ruleMessage(String(error.message),true);return;}
   const choice={...selected};
-  if(!window.confirm('Сохранить правило для «'+choice.name+'»? '+ruleEffect()+' Правило также применяется в классическом интерфейсе.'))return;
   changing=true;lock();
-  let saved=false,reloaded=true,error=null;
+  let saved=false,reloaded=true,error=null,attempted=false;
   try{
+    if(!await window.confirm('Сохранить правило для «'+choice.name+'»? '+ruleEffect())||closed)return;
+    attempted=true;
     if(typeof api.nativeSetRuleChecked!=='function')throw Error('Проверяемое сохранение правил недоступно.');
     await api.nativeSetRuleChecked(choice.name,rule,choice.revision,choice.folder,choice.signature);
     saved=true;
@@ -182,7 +183,7 @@ fields.save.addEventListener('click',async()=>{
     }catch{/* The rule was committed; the UI snapshot needs a manual refresh. */}
   }catch(exception){error=exception;}
   finally{
-    changing=false;lock();await load();
+    changing=false;lock();if(attempted||error||pending)await load();
     if(saved)ruleMessage(reloaded?'Правило сохранено. Данные SQLite обновлены.':
       'Правило сохранено. Нажмите «Обновить данные», чтобы обновить ревизию SQLite.',!reloaded);
     else if(error)ruleMessage('Правило не сохранено: '+String(error?.message||error)+'. Обновите список файлов.',true);
@@ -190,13 +191,15 @@ fields.save.addEventListener('click',async()=>{
 });
 choose.addEventListener('click',async()=>{
   if(busy||changing)return;
-  if(folder&&!window.confirm(
-    'При выборе другой папки правила файлов прежней папки будут сброшены. Сохранённые отчёты в SQLite останутся. '+
-    (autoEnabled()?'Автоимпорт продолжится для настроенной папки. ':'')+'Продолжить?'
-  ))return;
   changing=true;lock();
-  let changed=false,reloaded=true;
+  let changed=false,reloaded=true,attempted=false;
   try{
+    if(folder&&!await window.confirm(
+      'При выборе другой папки правила файлов прежней папки будут сброшены. Сохранённые отчёты в SQLite останутся. '+
+      (autoEnabled()?'Автоимпорт продолжится для настроенной папки. ':'')+'Продолжить?'
+    )){report('Выбор папки отменён.');return;}
+    if(closed)return;
+    attempted=true;
     const picked=await api.chooseFolder();
     if(picked){
       changed=true;
@@ -209,7 +212,7 @@ choose.addEventListener('click',async()=>{
   }catch(error){report('Не удалось выбрать папку: '+String(error?.message||error),true);}
   finally{
     changing=false;lock();
-    await load();
+    if(attempted||pending)await load();
     if(changed&&!reloaded)
       report('Папка выбрана. Нажмите «Обновить данные» для актуальной ревизии SQLite.',true);
   }

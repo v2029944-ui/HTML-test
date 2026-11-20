@@ -7,6 +7,10 @@ mod native_advanced_analysis;
 use native_advanced_analysis::{native_changes_page,native_changes_csv,native_pattern_page,native_composition_page};
 mod native_report_quality;
 mod native_name_selection;
+mod unified_commands;
+mod unified_management;
+use unified_commands::*;
+use unified_management::*;
 
 use native_report_quality::native_report_quality_page;
 use native_management::{native_catalog_page, native_delete_report, native_member_page, native_settings_edit};
@@ -248,7 +252,7 @@ async fn native_analysis_index_page(
             limit,
         )?;
         for item in &headers {
-            store.analysis_index_report(&item.id, revision)?;
+            store.index_unified_startup_report(item, revision, &ManagementJob::new())?;
         }
         let done = headers.len() < limit;
         let next = if done { None } else {
@@ -1062,6 +1066,14 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            unified_period_options, unified_name_options, unified_changes_page, unified_changes_csv,
+            unified_pattern_page, unified_comparison_page, unified_group_audit_page,
+            unified_rename_organizations, unified_clear_reports,
+            unified_report_page, unified_report_summary, unified_report_org_page,
+            unified_quality_page, unified_calendar,
+            unified_management_page, unified_group_save, unified_work_assign,
+            unified_groups_preview, unified_groups_import, unified_groups_export,
+            unified_catalog_preview, unified_catalog_apply,
             updater_configured, load_data, save_data, native_read_revision, native_report_page,
             native_report_calendar, native_report_quality_page, native_settings_bootstrap, native_group_page, native_group_rename,
             native_catalog_page, native_delete_report, native_member_page, native_settings_edit,

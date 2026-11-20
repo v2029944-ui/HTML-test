@@ -33,7 +33,7 @@ function mount(options={}){
   };
   const window={
     desktopAPI:api,
-    confirm:message=>{calls.push('confirm');confirmations.push(message);return options.consent!==false;},
+    confirm:message=>{calls.push('confirm');confirmations.push(message);return options.confirm?options.confirm(message):options.consent!==false;},
     nativeFolderAutoImport:options.autoEnabled?{isEnabled:()=>true,updateSnapshot:()=>{}}:undefined,
     nativeWorkspaceRefresh:async()=>{
       calls.push('sql_refresh');
@@ -47,21 +47,7 @@ function mount(options={}){
   return {nodes,window,calls,confirmations,getListing:()=>listing,setListing:v=>listing=v,onChanged:()=>onChanged?.(),isUnsubscribed:()=>unsubscribed};
 }
 
-test('native Excel source overview is packaged only for Tauri SQL workspace',()=>{
-  const root=path.resolve(__dirname,'../..');
-  const output=fs.mkdtempSync(path.join(os.tmpdir(),'sql-folder-'));
-  try{
-    prepare({base:root,output});
-    const html=fs.readFileSync(path.join(output,'native-workspace.html'),'utf8');
-    assert.match(html,/id="sourceFolderRows"/);
-    assert.match(html,/tauri-native-folder-status\.js/);
-    assert.equal(fs.readFileSync(path.join(output,'tauri-native-folder-status.js'),'utf8'),
-      fs.readFileSync(path.join(root,'tauri/native-folder-status.js'),'utf8'));
-    const browser=fs.readFileSync(path.join(root,'index.html'),'utf8');
-    assert.ok(!browser.includes('sourceFolderRows'));
-    assert.ok(!browser.includes('tauri-native-folder-status.js'));
-  }finally{fs.rmSync(output,{recursive:true,force:true});}
-});
+// Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 
 test('metadata-only list is capped to 100 rendered names and escapes untrusted data',async()=>{
   const files=Array.from({length:140},(_,i)=>({
@@ -237,4 +223,23 @@ test('saving a rule discloses possible automatic writes when the session opt-in 
  await e.sourceRuleSave.events.click();
  assert.match(panel.confirmations[0],/Автоимпорт включён/);
  assert.match(panel.confirmations[0],/могут быть добавлены автоматически/);
+});
+
+const deferredConsent=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
+test('folder choice waits for asynchronous consent and denial never opens its picker',async()=>{
+ const answer=deferredConsent(),x=mount({listing:{folder:'C:/Excel',revision:12,files:[],rules:{}},confirm:()=>answer.promise});await x.window.nativeFolderReady;
+ const pending=x.nodes.sourceFolderChoose.events.click();assert.equal(x.calls.includes('choose'),false);assert.equal(x.nodes.sourceFolderChoose.disabled,true);
+ await x.nodes.sourceFolderChoose.events.click();answer.resolve(false);await pending;assert.equal(x.calls.includes('choose'),false);assert.equal(x.nodes.sourceFolderChoose.disabled,false);
+});
+test('rule save waits for asynchronous consent, writes once after acceptance, and reports dialog errors',async()=>{
+ const listing={folder:'C:/Excel',revision:12,files:[{name:'report.xlsx',nativeSignature:'sig',size:1,tooLarge:false}],rules:{}};
+ const answer=deferredConsent(),x=mount({listing,confirm:()=>answer.promise});await x.window.nativeFolderReady;
+ const row=x.nodes.sourceFolderRows.children[0];await row.children.at(-1).children[0].events.click();
+ x.nodes.sourceRuleStart.value='2024-01-01';x.nodes.sourceRuleType.value='day';
+ const pending=x.nodes.sourceRuleSave.events.click();assert.equal(x.calls.some(c=>c.kind==='rule'),false);await x.nodes.sourceRuleSave.events.click();answer.resolve(true);await pending;
+ assert.equal(x.calls.filter(c=>c.kind==='rule').length,1);
+ const rejected=deferredConsent(),y=mount({listing:{...listing,rules:{}},confirm:()=>rejected.promise});await y.window.nativeFolderReady;
+ await y.nodes.sourceFolderRows.children[0].children.at(-1).children[0].events.click();y.nodes.sourceRuleStart.value='2024-01-01';y.nodes.sourceRuleType.value='day';
+ const failing=y.nodes.sourceRuleSave.events.click();rejected.reject(Error('dialog unavailable'));await failing;
+ assert.equal(y.calls.some(c=>c.kind==='rule'),false);assert.match(y.nodes.sourceRuleStatus.textContent,/dialog unavailable/);
 });
