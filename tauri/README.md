@@ -1,6 +1,10 @@
-# Анализ работ — Tauri 1.7.0 (предварительная версия, Windows + SQLite)
+# Анализ работ — Tauri для Windows и автономный HTML
 
 Основная платформа — Windows x64, Tauri 2 и системный WebView2. Данные сохраняются локально в SQLite в папке «Документы/Анализ работ». Автономный [`index.html`](../index.html) остаётся самостоятельной браузерной версией.
+
+## Выпуск 1.9.5 для Windows x64
+
+[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.9.5/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.9.5/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.9.5](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.9.5)
 
 ## Предварительный выпуск 1.7.0
 
