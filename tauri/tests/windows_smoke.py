@@ -1051,7 +1051,7 @@ def check_delete_without_backup(page, temporary, confirmations):
     clear_revision=api(page,'nativeSettingsBootstrap')['revision']
     confirmations.cancel_then_accept(page.locator('#clearReports'),
                                     'Удалить все импортированные отчёты? Группы останутся.')
-    page.wait_for_function('window.unifiedUI.snapshot?.reports===0',timeout=90_000)
+    page.wait_for_function('() => window.unifiedUI.snapshot?.reports===0',timeout=90_000)
     cleared=backup_contents(database)
     assert cleared[0]==[] and cleared[1:]==stored[1:]
     assert {p.name for p in database.parent.glob('*.sqlite3')}==files,'Deletion created an unsolicited SQLite backup'
