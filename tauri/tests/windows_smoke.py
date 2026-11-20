@@ -1139,7 +1139,7 @@ def run():
                         stop(process)
                     except (RuntimeError,subprocess.SubprocessError) as close_error:
                         # A system print preview can block a normal window close.
-                        # Only this last read-only fixture process is disposable.
+                        # Only this read-only fixture process is disposable.
                         if not print_probe_phase or not report.get('printProbeStatus','').startswith('unavailable-'):
                             raise
                         report['printProbeTeardown']=type(close_error).__name__+': '+str(close_error)
@@ -1163,13 +1163,31 @@ def run():
             other_folder=tmp/'other-source';other_folder.mkdir()
             legacy_source=other_folder/'ordinary.xlsx';legacy_source.write_bytes(daily_workbook_bytes())
             snapshot=tmp/'online-backup.sqlite3'
-            with installed_page() as (page,engine,pid):
+            independent_failures=[]
+            @contextmanager
+            def independent(name):
+                # Each read-only walkthrough gets a freshly started WebView2.
+                # Keep every failed assertion and fail the job after unrelated checks.
+                try:
+                    yield
+                except Exception as error:
+                    error.add_note(name)
+                    independent_failures.append(error)
+                    report.setdefault('failedWalkthroughs',{})[name]=str(error)
+                    print('FAILED '+name+': '+str(error),flush=True)
+
+            with independent('File dialogs on an empty database'), installed_page() as (page,_,pid):
+                ready(page,0)
+                confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
+                check_reference_file_dialogs(page,confirmations,output)
+                report['checks'].append('Empty database file pickers cancel without modifying SQLite and return focus')
+            with independent('Reference shell on an empty database'), installed_page() as (page,_,_):
                 ready(page,0)
                 check_reference(page,output,False)
                 report['checks'].append('Reference interface walkthrough and close/cancel/focus checks on an empty database')
+            with installed_page() as (page,engine,pid):
+                ready(page,0)
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
-                check_reference_file_dialogs(page,confirmations,output)
-                report['checks'].append('Native file pickers cancel without modifying SQLite and return focus to their openers')
                 open_full_workspace(page)
                 entry_url=page.url
                 check_runtime(page)
@@ -1196,12 +1214,29 @@ def run():
                 import_year(page,workbook,confirmations)
                 assert workbook.read_bytes()==original_xlsx
                 check_report_views(page)
-                page.locator('#refWorkspaceClose').click()
-                page.locator('#sheet').get_by_role('button',name='Закрыть',exact=True).click()
-                check_reference_data(page,output)
-                check_reference_data_file_dialogs(page,confirmations,output)
-                open_full_workspace(page)
                 report['checks'].append('Native Excel confirmation blocks writes, Cancel preserves SQLite, and OK imports 366 reports with 50-card pagination and a 29-day calendar')
+            with independent('Reference analytics on populated SQLite'), installed_page() as (page,_,_):
+                ready(page,366)
+                check_reference_data(page,output)
+            with independent('File dialogs on populated SQLite'), installed_page() as (page,_,pid):
+                ready(page,366)
+                confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
+                check_reference_data_file_dialogs(page,confirmations,output)
+                report['checks'].append('Populated summary CSV and verified restore-copy Save dialogs preserve data on cancellation')
+            with independent('System print preview'), installed_page(print_probe_phase=True) as (page,_,pid):
+                wait_for_app_state(page,'Boolean(window.appReady && window.unifiedUI?.snapshot?.reports)',
+                                   'Print probe on the isolated populated SQLite database',90_000)
+                expect(page.locator('#s1')).to_be_visible()
+                page.wait_for_function("""() => document.querySelector('#s1').getAttribute('aria-busy')!=='true'
+                  && !document.querySelector('#s1 .data-card button').disabled""",timeout=90_000)
+                probe=probe_reference_print(page,output,pid)
+                report['printProbeStatus']=probe['status']
+                if probe['status']=='probe-error' or probe['status'].startswith('targeted-') or probe['status'].endswith('focus-not-restored'):
+                    raise AssertionError('Installed print preview: '+probe['status'])
+            with installed_page() as (page,_,pid):
+                ready(page,366)
+                open_full_workspace(page)
+                confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 check_analytics(page,tmp,output)
                 report['checks'].append('Daily-source annual and February totals, exact work and organization filters, missing-week analytics, 200% zoom and responsive widths, and protected UTF-8 CSV')
                 check_extended(page)
@@ -1226,7 +1261,7 @@ def run():
             with installed_page() as (page,_,pid):
                 ready(page,366)
                 check_reference(page,output,True)
-                report['checks'].append('Reference views, SQL data scenarios, exports, printing and close/cancel/focus checks after actual native XLSX import')
+                report['checks'].append('Populated reference views, closing controls and focus after native replacement and restart')
                 open_full_workspace(page)
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 report['navigation_after_restart']=page.locator('.view.active').get_attribute('id')
@@ -1267,17 +1302,9 @@ def run():
                 report['checks'].append('Saved source evidence distinguishes zero provenance, source-day gaps, unknown organization and acknowledgment without changing source XLSX or read-only revision')
                 check_omitted_detail_evidence(page,tmp,output)
                 report['checks'].append('Native omitted-detail tags distinguish invalid data, unknown organizations, invalid controls and included unnamed rows; persisted totals remain 3 and 8 with explicit acknowledgment')
-            with installed_page(print_probe_phase=True) as (page,_,pid):
-                wait_for_app_state(page,'Boolean(window.appReady && window.unifiedUI?.snapshot?.reports)',
-                                   'Print probe on the isolated populated SQLite database',90_000)
-                expect(page.locator('#s1')).to_be_visible()
-                page.wait_for_function("""() => document.querySelector('#s1').getAttribute('aria-busy')!=='true'
-                  && !document.querySelector('#s1 .data-card button').disabled""",timeout=90_000)
-                probe=probe_reference_print(page,output,pid)
-                report['printProbeStatus']=probe['status']
-                if probe['status']=='probe-error' or probe['status'].startswith('targeted-') or probe['status'].endswith('focus-not-restored'):
-                    raise AssertionError('Installed print preview: '+probe['status'])
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+    if independent_failures:
+        raise ExceptionGroup('Installed WebView2 walkthroughs failed',independent_failures)
     write_reference_gallery(output, os.environ.get('REFERENCE_HEAD_SHA', ''), report['webview2'])
     print(json.dumps(report,ensure_ascii=False),flush=True)
 

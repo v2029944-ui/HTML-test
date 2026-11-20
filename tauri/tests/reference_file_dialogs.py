@@ -35,9 +35,12 @@ class OwnedFileDialogs:
     }
     $nodes=$dialog.FindAll([System.Windows.Automation.TreeScope]::Descendants,
                            [System.Windows.Automation.Condition]::TrueCondition)
-    $cancel=@()
+    $cancel=@();$inventory=@()
     foreach ($node in $nodes) {
       $c=$node.Current
+      $inventory += [PSCustomObject]@{pid=$c.ProcessId;type=$c.ControlType.ProgrammaticName;
+        name=$c.Name;automationId=$c.AutomationId;enabled=$c.IsEnabled;
+        offscreen=$c.IsOffscreen;handle=[long]$c.NativeWindowHandle}
       if ($c.ProcessId -eq $pidExpected -and
           $c.ControlType.ProgrammaticName -eq 'ControlType.Button' -and
           $c.AutomationId -eq '2') {
@@ -56,8 +59,8 @@ class OwnedFileDialogs:
         $bitmap.Save($env:ANALIZ_SMOKE_FILE_SCREENSHOT)
       } finally { $graphics.Dispose();$bitmap.Dispose() }
     }
-    [PSCustomObject]@{pid=$dialog.Current.ProcessId;title=$dialog.Current.Name;cancel=$cancel} |
-      ConvertTo-Json -Depth 4 -Compress
+    [PSCustomObject]@{pid=$dialog.Current.ProcessId;title=$dialog.Current.Name;
+      cancel=$cancel;inventory=$inventory} | ConvertTo-Json -Depth 5 -Compress
     """
 
     action_script = r"""
@@ -163,8 +166,43 @@ class OwnedFileDialogs:
         self.user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
         self.user32.GetDlgCtrlID.restype = ctypes.c_int
         self.user32.GetDlgCtrlID.argtypes = [wintypes.HWND]
+        self.user32.GetDlgItem.restype = wintypes.HWND
+        self.user32.GetDlgItem.argtypes = [wintypes.HWND, ctypes.c_int]
+        self.user32.GetParent.restype = wintypes.HWND
+        self.user32.GetParent.argtypes = [wintypes.HWND]
         self.user32.IsChild.restype = wintypes.BOOL
         self.user32.IsChild.argtypes = [wintypes.HWND, wintypes.HWND]
+
+    def native_inventory(self, hwnd):
+        nodes = []
+        callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        self.user32.EnumChildWindows.restype = wintypes.BOOL
+        self.user32.EnumChildWindows.argtypes = [wintypes.HWND, callback_type, wintypes.LPARAM]
+
+        @callback_type
+        def collect(child, _):
+            nodes.append({'handle': int(child), 'parent': int(self.user32.GetParent(child) or 0),
+                          'pid': self.native.process(child), 'class': self.native.window_class(child),
+                          'controlId': self.user32.GetDlgCtrlID(child), 'text': self.title(child),
+                          'visible': bool(self.user32.IsWindowVisible(child)),
+                          'enabled': bool(self.user32.IsWindowEnabled(child)),
+                          'child': bool(self.user32.IsChild(hwnd, child))})
+            return True
+
+        # EnumChildWindows returns zero for an empty tree without setting error.
+        self.user32.EnumChildWindows(hwnd, collect, 0)
+        return nodes
+
+    def cancel_control(self, hwnd, facts):
+        # IFileDialog's UIA AutomationId need not equal the Win32 IDCANCEL.
+        # Resolve the exact common-controls ID; never infer from text/count/order.
+        cancel = self.user32.GetDlgItem(hwnd, 2)
+        assert cancel, ('No native IDCANCEL child in verified file dialog', facts)
+        assert self.native.process(cancel) == self.native.pid, facts
+        assert self.user32.IsChild(hwnd, cancel) and self.user32.GetDlgCtrlID(cancel) == 2, facts
+        assert self.native.window_class(cancel).lower() == 'button', facts
+        assert self.user32.IsWindowVisible(cancel) and self.user32.IsWindowEnabled(cancel), facts
+        return cancel
 
     def escape(self, hwnd):
         # Send a real key only while Windows itself reports focus inside this
@@ -238,15 +276,13 @@ class OwnedFileDialogs:
         if result.returncode:
             raise AssertionError('Owned file-dialog UIA verification failed: ' + result.stderr.strip())
         facts = json.loads(result.stdout)
+        facts['nativeChildren'] = self.native_inventory(hwnd)
+        facts['dialogHwnd'] = int(hwnd)
+        if screenshot:
+            record = Path(screenshot).with_name('native-file-dialogs-inventory-' + Path(screenshot).stem + '.json')
+            record.write_text(json.dumps(facts, ensure_ascii=False, indent=2), encoding='utf-8')
         assert facts['pid'] == self.native.pid and facts['title'] == title, facts
-        buttons = facts['cancel']
-        if isinstance(buttons, dict):
-            buttons = [buttons]
-        assert len(buttons) == 1 and buttons[0]['enabled'] is True, facts
-        cancel = buttons[0]['handle']
-        assert cancel and self.native.process(cancel) == self.native.pid, facts
-        assert self.user32.IsChild(hwnd, cancel) and self.user32.GetDlgCtrlID(cancel) == 2, facts
-        assert self.user32.IsWindowVisible(cancel) and self.user32.IsWindowEnabled(cancel), facts
+        cancel = self.cancel_control(hwnd, facts)
         return facts, cancel
 
     def find(self, expected):
@@ -311,7 +347,7 @@ class OwnedFileDialogs:
         while time.monotonic() < deadline:
             if not self.user32.IsWindowVisible(hwnd) and self.user32.IsWindowEnabled(owner):
                 return {'title': title, 'mode': how, 'pid': facts['pid'],
-                        'class': '#32770', 'cancelAutomationId': '2', 'cancelControlId': 2,
+                        'class': '#32770', 'cancelLookup': 'GetDlgItem(IDCANCEL)', 'cancelControlId': 2,
                         'escapeFocusHwnd': focus,
                         'delivery': 'SendInput VK_ESCAPE down/up' if how == 'escape' else
                                     'BM_CLICK IDCANCEL' if how == 'cancel' else 'UIA Invoke TitleBar.Close'}

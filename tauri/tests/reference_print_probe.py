@@ -106,15 +106,21 @@ if ($action) {
       [PrintProbeNative]::GetDlgCtrlID([IntPtr]$info.NativeWindowHandle) -eq 2) {$cancel += $button}
  }
  if ($cancel.Count -ne 1) {throw 'Unique visible native IDCANCEL=2 not confirmed'}
+ $keyUpSent=$null
  if ($action -eq 'cancel') {
   $pattern=$cancel[0].GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
   ([System.Windows.Automation.InvokePattern]$pattern).Invoke()
  } elseif ($action -eq 'escape') {
   # Queue Escape for this verified HWND only; no SendKeys/SendInput/focus changes.
   if (-not [PrintProbeNative]::PostMessage($handle,0x100,[UIntPtr]27,[IntPtr]1)) {throw 'Targeted Escape keydown failed'}
-  if (-not [PrintProbeNative]::PostMessage($handle,0x101,[UIntPtr]27,[IntPtr]0xC0000001)) {throw 'Targeted Escape keyup failed'}
+  # Escape keydown may already destroy the dialog; do not turn that close
+  # into an artificial failure by requiring delivery of keyup to a dead HWND.
+  $keyUpSent=$false
+  if ([PrintProbeNative]::IsWindow($handle)) {
+   $keyUpSent=[PrintProbeNative]::PostMessage($handle,0x101,[UIntPtr]27,[IntPtr]0xC0000001)
+  }
  } else {throw 'Unsupported print probe action'}
- [PSCustomObject]@{action=$action;hwnd=$handle.ToInt64();dispatched=$true} | ConvertTo-Json -Compress
+ [PSCustomObject]@{action=$action;hwnd=$handle.ToInt64();dispatched=$true;keyup_posted=$keyUpSent} | ConvertTo-Json -Compress
  exit
 }
 $screenError=$null
@@ -196,6 +202,7 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
     report = {'app_pid': app_pid, 'status': 'started', 'attempts': [], 'snapshots': [],
               'restrictions': 'No mocks, printer selection, print-to-file, OK, or global input.'}
     path = output / 'reference-print-probe.json'
+    browser_session = None
 
     def save():
         path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
@@ -208,6 +215,16 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
                 snapshot[key] = read()
             except Exception as error:
                 snapshot[key + '_error'] = type(error).__name__ + ': ' + str(error)
+        # /json/list often omits openerId. Browser Target.getTargets provides
+        # the actual source relationship without evaluating blocked source JS.
+        if browser_session is not None:
+            try:
+                infos = browser_session.send('Target.getTargets')['targetInfos']
+                snapshot['http_targets'] = snapshot.get('targets', [])
+                snapshot['targets'] = [dict(item, id=item['targetId']) for item in infos]
+                snapshot['target_protocol'] = 'Target.getTargets'
+            except Exception as error:
+                snapshot['target_protocol_error'] = type(error).__name__ + ': ' + str(error)
         report['snapshots'].append(snapshot)
         save()
         return snapshot
@@ -309,6 +326,10 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
         return False
 
     try:
+        try:
+            browser_session = page.context.browser.new_browser_cdp_session()
+        except PlaywrightError as error:
+            report['browser_session_error'] = type(error).__name__ + ': ' + str(error)
         session = page.context.new_cdp_session(page)
         try:
             source = session.send('Target.getTargetInfo')['targetInfo']
@@ -349,11 +370,12 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
             except Exception as error:
                 action_result['error'] = type(error).__name__ + ': ' + str(error)
                 report['status'] = 'unavailable-targeted-' + action
+                capture(action + '-dispatch-error')
                 return report
             action_result['closed'] = observed_close(target, action + '-after')
             report[action + '_observed'] = action_result['closed']
             if not action_result['closed']:
-                report['status'] = 'targeted-' + action + '-did-not-close'
+                report['status'] = 'targeted-' + action + '-closure-not-confirmed'
                 return report
             try:
                 action_result['source_focus'] = page.locator('#s1').get_by_role(
@@ -376,5 +398,10 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
         capture('error')
         return report
     finally:
+        if browser_session is not None:
+            try:
+                browser_session.detach()
+            except PlaywrightError as error:
+                report['browser_session_detach_error'] = type(error).__name__ + ': ' + str(error)
         save()
         print('REFERENCE_PRINT_PROBE=' + report['status'], flush=True)
