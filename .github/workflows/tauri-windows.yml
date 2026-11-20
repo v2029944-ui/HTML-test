@@ -120,10 +120,11 @@ jobs:
           python -m pip install playwright==1.62.0
           if ($LASTEXITCODE -ne 0) { throw 'Playwright installation failed' }
           python -m unittest discover -s tauri/tests -p 'test_reference_*.py' -v
-          if ($LASTEXITCODE -ne 0) { throw 'Native dialog identification tests failed' }
+          $dialogTestExit = $LASTEXITCODE
           $env:REFERENCE_HEAD_SHA = "${{ github.event.pull_request.head.sha || github.sha }}"
           python tauri/tests/windows_smoke.py
           if ($LASTEXITCODE -ne 0) { throw 'WebView2 smoke test failed' }
+          if ($dialogTestExit -ne 0) { throw 'Native dialog identification tests failed' }
       - name: Upload preview EXE and Windows verification
         if: always() && github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         uses: actions/upload-artifact@v4

@@ -359,9 +359,11 @@ if(-not $refused){throw 'Unknown target was not refused before any Win32 call'}
 '''
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / 'native.ps1').write_text(_NATIVE, encoding='utf-8')
+            # Windows PowerShell 5.1 uses the system code page for BOM-less
+            # script files. Preserve the Russian UI Automation button names.
+            (root / 'native.ps1').write_text(_NATIVE, encoding='utf-8-sig')
             (root / 'native.cs').write_text(declarations, encoding='utf-8')
-            (root / 'validate.ps1').write_text(validation, encoding='utf-8')
+            (root / 'validate.ps1').write_text(validation, encoding='utf-8-sig')
             result = subprocess.run([shutil.which('powershell') or shutil.which('pwsh'),
                                      '-NoProfile', '-NonInteractive', '-File', str(root / 'validate.ps1')],
                                     capture_output=True, encoding='utf-8', errors='replace', timeout=30)
