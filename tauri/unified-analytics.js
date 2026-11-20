@@ -44,7 +44,7 @@ function layout(){const single=value('overviewMode')==='single';$('overviewSingl
  $('chartOrgScopeLabel').hidden=!departments;$('chartMetricsWrap').hidden=!departments;$('chartSeriesLayoutLabel').hidden=!departments||chosen.length<2;$('chartNotes').hidden=!departments;$('chartComparisonHint').hidden=!departments;$('chartReadGuide').hidden=!departments||state.chart==='table';
  $('chartDescription').textContent=departments?'Показатели подразделений за общий период. Настройки этого графика — ниже.':'Отмеченные работы и группы из общих фильтров.';
  $('chartComparisonHint').textContent='Подразделения выбираются вверху страницы. Показатели этого графика задаются независимо от показателей обзора и работ.';
- $('chartReadGuide').textContent=chosen.length>1&&value('chartSeriesLayout')==='combined'?'Цвет обозначает подразделение. В совместной диаграмме значения показаны в % от максимума каждого показателя, а не как процент изменения.':'У каждого показателя своя шкала в исходных единицах. Цвет обозначает подразделение.';
+ $('chartReadGuide').textContent=chosen.length>1&&value('chartSeriesLayout')==='combined'&&orientation()!=='horizontal'?'Цвет обозначает подразделение. В совместной диаграмме значения показаны в % от максимума каждого показателя, а не как процент изменения.':'У каждого показателя своя шкала в исходных единицах. Цвет обозначает подразделение.';
  $('chartsContainer').hidden=state.chart==='table';$('dataTable').hidden=state.chart!=='table';
  document.querySelectorAll('[data-chart]').forEach(button=>button.classList.toggle('active',button.dataset.chart===state.chart));
 }

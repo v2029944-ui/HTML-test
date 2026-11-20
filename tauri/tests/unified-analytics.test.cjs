@@ -254,3 +254,12 @@ test('department charts and CSV retain organizations after the first eight serie
  assert.equal(table.options.csvRows.length,10);assert.equal(table.options.csvRows[9][2],-10.75);
  assert.ok(queries.every(orgs=>orgs.length<=8));
 });
+test('horizontal department guide describes original units instead of normalized percentages',async()=>{
+ const f=fixture({nativeOrganizationTrends:async()=>({granularity:'period',series:[{organization:'A',points:[{start:'2024-01-02',missing:0,total:{amount:20,count:2,average:10}}]}]})});
+ await f.bootstrap();f.nodes.get('chartBreakdown').value='organizations';
+ f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ assert.match(f.nodes.get('chartReadGuide').textContent,/% от максимума/);
+ f.nodes.get('chartOrientation').value='horizontal';f.nodes.get('chartOrientation').dispatch('change');await settle();
+ assert.match(f.nodes.get('chartReadGuide').textContent,/в исходных единицах/);
+ assert.doesNotMatch(f.nodes.get('chartReadGuide').textContent,/% от максимума/);
+});
