@@ -53,9 +53,9 @@ function findKind(id){return kinds.find(k=>k.id===id);}
 function showPreview(result){
  if(!result||!findKind(result.kind)||typeof result.reviewToken!=='string'||
     result.reviewToken.length!==64)throw Error('Неверный план импорта.');
- review=result;
  const kind=findKind(result.kind);
  render(result.values,kind,'metricKindPreview');
+ review=result;
  status('Проверено: '+kind.name+', '+result.start+' — '+result.end+
    ', '+result.rowCount+' строк. Запись начнётся только после подтверждения.');
 }
@@ -97,22 +97,22 @@ for(const id of ['metricKindFrom','metricKindTo']){
 }
 $('metricKindChoose').addEventListener('click',async()=>{
  if(busy)return;
- clearReview();busy=true;controls();
+ busy=true;controls();
  try{
   const selected=await api.chooseMetricJson();
-  if(!selected){status('Выбор JSON отменён.');return;}
+  if(!selected){if(!review)status('Выбор JSON отменён.');return;}
+  clearReview();
   $('metricKindFile').textContent='Проверяется JSON: '+selected.split(/[\\/]/).pop();
   const revision=currentRevision(),result=await api.nativeMetricPreview(selected);
   if(currentRevision()!==revision)throw Error('База изменилась во время проверки файла.');
   showPreview(result);
   source=selected;format='json';
  }catch(err){
-  clearReview();status('Импорт не подготовлен: '+userError(err),true);
+  status('Импорт не подготовлен: '+userError(err),true);
  }finally{busy=false;controls();}
 });
 $('metricKindChooseXlsx').addEventListener('click',async()=>{
  if(busy)return;
- clearReview();controls();
  const profile=$('metricXlsxProfile').value;
  const start=$('metricKindFrom').value,end=$('metricKindTo').value;
  if(!profile||!start||!end||start>end){
@@ -122,14 +122,15 @@ $('metricKindChooseXlsx').addEventListener('click',async()=>{
  busy=true;controls();
  try{
   const selected=await api.chooseMetricXlsx();
-  if(!selected){status('Выбор XLSX отменён.');return;}
+  if(!selected){if(!review)status('Выбор XLSX отменён.');return;}
+  clearReview();
   $('metricKindFile').textContent='Проверяется XLSX: '+selected.split(/[\\/]/).pop();
   const revision=currentRevision(),result=await api.nativeMetricXlsxPreview(selected,profile,start,end);
   if(currentRevision()!==revision)throw Error('База изменилась во время проверки файла.');
   showPreview(result);
   source=selected;format='xlsx';xlsxArgs={profile,start,end};
  }catch(err){
-  clearReview();status('Импорт XLSX не подготовлен: '+userError(err),true);
+  status('Импорт XLSX не подготовлен: '+userError(err),true);
  }finally{busy=false;controls();}
 });
 $('metricKindApply').addEventListener('click',async()=>{

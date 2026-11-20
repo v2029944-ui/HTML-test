@@ -114,12 +114,17 @@ jobs:
       - name: Run installed Windows application with real WebView2
         if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         env:
+          PYTHONIOENCODING: utf-8
           ANALIZ_SMOKE_UNSIGNED_CI: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/main') && 'true' || 'false' }}
         run: |
           python -m pip install playwright==1.62.0
           if ($LASTEXITCODE -ne 0) { throw 'Playwright installation failed' }
+          python -m unittest discover -s tauri/tests -p 'test_reference_*.py' -v
+          $dialogTestExit = $LASTEXITCODE
+          $env:REFERENCE_HEAD_SHA = "${{ github.event.pull_request.head.sha || github.sha }}"
           python tauri/tests/windows_smoke.py
           if ($LASTEXITCODE -ne 0) { throw 'WebView2 smoke test failed' }
+          if ($dialogTestExit -ne 0) { throw 'Native dialog identification tests failed' }
       - name: Upload preview EXE and Windows verification
         if: always() && github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         uses: actions/upload-artifact@v4
@@ -149,5 +154,17 @@ jobs:
             tauri/test-artifacts/windows-webview2.png
             tauri/test-artifacts/windows-desktop-diagnostic.png
             tauri/test-artifacts/windows-sql-*.png
+            tauri/test-artifacts/reference-*.png
+            tauri/test-artifacts/reference-*.json
+            tauri/test-artifacts/native-file-*.png
+            tauri/test-artifacts/native-file-dialogs*.json
           if-no-files-found: warn
+          retention-days: 14
+      - name: Upload installed interface gallery
+        if: success() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Analiz-rabot-screens
+          path: tauri/test-artifacts/reference-screens.html
+          if-no-files-found: error
           retention-days: 14

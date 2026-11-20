@@ -5,7 +5,15 @@ mod native_import;
 mod native_management;
 mod native_advanced_analysis;
 use native_advanced_analysis::{native_changes_page,native_changes_csv,native_pattern_page,native_composition_page};
+mod native_reference_trend_csv;
+use native_reference_trend_csv::reference_trend_csv;
+mod native_reference_detail_csv;
+use native_reference_detail_csv::reference_detail_csv;
 mod native_report_quality;
+mod native_coverage;
+mod native_reference_changes;
+use native_reference_changes::{reference_changes,reference_changes_csv,reference_summary_csv};
+use native_coverage::{native_quality_matrix_page,native_quality_matrix_reports};
 mod native_name_selection;
 mod unified_commands;
 mod unified_management;
@@ -16,9 +24,9 @@ use native_report_quality::native_report_quality_page;
 use native_management::{native_catalog_page, native_delete_report, native_member_page, native_settings_edit};
 
 use native_import::{
-    native_wide_import_preview, native_wide_import_apply,
+    native_wide_import_preview, native_wide_import_apply, native_preview_quality_page, native_preview_quality_csv,
     native_folder_import_session, native_folder_import_preview, native_folder_import_apply,
-    native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
+    native_import_sheets, native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
 };
 
 use storage::{AnalysisScope, ManagementJob, RangeQuery, RangeSummary, ReadExcel, ReadFilter, ReportHeader, Rule, Storage};
@@ -1066,16 +1074,17 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            reference_changes, reference_changes_csv, reference_summary_csv,
             unified_period_options, unified_name_options, unified_changes_page, unified_changes_csv,
-            unified_pattern_page, unified_comparison_page, unified_group_audit_page,
+            reference_trend_csv, reference_detail_csv, unified_pattern_page, unified_comparison_page, unified_group_audit_page,
             unified_rename_organizations, unified_clear_reports,
             unified_report_page, unified_report_summary, unified_report_org_page,
-            unified_quality_page, unified_calendar,
+            unified_quality_page, unified_calendar, unified_group_audit_csv, unified_quality_csv,
             unified_management_page, unified_group_save, unified_work_assign,
             unified_groups_preview, unified_groups_import, unified_groups_export,
             unified_catalog_preview, unified_catalog_apply,
             updater_configured, load_data, save_data, native_read_revision, native_report_page,
-            native_report_calendar, native_report_quality_page, native_settings_bootstrap, native_group_page, native_group_rename,
+            native_report_calendar, native_report_quality_page, native_quality_matrix_page, native_quality_matrix_reports, native_settings_bootstrap, native_group_page, native_group_rename,
             native_catalog_page, native_delete_report, native_member_page, native_settings_edit,
             native_analysis_index_page, native_analysis_index_settings, native_analysis_name_options, native_analysis_range,
             native_analysis_timeline, native_analysis_ranking, native_analysis_organization_trends, native_analysis_work_timeline, native_analysis_compare, native_daily_rollup, native_changes_page, native_changes_csv, native_pattern_page, native_composition_page,
@@ -1085,8 +1094,8 @@ fn main() {
             native_folder_import_session,
             native_folder_import_preview,
             native_folder_import_apply,
-            native_wide_import_preview, native_wide_import_apply,
-            native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
+            native_wide_import_preview, native_wide_import_apply, native_preview_quality_page, native_preview_quality_csv,
+            native_import_sheets, native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
             native_metric_kinds, native_metric_preview, native_metric_apply, native_metric_summary,
             native_metric_xlsx_profiles, native_metric_xlsx_preview, native_metric_xlsx_apply,
             get_info, set_folder, set_rule, native_set_rule_checked,

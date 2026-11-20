@@ -10,6 +10,7 @@ window.appReady=Promise.resolve().then(async()=>{
  }
  for(const name of ['unifiedManagement','unifiedReports','unifiedExtended','unifiedAnalytics'])window[name].init();
  UI.init();
+ window.referenceDesktop?.init();
  await UI.refresh();
  return true;
 }).catch(error=>{

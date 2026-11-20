@@ -22,11 +22,19 @@ pub struct WideMapping {
     pub total_amount_col: Option<u32>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WideSequentialPeriod {
+    pub year: i32,
+    /// None means a complete year; Some(1..=4) means a complete quarter.
+    pub quarter: Option<u32>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WideOptions {
     pub year: Option<i32>,
     pub sheets: Vec<String>,
     pub mappings: BTreeMap<String, WideMapping>,
+    /// Confirmed periods keyed by logical worksheet name; never inferred from totals.
+    pub sequential_periods: BTreeMap<String, WideSequentialPeriod>,
     pub organizations: [String; 4],
 }
 impl Default for WideOptions {
@@ -35,6 +43,7 @@ impl Default for WideOptions {
             year: None,
             sheets: vec![],
             mappings: BTreeMap::new(),
+            sequential_periods: BTreeMap::new(),
             organizations: ["СМУ16".into(), "АВТО".into(), "ТРАК".into(), "ЦЕНТР".into()],
         }
     }
@@ -96,6 +105,7 @@ impl Serialize for SourceIssue {
         }
         View {
             diagnostic: crate::ReportIssue {
+                skipped: None,
                 sequence: self.sequence,
                 kind: self.kind.clone(),
                 reason: self.reason.clone(),
@@ -154,6 +164,9 @@ struct Patterns {
     text: Regex,
     quarter: Regex,
     quarter2: Regex,
+    quarter_any: Regex,
+    quarter2_any: Regex,
+    roman_any: Regex,
     roman: Regex,
     annual: Regex,
     strip_prefix: Regex,
@@ -208,6 +221,9 @@ impl Patterns {
             text: r(r"^(\d{1,2})\s+([а-яё]+)\.?\s*(\d{4})?$"),
             quarter: r(r"(?i)(?:^|[^a-z0-9])(?:q\s*|кв\.?\s*)([1-4])(?:[^a-z0-9]|$)"),
             quarter2: r(r"(?i)([1-4])\s*кв(?:артал|\.)?"),
+            quarter_any: r(r"(?i)(?:^|[^a-z0-9])(?:q\s*|кв\.?\s*)(\d+)"),
+            quarter2_any: r(r"(?i)(\d+)\s*кв(?:артал|\.)?"),
+            roman_any: r(r"(?i)(?:^|\s)([ivxlcdm]+)\s*(?:квартал|кв\.?)"),
             roman: r(r"(?i)(?:^|\s)(iv|iii|ii|i)\s*(?:квартал|кв\.?)"),
             annual: r(r"(?i)годов|за\s+\d{4}\s*год|year|annual"),
             strip_prefix: r(r"^(?:количество|кол[.-]?во|сумма)\s*[:;,·—-]?\s*"),
@@ -551,6 +567,13 @@ impl Stage<'_> {
                     });
                 }
             }
+            if cfg
+                .sequential_periods
+                .keys()
+                .any(|name| !found.iter().any(|s| &s.name == name))
+            {
+                return Err(fail("sequential period refers to an unused worksheet"));
+            }
             Ok(found)
         })();
         self.unhook();
@@ -687,10 +710,19 @@ impl Stage<'_> {
             if names.is_empty() {
                 return Err(fail("no shared-work daily sheets found"));
             }
+            if cfg
+                .sequential_periods
+                .keys()
+                .any(|name| !names.contains(name))
+            {
+                return Err(fail("sequential period refers to an unused worksheet"));
+            }
             let date1904:bool=self.db.query_row("SELECT EXISTS(SELECT 1 FROM nodes n JOIN attributes a ON a.component=n.component AND a.seq=n.seq AND a.key='date1904' WHERE n.component='xl/workbook.xml' AND n.tag='workbookPr' AND a.value IN ('1','true'))",[],|r|r.get(0))?;
             let mut summary = ConversionSummary::default();
             for name in names {
                 check_cancel(&cancel)?;
+                let sequential = cfg.sequential_periods.get(&name);
+                let sequential_bounds = sequential.map(period_bounds).transpose()?;
                 let path = &book
                     .iter()
                     .find(|x| x.0 == name)
@@ -739,12 +771,39 @@ impl Stage<'_> {
                         total = Some(*pair);
                         continue;
                     }
-                    let Some((parts, row, col)) = date else {
-                        return Err(fail(&format!(
-                            "date not found above {} / {}",
-                            cell(pair.q, info.header),
-                            cell(pair.a, info.header)
-                        )));
+                    let (parts, row, col) = if let Some((begin, _)) = sequential_bounds {
+                        let expected = begin + Duration::days(days.len() as i64);
+                        if let Some((parts, _, _)) = date {
+                            if parts.year.is_some_and(|year| year != expected.year())
+                                || parts
+                                    .suffix
+                                    .is_some_and(|year| year != expected.year() % 100)
+                                || parts.month != expected.month()
+                                || parts.day != expected.day()
+                            {
+                                return Err(fail(
+                                    "header date conflicts with sequential daily position",
+                                ));
+                            }
+                        }
+                        (
+                            Parts {
+                                year: Some(expected.year()),
+                                suffix: None,
+                                month: expected.month(),
+                                day: expected.day(),
+                            },
+                            date.map_or(info.header, |d| d.1),
+                            date.map_or(pair.q, |d| d.2),
+                        )
+                    } else {
+                        date.ok_or_else(|| {
+                            fail(&format!(
+                                "date not found above {} / {}",
+                                cell(pair.q, info.header),
+                                cell(pair.a, info.header)
+                            ))
+                        })?
                     };
                     if let Some(year) = parts.year {
                         years.insert(year);
@@ -760,6 +819,13 @@ impl Stage<'_> {
                 if days.is_empty() {
                     return Err(fail("no daily date columns"));
                 }
+                if sequential_bounds
+                    .is_some_and(|(begin, end)| days.len() as i64 != (end - begin).num_days() + 1)
+                {
+                    return Err(fail(
+                        "daily pair count does not match the explicit sequential period",
+                    ));
+                }
                 if cfg
                     .year
                     .is_some_and(|year| years.iter().any(|y| *y != year))
@@ -768,6 +834,8 @@ impl Stage<'_> {
                 }
                 let infer = years.is_empty();
                 let mut quarters = [None; 3];
+                let mut sequential_quarters = BTreeSet::new();
+                let mut invalid_quarter = false;
                 let mut annual = false;
                 // Legacy coverage examines sheet name plus all string header
                 // cells joined by spaces. Collapse JS whitespace and retain a
@@ -779,6 +847,8 @@ impl Stage<'_> {
                 let mut inspect = |value: &str| {
                     if infer {
                         infer_years(value, &mut years);
+                    } else if sequential.is_some() {
+                        find_years(value, &mut years, 9999);
                     }
                     // Cropping must not invent ^/left-word boundaries. Matches
                     // starting at the cropped edge cannot reach a new cell:
@@ -800,6 +870,45 @@ impl Stage<'_> {
                         }
                     }
                     let value = coverage.as_str();
+                    if sequential.is_some() {
+                        for (index, pattern) in
+                            [&p.quarter_any, &p.quarter2_any].into_iter().enumerate()
+                        {
+                            for capture in pattern.captures_iter(value) {
+                                if index == 0
+                                    && value
+                                        .as_bytes()
+                                        .get(capture.get(0).unwrap().end())
+                                        .is_some_and(u8::is_ascii_alphanumeric)
+                                {
+                                    continue;
+                                }
+                                match capture[1].parse::<u32>() {
+                                    Ok(q @ 1..=4) => {
+                                        sequential_quarters.insert(q);
+                                    }
+                                    _ => invalid_quarter = true,
+                                }
+                            }
+                        }
+                        for capture in p.roman_any.captures_iter(value) {
+                            match capture[1].to_lowercase().as_str() {
+                                "i" => {
+                                    sequential_quarters.insert(1);
+                                }
+                                "ii" => {
+                                    sequential_quarters.insert(2);
+                                }
+                                "iii" => {
+                                    sequential_quarters.insert(3);
+                                }
+                                "iv" => {
+                                    sequential_quarters.insert(4);
+                                }
+                                _ => invalid_quarter = true,
+                            }
+                        }
+                    }
                     if quarters[0].is_none() {
                         quarters[0] = p
                             .quarter
@@ -838,7 +947,7 @@ impl Stage<'_> {
                     let v: String = r.get::<_, Option<String>>(2)?.unwrap_or_default();
                     if ["s", "str", "inlineStr"].contains(&kind.as_str()) {
                         inspect(&v);
-                    } else if infer && r.get::<_, u32>(0)? < info.header {
+                    } else if (infer || sequential.is_some()) && r.get::<_, u32>(0)? < info.header {
                         if let Some(y) = number(Some(&v))
                             .filter(|n| n.fract() == 0. && *n >= 1900. && *n <= 9999.)
                         {
@@ -848,8 +957,26 @@ impl Stage<'_> {
                 }
                 drop(inspect);
                 years.extend(numeric_years);
-                let year = cfg
-                    .year
+                if let Some(period) = sequential {
+                    if years.iter().any(|year| *year != period.year) {
+                        return Err(fail(
+                            "sequential period year conflicts with worksheet headers",
+                        ));
+                    }
+                    if invalid_quarter
+                        || sequential_quarters.len() > 1
+                        || sequential_quarters
+                            .iter()
+                            .any(|q| Some(*q) != period.quarter)
+                    {
+                        return Err(fail(
+                            "sequential period quarter conflicts with worksheet headers",
+                        ));
+                    }
+                }
+                let year = sequential
+                    .map(|p| p.year)
+                    .or(cfg.year)
                     .or_else(|| (years.len() == 1).then(|| *years.first().unwrap()))
                     .ok_or_else(|| fail("year is ambiguous; provide a confirmed year"))?;
                 for day in &mut days {
@@ -876,7 +1003,9 @@ impl Stage<'_> {
                         )
                         .map_err(|_| fail("duplicate day within or across selected sheets"))?;
                 }
-                let (begin, end) = if let Some(q) = quarters.into_iter().flatten().next() {
+                let (begin, end) = if let Some(bounds) = sequential_bounds {
+                    bounds
+                } else if let Some(q) = quarters.into_iter().flatten().next() {
                     let month = (q - 1) * 3 + 1;
                     let begin = NaiveDate::from_ymd_opt(year, month, 1).unwrap();
                     let end = if q == 4 {
@@ -1023,7 +1152,7 @@ impl Stage<'_> {
                         [&id],
                         |r| r.get(0),
                     )?;
-                    self.db.execute("INSERT INTO converted_issues SELECT ?1,?2+row_number() OVER(ORDER BY seq),kind,reason,source_row,organization,NULL,count_cell,amount_cell,expected_count,expected_amount,actual_count,actual_amount,'source-period',date,seq FROM wide_source_issues WHERE sheet=?3 AND relevant=1 ORDER BY seq",params![id,offset,name])?;
+                    self.db.execute("INSERT INTO converted_issues SELECT ?1,?2+row_number() OVER(ORDER BY seq),kind,reason,source_row,organization,NULL,count_cell,amount_cell,expected_count,expected_amount,actual_count,actual_amount,'source-period',date,seq,NULL FROM wide_source_issues WHERE sheet=?3 AND relevant=1 ORDER BY seq",params![id,offset,name])?;
                     self.db.execute("UPDATE converted_reports SET has_mismatch=1 WHERE id=?1 AND EXISTS(SELECT 1 FROM wide_source_issues WHERE sheet=?2 AND relevant=1 AND kind='mismatch')",params![id,name])?;
                     summary.issues += relevant;
                 }
@@ -1214,11 +1343,18 @@ fn validate(cfg: &WideOptions) -> Result<()> {
     if cfg.year.is_some_and(|y| !(1900..=9999).contains(&y))
         || cfg.sheets.len() > 12
         || cfg.mappings.len() > 12
+        || cfg.sequential_periods.len() > 12
+        || cfg.sequential_periods.values().any(|p| {
+            !(1900..=9999).contains(&p.year)
+                || p.quarter.is_some_and(|q| !(1..=4).contains(&q))
+                || cfg.year.is_some_and(|year| year != p.year)
+        })
         || cfg.sheets.iter().collect::<BTreeSet<_>>().len() != cfg.sheets.len()
         || cfg
             .sheets
             .iter()
             .chain(cfg.mappings.keys())
+            .chain(cfg.sequential_periods.keys())
             .any(|n| n.is_empty() || n.encode_utf16().count() > 240)
         || cfg
             .organizations
@@ -1236,7 +1372,21 @@ fn validate(cfg: &WideOptions) -> Result<()> {
     }
     Ok(())
 }
+fn period_bounds(period: &WideSequentialPeriod) -> Result<(NaiveDate, NaiveDate)> {
+    let month = period.quarter.map_or(1, |q| (q - 1) * 3 + 1);
+    let begin = NaiveDate::from_ymd_opt(period.year, month, 1)
+        .ok_or_else(|| fail("invalid sequential period"))?;
+    let end = if period.quarter.is_none() || period.quarter == Some(4) {
+        NaiveDate::from_ymd_opt(period.year, 12, 31).unwrap()
+    } else {
+        NaiveDate::from_ymd_opt(period.year, month + 3, 1).unwrap() - Duration::days(1)
+    };
+    Ok((begin, end))
+}
 fn infer_years(value: &str, years: &mut BTreeSet<i32>) {
+    find_years(value, years, 2199);
+}
+fn find_years(value: &str, years: &mut BTreeSet<i32>, maximum: i32) {
     let bytes = value.as_bytes();
     for i in 0..bytes.len().saturating_sub(3) {
         let b = &bytes[i..i + 4];
@@ -1248,7 +1398,7 @@ fn infer_years(value: &str, years: &mut BTreeSet<i32>) {
                 + (b[1] - b'0') as i32 * 100
                 + (b[2] - b'0') as i32 * 10
                 + (b[3] - b'0') as i32;
-            if (1900..=2199).contains(&year) {
+            if (1900..=maximum).contains(&year) {
                 years.insert(year);
             }
         }

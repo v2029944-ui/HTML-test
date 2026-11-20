@@ -6,7 +6,7 @@ test('one canonical application retains the whole original interface and never s
  const html=prepareHtml(original);
  for(const id of ['dashboard','changes','upload','groups','storage','chartSeriesLayout','changesSort','changesDirection','regularityStatus','groupAuditPanel','groupCatalog','appearanceSize'])assert.match(html,new RegExp('id="'+id+'"'));
  assert.ok(!html.includes('window.appReady=main();'),'old full-history main must not run');
- assert.match(html,/tauri-unified-app.js/);assert.ok(!html.includes('tauri-native-reader.js'));assert.ok(!html.includes('Классический интерфейс'));
+ assert.match(html,/tauri-unified-app.js/);assert.match(html,/tauri-unified-horizontal-bars.js/);assert.ok(!html.includes('tauri-native-reader.js'));assert.ok(!html.includes('Классический интерфейс'));
  assert.ok(html.indexOf('tauri-bridge.js')<html.indexOf('tauri-unified-original.js'));
 });
 test('the source renderer is available without invoking old wire, storage or full report loading',()=>{
@@ -31,6 +31,7 @@ test('canonical DOM and all styles survive except duplicate source/year calendar
  const groupToolbar=html.slice(html.indexOf('id="createGroup"'),html.indexOf('id="groupCoverage"'));
  assert.match(groupToolbar,/id="importGroups"/);assert.match(groupToolbar,/id="catalogFile"/);
  assert.match(html,/id="hideEmptyPeriods"/);assert.match(html,/id="unifiedSource"/);
+ assert.match(html,/id="chartOrientation"/);assert.doesNotMatch(html,/data-chart="line"/);
  for(const id of ['additionalMetrics','metricKindSelect','metricKindCalculate','metricKindChooseXlsx','metricKindChoose','metricKindApply','metricKindPreview','metricKindStatus'])assert.match(html,new RegExp('id="'+id+'"'));
  assert.doesNotMatch(html,/<script>([\s\S]*?)<\/script>/);
 });
@@ -104,4 +105,38 @@ test('generated original presentation uses quantity/volume terminology, standalo
  assert.doesNotMatch(html,/Средняя сумма на работу|10, 20, 10 и 20 работ/);
  assert.match(html,/Сумма \/ количество \(объём\)/);
  assert.match(original,/Средняя сумма на работу/);
+});
+
+test('Windows CRLF presentation still generates the column-orientation controls',()=>{
+ const windows=original.replace(/\r?\n/g,'\r\n');
+ const html=prepareHtml(windows);
+ assert.match(html,/id="chartOrientation"/);assert.match(html,/id="changesPeriodOverride"/);assert.match(html,/id="analysisBasePeriod"/);assert.match(html,/id="changesSensitivityValue"/);assert.match(html,/id="changesMoreOptions"/);assert.doesNotMatch(html,/data-chart="line"/);
+});
+
+test('Tauri canonical page exposes one shared baseline and visible local period overrides',()=>{
+ const {html}=require('../unified-build.cjs').buildUnified(original);
+ for(const id of ['analysisBasePeriod','comparisonPeriodOverride','comparisonPeriodReset','structurePeriodOverride','structurePeriodReset','changesPeriodOverride','changesPeriodReset'])
+  assert.match(html,new RegExp('id="'+id+'"'));
+ assert.match(html,/Изменения к базовому периоду/);
+});
+
+test('installed analytics uses an accessible sensitivity slider and folds secondary filters',()=>{
+ const html=prepareHtml(original);
+ for(const id of ['changesPercent','changesSensitivityValue','changesSensitivityExample','changesMoreOptions','changesActiveFilter']){
+  assert.equal([...html.matchAll(new RegExp('id="'+id+'"','g'))].length,1,id+' should appear once');
+ }
+ assert.match(html,/<input id="changesPercent" type="range"[^>]*max="200"/);
+ assert.match(html,/<details class="changes-more-options" id="changesMoreOptions">/);
+ assert.doesNotMatch(html,/Сначала обычная база, затем малая/);
+});
+
+test('trend and composition occupy one presentation switch, retaining native SQL controls',()=>{
+ const html=prepareHtml(original);
+ const selector=html.indexOf('id="workViewMode"'),chart=html.indexOf('id="chartPanel"'),composition=html.indexOf('id="structurePanel"'),comparison=html.indexOf('id="comparison"');
+ assert.ok(selector>=0&&selector<chart&&chart<composition&&composition<comparison);
+ assert.match(html,/<details class="panel" id="structurePanel" hidden>/);
+ assert.match(html,/id="structureLimit"/);
+ assert.match(html,/id="chartsContainer"/);
+ assert.equal([...html.matchAll(/id="structurePanel"/g)].length,1);
+ assert.equal([...html.matchAll(/id="chartPanel"/g)].length,1);
 });

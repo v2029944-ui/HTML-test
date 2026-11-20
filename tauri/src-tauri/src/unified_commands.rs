@@ -320,3 +320,18 @@ pub async fn unified_calendar(
     .await
     .map_err(|e| e.to_string())?
 }
+
+#[tauri::command]
+pub async fn unified_quality_csv(app:AppHandle,revision:i64,filter:UnifiedQualityFilter,destination:String)->Result<(),String>{
+    tauri::async_runtime::spawn_blocking(move||app.state::<Storage>().unified_quality_csv(revision,&filter,Path::new(&destination)))
+        .await.map_err(|e|e.to_string())?
+}
+
+#[tauri::command]
+pub async fn unified_group_audit_csv(app:AppHandle,request:AdvancedRequest,mode:String,search:String,destination:String)->Result<(),String>{
+    tauri::async_runtime::spawn_blocking(move||{
+        let store=app.state::<Storage>();
+        let q=RangeQuery{from:request.query.from.clone(),to:request.query.to.clone()};
+        request.with_scope(&store,|scope,_|store.unified_group_audit_csv(request.revision,scope,&q,&mode,&search,Path::new(&destination)))
+    }).await.map_err(|e|e.to_string())?
+}

@@ -6,7 +6,7 @@ pub use prepared::{
 };
 mod wide;
 mod catalog;
-pub use wide::{Coverage, ReportProvenance, SourceIssue, WideMapping, WideOptions, WideSheet};
+pub use wide::{Coverage, ReportProvenance, SourceIssue, WideMapping, WideOptions, WideSheet, WideSequentialPeriod};
 mod zip_index;
 use fs2::FileExt;
 use quick_xml::{

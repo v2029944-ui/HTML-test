@@ -8,12 +8,24 @@ use std::io::{BufReader, Read, Write};
 #[path = "advanced_analysis.rs"]
 mod advanced_analysis;
 pub use advanced_analysis::*;
+#[path = "reference_trend_csv.rs"]
+mod reference_trend_csv;
+pub use reference_trend_csv::*;
+#[path = "reference_changes.rs"]
+mod reference_changes;
+pub use reference_changes::*;
 #[path = "unified_analytics.rs"]
 mod unified_analytics;
 pub use unified_analytics::*;
+#[path = "reference_detail_csv.rs"]
+mod reference_detail_csv;
+pub use reference_detail_csv::*;
 #[path = "unified_group_audit.rs"]
 mod unified_group_audit;
 pub use unified_group_audit::*;
+#[path = "analysis_coverage.rs"]
+mod analysis_coverage;
+pub use analysis_coverage::*;
 const BOUND: usize = 65536;
 
 pub(super) fn initialize(c: &Connection) -> Result<(), String> {
@@ -63,6 +75,7 @@ pub struct AnalysisTotals {
 }
 #[derive(Debug, Serialize)]
 pub struct RangeSummary {
+    pub single_missing: Option<MissingPeriod>,
     pub complete: bool,
     pub periods: i64,
     pub organizations: i64,
@@ -107,6 +120,7 @@ pub struct DailyRollupPage {
 }
 #[derive(Debug, Serialize)]
 pub struct TimelinePoint {
+    pub has_activity: bool,
     pub start: String,
     pub periods: i64,
     pub missing: i64,
@@ -127,6 +141,7 @@ pub struct WorkTrendSummary {
 }
 #[derive(Debug, Serialize)]
 pub struct OrganizationTrendPoint {
+    pub has_activity: bool,
     pub start: String,
     pub periods: i64,
     pub missing: i64,
@@ -277,6 +292,9 @@ pub struct ComparisonValue {
     pub count: Option<ChangeMeasure>,
     pub amount: Option<ChangeMeasure>,
     pub average: AverageChange,
+    /// Exact values of the sole complete side when a delta cannot be computed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available: Option<AnalysisTotals>,
 }
 
 fn bounded(s: &str) -> Result<(), String> {
@@ -1285,7 +1303,25 @@ fn range_summary(c: &Connection, s: &AnalysisScope, slot: i64) -> Result<RangeSu
         [slot],
         |r| r.get(0),
     ).map_err(err)?;
+    let single_missing = if missing == 1 {
+        Some(
+            c.query_row(
+                "SELECT org,start FROM temp.an_missing WHERE slot=?1",
+                [slot],
+                |r| {
+                    Ok(MissingPeriod {
+                        org: r.get(0)?,
+                        start: r.get(1)?,
+                    })
+                },
+            )
+            .map_err(err)?,
+        )
+    } else {
+        None
+    };
     Ok(RangeSummary {
+        single_missing,
         complete,
         periods,
         organizations,
@@ -1402,7 +1438,7 @@ impl Storage {
                 FROM temp.an_missing WHERE slot=1 GROUP BY label
             ), values_by_bucket AS (
                 SELECT CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count, SUM(x.amount) AS amount
+                       SUM(x.count) AS count, SUM(x.amount) AS amount, MAX(x.count<>0 OR x.amount<>0) AS active
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN analysis_filter_items f ON f.id=?2 AND f.item=v.org
@@ -1414,7 +1450,7 @@ impl Storage {
                 GROUP BY label
             )
             SELECT b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(v.count,0),COALESCE(v.amount,0)
+                   COALESCE(v.count,0),COALESCE(v.amount,0), COALESCE(v.active,0)
             FROM buckets b
             LEFT JOIN missing m ON m.label=b.label
             LEFT JOIN values_by_bucket v ON v.label=b.label
@@ -1429,6 +1465,7 @@ impl Storage {
             }
             let missing: i64 = row.get(2).map_err(err)?;
             points.push(TimelinePoint {
+                has_activity: row.get(5).map_err(err)?,
                 start: row.get(0).map_err(err)?,
                 periods: row.get(1).map_err(err)?,
                 missing,
@@ -1491,7 +1528,7 @@ impl Storage {
             ), values_by_bucket AS (
                 SELECT v.org,
                        CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count,SUM(x.amount) AS amount
+                       SUM(x.count) AS count,SUM(x.amount) AS amount, MAX(x.count<>0 OR x.amount<>0) AS active
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN selected s ON s.org=v.org
@@ -1503,7 +1540,7 @@ impl Storage {
                 GROUP BY v.org,label
             )
             SELECT s.org,b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(v.count,0),COALESCE(v.amount,0)
+                   COALESCE(v.count,0),COALESCE(v.amount,0), COALESCE(v.active,0)
             FROM selected s CROSS JOIN buckets b
             LEFT JOIN missing m ON m.org=s.org AND m.label=b.label
             LEFT JOIN values_by_bucket v ON v.org=s.org AND v.label=b.label
@@ -1527,6 +1564,7 @@ impl Storage {
                 return Err("Organization series exceeds 124 points".into());
             }
             current.points.push(OrganizationTrendPoint {
+                has_activity: row.get(6).map_err(err)?,
                 start:row.get(1).map_err(err)?,
                 periods:row.get(2).map_err(err)?,
                 missing,
@@ -1712,7 +1750,7 @@ impl Storage {
                 WHERE slot=1 AND (?2 IS NULL OR org=?2) GROUP BY label
             ), aggregates AS (
                 SELECT CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count,SUM(x.amount) AS amount
+                       SUM(x.count) AS count,SUM(x.amount) AS amount, MAX(x.count<>0 OR x.amount<>0) AS active
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
@@ -1722,7 +1760,7 @@ impl Storage {
                 GROUP BY label
             )
             SELECT b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(a.count,0),COALESCE(a.amount,0)
+                   COALESCE(a.count,0),COALESCE(a.amount,0), COALESCE(a.active,0)
             FROM buckets b
             LEFT JOIN missing m ON m.label=b.label
             LEFT JOIN aggregates a ON a.label=b.label
@@ -1735,6 +1773,7 @@ impl Storage {
             if points.len()>=124 {return Err("Work timeline exceeds 124 points".into());}
             let missing:i64=row.get(2).map_err(err)?;
             points.push(TimelinePoint{
+                has_activity: row.get(5).map_err(err)?,
                 start:row.get(0).map_err(err)?,
                 periods:row.get(1).map_err(err)?,
                 missing,
@@ -2223,6 +2262,11 @@ fn comparison_value(
             None
         },
         average: average_change(bt.average, at.average, q.percent)?,
+        available: match (b,a) {
+            (true,false) => Some(bt),
+            (false,true) => Some(at),
+            _ => None,
+        },
     })
 }
 impl Storage {
@@ -2364,7 +2408,7 @@ impl Storage {
     }
 }
 
-enum Cell<'a> {
+pub(super) enum Cell<'a> {
     Text(&'a str),
     Number(Option<f64>),
 }
@@ -2385,7 +2429,7 @@ fn number_text(n: f64) -> String {
         if exponent >= 0 { "+" } else { "" }
     )
 }
-fn csv_record(w: &mut impl Write, cells: &[Cell<'_>]) -> Result<(), String> {
+pub(super) fn csv_record(w: &mut impl Write, cells: &[Cell<'_>]) -> Result<(), String> {
     for (i, c) in cells.iter().enumerate() {
         if i > 0 {
             w.write_all(b";").map_err(err)?;
@@ -2426,7 +2470,7 @@ fn csv_record(w: &mut impl Write, cells: &[Cell<'_>]) -> Result<(), String> {
     }
     w.write_all(b"\r\n").map_err(err)
 }
-fn export(
+pub(super) fn export(
     destination: &Path,
     write: impl FnOnce(&mut std::io::BufWriter<fs::File>) -> Result<(), String>,
 ) -> Result<(), String> {

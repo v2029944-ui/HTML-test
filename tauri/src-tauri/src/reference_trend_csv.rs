@@ -1,0 +1,213 @@
+//! Complete chart tables from the same revision, date buckets and work identities
+//! as the paged renderer. Only a single output row is held in Rust.
+use super::*;
+use Cell::{Number, Text};
+
+#[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum TrendTable { Works, Organizations, OrganizationTotals }
+#[derive(Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TrendMetric { Count, Amount, Average }
+impl TrendMetric {
+    fn label(self) -> &'static str {
+        match self { Self::Count => "Количество / объём", Self::Amount => "Сумма", Self::Average => "Сумма / количество (объём)" }
+    }
+    fn value(self, value: &AnalysisTotals) -> Option<f64> {
+        match self { Self::Count => value.count, Self::Amount => value.amount, Self::Average => value.average }
+    }
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TrendCsvOptions {
+    pub table: TrendTable,
+    pub metrics: Vec<TrendMetric>,
+    pub hide_empty: bool,
+}
+// Use the same range aggregates as the organization page; summing a second
+// time after grouping into buckets can change the displayed rounding.
+fn organization_totals_csv(
+    tx: &Connection,
+    scope: &AnalysisScope,
+    metrics: &[TrendMetric],
+    destination: &Path,
+) -> Result<(), String> {
+    let mut stmt = tx.prepare(
+        "SELECT f.item,(SELECT count(*) FROM an_missing m WHERE slot=1 AND m.org=f.item),
+         coalesce(sum(v.count),0),coalesce(sum(v.amount),0) FROM analysis_filter_items f
+         LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item WHERE f.id=?1 GROUP BY f.item ORDER BY f.item"
+    ).map_err(err)?;
+    let mut rows = stmt.query([&scope.organizations]).map_err(err)?;
+    export(destination, |w| {
+        let mut head = vec![Text("Подразделение")];
+        head.extend(metrics.iter().map(|m| Text(m.label())));
+        head.push(Text("Полнота данных"));
+        csv_record(w, &head)?;
+        while let Some(row) = rows.next().map_err(err)? {
+            let name: String = row.get(0).map_err(err)?;
+            let missing: i64 = row.get(1).map_err(err)?;
+            let value = totals(row.get(2).map_err(err)?, row.get(3).map_err(err)?, missing == 0)?;
+            let coverage = if missing == 0 { "Полные данные".to_owned() } else { format!("Пропусков: {missing}") };
+            let mut line = vec![Text(&name)];
+            line.extend(metrics.iter().map(|m| Number(m.value(&value))));
+            line.push(Text(&coverage));
+            csv_record(w, &line)?;
+        }
+        Ok(())
+    })
+}
+
+impl Storage {
+    pub fn reference_trend_csv(&self, revision: i64, scope: &AnalysisScope, range: &RangeQuery,
+        grouping: Option<&str>, options: &TrendCsvOptions, destination: &Path) -> Result<(), String> {
+        if !destination.is_absolute() || destination.as_os_str().len()>32767 ||
+            !destination.extension().and_then(|v|v.to_str()).is_some_and(|v|v.eq_ignore_ascii_case("csv")) {
+            return Err("Choose an absolute CSV file path".into());
+        }
+        if options.metrics.is_empty() || options.metrics.len()>3 ||
+            (options.table==TrendTable::Works && options.metrics.len()!=1) ||
+            options.metrics.iter().enumerate().any(|(i,m)|options.metrics[..i].contains(m)) {
+            return Err("Select valid chart metrics".into());
+        }
+        let (lo,hi)=range_bounds(&scope.report_type,range)?;
+        if (hi-lo).num_days()>3660 { return Err("Select up to ten years".into()); }
+        let mut c=self.connect()?;
+        let tx=c.transaction().map_err(err)?;
+        workspace(&tx,revision,scope)?;
+        fill_range(&tx,scope,range,1)?;
+        if options.table == TrendTable::OrganizationTotals {
+            return organization_totals_csv(&tx, scope, &options.metrics, destination);
+        }
+        let periods=count_sql(&tx,"SELECT count(*) FROM an_periods WHERE slot=1")?;
+        let (mode,_)=timeline_grouping(scope,range,grouping,periods)?;
+        let works=options.table==TrendTable::Works;
+        let member=if works {"coalesce(g.key,'work:'||x.work)"} else {"v.org"};
+        tx.execute("CREATE TEMP TABLE trend_dates AS SELECT start,
+            CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start,'-'||((cast(strftime('%w',start) AS integer)+6)%7)||' days')
+                    WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END label FROM an_periods WHERE slot=1",[mode]).map_err(err)?;
+        tx.execute_batch("CREATE UNIQUE INDEX trend_date_start ON trend_dates(start);
+            CREATE TEMP TABLE trend_missing AS SELECT m.org,d.label,count(*) missing
+            FROM an_missing m JOIN trend_dates d USING(start) WHERE m.slot=1 GROUP BY m.org,d.label;
+            CREATE UNIQUE INDEX trend_org_missing ON trend_missing(org,label);
+            CREATE TEMP TABLE trend_series(member TEXT,label TEXT,qty REAL,money REAL,active INTEGER,PRIMARY KEY(member,label)) WITHOUT ROWID;").map_err(err)?;
+        tx.execute(&format!("INSERT INTO trend_series SELECT {member},d.label,sum(x.count),sum(x.amount),max(x.count<>0 OR x.amount<>0)
+            FROM trend_dates d JOIN an_valid v ON v.start=d.start JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
+            LEFT JOIN analysis_groups g ON g.work=x.work WHERE ?1 IS NULL OR EXISTS(
+                SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=coalesce(g.name,x.work))
+            GROUP BY {member},d.label"),[&scope.names]).map_err(err)?;
+        tx.execute_batch("CREATE TEMP TABLE trend_buckets AS WITH
+            sums AS (SELECT label,sum(qty) qty,sum(money) money,max(active) active FROM trend_series GROUP BY label),
+            gaps AS (SELECT label,sum(missing) missing FROM trend_missing GROUP BY label)
+            SELECT d.label,coalesce(s.qty,0.0) qty,coalesce(s.money,0.0) money,coalesce(s.active,0) active,
+                   coalesce(g.missing,0) missing FROM (SELECT DISTINCT label FROM trend_dates) d
+            LEFT JOIN sums s USING(label) LEFT JOIN gaps g USING(label);
+            CREATE UNIQUE INDEX trend_buckets_by_label ON trend_buckets(label);").map_err(err)?;
+        if count_sql(&tx,"SELECT count(*) FROM trend_buckets")?>124 {return Err("Analysis timeline exceeds 124 points".into());}
+        if works {
+            super::unified_analytics::presentation_functions(&tx)?;
+            super::unified_analytics::create_name_catalog(&tx)?;
+        }
+        // Missing buckets remain visible; cancelling positive and negative entries
+        // also remain visible even when both their aggregate measures equal zero.
+        let visible="(?1=0 OR b.active<>0 OR b.missing<>0)";
+        let hide=options.hide_empty;
+        let mut axis=tx.prepare(&format!("SELECT label FROM trend_buckets b WHERE {visible} ORDER BY label")).map_err(err)?;
+        let labels=axis.query_map([hide],|row|row.get::<_,String>(0)).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+        let members=if works {"SELECT n.key,n.name FROM unified_names n
+            LEFT JOIN analysis_filter_items f ON f.id=?1 AND f.item=n.name WHERE ?1 IS NULL OR f.id IS NOT NULL
+            ORDER BY f.ordinal,n.name COLLATE classic_ru,n.key"}
+            else {"SELECT item,item FROM analysis_filter_items WHERE id=?1 ORDER BY ordinal"};
+        let mut names=tx.prepare(members).map_err(err)?;
+        let mut names=names.query([if works {scope.names.as_deref()} else {Some(scope.organizations.as_str())}]).map_err(err)?;
+        let mut points=tx.prepare(&format!("SELECT coalesce(s.qty,0.0),coalesce(s.money,0.0),
+            CASE WHEN ?3 THEN b.missing ELSE coalesce(m.missing,0) END
+            FROM trend_buckets b LEFT JOIN trend_series s ON s.member=?2 AND s.label=b.label
+            LEFT JOIN trend_missing m ON m.org=?2 AND m.label=b.label WHERE {visible} ORDER BY b.label")).map_err(err)?;
+        export(destination,|w|{
+            let mut head=vec![Text(if works {"Работа / группа"}else{"Подразделение"})];
+            if !works {head.push(Text("Показатель"));}
+            head.extend(labels.iter().map(|v|Text(v)));
+            csv_record(w,&head)?;
+            if works {
+                let metric=options.metrics[0];let mut line=vec![Text("Итого по выбранным работам")];
+                let mut stmt=tx.prepare(&format!("SELECT qty,money,missing FROM trend_buckets b WHERE {visible} ORDER BY label")).map_err(err)?;
+                let mut rows=stmt.query([hide]).map_err(err)?;
+                while let Some(r)=rows.next().map_err(err)?{
+                    line.push(Number(metric.value(&totals(r.get(0).map_err(err)?,r.get(1).map_err(err)?,r.get::<_,i64>(2).map_err(err)?==0)?)));
+                }
+                csv_record(w,&line)?;
+            }
+            while let Some(row)=names.next().map_err(err)? {
+                let key:String=row.get(0).map_err(err)?;let name:String=row.get(1).map_err(err)?;
+                let mut values=Vec::with_capacity(labels.len());
+                let mut rows=points.query(params![hide,key,works]).map_err(err)?;
+                while let Some(r)=rows.next().map_err(err)? {
+                    let count:f64=r.get(0).map_err(err)?;let amount:f64=r.get(1).map_err(err)?;
+                    let missing:i64=r.get(2).map_err(err)?;
+                    values.push(totals(count,amount,missing==0)?);
+                }
+                for metric in &options.metrics {
+                    let mut line=vec![Text(&name)];if !works {line.push(Text(metric.label()));}
+                    line.extend(values.iter().map(|value|Number(metric.value(value))));csv_record(w,&line)?;
+                }
+            }
+            Ok(())
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trend_exports_all_names_including_groups_preserves_cancellation_missing_and_observed_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Storage::new(dir.path().join("data")).unwrap();
+        let mut works:Vec<_>=(1..=52).map(|n|json!({"organization":"A","work":format!("Work {n:02}"),"count":1,"amount":n})).collect();
+        works.push(json!({"organization":"A","work":"=Formula","count":1,"amount":10}));
+        let data = json!({"reports":[
+            {"id":"one","type":"day","start":"2024-01-01","end":"2024-01-01","organizations":["A","B"],"rows":works},
+            {"id":"zero","type":"day","start":"2024-01-02","end":"2024-01-02","organizations":["A","B"],"rows":[]},
+            {"id":"partial","type":"day","start":"2024-01-03","end":"2024-01-03","organizations":["A"],"rows":[{"organization":"A","work":"Work 52","count":1,"amount":5}]},
+            {"id":"cancel","type":"day","start":"2024-01-04","end":"2024-01-04","organizations":["A","B"],"rows":[
+                {"organization":"A","work":"Work 52","count":4,"amount":30},{"organization":"A","work":"Work 52","count":-4,"amount":-30}]}
+        ],"settings":{"orgNames":["A","B","C","D"],"groups":[{"id":"g","name":"Grouped","works":["Work 01","Work 02"]}],"catalog":[]}});
+        store.save(data).unwrap();
+        let rev=store.revision().unwrap();
+        for id in ["one","zero","partial","cancel"]{store.analysis_index_report(id,rev).unwrap();}
+        store.analysis_index_settings(rev).unwrap();
+        let orgs=store.analysis_filter_create(rev,"organizations").unwrap();
+        store.analysis_filter_append(rev,&orgs,&["A".into(),"B".into()]).unwrap();
+        store.analysis_filter_seal(rev,&orgs).unwrap();
+        let q=RangeQuery{from:"2024-01-01".into(),to:"2024-01-04".into()};
+        let scope=AnalysisScope{report_type:"day".into(),organizations:orgs,names:None};
+        let csv=dir.path().join("works.csv");
+        let options=TrendCsvOptions{table:TrendTable::Works,metrics:vec![TrendMetric::Amount],hide_empty:true};
+        store.reference_trend_csv(rev,&scope,&q,Some("day"),&options,&csv).unwrap();
+        let content=fs::read_to_string(&csv).unwrap();
+        assert_eq!(content.lines().count(),54); // Header, total and 52 distinct series.
+        assert!(content.starts_with("\u{feff}\"Работа / группа\";\"2024-01-01\";\"2024-01-03\";\"2024-01-04\""));
+        assert!(content.contains("\"Grouped\";\"3\";\"\";\"0\""));
+        assert!(content.contains("\"Work 52\";\"52\";\"\";\"0\""));
+        assert!(content.contains("\"'=Formula\";\"10\";\"\";\"0\""));
+        assert!(!content.contains("\"Work 01\""));
+        assert!(store.reference_trend_csv(rev,&scope,&q,None,&options,&csv).is_err());
+        assert_eq!(content,fs::read_to_string(csv).unwrap());
+        let points=store.analysis_timeline_grouped(rev,&scope,&q,Some("day")).unwrap().points;
+        assert!(!points[1].has_activity && points[3].has_activity);
+        let orgcsv=dir.path().join("orgs.csv");
+        let options=TrendCsvOptions{table:TrendTable::Organizations,metrics:vec![TrendMetric::Amount,TrendMetric::Count],hide_empty:false};
+        store.reference_trend_csv(rev,&scope,&q,Some("day"),&options,&orgcsv).unwrap();
+        let content=fs::read_to_string(orgcsv).unwrap();
+        assert!(content.contains("\"B\";\"Сумма\";\"0\";\"0\";\"\";\"0\""));
+        assert!(content.contains("\"A\";\"Количество / объём\";\"53\";\"0\";\"1\";\"0\""));
+        let dest=dir.path().join("org-totals.csv");
+        let options=TrendCsvOptions{table:TrendTable::OrganizationTotals,..options};
+        store.reference_trend_csv(rev,&scope,&q,Some("day"),&options,&dest).unwrap();
+        let content=fs::read_to_string(dest).unwrap();
+        assert!(content.contains("\"A\";\"1393\";\"54\";\"Полные данные\""));
+        assert!(content.contains("\"B\";\"\";\"\";\"Пропусков: 1\""));
+        assert_eq!(store.revision().unwrap(),rev);
+    }
+}

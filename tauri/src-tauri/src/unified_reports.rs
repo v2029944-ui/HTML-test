@@ -1,6 +1,8 @@
 //! Bounded original-interface report quality and calendar read models.
 use super::{err, read_model, QualityScope, Storage};
+use super::analytics::{csv_record, export, Cell};
 use rusqlite::params;
+use std::{io::Write, path::Path};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -31,8 +33,43 @@ fn checked_filter(f: &UnifiedQualityFilter) -> Result<(),String> {
 }
 fn matches_issue(v:&Value,f:&UnifiedQualityFilter)->bool {
     f.organization.as_deref().is_none_or(|o|v["organization"].as_str()==Some(o)) &&
-    f.kind.as_deref().is_none_or(|k|v["kind"].as_str()==Some(k)) &&
+    f.kind.as_deref().is_none_or(|k|v["kind"].as_str()==Some(k) || (k=="skipped" && v["skipped"].as_bool()==Some(true))) &&
     f.search.as_deref().is_none_or(|s|v.to_string().to_lowercase().contains(&s.to_lowercase()))
+}
+impl UnifiedQualityPage {
+    fn collect(&mut self, issue:Value, offset:u32, limit:usize)->Result<(),String>{
+        let kind=issue["kind"].as_str().unwrap_or("warning");
+        let known=["invalid","skipped","mismatch","warning","missing","duplicate","overlap","empty-name","import"];
+        *self.counts.entry(if known.contains(&kind){kind}else{"other"}.to_owned()).or_default()+=1;
+        if self.total>=u64::from(offset)&&self.issues.len()<limit {self.issues.push(issue);}
+        self.total+=1;
+        Ok(())
+    }
+    fn finish(&mut self,offset:u32,limit:usize)->Result<(),String>{
+        if self.total>u64::from(offset)+self.issues.len() as u64{self.next_offset=Some(offset.checked_add(limit as u32).ok_or("Quality offset overflow")?);}
+        Ok(())
+    }
+}
+
+fn write_quality_export(destination:&Path,write:impl FnOnce(&mut std::io::BufWriter<std::fs::File>)->Result<(),String>)->Result<(),String>{
+    if !destination.is_absolute() || destination.as_os_str().len()>32767 || !destination.extension().and_then(|s|s.to_str()).is_some_and(|s|s.eq_ignore_ascii_case("csv")) {return Err("Choose an absolute CSV file path".into());}
+    export(destination,|writer|{
+        let names=["Дата","Период с","Период до","Файл","Тип","Подразделение","Причина","Лист","Строка Excel","Ячейки","Отчёт хранения","Связанный файл","Область","Значения при чтении","Итог Excel","Факт"];
+        csv_record(writer,&names.map(Cell::Text))?;
+        write(writer)
+    })
+}
+
+fn write_quality_row(w:&mut impl Write,issue:&Value)->Result<(),String>{
+    let text=|key:&str|issue[key].as_str().unwrap_or("");
+    let mut cells=Vec::new();
+    if let Some(values)=issue["cells"].as_array(){cells.extend(values.iter().filter_map(Value::as_str));}
+    for x in ["work_cell","count_cell","amount_cell"]{if let Some(c)=issue[x].as_str(){if !cells.contains(&c){cells.push(c);}}}
+    let cells=cells.join(" · ");
+    let row=issue["source_row"].as_u64().or_else(||issue["row"].as_u64()).map(|n|n.to_string()).unwrap_or_default();
+    let detail=|key:&str|if issue[key].is_null(){String::new()}else{issue[key].to_string()};
+    let (raw,expected,actual)=(detail("raw"),detail("expected"),detail("actual"));
+    csv_record(w,&[text("date"),text("period_start"),text("period_end"),text("source_name"),text("kind"),text("organization"),text("reason"),text("sheet"),&row,&cells,text("source_anchor"),text("other_source_name"),issue["scope"].as_str().unwrap_or(text("diagnostic_scope")),&raw,&expected,&actual].map(Cell::Text))
 }
 impl Storage {
     /// Presence is deliberately independent of completeness; analytics daily
@@ -51,18 +88,24 @@ impl Storage {
     /// diagnostic, never to the currently visible report page. Only 50 issues
     /// and a fixed number of counters are retained in memory.
     pub fn unified_quality_page(&self, revision:i64, filter:&UnifiedQualityFilter, offset:u32, limit:usize)->Result<UnifiedQualityPage,String> {
-        checked_filter(filter)?;
         if !(1..=50).contains(&limit) {return Err("Quality page must contain 1..=50 rows".into());}
-        let c=self.connect()?; read_model::check_revision(&c,revision)?;read_model::check_metadata_bounds(&c)?;
         let mut result=UnifiedQualityPage{revision,issues:Vec::new(),next_offset:None,total:0,counts:BTreeMap::new()};
+        self.visit_saved_quality(revision,filter,|issue| result.collect(issue,offset,limit))?;
+        result.finish(offset,limit)?;
+        Ok(result)
+    }
+
+    pub fn unified_quality_csv(&self, revision:i64, filter:&UnifiedQualityFilter, destination:&Path)->Result<(),String> {
+        write_quality_export(destination,|writer| self.visit_saved_quality(revision,filter,|issue|write_quality_row(writer,&issue)))
+    }
+
+    fn visit_saved_quality(&self,revision:i64,filter:&UnifiedQualityFilter,mut visit:impl FnMut(Value)->Result<(),String>)->Result<(),String> {
+        checked_filter(filter)?;
+        let c=self.connect()?; read_model::check_revision(&c,revision)?;read_model::check_metadata_bounds(&c)?;
         let mut accept=|mut issue:Value,id:&str,start:&str,end:&str,source:&Option<String>,anchor:Value| {
             issue["report_id"]=json!(id);issue["period_start"]=json!(start);issue["period_end"]=json!(end);issue["source_name"]=json!(source);issue["source_anchor"]=anchor;
-            if !matches_issue(&issue,filter) {return;}
-            let original_kind=issue["kind"].as_str().unwrap_or("warning");
-            let counter_kind=if ["invalid","skipped","mismatch","warning","missing","duplicate","overlap","empty-name","import"].contains(&original_kind){original_kind}else{"other"};
-            *result.counts.entry(counter_kind.to_owned()).or_default()+=1;
-            if result.total>=u64::from(offset) && result.issues.len()<limit {result.issues.push(issue);}
-            result.total+=1;
+            if matches_issue(&issue,filter) {visit(issue)?;}
+            Ok::<(),String>(())
         };
         let mut cursor:Option<(String,String)>=None;
         loop {
@@ -73,8 +116,8 @@ impl Storage {
                 let mut page_offset=0;
                 loop {
                     let page=serde_json::to_value(self.report_quality_page(revision,id,QualityScope::Report,page_offset,50)?).map_err(err)?;
-                    for issue in page["issues"].as_array().ok_or("Invalid diagnostic page")? {accept(issue.clone(),id,start,end,source,page["source_anchor"].clone());}
-                    if page_offset==0 && page["invalid_entries"].as_u64().unwrap_or(0)>0 {accept(json!({"kind":"invalid","reason":format!("Сохранены замечания неподдерживаемого формата: {}. Полнота не подтверждена.",page["invalid_entries"])}),id,start,end,source,page["source_anchor"].clone());}
+                    for issue in page["issues"].as_array().ok_or("Invalid diagnostic page")? {accept(issue.clone(),id,start,end,source,page["source_anchor"].clone())?;}
+                    if page_offset==0 && page["invalid_entries"].as_u64().unwrap_or(0)>0 {accept(json!({"kind":"invalid","reason":format!("Сохранены замечания неподдерживаемого формата: {}. Полнота не подтверждена.",page["invalid_entries"])}),id,start,end,source,page["source_anchor"].clone())?;}
                     let source_anchor=page["source_anchor"].as_str();
                     let source_first=if page_offset==0 {if let Some(anchor)=source_anchor {
                         !c.query_row("SELECT EXISTS(SELECT 1 FROM reports r WHERE (r.id=?1 OR EXISTS(SELECT 1 FROM report_source_diagnostic_links l WHERE l.report_id=r.id AND l.anchor_id=?1)) AND (?2 IS NULL OR r.period_start>=?2) AND (?3 IS NULL OR r.period_start<=?3) AND (?4 IS NULL OR r.report_type=?4) AND (?5 IS NULL OR instr(lower(COALESCE(r.source_name,'')),lower(?5))>0) AND (r.period_start>?6 OR (r.period_start=?6 AND r.id<?7)))",params![anchor,filter.from,filter.to,filter.report_type,filter.source,start,id],|r|r.get::<_,bool>(0)).map_err(err)?
@@ -82,14 +125,14 @@ impl Storage {
                     if source_first {
                         let mut source_offset=0;
                         loop {let source_page=serde_json::to_value(self.report_quality_page(revision,id,QualityScope::Source,source_offset,50)?).map_err(err)?;
-                            for issue in source_page["issues"].as_array().ok_or("Invalid source diagnostic page")? {let mut issue=issue.clone();issue["diagnostic_scope"]=json!("source");accept(issue,id,start,end,source,json!(source_anchor));}
+                            for issue in source_page["issues"].as_array().ok_or("Invalid source diagnostic page")? {let mut issue=issue.clone();issue["diagnostic_scope"]=json!("source");accept(issue,id,start,end,source,json!(source_anchor))?;}
                             match source_page["next_offset"].as_u64(){Some(n)=>source_offset=u32::try_from(n).map_err(err)?,None=>break}
                         }
                     }
                     match page["next_offset"].as_u64() {Some(n)=>page_offset=u32::try_from(n).map_err(err)?,None=>break}
                 }
                 let invalid_reason:Option<String>=c.query_row("SELECT MAX(CASE WHEN valid=0 THEN COALESCE(issue,'Некорректный сохранённый отчёт') END) FROM analysis_reports WHERE report_id=?1",[id],|r|r.get(0)).map_err(err)?;
-                if let Some(reason)=invalid_reason {accept(json!({"kind":"invalid","reason":reason}),id,start,end,source,Value::Null);}
+                if let Some(reason)=invalid_reason {accept(json!({"kind":"invalid","reason":reason}),id,start,end,source,Value::Null)?;}
                 // Select either relevant member before canonical pair deduplication:
                 // a lexically larger selected report still exposes its conflict
                 // when its partner falls outside the period/source filters.
@@ -97,7 +140,7 @@ impl Storage {
                 // Conflicts come from the same SQL organization index as analytics.
                 let mut conflicts=c.prepare("SELECT b.id,o.org,CASE WHEN a.period_start=b.period_start AND a.period_end=b.period_end THEN 'duplicate' ELSE 'overlap' END,b.source_name,b.period_start,b.period_end FROM reports a JOIN analysis_reports va ON va.report_id=a.id AND va.valid=1 JOIN analysis_orgs o ON o.report_id=a.id JOIN analysis_orgs p ON p.org=o.org JOIN reports b ON b.id=p.report_id AND b.report_type=a.report_type JOIN analysis_reports vb ON vb.report_id=b.id AND vb.valid=1 WHERE a.id=?1 AND a.id<>b.id AND a.period_start<=b.period_end AND a.period_end>=b.period_start AND (a.id<b.id OR NOT ((?2 IS NULL OR b.period_start>=?2) AND (?3 IS NULL OR b.period_start<=?3) AND (?4 IS NULL OR b.report_type=?4) AND (?5 IS NULL OR instr(lower(COALESCE(b.source_name,'')),lower(?5))>0))) ORDER BY b.id,o.org").map_err(err)?;
                 let mut rows=conflicts.query(params![id,filter.from,filter.to,filter.report_type,filter.source]).map_err(err)?;
-                while let Some(row)=rows.next().map_err(err)? {let kind:String=row.get(2).map_err(err)?;accept(json!({"kind":kind,"organization":row.get::<_,String>(1).map_err(err)?,"other_report_id":row.get::<_,String>(0).map_err(err)?,"other_source_name":row.get::<_,Option<String>>(3).map_err(err)?,"other_period_start":row.get::<_,String>(4).map_err(err)?,"other_period_end":row.get::<_,String>(5).map_err(err)?,"reason":if kind=="duplicate"{"Повторный период"}else{"Пересечение периодов"}}),id,start,end,source,Value::Null);}
+                while let Some(row)=rows.next().map_err(err)? {let kind:String=row.get(2).map_err(err)?;accept(json!({"kind":kind,"organization":row.get::<_,String>(1).map_err(err)?,"other_report_id":row.get::<_,String>(0).map_err(err)?,"other_source_name":row.get::<_,Option<String>>(3).map_err(err)?,"other_period_start":row.get::<_,String>(4).map_err(err)?,"other_period_end":row.get::<_,String>(5).map_err(err)?,"reason":if kind=="duplicate"{"Повторный период"}else{"Пересечение периодов"}}),id,start,end,source,Value::Null)?;}
             }
             cursor=headers.last().map(|h|(h.1.clone(),h.0.clone()));
         }
@@ -105,13 +148,12 @@ impl Storage {
         // Weekly and monthly totals are never expanded into daily observations.
         let mut gaps=c.prepare("WITH RECURSIVE spans(org,kind,source,first,last) AS (SELECT o.org,r.report_type,r.source_name,MIN(r.period_start),MAX(r.period_start) FROM reports r JOIN analysis_orgs o ON o.report_id=r.id JOIN analysis_reports a ON a.report_id=r.id AND a.valid=1 WHERE r.source_name IS NOT NULL AND r.source_name<>'' AND (?1 IS NULL OR r.report_type=?1) AND (?2 IS NULL OR instr(lower(r.source_name),lower(?2))>0) GROUP BY o.org,r.report_type,r.source_name), expected(org,kind,source,d,last) AS (SELECT org,kind,source,first,last FROM spans UNION ALL SELECT org,kind,source,date(d,CASE kind WHEN 'day' THEN '+1 day' WHEN 'week' THEN '+7 days' ELSE '+1 month' END),last FROM expected WHERE d<last) SELECT org,kind,source,d FROM expected e WHERE (?3 IS NULL OR d>=?3) AND (?4 IS NULL OR d<=?4) AND NOT EXISTS(SELECT 1 FROM reports r JOIN analysis_orgs o ON o.report_id=r.id WHERE o.org=e.org AND r.report_type=e.kind AND r.period_start=e.d AND r.source_name=e.source) ORDER BY d DESC,org,kind,source").map_err(err)?;
         let mut rows=gaps.query(params![filter.report_type,filter.source,filter.from,filter.to]).map_err(err)?;
-        while let Some(row)=rows.next().map_err(err)? {let date:String=row.get(3).map_err(err)?;let source:Option<String>=row.get(2).map_err(err)?;accept(json!({"kind":"missing","organization":row.get::<_,String>(0).map_err(err)?,"report_type":row.get::<_,String>(1).map_err(err)?,"date":date,"reason":"Пропущен период внутри сохранённого источника. Это не нулевой показатель."}),"",&date,&date,&source,Value::Null);}
+        while let Some(row)=rows.next().map_err(err)? {let date:String=row.get(3).map_err(err)?;let source:Option<String>=row.get(2).map_err(err)?;accept(json!({"kind":"missing","organization":row.get::<_,String>(0).map_err(err)?,"report_type":row.get::<_,String>(1).map_err(err)?,"date":date,"reason":"Пропущен период внутри сохранённого источника. Это не нулевой показатель."}),"",&date,&date,&source,Value::Null)?;}
         drop(accept);
         // The revision recheck also rejects writes between independently opened
         // streaming report snapshots rather than presenting mixed results.
         read_model::check_revision(&c,revision)?;
-        if result.total>u64::from(offset)+result.issues.len() as u64 {result.next_offset=Some(offset.checked_add(limit as u32).ok_or("Quality offset overflow")?);}
-        Ok(result)
+        Ok(())
     }
 }
 #[cfg(test)]
@@ -119,6 +161,32 @@ mod tests {
  use super::*;
  #[test] fn quality_filters_are_global_and_bounded(){let d=tempfile::tempdir().unwrap();let s=Storage::new(d.path().into()).unwrap();let c=s.connect().unwrap();for n in 0..65 {let id=format!("r{n:03}");let doc=json!({"issues":[{"type":"invalid","reason":format!("needle {n}"),"organization":"A"}]});c.execute("INSERT INTO reports VALUES(?1,'day','2024-01-01','2024-01-01','file.xlsx',?2)",params![id,serde_json::to_vec(&doc).unwrap()]).unwrap();}let rev=s.revision().unwrap();let f=UnifiedQualityFilter{search:Some("needle 64".into()),..Default::default()};let p=s.unified_quality_page(rev,&f,0,50).unwrap();assert_eq!(p.total,1);assert_eq!(p.issues[0]["report_id"],"r064");assert!(s.unified_quality_page(rev-1,&f,0,50).is_err());assert!(s.unified_quality_page(rev,&f,0,51).is_err());}
  #[test] fn calendar_presence_does_not_claim_completeness(){let d=tempfile::tempdir().unwrap();let s=Storage::new(d.path().into()).unwrap();let c=s.connect().unwrap();c.execute("INSERT INTO reports VALUES('a','day','2024-02-29','2024-02-29',NULL,x'FF')",[]).unwrap();let v=s.unified_calendar(s.revision().unwrap(),2024).unwrap();assert_eq!(v.days.len(),1);assert!(v.days[0]["complete"].is_null());}
+ #[test]
+ fn saved_quality_csv_streams_all_matching_rows_and_refuses_stale_or_existing_files() {
+    let root=tempfile::tempdir().unwrap();
+    let store=Storage::new(root.path().join("db")).unwrap();
+    let conn=store.connect().unwrap();
+    let issues=(0..64).map(|n|json!({"type":"invalid","reason":format!("=needle {n}"),"organization":"A","skipped":true,"cells":["B7"],"expected":{"count":null,"amount":-2.5},"actual":{"count":1,"amount":0},"raw":["bad",null,-2.5]})).collect::<Vec<_>>();
+    let doc=serde_json::to_vec(&json!({"issues":issues})).unwrap();
+    for (id,file) in [("filtered","selected.xlsx"),("other","other.xlsx")] {
+        conn.execute("INSERT INTO reports VALUES(?1,'day','2024-01-01','2024-01-01',?2,?3)",params![id,file,&doc]).unwrap();
+    }
+    let rev=store.revision().unwrap();
+    let filter=UnifiedQualityFilter{source:Some("selected".into()),kind:Some("skipped".into()),..Default::default()};
+    let page=store.unified_quality_page(rev,&filter,50,50).unwrap();
+    assert_eq!(page.issues.len(),14);assert_eq!(page.issues[0]["expected"],json!({"count":null,"amount":-2.5}));assert_eq!(page.issues[0]["raw"],json!(["bad",null,-2.5]));
+    let target=root.path().join("issues.csv");
+    store.unified_quality_csv(rev,&filter,&target).unwrap();
+    let content=std::fs::read_to_string(&target).unwrap();
+    assert!(content.starts_with('\u{feff}'));assert_eq!(content.lines().count(),65);
+    assert!(content.contains("'=needle 63"));assert!(!content.contains("other.xlsx"));assert!(content.contains("-2.5"));assert!(content.contains("bad"));
+    assert!(store.unified_quality_csv(rev,&filter,&target).is_err());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(),content);
+    let stale=root.path().join("stale.csv");
+    assert!(store.unified_quality_csv(rev+1,&filter,&stale).is_err());assert!(!stale.exists());
+    assert!(store.unified_quality_csv(rev,&filter,&root.path().join("not-csv.sqlite3")).is_err());
+    assert_eq!(store.revision().unwrap(),rev);
+ }
  #[test] fn quality_reports_missing_duplicate_and_offset_across_history(){
   let d=tempfile::tempdir().unwrap();let s=Storage::new(d.path().into()).unwrap();let c=s.connect().unwrap();
   for (id,date) in [("a","2024-01-01"),("b","2024-01-03"),("c","2024-01-03")] {
@@ -160,7 +228,7 @@ impl super::Rule {
             let inc=|v:u32|v.checked_add(1).ok_or_else(||"Excel coordinate overflow".to_string());
             mappings.insert(name.clone(),analiz_import_core::WideMapping{work_col:inc(m.work_col)?,header_row:inc(m.header_row)?,first_day_col:inc(m.first_day_col)?,total_count_col:m.total_count_col.map(inc).transpose()?,total_amount_col:m.total_amount_col.map(inc).transpose()?});
         }
-        Ok(analiz_import_core::WideOptions{year:self.year.map(i32::from),sheets:self.sheets.clone().unwrap_or_default(),mappings,organizations})
+        Ok(analiz_import_core::WideOptions{year:self.year.map(i32::from),sheets:self.sheets.clone().unwrap_or_default(),mappings,organizations,sequential_periods:BTreeMap::new()})
     }
     pub fn native_legacy_sheet(&self,book:&[(String,String)])->Result<String,String> {
         if !self.sheet.is_empty(){return book.iter().find(|(name,_)|name==&self.sheet).map(|(_,component)|component.clone()).ok_or_else(||"Выбранный лист Excel не найден.".into());}
@@ -192,3 +260,6 @@ mod folder_rule_tests {
  }
 
 }
+
+#[path="prepared_quality.rs"]
+mod prepared_quality;

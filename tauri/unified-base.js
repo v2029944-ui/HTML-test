@@ -25,6 +25,8 @@ function setPeriodInput(id,kind,date){
  input.min=kind==='year'?'1':'';input.max=kind==='year'?'9999':'';
  if(date!==undefined&&date!==null)input.value=window.nativePeriodSelection.fromIsoDate(date,kind);
  else if(oldType&&oldType!==kind){const iso=window.nativePeriodSelection.normalize(oldType,previous);input.value=iso?window.nativePeriodSelection.fromIsoDate(iso,kind):'';}
+ // Programmatic value changes neither emit input events nor notify attribute observers.
+ window.referenceCalendar?.syncField?.(input);
 }
 function activate(name){
  if(!['dashboard','changes','upload','groups','storage'].includes(name))name='dashboard';
@@ -39,6 +41,44 @@ function activate(name){
 function request(value,overrides={}){
  if(!value||value.revision!==revision)throw Error('Данные изменились. Повторите расчёт.');
  return {revision,source:value.source,displayType:value.displayType,organizations:value.organizations.slice(),selectedNames:value.allNames?[]:value.selectedNames.slice(),query:{method:'range',from:value.from,to:value.to,percent:30,min_count:5,min_amount:1000,...overrides}};
+}
+let helpId=0;
+function tableHelp(section,table,headers,help){
+ const note=el('div',null,'table-header-help muted small'),message=el('span'),close=el('button','Закрыть','text-button');
+ note.id='table-header-help-'+(++helpId);note.hidden=true;
+ message.setAttribute('role','status');close.type='button';note.append(message,' ',close);
+ table.parentElement.before(note);
+ let active=null;
+ function hide(){
+  if(!active)return;
+  const opener=active;active=null;opener.setAttribute('aria-expanded','false');
+  note.hidden=true;opener.focus();
+ }
+ close.addEventListener('click',hide);
+ for(const [i,th] of Array.from(table.tHead.rows[0].cells).entries()){
+  if(!help[i])continue;
+  const button=el('button','?','table-help-button');
+  button.type='button';button.title=help[i];button.setAttribute('aria-label','Пояснение: '+headers[i]);
+  button.setAttribute('aria-controls',note.id);button.setAttribute('aria-expanded','false');
+  button.addEventListener('click',()=>{
+   if(active===button){hide();return;}
+   active?.setAttribute('aria-expanded','false');active=button;
+   message.textContent=headers[i]+'. '+help[i];note.hidden=false;button.setAttribute('aria-expanded','true');
+  });
+  th.append(button);
+ }
+ section.addEventListener('keydown',event=>{
+  if(event.key!=='Escape'||event.defaultPrevented||!active)return;
+  const nested=event.target.closest('details[open]');
+  if(nested&&section.contains(nested))return;
+  event.preventDefault();event.stopPropagation();hide();
+ });
+}
+function table(root,metric,caption,headers,rows,options={}){
+ if(!options.headerHelp?.some(Boolean))return O.makeTable(root,metric,caption,headers,rows,options);
+ O.makeTable(root,metric,caption,headers,rows,{...options,headerHelp:[]});
+ const section=root.lastElementChild;
+ tableHelp(section,section.querySelector('table'),headers,options.headerHelp);
 }
 const originalCsv=O.tableCsvButton;
 // Original makeTable calls this binding. Native exports capture the whole SQL query.
@@ -95,7 +135,7 @@ function init(){
  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&$('managementNav').open){$('managementNav').open=false;$('managementToggle').focus();}});
  activate('dashboard');
 }
-const U={api,state,$,el,notice:O.notice,fmt:O.fmt,table:O.makeTable,drawChart:O.drawChart,drawDepartments:O.drawDepartments,setPeriodInput,range:(...args)=>window.nativePeriodSelection.range(...args),request,refresh,activate,init,
+const U={api,state,$,el,notice:O.notice,fmt:O.fmt,table,tableHelp,drawChart:O.drawChart,drawDepartments:O.drawDepartments,setPeriodInput,range:(...args)=>window.nativePeriodSelection.range(...args),request,refresh,activate,init,
  get revision(){return revision;},get snapshot(){return snapshot;},get scope(){return scope;},get generation(){return generation;},
  onSnapshot(fn){snapshots.add(fn);return()=>snapshots.delete(fn);},onView(name,fn){if(!views.has(name))views.set(name,new Set());views.get(name).add(fn);},
  onScope(fn){scopes.add(fn);},publishScope(value){scope=value;for(const fn of scopes)fn(value);},isCurrent(value){return revision!==null&&value===revision;}};
