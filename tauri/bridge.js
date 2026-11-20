@@ -24,27 +24,56 @@
   // Native pickers disable their owner HWND; remember the actual visible opener
   // before an async controller disables its hidden file input or button.
   const document=window.document;
-  let activation=null,pickerOpen=false;
+  let activation=null,pickerOpen=false,interaction=0,pendingFocus=null;
   const restoredLabels=new WeakSet();
   function visibleOpener(node){
     return node?.closest?.('label')||node?.closest?.('button,a,input,select,textarea,[tabindex]')||null;
   }
+  function newInteraction(){
+    if(pickerOpen)return;
+    interaction++;
+    pendingFocus?.();
+  }
+  document?.addEventListener('pointerdown',newInteraction,true);
   document?.addEventListener('click',event=>{
     const opener=visibleOpener(event.target);
     if(!opener)return;
     if(pickerOpen){event.preventDefault();event.stopImmediatePropagation();return;}
+    newInteraction();
     activation=opener;
   },true);
   document?.addEventListener('keydown',event=>{
+    newInteraction();
     const opener=document.activeElement;
     if(!restoredLabels.has(opener)||!['Enter',' '].includes(event.key)||opener.control?.disabled)return;
     event.preventDefault();
     if(!pickerOpen)opener.click();
   },true);
-  function restoreOpener(opener){
-    if(!opener)return;
-    setTimeout(()=>{
-      if(!opener.isConnected||opener.disabled||opener.control?.disabled||!opener.getClientRects().length)return;
+  function restoreOpener(opener,expectedInteraction){
+    if(!opener||expectedInteraction!==interaction)return;
+    pendingFocus?.();
+    const initialFocus=document?.activeElement;
+    let observer=null,timer=null,expiry=null,finished=false;
+    const stop=()=>{
+      if(finished)return;
+      finished=true;observer?.disconnect();
+      clearTimeout(timer);clearTimeout(expiry);
+      if(pendingFocus===stop)pendingFocus=null;
+    };
+    const attempt=()=>{
+      if(finished)return;
+      const active=document?.activeElement;
+      if(expectedInteraction!==interaction||!opener.isConnected||
+         (active!==initialFocus&&active!==opener&&active!==opener.control&&active!==document?.body)){
+        stop();return;
+      }
+      // Folder cancellation reloads metadata asynchronously and disables its
+      // button again. Wait for the real controller unlock, not one timer tick.
+      if(opener.disabled||opener.control?.disabled||opener.getAttribute('aria-busy')==='true'||
+         opener.getAttribute('aria-disabled')==='true'||
+         opener.control?.getAttribute?.('aria-busy')==='true')return;
+      if(!opener.getClientRects().length){stop();return;}
+      stop();
       if(opener.tagName==='LABEL'){
         restoredLabels.add(opener);
         if(!opener.hasAttribute('tabindex')){
@@ -53,15 +82,24 @@
         }
       }
       opener.focus({preventScroll:true});
-    },0);
+    };
+    pendingFocus=stop;
+    if(typeof MutationObserver==='function'){
+      observer=new MutationObserver(attempt);
+      for(const node of new Set([opener,opener.control].filter(Boolean)))
+        observer.observe(node,{attributes:true,attributeFilter:['disabled','aria-busy','aria-disabled']});
+    }
+    timer=setTimeout(attempt,0);
+    expiry=setTimeout(stop,90_000);
   }
   // The dialog plugin supplies an asynchronous confirmation. Controllers may
   // temporarily disable their opener while the native owner window is blocked.
   const originalConfirm=window.confirm;
   if(typeof originalConfirm==='function')window.confirm=function(...args){
     const opener=visibleOpener(document?.activeElement)||(activation?.isConnected?activation:null);
+    const expectedInteraction=interaction;
     const answer=originalConfirm.apply(this,args);
-    const finish=accepted=>{if(accepted===false)restoreOpener(opener);return accepted;};
+    const finish=accepted=>{if(accepted===false)restoreOpener(opener,expectedInteraction);return accepted;};
     return answer&&typeof answer.then==='function'?answer.then(finish):finish(answer);
   };
   async function nativePicker(kind,options){
@@ -69,6 +107,7 @@
     if(pickerOpen)throw Error('Закройте открытый диалог выбора файла.');
     const active=document?.activeElement;
     const opener=(activation?.isConnected?activation:visibleOpener(active));
+    const expectedInteraction=interaction;
     const oldBusy=opener?.getAttribute('aria-busy'),oldDisabled=opener?.getAttribute('aria-disabled');
     pickerOpen=true;
     opener?.setAttribute('aria-busy','true');opener?.setAttribute('aria-disabled','true');
@@ -83,7 +122,7 @@
         if(oldBusy===null)opener.removeAttribute('aria-busy');else opener.setAttribute('aria-busy',oldBusy);
         if(oldDisabled===null)opener.removeAttribute('aria-disabled');else opener.setAttribute('aria-disabled',oldDisabled);
       }
-      if(cancelled)restoreOpener(opener);
+      if(cancelled)restoreOpener(opener,expectedInteraction);
     }
   }
   window.desktopAPI=Object.freeze({
