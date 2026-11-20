@@ -282,14 +282,15 @@ def check_reference(page, output, has_reports):
         # The installed route uses the existing native document, never an iframe importer.
         expect(page.locator('#toolsFrame')).to_have_count(0)
         if has_reports:
-            # The preceding empty-state run deliberately changes dates. Select
-            # the freshly imported real daily reports using the visible shortcut.
+            # The last report may fall in a partial calendar week (31 December
+            # 2024 is a Tuesday). Use the preceding complete week for real row
+            # drilldowns; partial and empty intervals have separate data checks.
             initial_fold = page.locator('#reportShell .filter-fold')
             if not initial_fold.evaluate('(node) => node.open'):
                 initial_fold.locator(':scope > summary').click()
-            latest_week = page.locator('#reportShell .quick-actions').get_by_role('button', name='Неделя', exact=True)
-            expect(latest_week).to_be_enabled(timeout=TIMEOUT)
-            latest_week.click()
+            complete_week = page.locator('#reportShell .quick-actions').get_by_role('button', name='Прошлая неделя', exact=True)
+            expect(complete_week).to_be_enabled(timeout=TIMEOUT)
+            complete_week.click()
         # Preserve the initial overview, including the header, before any panel scroll.
         page.evaluate('window.scrollTo(0, 0)')
         page.locator('#sharedHeader').scroll_into_view_if_needed()

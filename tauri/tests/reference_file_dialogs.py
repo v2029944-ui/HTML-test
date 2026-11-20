@@ -19,6 +19,36 @@ from playwright.sync_api import expect
 TIMEOUT = 90_000
 
 
+def windows_input_type():
+    class MouseInput(ctypes.Structure):
+        _fields_ = [('dx', wintypes.LONG), ('dy', wintypes.LONG),
+                    ('mouseData', wintypes.DWORD), ('dwFlags', wintypes.DWORD),
+                    ('time', wintypes.DWORD), ('dwExtraInfo', ctypes.c_size_t)]
+
+    class KeyboardInput(ctypes.Structure):
+        _fields_ = [('wVk', wintypes.WORD), ('wScan', wintypes.WORD),
+                    ('dwFlags', wintypes.DWORD), ('time', wintypes.DWORD),
+                    ('dwExtraInfo', ctypes.c_size_t)]
+
+    class HardwareInput(ctypes.Structure):
+        _fields_ = [('uMsg', wintypes.DWORD), ('wParamL', wintypes.WORD),
+                    ('wParamH', wintypes.WORD)]
+
+    class InputValue(ctypes.Union):
+        _fields_ = [('mi', MouseInput), ('ki', KeyboardInput), ('hi', HardwareInput)]
+
+    class Input(ctypes.Structure):
+        _anonymous_ = ('value',)
+        _fields_ = [('type', wintypes.DWORD), ('value', InputValue)]
+
+    return Input
+
+
+class TitleBarInfoEx(ctypes.Structure):
+    _fields_ = [('cbSize', wintypes.DWORD), ('rcTitleBar', wintypes.RECT),
+                ('rgstate', wintypes.DWORD * 6), ('rgrect', wintypes.RECT * 6)]
+
+
 class OwnedFileDialogs:
     """Reuse NativeConfirmations' PID/window primitives, never global SendKeys."""
 
@@ -62,102 +92,6 @@ class OwnedFileDialogs:
     [PSCustomObject]@{pid=$dialog.Current.ProcessId;title=$dialog.Current.Name;
       cancel=$cancel;inventory=$inventory} | ConvertTo-Json -Depth 5 -Compress
     """
-
-    action_script = r"""
-    [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)
-    $ErrorActionPreference='Stop'
-    Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
-    $pidExpected=[int]$env:ANALIZ_SMOKE_DIALOG_PID
-    $dialog=[System.Windows.Automation.AutomationElement]::FromHandle(
-      [IntPtr][long]$env:ANALIZ_SMOKE_DIALOG_HWND)
-    if ($null -eq $dialog -or $dialog.Current.ProcessId -ne $pidExpected -or
-        $dialog.Current.Name -cne $env:ANALIZ_SMOKE_FILE_TITLE -or
-        -not $dialog.Current.IsEnabled -or $dialog.Current.IsOffscreen) {
-      throw 'File dialog identity/title/visibility changed'
-    }
-    $tree=[System.Windows.Automation.TreeScope]::Descendants
-    $all=[System.Windows.Automation.Condition]::TrueCondition
-    $nodes=$dialog.FindAll($tree,$all)
-    if ($env:ANALIZ_SMOKE_FILE_ACTION -eq 'close') {
-      $buttons=@()
-      foreach ($bar in $nodes) {
-        if ($bar.Current.ProcessId -ne $pidExpected -or
-            $bar.Current.ControlType.ProgrammaticName -ne 'ControlType.TitleBar') {continue}
-        foreach ($node in $bar.FindAll($tree,$all)) {
-          $c=$node.Current
-          if ($c.ProcessId -eq $pidExpected -and
-              $c.ControlType.ProgrammaticName -eq 'ControlType.Button' -and
-              $c.AutomationId -eq 'Close' -and $c.IsEnabled -and -not $c.IsOffscreen) {
-            $buttons += $node
-          }
-        }
-      }
-      if ($buttons.Count -ne 1) {throw 'Expected exactly one visible enabled TitleBar.Close'}
-      $invoke=$null
-      if (-not $buttons[0].TryGetCurrentPattern(
-          [System.Windows.Automation.InvokePattern]::Pattern,[ref]$invoke)) {
-        throw 'The actual title-bar close button has no Invoke pattern'
-      }
-      $invoke.Invoke()
-      [PSCustomObject]@{action='close';automationId='Close';parentType='ControlType.TitleBar'} |
-        ConvertTo-Json -Compress
-    } elseif ($env:ANALIZ_SMOKE_FILE_ACTION -eq 'open-backup') {
-      # Accept only the known temporary backup for read-only preview, never Save.
-      $edits=@();$open=@()
-      foreach ($node in $nodes) {
-        $c=$node.Current
-        if ($c.ProcessId -ne $pidExpected) {continue}
-        if ($c.ControlType.ProgrammaticName -eq 'ControlType.ComboBox' -and
-            $c.AutomationId -eq '1148') {
-          foreach ($edit in $node.FindAll($tree,$all)) {
-            if ($edit.Current.ProcessId -eq $pidExpected -and
-                $edit.Current.ControlType.ProgrammaticName -eq 'ControlType.Edit' -and
-                $edit.Current.AutomationId -eq '1001' -and $edit.Current.IsEnabled) {
-              $edits += $edit
-            }
-          }
-        }
-        if ($c.ControlType.ProgrammaticName -eq 'ControlType.Button' -and
-            $c.AutomationId -eq '1' -and $c.IsEnabled -and -not $c.IsOffscreen) {
-          $open += $node
-        }
-      }
-      if ($edits.Count -ne 1 -or $open.Count -ne 1) {throw 'Ambiguous file-name/Open controls'}
-      $path=$env:ANALIZ_SMOKE_BACKUP_PATH
-      if (-not [System.IO.Path]::IsPathRooted($path) -or
-          -not [System.IO.File]::Exists($path)) {throw 'Temporary backup path is not a real absolute file'}
-      $value=$null
-      if (-not $edits[0].TryGetCurrentPattern(
-          [System.Windows.Automation.ValuePattern]::Pattern,[ref]$value)) {
-        throw 'The verified file-name edit has no Value pattern'
-      }
-      $value.SetValue($path)
-      if ($value.Current.Value -cne $path) {throw 'File-name edit did not retain the backup path'}
-      if ($dialog.Current.ProcessId -ne $pidExpected -or
-          $dialog.Current.Name -cne $env:ANALIZ_SMOKE_FILE_TITLE) {throw 'File dialog changed before Open'}
-      $invoke=$null
-      if (-not $open[0].TryGetCurrentPattern(
-          [System.Windows.Automation.InvokePattern]::Pattern,[ref]$invoke)) {
-        throw 'The verified Open button has no Invoke pattern'
-      }
-      $invoke.Invoke()
-      [PSCustomObject]@{action='open-backup';automationId='1';fileNameAutomationId='1001'} |
-        ConvertTo-Json -Compress
-    } else {throw 'Unsupported file-dialog action'}
-    """
-
-    def action(self, hwnd, title, action, backup=None):
-        result = subprocess.run(
-            ['powershell', '-NoProfile', '-NonInteractive', '-Command', self.action_script],
-            env=dict(os.environ, ANALIZ_SMOKE_DIALOG_PID=str(self.native.pid),
-                     ANALIZ_SMOKE_DIALOG_HWND=str(hwnd), ANALIZ_SMOKE_FILE_TITLE=title,
-                     ANALIZ_SMOKE_FILE_ACTION=action, ANALIZ_SMOKE_BACKUP_PATH=str(backup or '')),
-            capture_output=True, encoding='utf-8', errors='replace', timeout=20)
-        if result.returncode:
-            raise AssertionError('Owned file-dialog action failed: ' + result.stderr.strip())
-        fact = json.loads(result.stdout)
-        assert fact['action'] == action, fact
-        return fact
 
     def __init__(self, confirmations):
         self.native = confirmations
@@ -204,6 +138,103 @@ class OwnedFileDialogs:
         assert self.user32.IsWindowVisible(cancel) and self.user32.IsWindowEnabled(cancel), facts
         return cancel
 
+    def message(self, hwnd, message, wparam=0, lparam=0):
+        result = ctypes.c_size_t()
+        if not self.user32.SendMessageTimeoutW(hwnd, message, wparam, lparam, 0x0002, 3_000,
+                                               ctypes.byref(result)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return result.value
+
+    def verify_window(self, hwnd, owner, title):
+        assert self.native.process(hwnd) == self.native.pid and self.title(hwnd) == title
+        assert self.user32.GetWindow(hwnd, 4) == owner and self.native.process(owner) == self.native.pid
+        assert self.user32.IsWindowVisible(hwnd) and self.user32.IsWindowEnabled(hwnd)
+        assert not self.user32.IsWindowEnabled(owner)
+
+    def close_titlebar(self, hwnd, owner, title, screenshot=None):
+        """Physically click only the exact window's enabled Win32 close region.
+
+        Reusable for other owned native modal dialogs whose title/PID/owner have
+        been independently identified. Never sends a window-close command.
+        """
+        facts = {'hwnd': int(hwnd), 'owner': int(owner), 'title': title, 'inputSent': False}
+        try:
+            self.verify_window(hwnd, owner, title)
+            self.user32.GetWindowRect.restype = wintypes.BOOL
+            self.user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+            self.user32.WindowFromPoint.restype = wintypes.HWND
+            self.user32.WindowFromPoint.argtypes = [wintypes.POINT]
+            self.user32.GetForegroundWindow.restype = wintypes.HWND
+            self.user32.GetForegroundWindow.argtypes = []
+            self.user32.GetSystemMetrics.restype = ctypes.c_int
+            self.user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+            info = TitleBarInfoEx()
+            info.cbSize = ctypes.sizeof(info)
+            self.message(hwnd, 0x033F, 0, ctypes.addressof(info))  # WM_GETTITLEBARINFOEX
+            rect = info.rgrect[5]  # documented Close button, never a guessed offset
+            state = info.rgstate[5]
+            facts.update(closeRect=[rect.left, rect.top, rect.right, rect.bottom], state=int(state))
+            assert not state & (0x1 | 0x8000 | 0x10000), ('Close unavailable/invisible/offscreen', facts)
+            assert rect.right > rect.left and rect.bottom > rect.top, ('No native Close bounds', facts)
+            window = wintypes.RECT()
+            assert self.user32.GetWindowRect(hwnd, ctypes.byref(window)), facts
+            assert (window.left <= rect.left < rect.right <= window.right and
+                    window.top <= rect.top < rect.bottom <= window.bottom), facts
+            x, y = (rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2
+            assert -32768 <= x <= 32767 and -32768 <= y <= 32767, facts
+            packed = (x & 0xFFFF) | ((y & 0xFFFF) << 16)
+            facts.update(x=x, y=y, hitTest=self.message(hwnd, 0x0084, 0, packed))
+            assert facts['hitTest'] == 20, ('Native point is not HTCLOSE', facts)
+            assert self.user32.WindowFromPoint(wintypes.POINT(x, y)) == hwnd, ('Close point covered', facts)
+            assert self.user32.GetForegroundWindow() == hwnd, ('Close dialog is not foreground', facts)
+            left, top, width, height = [self.user32.GetSystemMetrics(i) for i in (76, 77, 78, 79)]
+            assert width > 1 and height > 1 and left <= x < left + width and top <= y < top + height, facts
+            Input = windows_input_type()
+            self.user32.SendInput.restype = wintypes.UINT
+            self.user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(Input), ctypes.c_int]
+            mouse = (Input * 3)()
+            mouse[0].mi.dx = round((x - left) * 65535 / (width - 1))
+            mouse[0].mi.dy = round((y - top) * 65535 / (height - 1))
+            mouse[0].mi.dwFlags = 0x0001 | 0x8000 | 0x4000  # MOVE | ABSOLUTE | VIRTUALDESK
+            mouse[1].mi.dwFlags, mouse[2].mi.dwFlags = 0x0002, 0x0004  # LEFTDOWN, LEFTUP
+            self.verify_window(hwnd, owner, title)
+            assert self.message(hwnd, 0x0084, 0, packed) == 20, facts
+            assert self.user32.WindowFromPoint(wintypes.POINT(x, y)) == hwnd, facts
+            assert self.user32.GetForegroundWindow() == hwnd, facts
+            if self.user32.SendInput(3, mouse, ctypes.sizeof(Input)) != 3:
+                raise ctypes.WinError(ctypes.get_last_error())
+            facts['inputSent'] = True
+            return facts
+        finally:
+            if screenshot:
+                record = Path(screenshot).with_name('native-file-dialogs-titlebar-' + Path(screenshot).stem + '.json')
+                record.write_text(json.dumps(facts, ensure_ascii=False, indent=2), encoding='utf-8')
+
+    def backup_open_controls(self, hwnd, facts):
+        # Actual installed Open dialog: ComboBoxEx32(1148) > ComboBox(1148)
+        # > Edit(1148). UIA reports all three and IDOK as Pane, not Edit/Button.
+        edits = [n['handle'] for n in facts['nativeChildren']
+                 if n['controlId'] == 1148 and n['class'].lower() == 'edit' and
+                 n['pid'] == self.native.pid and n['child'] and n['visible'] and n['enabled']]
+        assert len(edits) == 1, ('No unambiguous native file-name Edit(1148)', facts)
+        edit = edits[0]
+        for expected_class in ('combobox', 'comboboxex32'):
+            parent = self.user32.GetParent(edit)
+            assert self.native.process(parent) == self.native.pid and self.user32.IsChild(hwnd, parent), facts
+            assert self.user32.GetDlgCtrlID(parent) == 1148, facts
+            assert self.native.window_class(parent).lower() == expected_class, facts
+            edit = parent
+        edit = edits[0]
+        assert self.native.process(edit) == self.native.pid and self.user32.IsChild(hwnd, edit), facts
+        assert self.user32.GetDlgCtrlID(edit) == 1148 and self.native.window_class(edit).lower() == 'edit', facts
+        assert self.user32.IsWindowVisible(edit) and self.user32.IsWindowEnabled(edit), facts
+        opened = self.user32.GetDlgItem(hwnd, 1)
+        assert opened and self.native.process(opened) == self.native.pid, facts
+        assert self.user32.IsChild(hwnd, opened) and self.user32.GetDlgCtrlID(opened) == 1, facts
+        assert self.native.window_class(opened).lower() == 'button', facts
+        assert self.user32.IsWindowVisible(opened) and self.user32.IsWindowEnabled(opened), facts
+        return edit, opened
+
     def escape(self, hwnd):
         # Send a real key only while Windows itself reports focus inside this
         # exact verified file dialog. Never use ambient/global SendKeys.
@@ -214,26 +245,7 @@ class OwnedFileDialogs:
                         ('hwndMoveSize', wintypes.HWND), ('hwndCaret', wintypes.HWND),
                         ('rcCaret', wintypes.RECT)]
 
-        class MouseInput(ctypes.Structure):
-            _fields_ = [('dx', wintypes.LONG), ('dy', wintypes.LONG),
-                        ('mouseData', wintypes.DWORD), ('dwFlags', wintypes.DWORD),
-                        ('time', wintypes.DWORD), ('dwExtraInfo', ctypes.c_size_t)]
-
-        class KeyboardInput(ctypes.Structure):
-            _fields_ = [('wVk', wintypes.WORD), ('wScan', wintypes.WORD),
-                        ('dwFlags', wintypes.DWORD), ('time', wintypes.DWORD),
-                        ('dwExtraInfo', ctypes.c_size_t)]
-
-        class HardwareInput(ctypes.Structure):
-            _fields_ = [('uMsg', wintypes.DWORD), ('wParamL', wintypes.WORD),
-                        ('wParamH', wintypes.WORD)]
-
-        class InputValue(ctypes.Union):
-            _fields_ = [('mi', MouseInput), ('ki', KeyboardInput), ('hi', HardwareInput)]
-
-        class Input(ctypes.Structure):
-            _anonymous_ = ('value',)
-            _fields_ = [('type', wintypes.DWORD), ('value', InputValue)]
+        Input = windows_input_type()
 
         self.user32.GetForegroundWindow.restype = wintypes.HWND
         self.user32.GetForegroundWindow.argtypes = []
@@ -310,12 +322,22 @@ class OwnedFileDialogs:
 
     def open_backup_for_preview(self, hwnd, owner, title, backup, screenshot):
         assert title == 'Проверить резервную копию SQLite', 'Only restore-preview Open may be accepted'
-        assert self.native.process(hwnd) == self.native.pid and self.title(hwnd) == title
-        assert self.user32.GetWindow(hwnd, 4) == owner and self.native.process(owner) == self.native.pid
+        self.verify_window(hwnd, owner, title)
         assert self.native.window_class(hwnd) == '#32770'
-        assert not self.user32.IsWindowEnabled(owner)
-        self.inspect(hwnd, title, screenshot)
-        fact = self.action(hwnd, title, 'open-backup', backup)
+        backup = Path(backup)
+        assert backup.is_absolute() and backup.is_file() and backup.suffix == '.sqlite3'
+        facts, _ = self.inspect(hwnd, title, screenshot)
+        edit, opened = self.backup_open_controls(hwnd, facts)
+        text = ctypes.create_unicode_buffer(str(backup))
+        assert self.message(edit, 0x000C, 0, ctypes.addressof(text)), 'WM_SETTEXT refused backup path'
+        readback = ctypes.create_unicode_buffer(len(str(backup)) + 2)
+        self.message(edit, 0x000D, len(readback), ctypes.addressof(readback))  # WM_GETTEXT, cross-process
+        assert readback.value == str(backup), 'Verified file-name edit did not retain the backup path'
+        self.verify_window(hwnd, owner, title)
+        assert self.backup_open_controls(hwnd, facts) == (edit, opened)
+        self.message(opened, 0x00F5)  # BM_CLICK only on verified IDOK in restore-preview Open
+        fact = {'action': 'open-backup', 'controlId': 1, 'fileNameControlId': 1148,
+                'fileNameClass': 'Edit', 'delivery': 'WM_SETTEXT + BM_CLICK verified IDOK'}
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if not self.user32.IsWindowVisible(hwnd) and self.user32.IsWindowEnabled(owner):
@@ -330,14 +352,14 @@ class OwnedFileDialogs:
         assert self.user32.IsWindowVisible(hwnd) and self.user32.IsWindowEnabled(hwnd)
         assert not self.user32.IsWindowEnabled(owner)
         facts, cancel = self.inspect(hwnd, title, screenshot)
-        # Invoke the real visible title-bar button, independently verified
+        # Press the real visible title-bar button, independently verified
         # IDCANCEL, or a physical Escape key. No window-close message fallback.
         assert how in ('cancel', 'close', 'escape')
-        focus = None
+        focus, close = None, None
         if how == 'escape':
             focus = self.escape(hwnd)
         elif how == 'close':
-            self.action(hwnd, title, 'close')
+            close = self.close_titlebar(hwnd, owner, title, screenshot)
         else:
             result = ctypes.c_size_t()
             if not self.user32.SendMessageTimeoutW(cancel, 0x00F5, 0, 0, 0x0002, 3_000,
@@ -348,9 +370,9 @@ class OwnedFileDialogs:
             if not self.user32.IsWindowVisible(hwnd) and self.user32.IsWindowEnabled(owner):
                 return {'title': title, 'mode': how, 'pid': facts['pid'],
                         'class': '#32770', 'cancelLookup': 'GetDlgItem(IDCANCEL)', 'cancelControlId': 2,
-                        'escapeFocusHwnd': focus,
+                        'escapeFocusHwnd': focus, 'closeTarget': close,
                         'delivery': 'SendInput VK_ESCAPE down/up' if how == 'escape' else
-                                    'BM_CLICK IDCANCEL' if how == 'cancel' else 'UIA Invoke TitleBar.Close'}
+                                    'BM_CLICK IDCANCEL' if how == 'cancel' else 'SendInput mouse click verified HTCLOSE'}
             time.sleep(.05)
         raise AssertionError('Native file dialog stayed open after ' + how + ': ' + title)
 
@@ -414,7 +436,7 @@ class ReferenceFileDialogWalkthrough:
             assert self.drafts() == before, ('Cancel changed file/parameter drafts', name, how)
             assert self.native.revision() == self.revision, ('Cancel wrote SQLite', name)
             caption = {'cancel': 'настоящая кнопка Cancel (IDCANCEL=2)',
-                       'close': 'видимая кнопка × (UIA Invoke TitleBar.Close)',
+                       'close': 'видимая кнопка × (SendInput, Win32 HTCLOSE)',
                        'escape': 'настоящая клавиша Esc (SendInput, проверенный фокус)'}[how]
             self.evidence['dialogs'].append(dict(name=name, screenshot='native-file-' + name + '-' + how + '.png',
                                             caption=title + ' — ' + caption, **fact))

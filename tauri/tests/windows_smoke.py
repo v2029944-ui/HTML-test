@@ -1231,7 +1231,7 @@ def run():
                   && !document.querySelector('#s1 .data-card button').disabled""",timeout=90_000)
                 probe=probe_reference_print(page,output,pid)
                 report['printProbeStatus']=probe['status']
-                if probe['status']=='probe-error' or probe['status'].startswith('targeted-') or probe['status'].endswith('focus-not-restored'):
+                if probe['status']!='observed-cancel-reopen-escape-and-focus':
                     raise AssertionError('Installed print preview: '+probe['status'])
             with installed_page() as (page,_,pid):
                 ready(page,366)
@@ -1258,14 +1258,17 @@ def run():
                 report['navigation_before_restart']=page.locator('.view.active').get_attribute('id')
                 (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
 
-            with installed_page() as (page,_,pid):
+            with independent('Reference shell after replacement and restart'), installed_page() as (page,_,_):
                 ready(page,366)
-                check_reference(page,output,True)
-                report['checks'].append('Populated reference views, closing controls and focus after native replacement and restart')
-                open_full_workspace(page)
-                confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 report['navigation_after_restart']=page.locator('.view.active').get_attribute('id')
                 assert report['navigation_before_restart']=='upload' and report['navigation_after_restart']=='dashboard'
+                check_reference(page,output,True)
+                report['checks'].append('Populated reference views, closing controls and focus after native replacement and restart')
+
+            with installed_page() as (page,_,pid):
+                ready(page,366)
+                open_full_workspace(page)
+                confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 assert api(page,'list')['folder']
                 check_folder_rule_and_revocation(page,workbook,confirmations)
                 report['checks'].append('Normal restart preserves native SQLite and opens the canonical dashboard despite obsolete preferences; folder rule and revoked session are verified')
