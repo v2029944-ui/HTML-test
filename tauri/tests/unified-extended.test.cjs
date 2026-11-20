@@ -249,3 +249,22 @@ test('organization comparison overrides reset after a kind change and follow the
  assert.equal(f.nodes.get('comparisonRangeStart').value,'2024-01-15');
  assert.equal(f.nodes.get('comparisonPeriodOverride').hidden,true);
 });
+
+test('two incomplete comparison intervals explain both gaps without empty tables, exports or pager',async()=>{
+ for(const length of [0,1,50]){
+  const incomplete={complete:false,periods:1,missing:1,total:{count:null,amount:null,average:null}};
+  const fx=fixture({nativeAnalysisCompare:async()=>({summary:{before:incomplete,after:incomplete}}),unifiedComparisonPage:async()=>Array.from({length},(_,i)=>({key:'work:Known'+i,name:'Known'+i,kind:'work',count:null,amount:null,average:{base:null,current:null,delta:null,percent:null}}))});
+  fx.publish();fx.nodes.get('advancedAnalytics').open=true;fx.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+  assert.equal(fx.tables.length,0);assert.match(fx.nodes.get('comparisonTable').textContent,/Нет доступных значений/);
+  assert.doesNotMatch(fx.nodes.get('comparisonTable').textContent,/Предыдущая|Следующая|Страница|Known/);
+  assert.match(fx.nodes.get('comparisonCoverage').textContent,/базового и анализируемого периодов/);
+  assert.equal(fx.nodes.get('comparisonTable').attributes['aria-busy'],'false');
+ }
+});
+test('confirmed zero comparison retains real values and matching CSV columns',async()=>{
+ const complete={complete:true,periods:1,missing:0,total:{count:0,amount:0,average:null}},measure={base:0,current:0,delta:0,percent:null};
+ const fx=fixture({nativeAnalysisCompare:async()=>({summary:{before:complete,after:complete}}),unifiedComparisonPage:async()=>[{key:'work:Zero',name:'Zero',kind:'work',count:measure,amount:measure,average:{base:null,current:null,delta:null,percent:null}}]});
+ fx.publish();fx.nodes.get('advancedAnalytics').open=true;fx.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ assert.equal(fx.tables.length,2);for(const table of fx.tables){assert.deepEqual(Array.from(table.options.csvRows[1]),['Zero',0,0,0,null]);assert.equal(table.headers.length,table.options.csvRows[1].length);assert.equal(table.rows[1][1],'0');assert.equal(table.rows[1][2],'0');assert.equal(table.rows[1][4],'—');}
+ assert.match(fx.nodes.get('comparisonTable').textContent,/Предыдущая/);
+});

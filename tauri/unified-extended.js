@@ -160,8 +160,13 @@ async function comparison(positions=[null]){
   const beforeComplete=summary.before.complete,afterComplete=summary.after.complete;
   if(!beforeComplete||!afterComplete){
    $('comparisonCoverage').append(UI.el('p',
-    'Сравнение недоступно: '+(!beforeComplete?'не хватает отчётов базового периода':'не хватает отчётов анализируемого периода')+
-    '. Показаны только доступные показатели; прочерк не означает ноль.','warn small'));
+    'Сравнение недоступно: '+(!beforeComplete&&!afterComplete?'не хватает отчётов базового и анализируемого периодов':!beforeComplete?'не хватает отчётов базового периода':'не хватает отчётов анализируемого периода')+
+    (!beforeComplete&&!afterComplete?'. Значения недоступны; пропуск не означает ноль.':'. Показаны только доступные показатели; прочерк не означает ноль.'),'warn small'));
+  }
+  if(!beforeComplete&&!afterComplete){
+   clear('comparisonTable','Нет доступных значений для сравнения: оба интервала неполны. Проверьте наличие отчётов или выберите другие периоды. Пропуск не означает ноль.');
+   if($('contributions').open)contributions();
+   return;
   }
   for(const metric of metrics()){
    const valueNow=summary.after.total[metric],valueBefore=summary.before.total[metric],card=UI.el('div',null,'kpi');
