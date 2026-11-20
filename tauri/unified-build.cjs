@@ -104,7 +104,9 @@ function buildUnified(source){
  '<label id="workViewLabel" for="workViewMode">Показать</label>'+
  '<select id="workViewMode"><option value="trend">Динамика работ и подразделений</option><option value="composition">Состав работ и доли</option></select>'+
  '<p id="workViewDescription" class="muted small">Изменение значений по выбранным периодам. Для долей переключите представление.</p></div>\n      ';
- html=html.slice(0,comparisonStart)+switcher+html.slice(comparisonStart);
+ const chartStart=html.indexOf('<section class="panel" id="chartPanel"');
+ if(chartStart<0||chartStart>=comparisonStart)throw Error('Canonical chart panel changed');
+ html=html.slice(0,chartStart)+switcher+html.slice(chartStart);
  const relocated=html.indexOf('<section class="panel" id="comparison"');
  html=html.slice(0,relocated)+'      '+structure+'\n      '+html.slice(relocated);
 
