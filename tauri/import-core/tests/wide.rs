@@ -239,3 +239,290 @@ fn coverage_suffix_retains_word_boundary_context() {
     );
     assert!(s.source_issues("Data", 0, 100).unwrap().is_empty());
 }
+
+fn excel_column(mut col: usize) -> String {
+    let mut out = String::new();
+    while col > 0 {
+        col -= 1;
+        out.insert(0, (b'A' + (col % 26) as u8) as char);
+        col /= 26;
+    }
+    out
+}
+
+// Real XLSX worksheets with one existing quantity/amount pair per day.
+fn sequential_book(
+    path: &std::path::Path,
+    sheets: &[(String, String, usize)],
+    date_headers: &[(usize, usize, String)],
+    blank_day: Option<(usize, usize)>,
+) {
+    let mut zip = ZipWriter::new(fs::File::create(path).unwrap());
+    let mut workbook = String::from("<workbook xmlns:r=\"r\"><sheets>");
+    let mut relationships = String::from("<Relationships>");
+    for (index, (name, title, pairs)) in sheets.iter().enumerate() {
+        workbook.push_str(&format!("<sheet name=\"{name}\" r:id=\"r{index}\"/>"));
+        relationships.push_str(&format!("<Relationship Id=\"r{index}\" Target=\"worksheets/sheet{index}.xml\" Type=\"worksheet\"/>"));
+        let mut xml = String::from("<worksheet><sheetData>");
+        for row in 1..=5 {
+            xml.push_str(&format!("<row r=\"{row}\">"));
+            for col in 1..=2 * pairs + 3 {
+                let value = if col == 1 {
+                    [title.as_str(), "Работа", "СМУ16", "Work", "Итого"][row - 1].to_owned()
+                } else if row == 1 {
+                    if col == 2 * pairs + 2 {
+                        "Итого за период".into()
+                    } else {
+                        date_headers
+                            .iter()
+                            .find(|(s, day, _)| *s == index && col == day * 2 + 2)
+                            .map(|(_, _, value)| value.clone())
+                            .unwrap_or_default()
+                    }
+                } else if row == 2 {
+                    if col % 2 == 0 {
+                        "Количество".into()
+                    } else {
+                        "Сумма".into()
+                    }
+                } else if col >= 2 * pairs + 2 {
+                    (pairs * if col % 2 == 0 { 1 } else { 10 }).to_string()
+                } else if blank_day == Some((index, (col - 2) / 2)) {
+                    String::new()
+                } else if col % 2 == 0 {
+                    "1".into()
+                } else {
+                    "10".into()
+                };
+                if !value.is_empty() {
+                    xml.push_str(&format!(
+                        "<c r=\"{}{row}\" t=\"inlineStr\"><is><t>{value}</t></is></c>",
+                        excel_column(col)
+                    ));
+                }
+            }
+            xml.push_str("</row>");
+        }
+        xml.push_str("</sheetData></worksheet>");
+        zip.start_file(
+            format!("xl/worksheets/sheet{index}.xml"),
+            SimpleFileOptions::default(),
+        )
+        .unwrap();
+        zip.write_all(xml.as_bytes()).unwrap();
+    }
+    workbook.push_str("</sheets></workbook>");
+    relationships.push_str("</Relationships>");
+    for (name, xml) in [
+        ("xl/workbook.xml", workbook),
+        ("xl/_rels/workbook.xml.rels", relationships),
+    ] {
+        zip.start_file(name, SimpleFileOptions::default()).unwrap();
+        zip.write_all(xml.as_bytes()).unwrap();
+    }
+    zip.finish().unwrap();
+}
+
+fn sequential_options(year: i32, quarters: &[Option<u32>]) -> WideOptions {
+    let mut options = WideOptions::default();
+    for (index, quarter) in quarters.iter().enumerate() {
+        let name = format!("Sheet{index}");
+        options.sheets.push(name.clone());
+        options.sequential_periods.insert(
+            name,
+            analiz_import_core::WideSequentialPeriod {
+                year,
+                quarter: *quarter,
+            },
+        );
+    }
+    options
+}
+
+#[test]
+fn sequential_four_quarters_and_whole_year_preserve_daily_values() {
+    for year in [2023, 2024] {
+        for quarters in [vec![Some(1), Some(2), Some(3), Some(4)], vec![None]] {
+            let cfg = sequential_options(year, &quarters);
+            let counts = if quarters.len() == 4 {
+                vec![if year == 2024 { 91 } else { 90 }, 91, 92, 92]
+            } else {
+                vec![if year == 2024 { 366 } else { 365 }]
+            };
+            let sheets: Vec<_> = counts
+                .iter()
+                .enumerate()
+                .map(|(index, count)| (format!("Sheet{index}"), year.to_string(), *count))
+                .collect();
+            let t = tempfile::tempdir().unwrap();
+            let p = t.path().join("sequential.xlsx");
+            sequential_book(&p, &sheets, &[], None);
+            let area = StageArea::open(t.path().join("stage")).unwrap();
+            let cancel = Arc::new(AtomicBool::new(false));
+            let mut stage = area.ingest(&p, Limits::default(), &cancel, |_| {}).unwrap();
+            let summary = stage.convert_wide(&cfg, cancel, |_| {}).unwrap();
+            assert_eq!(
+                (summary.reports, summary.rows, summary.issues),
+                (
+                    counts.iter().sum::<usize>() as u64,
+                    counts.iter().sum::<usize>() as u64,
+                    0
+                )
+            );
+            let mut reports = Vec::new();
+            loop {
+                let page = stage.report_page(reports.len() as u64, 100).unwrap();
+                if page.is_empty() {
+                    break;
+                }
+                reports.extend(page);
+            }
+            assert_eq!(reports.first().unwrap().start, format!("{year}-01-01"));
+            assert_eq!(reports.last().unwrap().start, format!("{year}-12-31"));
+            let mut offset = 0;
+            for count in counts {
+                let coverage = stage
+                    .report_provenance(&reports[offset].id)
+                    .unwrap()
+                    .unwrap()
+                    .coverage;
+                assert_eq!(coverage.start, reports[offset].start);
+                assert_eq!(coverage.end, reports[offset + count - 1].start);
+                offset += count;
+            }
+            assert_eq!(
+                stage.report_rows(&reports[0].id, 0, 100).unwrap()[0].count_cell,
+                "B4"
+            );
+            assert!(stage.source_issue_page(0, 100).unwrap().is_empty());
+        }
+    }
+}
+
+#[test]
+fn sequential_rejects_bad_counts_years_headers_and_unused_metadata() {
+    for (pairs, title, date, configured_year, quarter, extra) in [
+        (90, "2024", None, None, Some(1), false),
+        (92, "2024", None, None, Some(1), false),
+        (91, "2023", None, None, Some(1), false),
+        (91, "2024 Q2", None, None, Some(1), false),
+        (91, "2024 Q1 Q2", None, None, Some(1), false),
+        (91, "2024 Q5", None, None, Some(1), false),
+        (91, "2024 V квартал", None, None, Some(1), false),
+        (91, "2024", Some("2024-01-02"), None, Some(1), false),
+        (91, "2024", Some("2023-01-01"), None, Some(1), false),
+        (91, "2024", Some("01.01.23"), None, Some(1), false),
+        (91, "2024", None, Some(2023), Some(1), false),
+        (91, "2024", None, None, Some(0), false),
+        (91, "2024", None, None, Some(5), false),
+        (91, "2024", None, None, Some(1), true),
+        (365, "2024", None, None, None, false),
+        (366, "2024 Q1", None, None, None, false),
+    ] {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("sequential.xlsx");
+        let headers = date.map(|d| vec![(0, 0, d.to_owned())]).unwrap_or_default();
+        sequential_book(
+            &p,
+            &[("Sheet0".into(), title.into(), pairs)],
+            &headers,
+            None,
+        );
+        let area = StageArea::open(t.path().join("stage")).unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let mut stage = area.ingest(&p, Limits::default(), &cancel, |_| {}).unwrap();
+        let mut cfg = sequential_options(2024, &[quarter]);
+        cfg.year = configured_year;
+        if extra {
+            cfg.sequential_periods.insert(
+                "Unknown".into(),
+                analiz_import_core::WideSequentialPeriod {
+                    year: 2024,
+                    quarter: Some(1),
+                },
+            );
+        }
+        assert!(
+            stage.convert_wide(&cfg, cancel, |_| {}).is_err(),
+            "accepted {pairs} / {title} / {date:?} / {configured_year:?} / {quarter:?} / {extra}"
+        );
+        assert!(stage.report_page(0, 100).is_err());
+    }
+}
+
+#[test]
+fn sequential_validates_dates_and_keeps_blank_days_missing_despite_nonzero_totals() {
+    let t = tempfile::tempdir().unwrap();
+    let p = t.path().join("sequential.xlsx");
+    sequential_book(
+        &p,
+        &[("Sheet0".into(), "2024 Q1".into(), 91)],
+        &[(0, 0, "2024-01-01".into()), (0, 90, "31.03".into())],
+        Some((0, 1)),
+    );
+    let area = StageArea::open(t.path().join("stage")).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut stage = area.ingest(&p, Limits::default(), &cancel, |_| {}).unwrap();
+    let cfg = sequential_options(2024, &[Some(1)]);
+    assert_eq!(
+        stage
+            .convert_wide(&cfg, cancel.clone(), |_| {})
+            .unwrap()
+            .reports,
+        90
+    );
+    let issues = stage.source_issue_page(0, 100).unwrap();
+    assert!(issues
+        .iter()
+        .any(|i| i.kind == "missing-day" && i.date.as_deref() == Some("2024-01-02")));
+    assert!(issues.iter().any(|i| i.kind == "mismatch"));
+    assert!(stage
+        .report_page(0, 100)
+        .unwrap()
+        .iter()
+        .all(|r| r.start != "2024-01-02"));
+    // Opt-in must not change the original date-header parser.
+    assert!(stage
+        .convert_wide(&WideOptions::default(), cancel, |_| {})
+        .is_err());
+    assert_eq!(stage.report_page(0, 100).unwrap().len(), 90);
+}
+
+#[test]
+fn sequential_cancellation_and_unused_known_sheet_keep_previous_conversion() {
+    let t = tempfile::tempdir().unwrap();
+    let p = t.path().join("sequential.xlsx");
+    sequential_book(
+        &p,
+        &[
+            ("Sheet0".into(), "Year 2024 Q1".into(), 91),
+            ("Sheet1".into(), "2024 Q2".into(), 91),
+        ],
+        &[],
+        None,
+    );
+    let area = StageArea::open(t.path().join("stage")).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut stage = area.ingest(&p, Limits::default(), &cancel, |_| {}).unwrap();
+    let mut cfg = sequential_options(2024, &[Some(1), Some(2)]);
+    assert_eq!(
+        stage
+            .convert_wide(&cfg, cancel.clone(), |_| {})
+            .unwrap()
+            .reports,
+        182
+    );
+    assert!(stage
+        .convert_wide(&cfg, cancel.clone(), |progress| {
+            if progress.reports == 92 {
+                cancel.store(true, Ordering::Release);
+            }
+        })
+        .is_err());
+    cancel.store(false, Ordering::Release);
+    assert_eq!(stage.report_page(100, 100).unwrap().len(), 82);
+    cfg.sheets.pop();
+    assert!(stage.detect_wide(&cfg, cancel.clone()).is_err());
+    assert!(stage.convert_wide(&cfg, cancel, |_| {}).is_err());
+    assert_eq!(stage.report_page(100, 100).unwrap().len(), 82);
+}

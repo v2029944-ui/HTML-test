@@ -1,7 +1,7 @@
 use super::*;
 use analiz_import_core::{ImportMode, Limits, PreparedImport, Stage, StageArea, WideOptions};
 use std::{
-    io::Write,
+    io::{Read, Write},
     sync::{atomic::AtomicBool, Arc},
 };
 use zip::{write::SimpleFileOptions, ZipWriter};
@@ -132,6 +132,46 @@ fn prepared<'a>(area: &'a StageArea, source: &Path, today: &str) -> PreparedImpo
     converted(area, source, today)
         .prepare_with_mode(ImportMode::Folder, &AtomicBool::new(false), |_| {})
         .unwrap()
+}
+#[test]
+fn undated_quarter_prepare_apply_preserves_source_dates_values_and_idempotent_replay() {
+    let root=tempfile::tempdir().unwrap();
+    let source=root.path().join("undated.xlsx");
+    fixture_at(&source,91,false,false,false,"2024-01-01","Работа Q1 2024");
+    let mut archive=zip::ZipArchive::new(fs::File::open(&source).unwrap()).unwrap();
+    let mut entries=Vec::new();
+    for index in 0..archive.len(){
+        let mut entry=archive.by_index(index).unwrap();
+        let name=entry.name().to_owned();let mut data=String::new();entry.read_to_string(&mut data).unwrap();
+        if name.starts_with("xl/worksheets/"){
+            for day in 0..91{
+                let date=chrono::NaiveDate::from_ymd_opt(2024,1,1).unwrap()+chrono::Duration::days(day);
+                data=data.replace(&format!("<t>{date}</t>"),"<t></t>");
+            }
+        }
+        entries.push((name,data));
+    }
+    drop(archive);
+    let mut zip=ZipWriter::new(fs::File::create(&source).unwrap());
+    for (name,data) in entries{zip.start_file(name,SimpleFileOptions::default()).unwrap();zip.write_all(data.as_bytes()).unwrap();}zip.finish().unwrap();
+    let original_source=fs::read(&source).unwrap();
+    let area=StageArea::open(root.path().join("stage")).unwrap();let cancel=Arc::new(AtomicBool::new(false));
+    let mut stage=area.ingest(&source,Limits::default(),&cancel,|_|{}).unwrap();
+    let mut options=WideOptions::default();options.year=Some(2024);
+    options.sequential_periods.insert("Data".into(),analiz_import_core::WideSequentialPeriod{year:2024,quarter:Some(1)});
+    stage.convert_wide_as_of(&options,cancel,"2024-12-31".parse().unwrap(),|_|{}).unwrap();
+    let prepared=stage.prepare_with_mode(ImportMode::Folder,&AtomicBool::new(false),|_|{}).unwrap();
+    assert_eq!(prepared.report_count(),91);assert_eq!(prepared.row_count(),91);
+    let storage=Storage::new(root.path().join("live")).unwrap();storage.revision().unwrap();
+    let before=storage.load().unwrap();let preview=storage.preview_import(&prepared).unwrap();
+    assert_eq!(storage.load().unwrap(),before,"preview must not write live reports");
+    let receipt=storage.apply_import(&prepared,&preview,ImportConfirmation::default(),&ImportJob::new(),|_|{}).unwrap();
+    let loaded=storage.load().unwrap();let reports=loaded["reports"].as_array().unwrap();assert_eq!(reports.len(),91);
+    let mut starts=reports.iter().map(|doc|doc["start"].as_str().unwrap()).collect::<Vec<_>>();starts.sort_unstable();
+    assert_eq!(starts.first().copied(),Some("2024-01-01"));assert_eq!(starts.last().copied(),Some("2024-03-31"));
+    for report in reports{assert_eq!(report["count"],1.0);assert_eq!(report["amount"],2.0);assert_eq!(report["sourceCoverage"],json!({"start":"2024-01-01","end":"2024-03-31"}));}
+    assert_eq!(storage.apply_import(&prepared,&preview,ImportConfirmation::default(),&ImportJob::new(),|_|{}).unwrap(),receipt);
+    assert_eq!(storage.load().unwrap(),loaded);assert_eq!(fs::read(&source).unwrap(),original_source);
 }
 #[test]
 fn wide_zero_day_prepares_applies_and_backfills_without_fabricated_rows() {

@@ -18,7 +18,7 @@ use native_management::{native_catalog_page, native_delete_report, native_member
 use native_import::{
     native_wide_import_preview, native_wide_import_apply,
     native_folder_import_session, native_folder_import_preview, native_folder_import_apply,
-    native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
+    native_import_sheets, native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
 };
 
 use storage::{AnalysisScope, ManagementJob, RangeQuery, RangeSummary, ReadExcel, ReadFilter, ReportHeader, Rule, Storage};
@@ -1086,7 +1086,7 @@ fn main() {
             native_folder_import_preview,
             native_folder_import_apply,
             native_wide_import_preview, native_wide_import_apply,
-            native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
+            native_import_sheets, native_legacy_import_sheets, native_legacy_import_preview, native_legacy_import_apply,
             native_metric_kinds, native_metric_preview, native_metric_apply, native_metric_summary,
             native_metric_xlsx_profiles, native_metric_xlsx_preview, native_metric_xlsx_apply,
             get_info, set_folder, set_rule, native_set_rule_checked,
