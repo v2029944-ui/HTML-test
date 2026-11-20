@@ -87,7 +87,7 @@ test('member destination chooser jumps directly with unchanged selection and fil
  assert.deepEqual(m.reads.slice(before),[[7,'groups','Group',null,100,50]]);
  assert.equal(label.children[0].value,'g0');assert.equal(m.writes.length,0);
 });
-test('clear requires confirmation and fresh backup path; picker cancellation leaves data intact',async()=>{const m=mount();m.snapshot(7);m.setConfirm(false);m.setBackup('/new.sqlite3');await m.nodes.clearReports.fire();assert.equal(m.writes.length,0);m.setConfirm(true);m.setBackup(null);await m.nodes.clearReports.fire();assert.equal(m.writes.length,0);m.setBackup('/new.sqlite3');await m.nodes.clearReports.fire();assert.deepEqual(m.writes,[['clear',7,'/new.sqlite3']]);assert.match(m.questions.at(-1),/резервная копия/);});
+test('clear requires confirmation and removes reports without choosing or creating a backup',async()=>{const m=mount();m.snapshot(7);m.setConfirm(false);await m.nodes.clearReports.fire();assert.equal(m.writes.length,0);m.setConfirm(true);await m.nodes.clearReports.fire();assert.deepEqual(m.writes,[['clear',7]]);assert.deepEqual(m.pickers,[]);assert.match(m.questions.at(-1),/Удалить все импортированные отчёты/);assert.doesNotMatch(m.questions.at(-1),/резервная копия/);});
 test('organization rename validates exactly four names and backs up before native mutation',async()=>{const m=mount();m.snapshot(7);const inputs=m.nodes.organizationFields.querySelectorAll('input');inputs[0].value='Б';await m.nodes.saveOrganizations.fire();assert.equal(m.writes.length,0);assert.equal(m.messages.at(-1)[1],true);inputs[0].value='АА';m.setBackup('/org-backup.sqlite3');await m.nodes.saveOrganizations.fire();assert.deepEqual(JSON.parse(JSON.stringify(m.writes)),[['org',7,['АА','Б','В','Г'],'/org-backup.sqlite3']]);assert.equal(m.UI.state.reports.length,0);});
 test('group file import is previewed and hash-confirmed; cancelled picker and denial never write',async()=>{const m=mount();m.snapshot(7);await m.nodes.importGroups.fire();assert.equal(m.writes.length,0);m.setSource('/groups.json');m.setConfirm(false);await m.nodes.importGroups.fire();assert.equal(m.writes.length,0);m.setConfirm(true);await m.nodes.importGroups.fire();assert.deepEqual(m.writes,[['import',7,'/groups.json','hash',true]]);});
 
@@ -114,11 +114,11 @@ test('successful mutation followed by refresh failure clears stale rows and prev
 
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};}
 function actionByText(root,text){const action=root.querySelectorAll('button').find(n=>n.textContent===text);assert.ok(action,'Missing action: '+text);return action;}
-test('native async confirmation blocks backup picker and writes, denial cancels and acceptance writes once',async()=>{
+test('native async delete confirmation blocks writes, denial cancels and acceptance writes once without backup',async()=>{
  const m=mount();m.snapshot(7);m.setBackup('/safe.sqlite3');const denied=deferred();m.setConfirm(denied.promise);
  const pending=m.nodes.clearReports.fire();await tick();assert.equal(m.questions.length,1);assert.equal(m.pickers.length,0);assert.equal(m.writes.length,0);assert.equal(m.nodes.clearReports.disabled,true);
  await m.nodes.clearReports.fire();assert.equal(m.questions.length,1);denied.resolve(false);await pending;assert.equal(m.pickers.length,0);assert.equal(m.writes.length,0);
- const accepted=deferred();m.setConfirm(accepted.promise);const saved=m.nodes.clearReports.fire();await tick();assert.equal(m.pickers.length,0);accepted.resolve(true);await saved;assert.deepEqual(m.pickers,['backup']);assert.deepEqual(m.writes,[['clear',7,'/safe.sqlite3']]);
+ const accepted=deferred();m.setConfirm(accepted.promise);const saved=m.nodes.clearReports.fire();await tick();assert.equal(m.pickers.length,0);accepted.resolve(true);await saved;assert.deepEqual(m.pickers,[]);assert.deepEqual(m.writes,[['clear',7]]);
 });
 test('confirmation rechecks revision after native modal and rejected dialogs surface an error',async()=>{
  const m=mount();m.snapshot(7);m.setBackup('/safe.sqlite3');const stale=deferred();m.setConfirm(stale.promise);const pending=m.nodes.clearReports.fire();await tick();m.snapshot(8);stale.resolve(true);await pending;assert.equal(m.pickers.length,0);assert.equal(m.writes.length,0);assert.match(m.messages.at(-1)[0],/База изменилась/);

@@ -23,7 +23,7 @@ Modules define `window.unifiedAnalytics`, `window.unifiedExtended`, `window.unif
 - Root: canonical build/prepare, startup single entry, original helper bridge/base, dashboard charts/KPI and commonfilters, bridge/IPCregistration, Cargo features, browser/tests/integration.
 - Analytics backend: unified_analytics.rs, analytics.rs, advanced_analysis.rs; SQL search/filter/sort/stats/CSV, period/name paging.
 - Management backend: unified_management.rs, management.rs, unified_settings_io.rs, catalog conversion; group exclusivity, pages, import/export.
-- Data admin: unified_data_admin.rs child management; org rename/clear with backup + source lifecycle.
+- Data admin: unified_data_admin.rs child management; org rename with backup; confirmed clear without mandatory backup + atomic source lifecycle.
 - Reports fullstack: new report query APIs+native UI reports/import/calendar/quality (see assigned task); coordinate only own modules.
 - Extended frontend: unified-extended.js for all classic comparison/contributions/structure/usual/regularity/changes controls.
 - Management frontend: unified-management.js for groups/catalog/orgsettings/backup.

@@ -156,7 +156,7 @@
     unifiedCatalogPreview:(revision,source)=>tracked('unified_catalog_preview',{revision,source},'reads'),
     unifiedCatalogApply:(revision,source,hash,confirmed)=>tracked('unified_catalog_apply',{revision,source,hash,confirmed},'saves'),
     unifiedRenameOrganizations:(revision,names,destination)=>tracked('unified_rename_organizations',{revision,names,destination},'saves'),
-    unifiedClearReports:(revision,destination)=>tracked('unified_clear_reports',{revision,destination},'saves'),
+    unifiedClearReports:revision=>tracked('unified_clear_reports',{revision},'saves'),
     managementReportPage:(revision,filter,after=null,limit=50)=>tracked('unified_report_page',{revision,filter,after,limit},'reads'),
     managementReportWindow:(revision,filter,pageIndex=0,limit=50)=>tracked('unified_report_window',{revision,filter,pageIndex,limit},'reads'),
     managementReportSummary:(revision,filter)=>tracked('unified_report_summary',{revision,filter},'reads'),
@@ -192,8 +192,8 @@
       'native_catalog_page',{revision,afterHandle,limit},'reads'),
     nativeReportQualityPage:(revision,id,scope,offset=0,limit=50)=>tracked(
       'native_report_quality_page',{revision,id,scope,offset,limit},'reads'),
-    nativeDeleteReport:(revision,id,backupDestination)=>tracked(
-      'native_delete_report',{revision,id,backupDestination},'saves'),
+    nativeDeleteReport:(revision,id)=>tracked(
+      'native_delete_report',{revision,id},'saves'),
     nativeSettingsEdit:(revision,action)=>tracked(
       'native_settings_edit',{revision,action},'saves'),
     nativeAnalysisIndexPage:(revision,reportType,after=null,limit=20)=>tracked(
