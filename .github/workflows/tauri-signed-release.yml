@@ -15,7 +15,7 @@ on:
         required: true
         type: choice
         default: check-keys
-        options: [check-keys, publish]
+        options: [check-keys, sign-only, publish]
       version:
         description: "For publish: new version, e.g. 0.1.6"
         type: string
@@ -75,7 +75,7 @@ jobs:
           node tauri/check-update-signing.cjs historical/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig
           echo 'Public key identity matches signed 0.1.2.' >> "$GITHUB_STEP_SUMMARY"
       - name: Require new version, release notes and successful main Windows CI
-        if: inputs.operation == 'publish' && steps.keys.outputs.configured == 'true'
+        if: (inputs.operation == 'publish' || inputs.operation == 'sign-only') && steps.keys.outputs.configured == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -107,7 +107,7 @@ jobs:
 
   build-and-publish:
     needs: signing-ready
-    if: inputs.operation == 'publish' && needs.signing-ready.outputs.configured == 'true'
+    if: (inputs.operation == 'publish' || inputs.operation == 'sign-only') && needs.signing-ready.outputs.configured == 'true'
     runs-on: windows-latest
     timeout-minutes: 75
     permissions:
@@ -184,6 +184,9 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'WebView2 test build failed' }
           } finally { Pop-Location }
       - name: Test installed app through real WebView2
+        env:
+          PYTHONIOENCODING: utf-8
+          REFERENCE_HEAD_SHA: ${{ github.sha }}
         shell: pwsh
         run: |
           python -m pip install playwright==1.62.0
@@ -198,6 +201,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Publish signed GitHub Release and advance updater channel
+        if: inputs.operation == 'publish'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
