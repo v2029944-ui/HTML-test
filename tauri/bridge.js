@@ -23,10 +23,15 @@
   }
   window.desktopAPI=Object.freeze({
     load:()=>invoke('load_data'),
+    referenceChanges:request=>tracked('reference_changes',{request},'reads'),
+    referenceChangesCsv:(request,destination)=>tracked('reference_changes_csv',{request,destination},'saves'),
+    referenceSummaryCsv:(request,destination)=>tracked('reference_summary_csv',{request,destination},'saves'),
     unifiedPeriodOptions:(revision,reportType,grouping=null,after=null,limit=100)=>tracked('unified_period_options',{revision,reportType,grouping,after,limit},'reads'),
     unifiedNameOptions:(revision,search='',after=null,limit=50)=>tracked('unified_name_options',{revision,search,after,limit},'reads'),
     unifiedChangesPage:(request,options,after=null)=>tracked('unified_changes_page',{request,options,after},'reads'),
     unifiedChangesCsv:(request,options,destination)=>tracked('unified_changes_csv',{request,options,destination},'saves'),
+    referenceTrendCsv:(request,options,destination)=>tracked('reference_trend_csv',{request,options,destination},'saves'),
+    referenceDetailCsv:(payload,destination)=>tracked('reference_detail_csv',{payload,destination},'saves'),
     unifiedPatternPage:(request,mode,windowSize,options,after=null)=>tracked('unified_pattern_page',{request,mode,windowSize,options,after},'reads'),
     unifiedComparisonPage:(request,before,organization=null,after=null,limit=50)=>tracked('unified_comparison_page',{request,before,organization,after,limit},'reads'),
     unifiedGroupAuditPage:(request,mode,search='',offset=0,limit=50)=>tracked('unified_group_audit_page',{request,mode,search,offset,limit},'reads'),

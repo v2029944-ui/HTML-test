@@ -26,14 +26,28 @@ impl Storage {
         offset: i64,
         limit: usize,
     ) -> Result<UnifiedGroupAuditPage, String> {
-        if !matches!(mode, "all" | "ungrouped" | "unused")
-            || search.len() > 512
-            || offset < 0
-            || offset > i64::from(i32::MAX)
-            || !(1..=50).contains(&limit)
-        {
+        if offset<0 || offset>i64::from(i32::MAX) || !(1..=50).contains(&limit) {
             return Err("Invalid group audit query".into());
         }
+        let mut rows=Vec::new();
+        let (total,coverage)=self.visit_group_audit(revision,scope,query,mode,search,offset,limit as i64,|row|{rows.push(row);Ok(())})?;
+        Ok(UnifiedGroupAuditPage{rows,total,coverage})
+    }
+
+    pub fn unified_group_audit_csv(&self,revision:i64,scope:&AnalysisScope,query:&RangeQuery,mode:&str,search:&str,destination:&Path)->Result<(),String>{
+        if !destination.is_absolute() || destination.as_os_str().len()>32767 || !destination.extension().and_then(|s|s.to_str()).is_some_and(|s|s.eq_ignore_ascii_case("csv")) {return Err("Choose an absolute CSV file path".into());}
+        export(destination,|w| {
+            csv_record(w,&["Название","Группа","Названий работ в группе","Выполнения","Период с","Период до"].map(Cell::Text))?;
+            self.visit_group_audit(revision,scope,query,mode,search,0,-1,|row|{
+                let status=match row.active{Some(true)=>"Есть выполнения",Some(false)=>"Нет выполнений",None=>"Недостаточно данных о выполнениях"};
+                csv_record(w,&[Cell::Text(&row.name),Cell::Text(row.group_name.as_deref().unwrap_or("")),Cell::Number((mode=="unused").then_some(row.members as f64)),Cell::Text(status),Cell::Text(&query.from),Cell::Text(&query.to)])
+            })?;
+            read_model::check_revision(&self.connect()?,revision)
+        })
+    }
+
+    fn visit_group_audit(&self,revision:i64,scope:&AnalysisScope,query:&RangeQuery,mode:&str,search:&str,offset:i64,limit:i64,mut visit:impl FnMut(UnifiedGroupAuditRow)->Result<(),String>)->Result<(i64,RangeSummary),String>{
+        if !matches!(mode,"all"|"ungrouped"|"unused")||search.len()>512 {return Err("Invalid group audit query".into());}
         // This audit always considers all works, independently of the chart's
         // name selection. Organization/range validation remains the same.
         let scope = AnalysisScope {
@@ -80,7 +94,7 @@ impl Storage {
         let total = count_sql(&tx, "SELECT count(*) FROM audit_rows")?;
         let mut stmt=tx.prepare("SELECT name,key,group_handle,group_name,members,observed FROM audit_rows ORDER BY (instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key,group_handle LIMIT ?2 OFFSET ?3").map_err(err)?;
         let rows = stmt
-            .query_map(params![term, limit as i64, offset], |r| {
+            .query_map(params![term, limit, offset], |r| {
                 let observed: bool = r.get(5)?;
                 Ok(UnifiedGroupAuditRow {
                     name: r.get(0)?,
@@ -97,13 +111,8 @@ impl Storage {
                     },
                 })
             })
-            .map_err(err)?
-            .collect::<Result<Vec<_>, _>>()
             .map_err(err)?;
-        Ok(UnifiedGroupAuditPage {
-            rows,
-            total,
-            coverage,
-        })
+        for result in rows {visit(result.map_err(err)?)?;}
+        Ok((total,coverage))
     }
 }

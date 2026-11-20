@@ -1,5 +1,6 @@
 'use strict';
 // The original markup/styles are canonical; only its full-history controller is retired.
+const fs=require('node:fs'),path=require('node:path');
 const dateIds=['overviewPeriod','rangeStart','rangeEnd','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','structureBase','structureCurrent','usualPeriod','groupAuditFrom','groupAuditTo','changesFrom','changesTo'];
 function buildUnified(source){
  if(/analiz-unified-sql|tauri-bridge\.js/.test(source))throw Error('Настольные скрипты уже присутствуют.');
@@ -7,6 +8,11 @@ function buildUnified(source){
  const presentation=inline.find(item=>item[1].includes('const state =')&&item[1].includes('window.appReady=main();'));
  if(!presentation)throw Error('Original interface presentation markers changed');
  let script=presentation[1].replace('window.appReady=main();','').replace(/\r\n/g,'\n');
+ // Fresh desktop installations follow the reference theme. Saved preferences,
+ // including an explicit system theme, continue through the original helper.
+ const appearanceDefault="legacy?(savedTheme==='neon'?'dark':'light'):'system'";
+ if(!script.includes(appearanceDefault))throw Error('Desktop appearance default changed');
+ script=script.replace(appearanceDefault,"legacy?(savedTheme==='neon'?'dark':'light'):(!savedTheme&&!savedPalette&&!savedDesign?'dark':'system')");
  // The standalone browser UI stays unchanged; only the installed SQL presentation
  // must not describe a fractional quantity/volume as a count of completed jobs.
  const metricMarker="function metricTitle(metric){return {count:'Количество',amount:'Сумма',average:'Средняя сумма на одну работу'}[metric]||metric;}";
@@ -117,7 +123,16 @@ function buildUnified(source){
  html=html.replace('>Скачать группы (JSON)</button>','>Экспорт групп</button>').replace('>Импорт групп JSON<input','>Импорт групп<input').replace('Добавить справочник услуг из Excel\n','Импорт справочника Excel\n');
  const catalog=html.match(/<div class="catalog-toolbar">[\s\S]*?<\/div>/);
  if(catalog){html=html.replace(catalog[0],'');const groups=html.indexOf('id="importGroups"');const end=html.indexOf('</div>',groups);if(groups<0||end<0)throw Error('Missing group import toolbar');html=html.slice(0,end)+catalog[0]+html.slice(end);}
- const modules=['unified-original','unified-horizontal-bars','native-errors','native-period-selection','app-status','unified-base','unified-coverage','unified-management','unified-reports','native-metric-kinds','unified-extended','unified-analytics','unified-app','updates'];
+ // Mount the reference and the existing SQL forms in one document. Moving the
+ // native workspace between the panel and the modal preserves inputs and listeners.
+ const nativeStart=html.indexOf('<header class="topbar">');
+ const nativeEnd=html.indexOf('<section id="printReport"');
+ if(nativeStart<0||nativeEnd<nativeStart)throw Error('Missing native workspace layout');
+ const reference=fs.readFileSync(path.join(__dirname,'reference-shell.html'),'utf8');
+ const workspace=html.slice(nativeStart,nativeEnd);
+ html=html.slice(0,nativeStart)+reference.replace('<div id="refNative"></div>',()=>'<div id="refNative">'+workspace+'</div>')+html.slice(nativeEnd);
+ html=html.replace('</head>','<link rel="stylesheet" href="tauri-reference-shell.css"><link rel="stylesheet" href="tauri-reference-detail.css"></head>');
+ const modules=['unified-original','unified-horizontal-bars','native-errors','native-period-selection','app-status','unified-base','unified-coverage','unified-management','unified-reports','native-metric-kinds','unified-extended','unified-analytics','reference-calendar','reference-detail','reference-results','reference-filters','reference-desktop','unified-app','updates'];
  html=html.replace('</body>',modules.map(name=>'<script src="tauri-'+name+'.js"></script>').join('\n')+'\n</body>');
  return {html,script};
 }

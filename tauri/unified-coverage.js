@@ -86,7 +86,13 @@ async function render(root,s,active){
   const heading=el('h4',(organization||'Без распознанного подразделения')+' · '+range(period.start,period.end));heading.setAttribute('tabindex','-1');
   const content=el('div'),close=()=>{if(!current())return;inspectionSequence++;root.hidden=true;trigger.focus?.();};
   root.hidden=false;root.replaceChildren(heading,button('Закрыть подробности',close),content);heading.focus?.({preventScroll:true});root.scrollIntoView?.({block:'nearest'});
-  root.onkeydown=event=>{if(event.key==='Escape')close();};
+  root.onkeydown=event=>{
+   if(event.key!=='Escape')return;
+   const detail=event.target.closest?.('details[open]');
+   if(detail&&root.contains(detail)){detail.open=false;detail.querySelector('summary')?.focus();}
+   else close();
+   event.preventDefault?.();event.stopPropagation?.();
+  };
   async function load(positions=[null]){
    const request=++listSequence;content.replaceChildren(el('p','Загрузка отчётов…','muted small'));
    const valid=()=>current()&&request===listSequence;

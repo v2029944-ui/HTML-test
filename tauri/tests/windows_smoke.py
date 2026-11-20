@@ -9,6 +9,8 @@ from test_daily_wide import wide_xlsx
 from test_import_controls import daily_workbook_bytes
 sys.path.insert(0,str(ROOT/'tauri'/'examples'))
 from make_metric_xlsx import create_example
+from reference_smoke import check_reference
+from reference_data_smoke import check_reference_data
 
 def diagnostics(error):
     output=ROOT/'tauri/test-artifacts';output.mkdir(exist_ok=True)
@@ -279,9 +281,17 @@ def ready(page, count):
         && window.unifiedOriginal.state.reports.length===0
         && !document.querySelector('#legacyWorkspaceLink,#openNativeWorkspace,#sqlStartupPreference');
     }''')
-    assert page.locator('#dashboard.view.active').is_visible()
+    expect(page.locator('#s1')).to_be_visible()
+    assert page.locator('#dashboard').evaluate("el=>el.classList.contains('active')")
     assert api(page,'nativeSettingsBootstrap')['reports']==count
     wait_for_text(page,'#unifiedIndexStatus',f'Отчётов: {count} · Локальная база SQLite',90_000)
+
+
+def open_full_workspace(page):
+    page.locator('#refData').click()
+    page.locator('#sheet').get_by_role('button',name='Исходный макет',exact=True).click()
+    expect(page.locator('#refWorkspaceDialog')).to_be_visible()
+    expect(page.locator('#dashboard.view.active')).to_be_visible()
 
 
 def check_runtime(page):
@@ -425,6 +435,16 @@ def check_report_views(page):
     assert leap.evaluate('el => document.activeElement===el')
     page.get_by_role('button',name='Закрыть подробности месяца',exact=True).click()
     assert month.evaluate('el => document.activeElement===el')
+    month.click()
+    leap.click()
+    detail.get_by_role('button',name='Закрыть подробности дня',exact=True).focus()
+    page.keyboard.press('Escape')
+    expect(leap).to_be_focused()
+    expect(detail.get_by_role('heading',name='2024-02-29',exact=True)).to_have_count(0)
+    page.keyboard.press('Escape')
+    expect(month).to_be_focused()
+    expect(page.locator('#refWorkspaceDialog')).to_be_visible()
+    expect(leap).to_have_count(0)
 
 
 def check_metrics(page, temporary):
@@ -460,6 +480,7 @@ def dashboard_month(page):
     page.locator('#unifiedSource').select_option('daily')
     page.locator('#periodType').select_option('month')
     wait_for_app_state(page,'document.getElementById("overviewPeriod").type==="month"','Monthly period input')
+    page.locator('#overviewMode').select_option('single')
     page.locator('#overviewPeriod').fill('2024-02')
     wait_for_app_state(page,
         'window.unifiedUI.scope?.from==="2024-02-01" && window.unifiedUI.scope?.to==="2024-02-29" '
@@ -766,7 +787,7 @@ def check_extended(page):
     page.emulate_media(media='print')
     try:
         assert page.evaluate('getComputedStyle(document.body).backgroundColor')=='rgb(255, 255, 255)'
-        assert not page.locator('main').is_visible()
+        assert not page.locator('main.container').is_visible()
     finally:
         page.emulate_media(media='screen')
     page.locator('#advancedAnalytics > summary').click()
@@ -1096,6 +1117,9 @@ def run():
             snapshot=tmp/'online-backup.sqlite3'
             with installed_page() as (page,engine,pid):
                 ready(page,0)
+                check_reference(page,output,False)
+                report['checks'].append('Reference interface walkthrough and close/cancel/focus checks on an empty database')
+                open_full_workspace(page)
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 entry_url=page.url
                 check_runtime(page)
@@ -1122,6 +1146,10 @@ def run():
                 import_year(page,workbook,confirmations)
                 assert workbook.read_bytes()==original_xlsx
                 check_report_views(page)
+                page.locator('#refWorkspaceClose').click()
+                page.locator('#sheet').get_by_role('button',name='Закрыть',exact=True).click()
+                check_reference_data(page,output)
+                open_full_workspace(page)
                 report['checks'].append('Native Excel confirmation blocks writes, Cancel preserves SQLite, and OK imports 366 reports with 50-card pagination and a 29-day calendar')
                 check_analytics(page,tmp,output)
                 report['checks'].append('Daily-source annual and February totals, exact work and organization filters, missing-week analytics, 200% zoom and responsive widths, and protected UTF-8 CSV')
@@ -1146,6 +1174,9 @@ def run():
 
             with installed_page() as (page,_,pid):
                 ready(page,366)
+                check_reference(page,output,True)
+                report['checks'].append('Reference views, SQL data scenarios, exports, printing and close/cancel/focus checks after actual native XLSX import')
+                open_full_workspace(page)
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 report['navigation_after_restart']=page.locator('.view.active').get_attribute('id')
                 assert report['navigation_before_restart']=='upload' and report['navigation_after_restart']=='dashboard'
@@ -1167,6 +1198,7 @@ def run():
 
             with installed_page() as (page,_,_):
                 ready(page,366)
+                open_full_workspace(page)
                 restored=tmp/'after-restore.sqlite3'
                 api(page,'nativeBackupSqlite',str(restored))
                 assert backup_contents(restored)==original,'Recovery did not restore the backed-up reports, settings and metric data'

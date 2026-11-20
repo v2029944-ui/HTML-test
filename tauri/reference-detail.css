@@ -1,0 +1,52 @@
+/* One SQL workspace is mounted inside the chosen tab. Its full presentation
+   remains available in the original layout dialog. */
+#refNative[data-panel] > .topbar,
+#refNative[data-panel] > .container > :is(.pagehead,.tabs,.mobile-help),
+#refNative[data-panel] #dashboard > :not(#advancedAnalytics),
+#refNative[data-panel] #advancedAnalytics > summary,
+#refNative[data-panel] #advancedAnalytics > .work-view-switcher,
+#refNative[data-panel]:not([data-panel="chartPanel"]) #chartPanel,
+#refNative[data-panel]:not([data-panel="structurePanel"]) #structurePanel,
+#refNative[data-panel]:not([data-panel="comparison"]) #comparison,
+#refNative[data-panel]:not([data-panel="usualPanel"]) #usualPanel,
+#refNative[data-panel]:not([data-panel="regularityPanel"]) #regularityPanel {display:none!important}
+#refNative[data-panel] {min-width:0;color:var(--text);font-family:var(--font-body,Inter,system-ui,sans-serif)}
+#refNative[data-panel] > main.container {display:block;position:static;padding:0;width:100%;max-width:none;margin:0;min-height:0}
+#refNative[data-panel] #advancedAnalytics {margin:0;padding:0;border:0;background:transparent}
+#refNative[data-panel] :is(.view,.panel,.sectionbar,.chart-wrap,.extended-filters,.import-controls,.table-scroll) {min-width:0;max-width:100%}
+#refNative[data-panel] .panel {box-shadow:none;margin:0 0 14px;border:1px solid var(--border);border-radius:var(--radius-panel,14px);background:var(--surface);color:var(--text)}
+#refNative[data-panel] .view.active {display:grid;gap:12px}
+#refNative[data-panel] .view.active > .panel {margin:0}
+#refNative[data-panel] :is(button,select,input,label,summary) {overflow-wrap:anywhere}
+#refNative[data-panel] .chart-view-controls {grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr))}
+#refNative[data-panel] .table-scroll {overflow-x:auto}
+#refNative[data-panel] :is(td,th) {font-variant-numeric:tabular-nums}
+#refNative[data-panel] .comparison-warning {display:grid;gap:6px;margin:12px 0;padding:12px 14px;border-left:3px solid var(--warning);background:var(--warning-bg,var(--subtle));color:var(--text)}
+#refNative[data-panel] .comparison-warning :is(p,details) {margin:0}
+#refNative[data-panel] .comparison-warning button {justify-self:start}
+#refNative .detail-date-scope {display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;color:var(--muted);margin:8px 0 14px}
+#refNative .detail-date-scope button {font:inherit;color:var(--accent);text-decoration:underline;background:transparent;border:none;cursor:pointer}
+#refNative[data-panel] .change-pagination {flex-wrap:wrap;align-items:center}
+#refNative[data-panel] .change-pagination :is(button,span) {padding:6px 10px}
+@media(max-width:640px) {
+  #refNative[data-panel] .sectionbar {flex-wrap:wrap}
+  #refNative[data-panel] .panel {padding:12px}
+  #refNative[data-panel] .change-pagination {max-width:100%;height:auto}
+}
+#refNative:not([data-panel="chartPanel"]) [data-reference-line],
+#refNative[data-panel="chartPanel"] .ref-hide-orientation,
+#refNative:not([data-panel]) .detail-date-scope {display:none!important}
+#refNative:not([data-panel="comparison"]) #refComparisonDates,
+#refNative[data-panel="comparison"] #periodComparisonFilters.ref-local-date-fields,
+#refComparisonDates[hidden] {display:none!important}
+#refComparisonDates {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:10px;margin:14px 0;align-items:start}
+#refComparisonDates .ref-cmp-presets {grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px}
+#refComparisonDates .ref-comparison-card {padding:10px 12px;margin:0;border:1px solid var(--border);border-radius:var(--radius-control);display:flex;gap:8px;flex-wrap:wrap;align-items:end;min-width:0}
+#refComparisonDates .ref-comparison-card > div {display:grid;gap:3px}
+#refComparisonDates legend {font-weight:650;padding-inline:4px}
+#refComparisonDates [data-lengths] {grid-column:1/-1;margin:0}
+#refComparisonDates [data-reset-base] {justify-self:start}
+#refComparisonDates [aria-pressed=true] {background:var(--selected);border-color:var(--accent)}
+#refNative:not([data-panel="comparison"]) #refComparisonModes,
+#refNative[data-panel="comparison"] #comparison .section-filter-row > label:has(> #comparisonMode) {display:none!important}
+#refComparisonModes {width:fit-content;max-width:100%;display:flex;flex-wrap:wrap}

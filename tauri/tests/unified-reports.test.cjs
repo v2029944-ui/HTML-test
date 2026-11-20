@@ -174,3 +174,18 @@ test('saved daily-folder rule stays saved when view refresh fails',async()=>{
  assert.match(ui.nodes.unifiedImportStatus.textContent,/Правило файла сохранено в SQLite/);
  assert.doesNotMatch(ui.nodes.unifiedImportStatus.textContent,/Правило не сохранено/);
 });
+
+test('choosing a report calendar year loads the confirmed year and keeps the same focus target',async()=>{
+ const years=[],ui=mount({unifiedCalendar:async(_revision,year)=>{years.push(year);return {days:[]};}});
+ let open;
+ ui.window.referenceCalendar={open:options=>{open=options;}};
+ await ui.refresh();
+ const first=years.at(-1),button=ui.nodes.referenceReportYear;
+ await button.click();assert.equal(open.anchor,button);assert.equal(open.unit,'year');
+ assert.equal(open.initial,String(first)+'-01-01');assert.equal(years.length,1);
+ assert.equal(open.allowed.has('9999-01-01'),false);assert.equal(open.allowed.has('0001-01-01'),true);
+ open.apply('2020-01-01');await flush();
+ assert.deepEqual(years,[first,2020]);assert.equal(ui.nodes.referenceReportYear,button);
+ assert.equal(ui.nodes.calendarRange.children[0],button);assert.match(button.textContent,/2020/);
+ await ui.nodes.calendarNext.click();await flush();assert.equal(years.at(-1),2021);
+});

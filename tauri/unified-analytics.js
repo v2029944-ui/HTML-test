@@ -136,9 +136,9 @@ function drawOverview(result,organizations,s,before){
  insights.append(UI.el('p','Единицы суммы и количества / объёма необходимо сверять с источником. Дробное количество может означать объём, а не число работ.','muted small'));
  printCapture={revision:s.revision,scope:s,before,summary,organizations,result};
 }
-async function calculate(){
+async function calculate(shared=null){
  const mine=++ticket,revision=UI.revision;invalidateScope();$('printSummary').disabled=true;for(const id of ['overviewKpis','overviewInsights','overviewOrganizations','overviewAlerts'])clear(id,'Загрузка…');
- try{if(!Number.isSafeInteger(revision))throw Error('Дождитесь подготовки данных.');layout();const displayType=value('periodType'),source=value('unifiedSource'),range=UI.range(displayType,value('rangeStart'),value('rangeEnd'),source);if(!range||!orgs().length)throw Error('Выберите корректный период и подразделения.');const s={...range,revision,organizations:orgs(),selectedNames:[],selectedKeys:[],allNames:false,nameRows:[]},before=chosenBaseRange(s);if(!before)throw Error('Базовый период выходит за допустимые календарные границы.');s.baseFrom=before.from;s.baseTo=before.to;s.overviewMode=value('overviewMode');scope=s;
+ try{if(!Number.isSafeInteger(revision))throw Error('Дождитесь подготовки данных.');layout();const displayType=value('periodType'),source=value('unifiedSource'),range=shared?{displayType,source,type:shared.type,from:shared.from,to:shared.to}:UI.range(displayType,value('rangeStart'),value('rangeEnd'),source);if(!range||!orgs().length)throw Error('Выберите корректный период и подразделения.');const s={...range,revision,organizations:orgs(),selectedNames:[],selectedKeys:[],allNames:false,nameRows:[]},before=shared?{...range,from:shared.baseFrom,to:shared.baseTo}:chosenBaseRange(s);if(!before)throw Error('Базовый период выходит за допустимые календарные границы.');s.baseFrom=before.from;s.baseTo=before.to;s.overviewMode=value('overviewMode');scope=s;
   const [overview,organizations]=await Promise.all([api.nativeAnalysisCompare(revision,s.type,before.from,before.to,s.from,s.to,s.organizations,null,null),api.nativeAnalysisOrganizations(revision,s.type,s.from,s.to,s.organizations,null,null)]);
   if(!valid(mine,revision))return;drawOverview(overview,organizations,s,before);
    if(!overview.summary.after.complete)void suggestWeeklyReports(s);
@@ -147,11 +147,15 @@ async function calculate(){
  }catch(error){if(valid(mine,revision)){scope=null;for(const id of ['overviewKpis','overviewInsights','overviewOrganizations'])clear(id);clear('overviewAlerts','Не удалось загрузить обзор. '+errorText(error));for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id);}}
 }
 function descriptors(points,granularity,s){const kind=granularity==='period'?s.displayType:granularity;return points.map(p=>{const start=p.start.length===7?p.start+'-01':p.start;return {type:kind,start,end:O.periodEnd(start,kind)};});}
-function confirmedZero(point){return point&&point.missing===0&&point.total?.count===0&&point.total?.amount===0;}
+function confirmedZero(point){return point&&point.missing===0&&point.has_activity!==true&&point.total?.count===0&&point.total?.amount===0;}
 function plotSection(root,metric,title=titles[metric]){const section=UI.el('section',null,'metric-chart'),plot=UI.el('div',null,'metric-plot');section.append(UI.el('h3',title),plot);root.append(section);return plot;}
 async function renderCharts(positions=seriesPositions){
  const mine=++chartTicket;
- layout();if(value('workViewMode')==='composition'||!scope||scope.revision!==UI.revision)return;const s={...scope,organizations:orgs(),selectedNames:allNames?[]:[...selectedRows.values()].map(r=>r.name),allNames},revision=s.revision;
+ layout();
+ if(window.referenceDetail?.active&&window.referenceDetail.active!=='chartPanel')return;
+ if(value('workViewMode')==='composition'||!scope||scope.revision!==UI.revision)return;const s={...scope,organizations:orgs(),selectedNames:allNames?[]:[...selectedRows.values()].map(r=>r.name),allNames},revision=s.revision;
+ // The reference detail charts daily observations even when the shell selects a whole week or month.
+ if(window.referenceDetail?.active==='chartPanel'&&s.source==='daily')s.displayType='day';
  const isCurrent=()=>chartTicket===mine&&UI.revision===revision;
  for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id,'Загрузка…');
  try{if(!allNames&&!selectedRows.size)throw Error('Выберите хотя бы одну работу или группу.');
@@ -235,5 +239,19 @@ function init(){if(initialized)return;initialized=true;state.selectedMetrics=sta
  $('advancedAnalytics').addEventListener('toggle',()=>{if($('advancedAnalytics').open)void renderCharts();});$('printSummary').addEventListener('click',print);
  UI.onSnapshot(configure);UI.onView('dashboard',()=>{if(!scope&&UI.snapshot)void configure(UI.snapshot);});
 }
-window.unifiedAnalytics=Object.freeze({init});
+// Apply the shared shell filters in one revision. Dispatching several native change
+// events here would publish transient mixtures of old and new date boundaries.
+function applyReferenceScope(shared){
+ if(!shared||shared.revision!==UI.revision){++ticket;invalidateScope();return;}
+ const kind=shared.displayType;
+ $('periodType').value=kind;$('unifiedSource').value=shared.source;$('overviewMode').value=shared.overviewMode;
+ for(const [id,date] of [['rangeStart',shared.from],['rangeEnd',shared.to],['overviewPeriod',shared.from],['analysisBasePeriod',shared.baseFrom]])UI.setPeriodInput(id,kind,date);
+ $('analysisBasePeriod').dataset.userSelected='true';
+ state.selectedOrganizations=new Set(shared.organizations);
+ state.selectedMetrics=new Set([shared.metric]);
+ selectedRows=new Map(shared.nameRows.map(row=>[row.key,row]));
+ allNames=shared.allNames;selectionReady=true;seriesPositions=[null];namePositions=[null];
+ filters();selectionCount();return calculate(shared);
+}
+window.unifiedAnalytics=Object.freeze({init,applyReferenceScope});
 })();

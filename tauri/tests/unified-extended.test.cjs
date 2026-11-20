@@ -268,3 +268,44 @@ test('confirmed zero comparison retains real values and matching CSV columns',as
  assert.equal(fx.tables.length,2);for(const table of fx.tables){assert.deepEqual(Array.from(table.options.csvRows[1]),['Zero',0,0,0,null]);assert.equal(table.headers.length,table.options.csvRows[1].length);assert.equal(table.rows[1][1],'0');assert.equal(table.rows[1][2],'0');assert.equal(table.rows[1][4],'—');}
  assert.match(fx.nodes.get('comparisonTable').textContent,/Предыдущая/);
 });
+
+test('reference comparison uses exact shared intervals and excludes unavailable organizations from SQL totals and rows',async()=>{
+ const requests=[],applied=[],exports=[];
+ const total={complete:true,periods:1,missing:0,total:{count:1,amount:15,average:15}};
+ const f=fixture({
+  nativeAnalysisOrganizations:async(_rev,_kind,from,to)=>[
+   {org:'A',complete:true,missing:0},{org:'B',complete:from==='2024-01-01',missing:from==='2024-01-01'?0:1}
+  ],
+  nativeAnalysisCompare:async(...args)=>{requests.push(args);return {summary:{before:total,after:total}};},
+  unifiedComparisonPage:async(req)=>{assert.deepEqual([...req.organizations],['A']);return [];},
+  chooseCsvPath:async()=>'/tmp/ref.csv',referenceDetailCsv:async(...args)=>exports.push(args)
+ });
+ f.window.referenceDetail={active:'comparison'};f.window.referenceFilters={setOrganizations:names=>applied.push(...names)};
+ f.publish({from:'2024-01-10',to:'2024-01-20',baseFrom:'2024-01-01',baseTo:'2024-01-04',organizations:['A','B']});
+ await f.window.unifiedExtended.openComparison();
+ assert.deepEqual(requests[0].slice(2,6),['2024-01-01','2024-01-04','2024-01-10','2024-01-20']);
+ assert.deepEqual([...requests[0][6]],['A']);
+ const exportView=f.tables[0].options.csvContext;
+ await exportView.export();
+ assert.deepEqual([...exports[0][0].request.organizations],['A']);assert.equal(exports[0][0].section,'comparison');
+ assert.deepEqual({...exports[0][0].before},{from:'2024-01-01',to:'2024-01-04'});assert.equal(exports[0][1],'/tmp/ref.csv');
+ const note=f.nodes.get('comparisonCoverage').children[0];
+ assert.match(note.textContent,/Сопоставимые подразделения: 1 из 2/);
+ note.children.at(-1).dispatch('click');assert.deepEqual(applied,['A']);
+ f.window.referenceDetail.active='storage';await assert.rejects(exportView.export(),/изменились/);assert.equal(exports.length,1);
+});
+
+test('reference regularity sends the chosen calendar-day baseline and never calculates an empty sample as all organizations',async()=>{
+ const calls=[];
+ const f=fixture({
+  nativeAnalysisOrganizations:async()=>[{org:'A',complete:false,missing:1}],
+  unifiedPatternPage:async(...args)=>{calls.push(args);return {rows:[],total_rows:0};}
+ });
+ f.window.referenceDetail={active:'regularityPanel'};
+ f.publish({from:'2024-02-01',to:'2024-02-29',displayType:'month',baseFrom:'2023-02-01',baseTo:'2023-02-28'});
+ f.nodes.get('regularityPanel').open=true;f.nodes.get('regularityPanel').dispatch('toggle');await settle();
+ assert.equal(calls.length,0);assert.match(f.nodes.get('regularityCoverage').textContent,/Нет сопоставимых подразделений/);
+ f.UI.api.nativeAnalysisOrganizations=async()=>[{org:'A',complete:true,missing:0}];
+ f.nodes.get('regularityPanel').dispatch('toggle');await settle();
+ assert.equal(calls.length,1);assert.equal(calls[0][0].displayType,'day');assert.deepEqual({...calls[0][3].baseline},{from:'2023-02-01',to:'2023-02-28'});
+});

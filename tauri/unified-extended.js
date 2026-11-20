@@ -48,22 +48,35 @@ function setDate(id,kind,date,force=false){const node=$(id);if(node&&(!node.data
 function copyScope(next){return {...next,organizations:[...next.organizations],selectedNames:[...(next.selectedNames||[])],selectedKeys:[...(next.selectedKeys||[])]};}
 function scopeFor(range,overrides={}){return {...copyScope(scope),...range,...overrides};}
 function request(s,overrides={}){return UI.request(s,overrides);}
+function fullExport(task,req,section,metric,fields={}){
+ const spec={request:req,section,metric,...fields},panel=window.referenceDetail?.active;
+ if(!panel)return null;
+ const current=()=>task.valid()&&window.referenceDetail.active===panel;
+ return {export:async()=>{
+  if(!current())throw Error('Параметры анализа изменились. Рассчитайте заново.');
+  const path=await api.chooseCsvPath(section+'-'+metric+'-'+req.query.from+'-'+req.query.to+'.csv');
+  if(!path)return;
+  if(!current())throw Error('Данные изменились. Рассчитайте заново.');
+  await api.referenceDetailCsv(spec,path);
+ }};
+}
 function dateLabel(iso){return /^\d{4}-\d{2}-\d{2}$/.test(iso)?iso.slice(8,10)+'.'+iso.slice(5,7)+'.'+iso.slice(0,4):iso;}
 function visibleEnd(range){return range.source==='daily'?range.to:periodEnd(range.to,range.displayType);}
 function caption(range){const end=visibleEnd(range);return dateLabel(range.from)+(end!==range.from?' — '+dateLabel(end):'');}
 function periodLabel(start,kind){return dateLabel(start)+(kind==='week'?' — '+dateLabel(periodEnd(start,'week')):'');}
 function workLabel(name){return String(name).trim().replace(/,\s*$/,'');}
-function itemButton(entry,s,organization=null,target='analytics'){const button=UI.el('button',workLabel(entry.name)+(entry.kind==='group'?' (группа)':''),'service-link text-button');button.type='button';button.addEventListener('click',()=>history(entry,s,organization,target));return button;}
+function itemButton(entry,s,organization=null,target='analytics'){const button=UI.el('button',workLabel(entry.name)+(entry.kind==='group'?' (группа)':''),'service-link text-button');button.type='button';button.addEventListener('click',()=>history(entry,s,organization,target,button));return button;}
 function plotTimeline(result,entry,s,root,chosenMetrics,seriesType){
  const points=result.points||[],kind=result.granularity==='period'?s.displayType:result.granularity;
  const periods=points.map(p=>{const start=p.start.length===7?p.start+'-01':p.start;return {type:kind,start,end:periodEnd(start,kind)};});
  const data=points.map(p=>p.missing===0?new Map([[entry.key,p.total]]):null);
  for(const metric of chosenMetrics){const section=UI.el('section',null,'metric-chart'),plot=UI.el('div',null,'metric-plot');section.append(UI.el('h3',titles[metric]),plot);root.append(section);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'bar',orientation:orientation(),categories:[entry.key],data,label:()=>entry.name,seriesType});}
 }
-async function history(entry,s,organization,target){
+const historyTriggers=new Map();
+async function history(entry,s,organization,target,trigger){
  if(!entry.key||entry.other)return;
  const prefix=target==='change'?'change':'analytics',panel=$(prefix==='change'?'changeDetails':'analyticsDetails'),title=$(prefix==='change'?'changeDetailTitle':'analyticsDetailTitle'),content=$(prefix==='change'?'changeDetailContent':'analyticsDetailContent');
- if(!panel||!content)return;panel.hidden=false;title.textContent=entry.name+(organization?' · '+organization:'');
+ if(!panel||!content)return;historyTriggers.set(prefix,trigger);panel.hidden=false;title.textContent=entry.name+(organization?' · '+organization:'');
  const task=loading(prefix+'History',[content.id]);
  try{const result=await api.nativeWorkTimeline(s.revision,s.type,s.from,s.to,s.organizations,organization,entry.key,null,s.source==='daily'?s.displayType:null,s.selectedNames||[]);if(!task.valid())return;content.replaceChildren();content.append(UI.el('p','Динамика за '+caption(s)+'. Пропуски не считаются нулём. Данные представлены по периодам.','muted small'));plotTimeline(result,entry,s,content,target==='change'?[...changeMetrics]:metrics());title.focus?.({preventScroll:true});panel.scrollIntoView?.({block:'nearest'});}
  catch(error){task.error(error);}finally{task.done();}
@@ -140,21 +153,63 @@ async function changes(positions=[null]){
   task.s.captured=captured;pager('changes',result,positions,result.next);
  }catch(error){task.error(error);}finally{task.done();}
 }
-function comparisonRanges(){const ranges=value('periodComparisonScope')==='range';return {before:fieldsRange(ranges?'baseRangeStart':'basePeriod',ranges?'baseRangeEnd':'basePeriod'),after:fieldsRange(ranges?'currentRangeStart':'currentPeriod',ranges?'currentRangeEnd':'currentPeriod')};}
+function referencePanel(id){return window.referenceDetail?.active===id;}
+function sharedRanges(){
+ return {before:{...scope,from:scope.baseFrom,to:scope.baseTo},after:{...scope}};
+}
+function comparisonRanges(){
+ const local=window.referenceDetail?.currentComparison?.();
+ if(local)return {before:{...scope,...local.before},after:{...scope,...local.after}};
+ const ranges=value('periodComparisonScope')==='range';
+ if(referencePanel('comparison')&&scope.baseFrom&&scope.baseTo&&
+    !['periodComparisonScope','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd'].some(id=>$(id).dataset.unifiedTouched))return sharedRanges();
+ return {before:fieldsRange(ranges?'baseRangeStart':'basePeriod',ranges?'baseRangeEnd':'basePeriod'),after:fieldsRange(ranges?'currentRangeStart':'currentPeriod',ranges?'currentRangeEnd':'currentPeriod')};
+}
+// Coverage is independent of the work filter. A missing range response never
+// contributes a zero-valued member to the comparable sample.
+async function sampleFor(s,ranges){
+ const pages=await Promise.all(ranges.map(range=>api.nativeAnalysisOrganizations(s.revision,s.type,range.from,range.to,s.organizations,null,null)));
+ const complete=pages.map(rows=>new Set(rows.filter(row=>row.complete).map(row=>row.org)));
+ const included=s.organizations.filter(org=>complete.every(list=>list.has(org)));
+ return {included,excluded:s.organizations.filter(org=>!included.includes(org)),pages};
+}
+function sampleNote(root,sample,apply=false){
+ if(!sample?.excluded.length)return;
+ const banner=UI.el('div',null,'comparison-warning'),total=sample.included.length+sample.excluded.length;
+ banner.append(UI.el('strong',sample.included.length?'Сопоставимые подразделения: '+sample.included.length+' из '+total:'Нет сопоставимых подразделений'),
+  UI.el('p','Исключены из расчёта: '+sample.excluded.join(', ')+'.'));
+ const reasons=UI.el('details');reasons.append(UI.el('summary','Причины по подразделениям'));
+ sample.pages.forEach((rows,index)=>{for(const org of sample.excluded){
+  const row=rows.find(item=>item.org===org);
+  if(!row?.complete)reasons.append(UI.el('p',org+' · '+(sample.pages.length===1?'анализируемый период':index===0?'базовый период':'анализируемый период')+' · '+(row?'пропусков: '+row.missing:'нет отчёта')));
+ }});
+ banner.append(reasons);
+ if(apply&&sample.included.length){const button=UI.el('button','Сравнить без '+sample.excluded.join(', '),'button secondary');
+  button.type='button';button.addEventListener('click',()=>{
+   window.referenceFilters.setOrganizations(sample.included);const heading=$('comparisonHeading');heading.tabIndex=-1;heading.focus();
+  });banner.append(button);
+ }
+ root.append(banner);
+}
 function comparisonLayout(){const organizations=value('comparisonMode')==='organizations',ranges=value('periodComparisonScope')==='range',orgRange=value('comparisonScope')==='range';
  $('periodComparisonFilters').hidden=organizations;$('orgComparisonFilters').hidden=!organizations;$('kpis').hidden=organizations;$('comparisonCharts').hidden=!organizations;$('comparisonDynamics').hidden=!organizations;$('contributions').hidden=organizations;
  $('periodComparisonSingle').hidden=ranges;$('periodComparisonRanges').hidden=!ranges;$('comparisonPeriodLabel').hidden=orgRange;$('comparisonRangeGroup').hidden=!orgRange;
 }
 function addBoundedPager(root,s,rows,run){const bar=UI.el('div',null,'change-pagination'),prev=UI.el('button','← Предыдущая','button secondary'),next=UI.el('button','Следующая →','button secondary');prev.type=next.type='button';prev.disabled=s.positions.length<=1;next.disabled=rows.length<50;prev.addEventListener('click',()=>run(s.positions.slice(0,-1)));next.addEventListener('click',()=>run([...s.positions,rows.at(-1).key]));bar.append(prev,UI.el('span','Страница '+s.positions.length,'muted small'),next);root.append(bar);}
 async function comparison(positions=[null]){
+ if(window.referenceDetail?.active&&!referencePanel('comparison'))return;
  comparisonLayout();if(!scope)return;
  const task=loading('comparison',['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis']);$('analyticsDetails').hidden=true;
  try{if(!selected())throw Error('Отметьте работы или группы для сравнения.');
   if(value('comparisonMode')==='organizations'){await departmentComparison(task,positions);return;}
-  const {before,after}=comparisonRanges(),s=scopeFor(after),req=request(s,{percent:0,min_count:0,min_amount:0});
+  const {before,after}=comparisonRanges(),s=scopeFor(after);
+  const sample=referencePanel('comparison')?await sampleFor(s,[before,after]):null;
+  if(!task.valid())return;
+  if(sample?.included.length)s.organizations=sample.included;
+  const req=request(s,{percent:0,min_count:0,min_amount:0});
   const [dashboard,page]=await Promise.all([api.nativeAnalysisCompare(s.revision,s.type,before.from,before.to,after.from,after.to,s.organizations,null,s.selectedNames),api.unifiedComparisonPage(req,{from:before.from,to:before.to},null,positions.at(-1),50)]);
   if(!task.valid())return;for(const id of ['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis'])clear(id);
-  const summary=dashboard.summary;
+  const summary=dashboard.summary;sampleNote($('comparisonCoverage'),sample,true);
   $('comparisonHelp').textContent='Второй интервал сравнивается с первым по отмеченным работам. Прочерк — неполные данные; при нулевой базе процент не рассчитывается.';
   for(const [label,total] of [['Первый интервал',summary.before],['Второй интервал',summary.after]])$('comparisonCoverage').append(UI.el('p',label+': '+(total.complete?'Полные данные':'Неполные данные')+' · периодов '+total.periods+', пропусков: '+total.missing+' (подразделение × период)',total.complete?'muted small':'warn small'));
   const beforeComplete=summary.before.complete,afterComplete=summary.after.complete;
@@ -182,7 +237,7 @@ async function comparison(positions=[null]){
     for(const entry of visible){const value=(entry[metric]||{})[showAfter?'current':'base'];
      rows.push([itemButton(entry,s),fmt(value,metric)]);raw.push([entry.name,value]);}
     UI.table($('comparisonTable'),metric,caption(showAfter?after:before),
-     ['Работа / группа',label],rows,{csvRows:raw});
+     ['Работа / группа',label],rows,{csvRows:raw,csvContext:fullExport(task,req,'comparison',metric,{before:{from:before.from,to:before.to}})});
     continue;
    }
    const raw=[['Итого по выбранным работам',valueBefore,valueNow,...rawDifference(valueNow,valueBefore)]];
@@ -195,16 +250,24 @@ async function comparison(positions=[null]){
     raw.push([entry.name,m.base,m.current,m.delta,m.percent]);
    }
    UI.table($('comparisonTable'),metric,caption(before)+' / '+caption(after),
-    ['Работа / группа','Значение раньше','Значение сейчас','Разница','Изменение, %'],rows,{csvRows:raw});
+    ['Работа / группа','Значение раньше','Значение сейчас','Разница','Изменение, %'],rows,{csvRows:raw,csvContext:fullExport(task,req,'comparison',metric,{before:{from:before.from,to:before.to}})});
   }
   task.s.positions=positions;addBoundedPager($('comparisonTable'),task.s,page,comparison);
   if($('contributions').open)contributions();
  }catch(error){task.error(error);}finally{task.done();}
 }
 async function departmentComparison(task,positions){
- const range=value('comparisonScope')==='range'?fieldsRange('comparisonRangeStart','comparisonRangeEnd'):fieldsRange('comparisonPeriod'),s=scopeFor(range),chosen=[...comparisonMetrics],baseOrg=value('comparisonBaseOrg');
+ const range=value('comparisonScope')==='range'?fieldsRange('comparisonRangeStart','comparisonRangeEnd'):fieldsRange('comparisonPeriod'),s=scopeFor(range),chosen=[...comparisonMetrics];let baseOrg=value('comparisonBaseOrg');
  const organizations=await api.nativeAnalysisOrganizations(s.revision,s.type,s.from,s.to,s.organizations,null,s.selectedNames);
  if(!task.valid())return;for(const id of ['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis'])clear(id);
+ if(referencePanel('comparison')){
+  const included=s.organizations.filter(org=>organizations.some(row=>row.org===org&&row.complete)),excluded=s.organizations.filter(org=>!included.includes(org));
+  sampleNote($('comparisonCoverage'),{included,excluded,pages:[organizations]},true);
+  if(!included.length){clear('comparisonTable','Нет подразделений с полным набором отчётов.');return;}
+  s.organizations=included;
+  $('comparisonBaseOrg').replaceChildren(...included.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));
+  baseOrg=included.includes(baseOrg)?baseOrg:included[0];$('comparisonBaseOrg').value=baseOrg;
+ }
  $('comparisonHelp').textContent='Общий интервал для подразделений; разница относительно '+baseOrg+'. При нулевой базе процент не рассчитывается.';
  for(const org of organizations)$('comparisonCoverage').append(UI.el('p',org.org+': '+(org.complete?'Полные данные':'Неполные данные')+' · пропусков '+org.missing,org.complete?'muted small':'warn small'));
  // Bounded selected-name set: each SQL query aggregates one actual service;
@@ -219,7 +282,7 @@ async function departmentComparison(task,positions){
   const makeRaw=(label,values)=>{const base=values.find(o=>o.org===baseOrg)?.total?.[metric];return [label,...s.organizations.flatMap(org=>{const n=values.find(o=>o.org===org)?.total?.[metric]??null;return org===baseOrg?[n]:[n,...rawDifference(n,base)];})];};
   rows.push(make('Итого по выбранным работам',organizations));raw.push(makeRaw('Итого по выбранным работам',organizations));
   for(const item of perName){rows.push(make(itemButton(item.entry,s),item.rows));raw.push(makeRaw(item.entry.name,item.rows));}
-  UI.table($('comparisonTable'),metric,caption(range),['Работа / группа',...s.organizations.flatMap(org=>org===baseOrg?[org]:[org,org+' · разница',org+' · %'])],rows,{csvRows:raw});
+  UI.table($('comparisonTable'),metric,caption(range),['Работа / группа',...s.organizations.flatMap(org=>org===baseOrg?[org]:[org,org+' · разница',org+' · %'])],rows,{csvRows:raw,csvContext:fullExport(task,request(s),'organizations',metric,{baseOrg})});
   const plot=UI.el('div',null,'metric-plot');$('comparisonCharts').append(plot);
   UI.drawChart([{type:s.displayType,start:s.from,end:visibleEnd(s)}],new Set(s.organizations),metric,plot,{chart:'bar',seriesType:'organizations',categories:s.organizations,data:[new Map(organizations.map(o=>[o.org,o.total]))]});
  }
@@ -238,12 +301,20 @@ async function departmentComparison(task,positions){
 async function contributions(positions=[null]){
  const task=loading('contribution',['contributionResults','contributionCheck']);
  try{if(!scope)throw Error('Выберите периоды.');const {before,after}=comparisonRanges(),s=scopeFor(after,{selectedNames:[],allNames:true}),chosen=metrics().filter(m=>m!=='average');
+  if(referencePanel('comparison')){
+   const sample=await sampleFor(s,[before,after]);if(!task.valid())return;
+   if(!sample.included.length){clear('contributionCheck','Нет сопоставимых подразделений.');clear('contributionResults');return;}
+   s.organizations=sample.included;
+  }
   const result=await Promise.all(chosen.map(metric=>positions.at(-1)?.[metric]===false?null:api.nativeCompositionPage(request(s,{percent:0,min_count:0,min_amount:0}),{from:before.from,to:before.to},'contributions',metric,positions.at(-1)?.[metric]||null)));
   if(!task.valid())return;clear('contributionResults');clear('contributionCheck');const next={};
   result.forEach((page,i)=>{const metric=chosen[i];if(!page){next[metric]=false;return;}if(!page.baseComplete||!page.currentComplete){$('contributionCheck').append(UI.el('p','Нет полного набора отчётов для обоих интервалов. Вклад не рассчитывается.','warn small'));return;}
    const check=page.check;$('contributionCheck').append(UI.el('p',titles[metric]+': сумма вкладов '+fmt(check.sum,metric)+'; общее изменение '+fmt(check.delta,metric)+' — '+(check.reconciled?'совпадает':'расхождение '+fmt(check.residual,metric)),check.reconciled?'positive small':'negative small'));
    const rows=page.rows.map(row=>[itemButton(row,{...s,from:before.from<after.from?before.from:after.from,to:before.to>after.to?before.to:after.to}),fmt(row.base,metric),fmt(row.current,metric),delta(row.delta,metric),percent(row.percent),percent(row.contribution)]);
-   UI.table($('contributionResults'),metric,caption(before)+' / '+caption(after),['Услуга / группа','Значение раньше','Значение сейчас','Изменение значения','Изменение, %','Вклад в общее изменение, %'],rows,{totalRow:false,csvRows:page.rows.map(r=>[r.name,r.base,r.current,r.delta,r.percent,r.contribution])});next[metric]=page.next||false;
+   UI.table($('contributionResults'),metric,caption(before)+' / '+caption(after),['Услуга / группа','Значение раньше','Значение сейчас','Изменение значения','Изменение, %','Вклад в общее изменение, %'],rows,{totalRow:false,
+    headerHelp:[null,null,null,'Значение сейчас минус значение раньше.','Изменение относительно модуля прежнего значения.','Изменение работы, делённое на изменение общего итога, в процентах.'],
+    csvContext:fullExport(task,request(s),'contributions',metric,{before:{from:before.from,to:before.to}}),
+    csvRows:page.rows.map(r=>[r.name,r.base,r.current,r.delta,r.percent,r.contribution])});next[metric]=page.next||false;
   });
   const total=Math.max(0,...result.filter(Boolean).map(p=>p.total_rows)),cursor=Object.values(next).some(Boolean)?next:null;pager('contribution',{total_rows:total,next:cursor},positions,cursor);
  }catch(error){task.error(error);}finally{task.done();}
@@ -251,9 +322,18 @@ async function contributions(positions=[null]){
 async function structure(){
  const task=loading('structure',['structureResults']);
  try{if(!scope)throw Error('Выберите период.');if(value('structureScope')!=='all'&&!selected())throw Error('Отметьте работы или выберите все выполненные работы.');
-  const before=fieldsRange('structureBase'),after=fieldsRange('structureCurrent'),metric=value('structureMetric'),s=scopeFor(after,value('structureScope')==='all'?{selectedNames:[],allNames:true}:{});
+  const useShared=referencePanel('structurePanel'),shared=useShared?sharedRanges():null;
+  const before=shared?.before.from&&!$('structureBase').dataset.unifiedTouched?shared.before:fieldsRange('structureBase');
+  const after=shared&&!$('structureCurrent').dataset.unifiedTouched?shared.after:fieldsRange('structureCurrent');
+  const metric=value('structureMetric'),s=scopeFor(after,value('structureScope')==='all'?{selectedNames:[],allNames:true}:{});
+  const sample=useShared?await sampleFor(s,[before,after]):null;
+  if(!task.valid())return;
+  if(sample){
+   if(!sample.included.length){clear('structureResults');sampleNote($('structureResults'),sample);return;}
+   s.organizations=sample.included;
+  }
   const page=await api.nativeCompositionPage(request(s,{percent:0,min_count:0,min_amount:0}),{from:before.from,to:before.to},'structure',metric,null,Number(value('structureLimit')));
-  if(!task.valid())return;clear('structureResults');const root=$('structureResults');
+  if(!task.valid())return;clear('structureResults');const root=$('structureResults');sampleNote(root,sample);
   if(!page.currentComplete){clear('structureResults','Нет полного отчёта анализируемого периода. Доли не рассчитываются.');return;}
   root.append(UI.el('p','Итог: '+fmt(page.total,metric),'small'));if(!page.sharesValid)root.append(UI.el('p','Есть отрицательные значения или неположительный итог: доли не рассчитываются.','warn small'));if(!page.baseComplete)root.append(UI.el('p','Базовый период неполон: изменение долей недоступно.','warn small'));
   const visible=page.rows.filter(row=>Number.isFinite(row.current)&&row.current!==0);
@@ -270,7 +350,9 @@ async function structure(){
    [label(row),fmt(row.current,metric),percent(row.share),percent(row.cumulative)]);
   const headers=baselineValid?['Услуга / группа','Значение раньше','Значение сейчас','Доля раньше','Доля сейчас','Накопленная доля','Изменение доли']:
    ['Услуга / группа','Значение сейчас','Доля сейчас','Накопленная доля'];
-  UI.table(root,metric,caption(before)+' / '+caption(after),headers,rows,{totalRow:false,csvRows:raw});
+  UI.table(root,metric,caption(before)+' / '+caption(after),headers,rows,{totalRow:false,csvRows:raw,
+   headerHelp:headers.map(header=>({'Доля раньше':'Значение работы относительно итога базового периода.','Доля сейчас':'Значение работы относительно итога анализируемого периода.','Накопленная доля':'Сумма долей от первой строки до этой позиции.','Изменение доли':'Разница между текущей и базовой долей в процентных пунктах.'})[header]),
+   csvContext:fullExport(task,request(s),'structure',metric,{before:{from:before.from,to:before.to},limit:selectedLimit})});
   const plot=UI.el('div',null,'metric-plot');root.append(plot);
   const key=row=>row.other?'others':row.key;
   UI.drawChart([{type:s.displayType,start:after.from,end:visibleEnd(after)}],new Set(s.organizations),metric,plot,
@@ -280,13 +362,28 @@ async function structure(){
 }
 async function patterns(mode,positions=[null]){
  const name=mode==='usual'?'usual':'regularity',task=loading(name,[name+'Results',name+'Coverage']);
- try{if(!scope||!selected())throw Error('Отметьте услуги или группы в списке работ.');const range=mode==='usual'?fieldsRange('usualPeriod'):{type:scope.type,displayType:scope.displayType,source:scope.source,from:scope.from,to:scope.to},s=scopeFor(range),windowSize=Number(value(mode==='usual'?'usualWindow':'regularityGap'));
-  const opts={search:mode==='usual'?'':value('regularitySearch'),status:mode==='usual'?'all':value('regularityStatus')},req=request(s,{method:'range',percent:mode==='usual'?number('usualPercent'):0,min_count:0,min_amount:0});
-  const page=await api.unifiedPatternPage(req,mode,windowSize,opts,positions.at(-1));if(!task.valid())return;clear(name+'Results');clear(name+'Coverage');
+ try{if(!scope||!selected())throw Error('Отметьте услуги или группы в списке работ.');const normal=referencePanel(mode==='usual'?'usualPanel':'regularityPanel'),range=mode==='usual'&&(!normal||$('usualPeriod').dataset.unifiedTouched)?fieldsRange('usualPeriod'):scope,s=scopeFor(range),windowSize=Number(value(mode==='usual'?'usualWindow':'regularityGap'));
+  const opts={search:mode==='usual'?'':value('regularitySearch'),status:mode==='usual'?'all':value('regularityStatus')};
+  let sample=null;
+  if(normal){
+   const baseline={from:scope.baseFrom,to:scope.baseTo};
+   const ranges=mode==='regularity'?[baseline,range]:[range];
+   sample=await sampleFor(s,ranges);if(!task.valid())return;
+   if(!sample.included.length){clear(name+'Results','Нет сопоставимых подразделений.');clear(name+'Coverage');sampleNote($(name+'Coverage'),sample);pager(name,{total_rows:0},[null],null);return;}
+   s.organizations=sample.included;
+   if(s.source==='daily')s.displayType='day';
+   if(mode==='regularity')opts.baseline=baseline;else opts.range_window=true;
+  }
+  const req=request(s,{method:'range',percent:mode==='usual'?number('usualPercent'):0,min_count:0,min_amount:0});
+  const page=await api.unifiedPatternPage(req,mode,windowSize,opts,positions.at(-1));if(!task.valid())return;clear(name+'Results');clear(name+'Coverage');sampleNote($(name+'Coverage'),sample);
   $(name+'Coverage').append(UI.el('p','Полных периодов: '+page.used+' из '+page.expected+'. В предыдущем диапазоне: '+page.previous_used+'.'+(page.current_complete?'':' Анализируемый диапазон неполон.'),'muted small'));
   const root=$(name+'Results');if(!page.rows.length)root.append(UI.el('p','Нет услуг по выбранным фильтрам.','muted small'));
-  if(mode==='usual')for(const metric of usualMetrics){const rows=page.rows.map(row=>{const m=row[metric];return [row.key?itemButton(row,{...s,from:page.baseline_from,to:s.to}):row.name,fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent),UI.el('span',usualLabels[m.status]||m.status,m.status==='high'?'numeric-rise':m.status==='low'?'numeric-fall':'')];});UI.table(root,metric,'Среднее: '+page.baseline_from+' — '+page.baseline_to+'; анализ: '+page.current_from+' — '+page.current_to,['Услуга / группа','Среднее раньше','Сейчас','Отклонение','Отклонение, %','Оценка'],rows,{csvRows:page.rows.map(row=>{const m=row[metric];return [row.name,m.base,m.current,m.delta,m.percent,usualLabels[m.status]||m.status];})});}
-  else {const raw=page.rows.map(row=>[row.name,page.used?row.hits:null,row.frequency,page.previous_used?row.previousHits:null,row.previousFrequency,Number.isFinite(row.frequency)&&Number.isFinite(row.previousFrequency)?row.frequency-row.previousFrequency:null,row.first,row.last,row.trailing,(row.statuses||[]).map(s=>regularLabels[s]||s).join('; ')]);const rows=raw.map((row,i)=>[itemButton(page.rows[i],s),row[1]??'—',percent(row[2]),row[3]??'—',percent(row[4]),Number.isFinite(row[5])?fmt(row[5],'count')+' п. п.':'—',row[6]||'—',row[7]||'—',row[8]??'—',row[9]]);UI.table(root,'count',caption(s),['Услуга / группа','Была в периодах','Частота сейчас, %','Была раньше','Частота раньше, %','Разница частоты, п. п.','Впервые в истории','Последний раз','Подряд без активности','Что это значит'],rows,{title:'Как часто выполнялись услуги',totalRow:false,csvRows:raw});}
+  if(mode==='usual')for(const metric of usualMetrics){const rows=page.rows.map(row=>{const m=row[metric];return [row.key?itemButton(row,{...s,from:page.baseline_from,to:s.to}):row.name,fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent),UI.el('span',usualLabels[m.status]||m.status,m.status==='high'?'numeric-rise':m.status==='low'?'numeric-fall':'')];});UI.table(root,metric,'Среднее: '+page.baseline_from+' — '+page.baseline_to+'; анализ: '+page.current_from+' — '+page.current_to,['Услуга / группа','Среднее раньше','Сейчас','Отклонение','Отклонение, %','Оценка'],rows,{
+   headerHelp:[null,'Среднее по полностью загруженным интервалам окна.',null,'Значение сейчас минус среднее за прошлые интервалы.','Разница относительно модуля среднего. При нулевой базе процент недоступен.','Для оценки нужны как минимум два полных предыдущих интервала.'],
+   csvContext:fullExport(task,req,'usual',metric,{options:opts,window:windowSize}),csvRows:page.rows.map(row=>{const m=row[metric];return [row.name,m.base,m.current,m.delta,m.percent,usualLabels[m.status]||m.status];})});}
+  else {const raw=page.rows.map(row=>[row.name,page.used?row.hits:null,row.frequency,page.previous_used?row.previousHits:null,row.previousFrequency,Number.isFinite(row.frequency)&&Number.isFinite(row.previousFrequency)?row.frequency-row.previousFrequency:null,row.first,row.last,row.trailing,(row.statuses||[]).map(s=>regularLabels[s]||s).join('; ')]);const rows=raw.map((row,i)=>[itemButton(page.rows[i],s),row[1]??'—',percent(row[2]),row[3]??'—',percent(row[4]),Number.isFinite(row[5])?fmt(row[5],'count')+' п. п.':'—',row[6]||'—',row[7]||'—',row[8]??'—',row[9]]);UI.table(root,'count',caption(s),['Услуга / группа','Была в периодах','Частота сейчас, %','Была раньше','Частота раньше, %','Разница частоты, п. п.','Впервые в истории','Последний раз','Подряд без активности','Что это значит'],rows,{title:'Как часто выполнялись услуги',totalRow:false,csvRows:raw,
+   headerHelp:[null,null,'Доля полных периодов, в которых была активность.',null,'Доля активных периодов среди полных базовых периодов.',null,null,null,'Количество полных периодов подряд без выполнений.','Признаки частоты относятся к фактически загруженной истории.'],
+   csvContext:fullExport(task,req,'regularity','count',{options:opts,window:windowSize})});}
   pager(name,page,positions,page.next);
  }catch(error){task.error(error);}finally{task.done();}
 }
@@ -382,10 +479,14 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
  bind(['comparisonMode','periodComparisonScope','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonScope','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','comparisonBaseOrg'],'change',()=>{invalidate('comparison');invalidate('contribution');comparison();});
  bind(['structureBase','structureCurrent','structureMetric','structureLimit','structureScope'],'change',structure);bind(['usualPeriod','usualWindow'],'change',()=>patterns('usual'));bind(['usualPercent'],'input',()=>schedule('usual',()=>patterns('usual')));bind(['regularityGap','regularityStatus'],'change',()=>patterns('regularity'));bind(['regularitySearch'],'input',()=>schedule('regularity',()=>patterns('regularity')));
  for(const [id,run] of [['advancedAnalytics',comparison],['contributions',contributions],['structurePanel',structure],['usualPanel',()=>patterns('usual')],['regularityPanel',()=>patterns('regularity')]])$(id).addEventListener('toggle',()=>{if($(id).open&&scope)run();});
- $('closeAnalyticsDetails').addEventListener('click',()=>{invalidate('analyticsHistory');$('analyticsDetails').hidden=true;});$('closeChangeDetails').addEventListener('click',()=>{invalidate('changeHistory');$('changeDetails').hidden=true;});
+ $('closeAnalyticsDetails').addEventListener('click',()=>{invalidate('analyticsHistory');$('analyticsDetails').hidden=true;historyTriggers.get('analytics')?.focus();});$('closeChangeDetails').addEventListener('click',()=>{invalidate('changeHistory');$('changeDetails').hidden=true;historyTriggers.get('change')?.focus();});
  $('overviewShowComparison').addEventListener('click',()=>{$('advancedAnalytics').open=true;$('comparisonMode').value='periods';comparison();$('comparison').scrollIntoView?.({block:'start'});});
  UI.onScope(resetScope);UI.onSnapshot(snapshot=>{if(!snapshot){scope=null;clearExtended();}});
  UI.onView('changes',()=>{activeView='changes';if(scope)changes();});UI.onView('dashboard',()=>{activeView='dashboard';if(scope?.revision===UI.revision&&$('advancedAnalytics').open)comparison();});for(const view of ['upload','groups','storage'])UI.onView(view,()=>{activeView=view;});
 }
-window.unifiedExtended=Object.freeze({init});
+function leaveDetail(){
+ for(const key of ['analyticsHistory','comparison','contribution','structure','usual','regularity'])if(channels.has(key))invalidate(key);
+ historyTriggers.delete('analytics');$('analyticsDetails').hidden=true;
+}
+window.unifiedExtended=Object.freeze({init,openComparison:comparison,leaveDetail});
 })();

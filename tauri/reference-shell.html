@@ -1,0 +1,151 @@
+<div id="refRoot">
+<div class="screen" id="sharedHeader"><header class="app-header">
+<div class="brand"><span class="brand-mark"><svg aria-hidden="true" fill="currentColor" height="23" viewBox="0 0 24 24" width="23"><rect height="8" rx="1" width="4" x="3" y="12"></rect><rect height="16" rx="1" width="4" x="10" y="4"></rect><rect height="12" rx="1" width="4" x="17" y="8"></rect></svg></span><strong>Анализ работ</strong></div>
+<nav aria-label="Разделы аналитики" class="main-nav">
+<button aria-current="page" class="btn">Сводка</button>
+<button class="btn">Анализ изменений</button>
+</nav>
+
+
+
+
+<div class="head-tools"><span class="source-state" aria-live="polite">Открытие SQLite…</span><button class="btn pri" id="refImport"><svg aria-hidden="true" fill="none" height="15" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewBox="0 0 24 24" width="15"><path d="M12 15V3m-5 5 5-5 5 5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"></path></svg>Импорт Excel</button><button class="btn" id="refData">Данные</button><button aria-label="Настройки" class="btn settings-trigger" id="refSettings" title="Настройки" aria-expanded="false" aria-controls="toolsPage"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m10 3-.5 2-1.6.9-2-.6-2 3.4 1.5 1.5v1.8l-1.5 1.5 2 3.5 2-.6 1.6.9.5 2.1h4l.5-2.1 1.6-.9 2 .6 2-3.5-1.5-1.5v-1.8l1.5-1.5-2-3.4-2 .6-1.6-.9L14 3Z"></path><circle cx="12" cy="11.3" r="3.1"></circle></svg></button></div></header></div>
+<div class="screen" id="reportShell"><section aria-label="Фильтры" class="card report-filter">
+<details class="filter-fold" open="">
+<summary><strong>Периоды и фильтры</strong><span class="filter-summary"></span></summary>
+<div class="filter-content">
+<div class="filter-periods">
+<div class="lbl">Тип периода<div aria-label="Тип периода" class="seg" data-filter="type" role="group"><button>День</button><button>Неделя</button><button>Месяц</button><button>Год</button></div></div>
+<div class="lbl">Режим<div aria-label="Режим выбора периода" class="seg" data-filter="mode" role="group"><button>Один период</button><button>Диапазон</button></div></div>
+<div class="lbl"><label for="sum-base">База сравнения</label><select class="sel ref-baseline" data-compare="" id="sum-base"></select></div>
+</div>
+<div class="report-dates unified-date-scope">
+  <section class="report-date-card" aria-labelledby="sum-base-title" data-base-card>
+    <div class="report-date-heading">
+      <h3 class="date-group-title" id="sum-base-title">Базовый период</h3>
+      <button type="button" class="filter-base-edit" aria-haspopup="dialog" aria-label="Изменить базовый период">Изменить</button>
+    </div>
+    <div class="report-date-values">
+      <div class="date-label-pair"><span class="date-section-label" data-base-start-label>С</span><span class="date-field-readout" data-base-start></span></div>
+      <div class="date-label-pair" data-base-end-field><span class="date-section-label">По</span><span class="date-field-readout" data-base-end></span></div>
+    </div>
+    <small class="date-range-caption" data-base-duration></small>
+  </section>
+  <section class="report-date-card" aria-labelledby="sum-current-title" data-current-card>
+    <div class="report-date-heading">
+      <h3 class="date-group-title" id="sum-current-title">Анализируемый период</h3>
+      <div class="date-shifts" role="group" aria-label="Сдвинуть анализируемый период">
+        <button type="button" class="filter-shift" data-shift="-1" title="Предыдущий период" aria-label="Предыдущий период"><svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><path d="m10 3-5 5 5 5"></path></svg></button>
+        <button type="button" class="filter-shift" data-shift="1" title="Следующий период" aria-label="Следующий период"><svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16"><path d="m6 3 5 5-5 5"></path></svg></button>
+      </div>
+    </div>
+    <div class="report-date-values">
+      <div class="date-label-pair"><span class="date-section-label" data-start-label>С</span><button class="date-field-trigger" aria-haspopup="dialog" data-date="start" type="button"></button></div>
+      <div class="date-label-pair" data-end-field><span class="date-section-label">По</span><button class="date-field-trigger" aria-haspopup="dialog" data-date="end" type="button"></button></div>
+    </div>
+    <small class="date-range-caption period-duration" id="sum-duration"></small>
+  </section>
+</div>
+<div class="filter-options">
+<label class="lbl">Показатель<select class="sel" data-measure=""><option value="amount">Сумма</option><option value="count">Количество / объём</option></select></label>
+<label class="lbl">Подразделения<button aria-haspopup="dialog" class="filter-picker" data-pick="orgs" type="button">Все подразделения</button></label>
+<label class="lbl">Работы в детализации<button aria-haspopup="dialog" class="filter-picker" data-pick="works" type="button">Все работы</button></label>
+</div>
+<div class="filter-shortcuts"><div class="preset-fields"><span class="preset-title">По последнему отчёту</span><div class="quick-actions"><button class="chip" type="button">Неделя</button><button class="chip" type="button">Прошлая неделя</button><button class="chip" type="button">4 недели</button><button class="chip" type="button">Месяц</button><button class="chip" type="button">Год</button></div></div><button class="filter-reset" type="button">Сбросить</button></div>
+<p class="period-length-note" hidden></p>
+</div>
+</details>
+</section></div>
+<section aria-label="Главный экран" class="screen" id="s1">
+<div style="min-height:1240px;display:flex;flex-direction:column">
+
+<main style="width:100%;max-width:1200px;margin:0 auto;padding:28px 40px 48px;display:flex;flex-direction:column;gap:20px">
+<div class="title-row"><div>
+<h1 style="margin:0 0 4px;font-size:30px">Анализ выполненных работ</h1>
+<p class="report-range"></p>
+</div><div class="summary-actions"><button class="btn">Печать / PDF</button></div></div><section aria-label="Итоги за период" class="metrics-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+<div class="card metric-card" style="padding:20px"><div class="metric-name">Сумма выполненных работ</div>
+<div class="num metric-value">—</div>
+<div class="num metric-delta"></div></div>
+<div class="card metric-card" style="padding:20px"><div class="metric-name">Количество / объём</div>
+<div class="num metric-value">—</div>
+<div class="num metric-delta"></div></div>
+<div class="card metric-card" style="padding:20px"><div class="metric-name">Сумма / количество (объём)</div>
+<div class="num metric-value">—</div>
+<div class="num metric-delta"></div></div>
+</section><div class="quality-notice" role="status" style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-radius:12px;background:#33281a;border:1px solid #6b5326" hidden="">
+<svg aria-hidden="true" fill="none" height="20" stroke="#f5c542" stroke-width="2" viewBox="0 0 24 24" width="20"><path d="M12 3 2 21h20L12 3zM12 10v5M12 18v.5"></path></svg>
+<span style="flex:1;font-size:14px"></span>
+<button class="btn" style="min-height:36px">Проверить отчёты</button>
+</div>
+
+
+
+<section class="result-grid" style="display:grid;grid-template-columns:1.5fr 1fr;gap:16px">
+<div class="card data-card" style="padding:20px 8px 12px">
+<div class="card-heading" style="display:flex;justify-content:space-between;align-items:center;padding:0 12px 8px"><h2 style="margin:0;font-size:18px">Подразделения</h2><button class="btn ghost" style="min-height:36px">Скачать CSV</button></div>
+<div class="table-viewport"><table aria-label="Распределение по подразделениям">
+<thead><tr><th>Подразделение</th><th>Сумма</th><th>Количество / объём</th><th style="width:150px">Доля суммы</th></tr></thead>
+<tbody></tbody></table></div>
+</div>
+<div class="card insight-card" style="padding:20px;display:flex;flex-direction:column;gap:14px">
+<h2 style="margin:0;font-size:18px">Наибольшие изменения по работам</h2>
+<div></div>
+<button class="btn" style="align-self:flex-start">Открыть полный анализ изменений</button>
+<p style="margin:auto 0 0;font-size:12px;color:#a3b0bf;line-height:1.5">Стрелка показывает направление изменения к базе сравнения.</p>
+</div>
+</section>
+
+<div class="summary-actions summary-bottom-actions"><button class="btn analytics-trigger" id="refAnalytics" aria-controls="toolsPage" aria-expanded="false">Подробная аналитика</button></div>
+</main>
+</div>
+</section>
+<section aria-label="Анализ изменений" class="screen" hidden="" id="s2">
+<div style="min-height:1320px;display:flex;flex-direction:column">
+
+<main style="width:100%;max-width:1200px;margin:0 auto;padding:28px 40px 48px;display:flex;flex-direction:column;gap:20px">
+<div class="title-row">
+<div><h1 style="margin:0 0 4px;font-size:30px">Анализ изменений</h1>
+<p class="report-range"></p></div>
+<button class="btn ghost">Как читать результаты?</button>
+</div><section aria-label="Сводка изменений" class="kind-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px">
+<button class="kpi"><div class="mut" style="font-size:13px;font-weight:600">Значительный рост</div><div class="num up" data-count="" style="font-size:36px;font-weight:700;margin:8px 0 4px">—</div><div class="mut" style="font-size:12px">работа × подразделение</div></button>
+<button class="kpi"><div class="mut" style="font-size:13px;font-weight:600">Значительное снижение</div><div class="num down" data-count="" style="font-size:36px;font-weight:700;margin:8px 0 4px">—</div><div class="mut" style="font-size:12px">работа × подразделение</div></button>
+<button class="kpi"><div class="mut" style="font-size:13px;font-weight:600">Новые работы</div><div class="num" data-count="" style="font-size:36px;font-weight:700;margin:8px 0 4px">—</div><div class="mut" style="font-size:12px">появились в этом периоде</div></button>
+<button class="kpi"><div class="mut" style="font-size:13px;font-weight:600">Без выполнений</div><div class="num" data-count="" style="font-size:36px;font-weight:700;margin:8px 0 4px">—</div><div class="mut" style="font-size:12px">были только в базовом периоде</div></button>
+</section><div class="quality-notice" role="status" style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-radius:12px;background:#33281a;border:1px solid #6b5326" hidden="">
+<svg aria-hidden="true" fill="none" height="20" stroke="#f5c542" stroke-width="2" viewBox="0 0 24 24" width="20"><path d="M12 3 2 21h20L12 3zM12 10v5M12 18v.5"></path></svg>
+<span style="flex:1;font-size:14px"></span>
+<button class="btn" style="min-height:36px">Проверить отчёты</button>
+</div>
+<div class="filter-shortcuts filter-sensitivity"><button aria-haspopup="dialog" class="filter-threshold" type="button">Чувствительность</button><span></span></div>
+
+
+<section aria-label="Крупнейшие изменения" class="leaders" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+<div class="card" style="padding:18px 20px"><div class="leader-name" style="font-size:13px;font-weight:600">Наибольшее изменение объёма</div>
+<div class="leader-value num" style="font-size:30px;font-weight:700;margin:6px 0"></div>
+<div style="font-size:14px"></div></div>
+<div class="card" style="padding:18px 20px"><div class="leader-name" style="font-size:13px;font-weight:600">Наибольшее изменение суммы</div>
+<div class="leader-value num" style="font-size:30px;font-weight:700;margin:6px 0"></div>
+<div style="font-size:14px"></div></div>
+</section>
+<section class="card changes-card" style="padding:20px 8px 12px">
+<div class="card-heading" style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px;padding:0 12px 12px">
+<div class="changes-heading"><h2 style="margin:0;font-size:18px" tabindex="-1">Все изменения</h2><span class="excluded-orgs" hidden></span></div>
+<div class="table-tools" style="display:flex;gap:12px;flex-wrap:wrap">
+<div class="lbl"><span id="changeMetricLabel">Показатель</span><div class="change-metrics" role="group" aria-labelledby="changeMetricLabel"><button type="button" data-change-metric="amount">Сумма</button><button type="button" data-change-metric="count">Количество / объём</button></div></div>
+<label class="lbl">Поиск<input class="sel" placeholder="Название работы" style="min-width:280px"></label>
+<label class="lbl">Сортировка<select class="sel" data-sort=""><option value="delta">По величине изменения</option><option value="percent">По изменению, %</option><option value="name">По названию</option></select></label>
+</div></div><p class="match-note" hidden=""></p>
+<div aria-label="Таблица изменений, доступна горизонтальная прокрутка" class="table-viewport" role="region" tabindex="0"><table aria-label="Изменения по работам и подразделениям" class="changes-table">
+<thead><tr><th scope="col">Работа</th><th scope="col">Подразделение</th><th scope="col">Было</th><th scope="col">Стало</th><th scope="col">Изменение</th><th scope="col">%</th></tr></thead>
+<tbody></tbody></table></div><div class="table-empty" hidden=""></div>
+<div class="table-footer" style="display:flex;justify-content:space-between;align-items:center;padding:12px 12px 4px"><span class="pager-footer" style="font-size:13px"></span><div style="display:flex;gap:8px"><button class="btn" data-export-changes="">Скачать CSV</button><button class="btn">Печать / PDF</button></div></div>
+</section>
+</main>
+</div>
+</section>
+<dialog id="sheet"><div id="dialogBody"></div><form method="dialog"><button class="btn">Закрыть</button></form></dialog>
+<div class="screen tools-layout"><div class="tools-column"><section hidden="" id="toolsPage"><header><strong id="toolsTitle" tabindex="-1"></strong><button class="btn" id="backBtn">Свернуть ▴</button><nav aria-label="Разделы панели" class="tool-tabs"></nav></header><div id="refNative"></div></section></div></div>
+<dialog id="refWorkspaceDialog" aria-label="Исходный макет"><button type="button" id="refWorkspaceClose" class="button secondary">← Закрыть эталон</button></dialog>
+</div>

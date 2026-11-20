@@ -149,5 +149,7 @@ jobs:
             tauri/test-artifacts/windows-webview2.png
             tauri/test-artifacts/windows-desktop-diagnostic.png
             tauri/test-artifacts/windows-sql-*.png
+            tauri/test-artifacts/reference-*.png
+            tauri/test-artifacts/reference-*.json
           if-no-files-found: warn
           retention-days: 14

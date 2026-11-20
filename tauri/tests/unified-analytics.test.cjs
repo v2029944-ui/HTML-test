@@ -275,3 +275,32 @@ test('fully available ranges expose lazy quality evidence without hiding source 
  const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');assert.ok(details);assert.match(details.textContent,/Качество данных/);
  details.open=true;details.dispatch('toggle');await settle();assert.equal(f.calls.filter(c=>c.key==='nativeQualityMatrixPage').length,1);assert.match(details.textContent,/Есть данные/);
 });
+test('the reference filter passes both exact intervals and selected work keys through the native detail scope',async()=>{
+ const f=fixture();await f.bootstrap();
+ const shared={revision:1,displayType:'month',source:'daily',type:'day',overviewMode:'single',from:'2024-02-01',to:'2024-02-29',
+  baseFrom:'2023-02-01',baseTo:'2023-02-28',organizations:['B'],metric:'count',allNames:false,nameRows:[{key:'work:W',name:'W',kind:'work'}]};
+ await f.window.unifiedAnalytics.applyReferenceScope(shared);
+ const query=f.calls.filter(c=>c.key==='nativeAnalysisCompare').at(-1);
+ assert.deepEqual(query.args.slice(2,6),['2023-02-01','2023-02-28','2024-02-01','2024-02-29']);
+ const scope=f.published.at(-1);assert.deepEqual(Array.from(scope.organizations),['B']);
+ assert.deepEqual(Array.from(scope.selectedKeys),['work:W']);assert.deepEqual(Array.from(f.UI.state.selectedMetrics),['count']);
+ assert.equal(scope.baseTo,'2023-02-28');assert.equal(scope.to,'2024-02-29');
+ f.window.unifiedAnalytics.applyReferenceScope({...shared,revision:0});
+ assert.equal(f.published.at(-1),null);
+});
+test('the reference weekly chart requests daily observations without changing the shared weekly selection',async()=>{
+ const f=fixture();await f.bootstrap();
+ f.window.referenceDetail={active:'chartPanel'};
+ f.nodes.get('advancedAnalytics').open=true;
+ const shared={revision:1,displayType:'week',source:'daily',type:'day',overviewMode:'single',from:'2024-01-01',to:'2024-01-07',
+  baseFrom:'2023-12-25',baseTo:'2023-12-31',organizations:['A'],metric:'count',allNames:false,nameRows:[{key:'work:W',name:'W',kind:'work'}]};
+ await f.window.unifiedAnalytics.applyReferenceScope(shared);
+ const query=f.calls.filter(c=>c.key==='nativeAnalysisTimeline').at(-1);
+ assert.equal(query.args[6],'day');
+ assert.equal(f.draws.at(-1)[0][0].type,'day');
+ assert.equal(f.published.at(-1).displayType,'week');
+ f.window.referenceDetail.active='regularityPanel';
+ const before=f.calls.filter(c=>c.key==='nativeAnalysisTimeline').length;
+ f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ assert.equal(f.calls.filter(c=>c.key==='nativeAnalysisTimeline').length,before);
+});

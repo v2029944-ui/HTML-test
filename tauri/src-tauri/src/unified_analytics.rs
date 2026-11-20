@@ -36,6 +36,11 @@ pub struct UnifiedChangesPage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UnifiedPatternOptions {
+    /// Mean of 4/8 whole intervals of the same length as the selected interval.
+    #[serde(default)]
+    pub range_window: bool,
+    /// Exact comparison interval for frequency, including non-adjacent periods.
+    pub baseline: Option<RangeQuery>,
     pub search: String,
     pub status: String,
 }
@@ -273,6 +278,13 @@ fn top(c: &Connection, q: &ChangeQuery, m: &str) -> Result<Option<ChangeValue>, 
         .map(|r| change_value(r, q))
         .transpose()
 }
+pub(super) fn create_name_catalog(tx: &Connection) -> Result<(), String> {
+    tx.execute_batch("CREATE TEMP TABLE unified_names AS WITH candidates AS (
+            SELECT g.key,g.name,'group' kind FROM analysis_groups g GROUP BY g.key,g.name
+            UNION ALL SELECT 'work:'||x.work,x.work,'work' FROM report_rows x
+            WHERE NOT EXISTS(SELECT 1 FROM analysis_groups g WHERE g.work=x.work) GROUP BY x.work
+        ) SELECT key,name,min(kind) kind FROM candidates WHERE name<>'' AND length(CAST(name AS BLOB))<=512 GROUP BY name HAVING count(*)=1").map_err(err)
+}
 impl Storage {
     /// Metadata only; each response is bounded even for very large history.
     pub fn unified_name_options(
@@ -305,11 +317,7 @@ impl Storage {
             )
         );
         let offset = page_offset(after, &fingerprint)?;
-        tx.execute_batch("CREATE TEMP TABLE unified_names AS WITH candidates AS (
-            SELECT g.key,g.name,'group' kind FROM analysis_groups g GROUP BY g.key,g.name
-            UNION ALL SELECT 'work:'||x.work,x.work,'work' FROM report_rows x
-            WHERE NOT EXISTS(SELECT 1 FROM analysis_groups g WHERE g.work=x.work) GROUP BY x.work
-        ) SELECT key,name,min(kind) kind FROM candidates WHERE name<>'' AND length(CAST(name AS BLOB))<=512 GROUP BY name HAVING count(*)=1").map_err(err)?;
+        create_name_catalog(&tx)?;
         let term = normalized(search);
         tx.execute(
             "DELETE FROM unified_names WHERE instr(classic_normalized(name),?1)=0",

@@ -59,6 +59,8 @@ fn unified_metadata_and_pattern_filters_are_paged() {
         .unwrap();
     assert_eq!(month.rows[0].end, "2024-01-31");
     let options = UnifiedPatternOptions {
+        range_window: false,
+        baseline: None,
         search: "яркая".into(),
         status: "all".into(),
     };
@@ -77,6 +79,8 @@ fn unified_metadata_and_pattern_filters_are_paged() {
             "regularity",
             4,
             &UnifiedPatternOptions {
+                range_window: false,
+                baseline: None,
                 search: "яркая".into(),
                 status: "rare".into(),
             },
@@ -368,3 +372,45 @@ fn unified_historical_picker_keys_have_zero_only_with_complete_coverage() {
     assert!(s.analysis_work_timeline(r,&scope,&current,None,"group:historical").is_err());
     assert!(s.analysis_work_timeline(r+1,&scope,&current,None,"work:ЯРКАЯ услуга").is_err());
 }
+
+#[test]
+fn reference_usual_uses_whole_equal_windows_and_excludes_partial_samples() {
+    let (_dir, store, revision, scope) = fixture();
+    let options = UnifiedPatternOptions {
+        search: "яркая".into(), status: "all".into(), range_window: true, baseline: None,
+    };
+    let run = |from: &str, to: &str| {
+        let query = ChangeQuery { from: from.into(), to: to.into(), ..query() };
+        store.unified_pattern_page(revision, &scope, &query, None, "usual", 4, &options, None).unwrap()
+    };
+    let current = run("2024-01-01", "2024-01-02");
+    assert_eq!(current.rows[0]["count"]["current"], 3.0);
+    assert_eq!(current.used, 0);
+    assert!(current.rows[0]["count"]["base"].is_null());
+    let with_sample = run("2024-01-03", "2024-01-04");
+    assert_eq!(with_sample.used, 1);
+    assert_eq!(with_sample.rows[0]["count"]["base"], 3.0);
+    assert!(with_sample.rows[0]["count"]["current"].is_null());
+    let partial_sample = run("2024-01-04", "2024-01-06");
+    assert_eq!(partial_sample.used, 0);
+    assert!(partial_sample.rows[0]["count"]["base"].is_null());
+}
+
+#[test]
+fn reference_frequency_counts_overlapping_and_future_baseline_days_separately() {
+    let (_dir, store, revision, scope) = fixture();
+    let q = ChangeQuery { from: "2024-01-01".into(), to: "2024-01-01".into(), ..query() };
+    let options = UnifiedPatternOptions {
+        search: "яркая".into(), status: "all".into(), range_window: false,
+        baseline: Some(RangeQuery { from: "2024-01-01".into(), to: "2024-01-02".into() }),
+    };
+    let result = store.unified_pattern_page(revision, &scope, &q, None, "regularity", 4, &options, None).unwrap();
+    assert_eq!(result.used, 1);
+    assert_eq!(result.previous_used, 2);
+    assert_eq!(result.rows[0]["hits"], 1);
+    assert_eq!(result.rows[0]["previousHits"], 2);
+    assert_eq!(result.rows[0]["last"], "2024-01-01");
+}
+
+#[path="reference_detail_csv_tests.rs"]
+mod reference_detail_csv_tests;

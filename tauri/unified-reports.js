@@ -64,6 +64,21 @@ function init(){
    if(year===null)year=Number((summary.latest||new Date().toISOString()).slice(0,4));
   }catch(error){if(live(rev,ticket,reportTicket)){reportPageStatus.textContent='Страница недоступна';status('reportCount','Не удалось прочитать отчёты: '+String(error.message||error));$('reports').replaceChildren();}}
  }
+ // Keep the year trigger mounted while the request changes status, so both
+ // confirmation and Escape return focus to the very button that opened it.
+ const yearPicker=button('',()=>{
+  if(!Number.isSafeInteger(UI.revision)||year===null)return;
+  const initial=String(year).padStart(4,'0')+'-01-01';
+  window.referenceCalendar.open({anchor:yearPicker,title:'Год календаря отчётов',initial,unit:'year',
+   allowed:{has:date=>Number(date.slice(0,4))>=1&&Number(date.slice(0,4))<=9998},
+   apply:date=>{year=Number(date.slice(0,4));void loadCalendar();}});
+ });
+ yearPicker.id='referenceReportYear';yearPicker.setAttribute('aria-haspopup','dialog');
+ function calendarStatus(text){
+  if(!window.referenceCalendar){status('calendarRange',text);return;}
+  if(yearPicker.parentElement!==$('calendarRange'))$('calendarRange').replaceChildren(yearPicker);
+  yearPicker.textContent=text;yearPicker.setAttribute('aria-label','Выбрать год календаря отчётов · '+year);
+ }
  function monthName(n){return new Intl.DateTimeFormat('ru-RU',{month:'long',timeZone:'UTC'}).format(new Date(String(year).padStart(4,'0')+'-'+String(n+1).padStart(2,'0')+'-01T12:00:00Z'));}
  function monthBounds(n){const from=String(year).padStart(4,'0')+'-'+String(n+1).padStart(2,'0')+'-01';const end=new Date(from+'T12:00:00Z');end.setUTCMonth(end.getUTCMonth()+1,0);return [from,end.toISOString().slice(0,10)];}
  function clearDetails(focus){++detailTicket;$('calendarDetails').replaceChildren();selectedMonth=null;$('reportCalendar').querySelectorAll('button').forEach(b=>b.setAttribute('aria-expanded','false'));focus?.focus();}
@@ -75,11 +90,11 @@ function init(){
  async function loadCalendar(){
   const rev=UI.revision,ticket=++calendarTicket;clearDetails();$('reportCalendar').replaceChildren();calendarData=null;dayPoints=new Map();monthPoints=[];
   if(!Number.isSafeInteger(rev))return;
-  if(year===null)year=new Date().getUTCFullYear();status('calendarRange',year+' год · загрузка…');$('calendarPrev').disabled=$('calendarNext').disabled=true;
+  if(year===null)year=new Date().getUTCFullYear();calendarStatus(year+' год · загрузка…');$('calendarPrev').disabled=$('calendarNext').disabled=true;
   const from=String(year).padStart(4,'0')+'-01-01',to=String(year).padStart(4,'0')+'-12-31';
   try{const [headers,monthly,daily,annual]=await Promise.all([api.unifiedCalendar(rev,year),readRollups(rev,from,to,'month'),readRollups(rev,from,to,'day'),readRollups(rev,from,to,'year')]);
    if(!live(rev,ticket,calendarTicket))return;calendarData=headers;monthPoints=monthly;dayPoints=new Map(daily.map(p=>[p.start,p]));
-   const y=annual[0];status('calendarRange',year+' год'+(y?' · '+(y.complete?'Дневные итоги: ':'Дневные, доступная часть: ')+UI.fmt((y.complete?y.total:y.available_total)?.amount,'amount'):''));
+   const y=annual[0];calendarStatus(year+' год'+(y?' · '+(y.complete?'Дневные итоги: ':'Дневные, доступная часть: ')+UI.fmt((y.complete?y.total:y.available_total)?.amount,'amount'):''));
    $('calendarPrev').disabled=year<=1;$('calendarNext').disabled=year>=9998;
    for(let n=0;n<12;n++){
     const [start,end]=monthBounds(n),p=monthly.find(x=>x.start===start),days=headers.days.filter(x=>x.date>=start&&x.date<=end),warnings=days.reduce((s,d)=>s+d.warnings,0),loaded=days.filter(d=>d.day_reports>0).length;
@@ -90,7 +105,7 @@ function init(){
     if(p?.available_reports)b.append(el('small',(complete?'Дневные итоги: ':'Дневные, доступная часть: ')+UI.fmt((complete?p.total:p.available_total)?.count,'count')+' · '+UI.fmt((complete?p.total:p.available_total)?.amount,'amount')));
     $('reportCalendar').append(b);
    }
-  }catch(error){if(live(rev,ticket,calendarTicket)){status('calendarRange',year+' год · Не удалось прочитать календарь: '+String(error.message||error));$('reportCalendar').replaceChildren();clearDetails();}}
+  }catch(error){if(live(rev,ticket,calendarTicket)){calendarStatus(year+' год · Не удалось прочитать календарь: '+String(error.message||error));$('reportCalendar').replaceChildren();clearDetails();}}
  }
  async function sourceList(root,filter,rev,after=null){
   const token=detailTicket;
