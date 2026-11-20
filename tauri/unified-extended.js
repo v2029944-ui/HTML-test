@@ -68,7 +68,26 @@ async function history(entry,s,organization,target){
  try{const result=await api.nativeWorkTimeline(s.revision,s.type,s.from,s.to,s.organizations,organization,entry.key,null,s.source==='daily'?s.displayType:null,s.selectedNames||[]);if(!task.valid())return;content.replaceChildren();content.append(UI.el('p','Динамика за '+caption(s)+'. Пропуски не считаются нулём. Данные представлены по периодам.','muted small'));plotTimeline(result,entry,s,content,target==='change'?[...changeMetrics]:metrics());title.focus?.({preventScroll:true});panel.scrollIntoView?.({block:'nearest'});}
  catch(error){task.error(error);}finally{task.done();}
 }
-function changeLayout(){const single=value('changesMethod')==='previous';$('changesFromLabel').hidden=single;$('changeDatePair').classList.toggle('single',single);$('changesToText').textContent=single?'Текущий период':'Конец диапазона';
+
+function explainSensitivity(){
+ const percent=Number(value('changesPercent')),count=Number(value('changesCountMin')),amount=Number(value('changesAmountMin'));
+ if(!Number.isFinite(percent)||!Number.isFinite(count)||!Number.isFinite(amount))return;
+ const out=$('changesSensitivityValue'),example=$('changesSensitivityExample');
+ if(out)out.textContent=percent.toLocaleString('ru-RU',{maximumFractionDigits:1})+'%';
+ if(example)example.textContent='Пример: если было 100 единиц количества / объёма, изменение на '+percent.toLocaleString('ru-RU',{maximumFractionDigits:1})+
+  ' достигает процентного порога. Для «сильного изменения» также нужна абсолютная разница от '+count.toLocaleString('ru-RU')+
+  ' по количеству / объёму или от '+amount.toLocaleString('ru-RU')+' по сумме. Чем выше процентный порог, тем меньше изменений попадёт в список.';
+}
+function describeActiveFilters(){
+ const node=$('changesActiveFilter');if(!node)return;
+ const labels={up:'рост',down:'снижение',new:'новые',gone:'нет выполнений',small:'малая база',negative:'отрицательные',unchanged:'без изменений'};
+ const tags=[],direction=value('changesDirection'),search=value('changesSearch').trim();
+ if(labels[direction])tags.push('фильтр: '+labels[direction]);
+ if(value('changesMode')==='strong')tags.push('только заметные');
+ if(search)tags.push('поиск: '+search.slice(0,30));
+ node.textContent=tags.length?' · '+tags.join(' · '):'';
+}
+function changeLayout(){explainSensitivity();describeActiveFilters();const single=value('changesMethod')==='previous';$('changesFromLabel').hidden=single;$('changeDatePair').classList.toggle('single',single);$('changesToText').textContent=single?'Текущий период':'Конец диапазона';
  const search=Boolean(value('changesSearch').trim());$('changesSort').disabled=search;$('changesSort').title=search?'Сначала начала названий, затем совпадения внутри, по алфавиту.':'';
  for(const option of $('changesSort').options||[])option.disabled=option.value.includes('-')&&!changeMetrics.has(option.value.split('-')[1]);
  if($('changesSort').selectedOptions?.[0]?.disabled&&changeMetrics.size)$('changesSort').value='significance-'+[...changeMetrics][0];
@@ -307,7 +326,7 @@ function resetScope(next){if(!next){scope=null;clearExtended();return;}scope=cop
  updatePeriodOverrides();if(activeView==='changes')changes();if(activeView==='dashboard'&&$('advancedAnalytics').open){comparison();if($('structurePanel').open)structure();if($('usualPanel').open)patterns('usual');if($('regularityPanel').open)patterns('regularity');}
 }
 function bind(ids,event,handler){for(const id of ids)$(id)?.addEventListener(event,handler);}
-function init(){if(initialized)return;initialized=true;
+function init(){if(initialized)return;initialized=true;explainSensitivity();describeActiveFilters();
  const dateIds=['changesFrom','changesTo','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','structureBase','structureCurrent','usualPeriod'];for(const id of dateIds){for(const event of ['input','change'])$(id)?.addEventListener(event,()=>{$(id).dataset.unifiedTouched='true';updatePeriodOverrides();});}
  $('periodComparisonScope')?.addEventListener('change',()=>{$('periodComparisonScope').dataset.unifiedTouched='true';updatePeriodOverrides();});
  for(const name of Object.keys(localPeriods))$(name+'PeriodReset')?.addEventListener('click',()=>resetLocalPeriod(name));
@@ -315,7 +334,7 @@ function init(){if(initialized)return;initialized=true;
  $('changesMethod')?.addEventListener('change',updatePeriodOverrides);
  checkboxList('changesMetrics',[['count','Количество / объём'],['amount','Сумма']],changeMetrics,()=>changes());checkboxList('usualMetrics',Object.entries(titles),usualMetrics,()=>patterns('usual'));
  bind(['changesMethod','changesFrom','changesTo','changesMode','changesDirection','changesSort'],'change',()=>{invalidate('changes');changes();});
- bind(['changesPercent','changesCountMin','changesAmountMin','changesSearch'],'input',()=>schedule('changes',changes));
+ bind(['changesPercent','changesCountMin','changesAmountMin','changesSearch'],'input',()=>{explainSensitivity();describeActiveFilters();schedule('changes',changes);});
  $('changesType').addEventListener('change',()=>{changesKind=value('changesType');for(const id of ['changesFrom','changesTo'])setDate(id,changesKind,scope?.to||new Date().toISOString().slice(0,10),true);invalidate('changes');changes();});
  for(const name of ['changes','contribution','usual','regularity']){const run=name==='changes'?changes:name==='contribution'?contributions:positions=>patterns(name,positions);$(name+'Prev').addEventListener('click',()=>{const s=slot(name);if(s.positions.length>1)run(s.positions.slice(0,-1));});$(name+'Next').addEventListener('click',()=>{const s=slot(name);if(s.page?.next)run([...s.positions,s.page.next]);});}
  bind(['comparisonMode','periodComparisonScope','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonScope','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','comparisonBaseOrg'],'change',()=>{invalidate('comparison');invalidate('contribution');comparison();});

@@ -119,3 +119,13 @@ test('Tauri canonical page exposes one shared baseline and visible local period 
   assert.match(html,new RegExp('id="'+id+'"'));
  assert.match(html,/Изменения к базовому периоду/);
 });
+
+test('installed analytics uses an accessible sensitivity slider and folds secondary filters',()=>{
+ const html=prepareHtml(original);
+ for(const id of ['changesPercent','changesSensitivityValue','changesSensitivityExample','changesMoreOptions','changesActiveFilter']){
+  assert.equal([...html.matchAll(new RegExp('id="'+id+'"','g'))].length,1,id+' should appear once');
+ }
+ assert.match(html,/<input id="changesPercent" type="range"[^>]*max="200"/);
+ assert.match(html,/<details class="changes-more-options" id="changesMoreOptions">/);
+ assert.doesNotMatch(html,/Сначала обычная база, затем малая/);
+});

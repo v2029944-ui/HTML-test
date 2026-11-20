@@ -50,3 +50,15 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
 .period-override{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0;padding:7px 0;color:var(--muted);font-size:12px}
 .period-override[hidden]{display:none!important}
 .period-override .button{min-height:32px;padding:6px 9px;font-size:12px}
+
+/* Tauri-only sensitivity control, advanced filters hidden until requested. */
+.changes-sensitivity-quick{padding:12px 15px;margin:13px 0 8px;border:1px solid var(--border);border-radius:var(--radius-control)}
+.changes-sensitivity-quick>label{display:block;font-weight:650;margin-bottom:7px}
+.changes-sensitivity-row{display:flex;gap:14px;align-items:center}
+.changes-sensitivity-row input[type=range]{flex:1;min-width:140px;max-width:560px;accent-color:var(--accent)}
+.changes-sensitivity-row output{min-width:58px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+.changes-sensitivity-quick p{margin:7px 0 0}
+.changes-more-options{margin:10px 0}
+.changes-more-options>summary{cursor:pointer;font-weight:650;padding:8px 2px}
+#changesActiveFilter{font-weight:400;margin-left:8px}
+.changes-more-options .changes-filters{padding:10px 0}

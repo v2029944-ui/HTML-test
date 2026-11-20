@@ -21,7 +21,7 @@ class Element {
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 function fixture(overrides={}){
  const nodes=new Map();for(const match of original.matchAll(/<([a-z][\w-]*)\b[^>]*\bid="([^"]+)"[^>]*>/gi)){const el=new Element(match[1]);el.id=match[2];nodes.set(el.id,el);}
- for(const id of ['comparisonPeriodOverride','structurePeriodOverride','changesPeriodOverride','comparisonPeriodReset','structurePeriodReset','changesPeriodReset']){const el=new Element('div');el.id=id;nodes.set(id,el);}
+ for(const id of ['comparisonPeriodOverride','structurePeriodOverride','changesPeriodOverride','comparisonPeriodReset','structurePeriodReset','changesPeriodReset','changesSensitivityValue','changesSensitivityExample','changesActiveFilter']){const el=new Element('div');el.id=id;nodes.set(id,el);}
  const defaults={changesType:'day',changesMethod:'previous',changesFrom:'2024-01-01',changesTo:'2024-01-02',changesPercent:'30',changesCountMin:'5',changesAmountMin:'1000',changesMode:'all',changesDirection:'all',changesSort:'name',comparisonMode:'periods',periodComparisonScope:'single',comparisonScope:'single',structureMetric:'amount',structureLimit:'10',structureScope:'selected',usualWindow:'4',usualPercent:'30',regularityGap:'4',regularityStatus:'all'};
  for(const [id,value]of Object.entries(defaults))nodes.get(id).value=value;
  const hooks={scope:[],snapshot:[],views:{}},tables=[],calls=[];
@@ -142,4 +142,27 @@ test('changing global calendar granularity resets an obsolete local change-view 
  f.publish({source:'daily',displayType:'week',type:'day',from:'2024-01-01',to:'2024-01-07'});
  assert.equal(f.nodes.get('changesType').value,'week');
  assert.equal(f.nodes.get('changesPeriodOverride').hidden,true);
+});
+
+test('sensitivity slider updates its clear example and preserves numeric SQL thresholds',async()=>{
+ const args=[];const f=fixture({unifiedChangesPage:async(request,options)=>{args.push({request,options});return page();}});
+ f.publish();f.view('changes');await settle();
+ assert.match(f.nodes.get('changesSensitivityExample').textContent,/было 100/);
+ assert.equal(f.nodes.get('changesSensitivityValue').textContent,'30%');
+ f.nodes.get('changesPercent').value='55';f.nodes.get('changesPercent').dispatch('input');
+ assert.equal(f.nodes.get('changesSensitivityValue').textContent,'55%');
+ assert.match(f.nodes.get('changesSensitivityExample').textContent,/55/);
+ await new Promise(resolve=>setTimeout(resolve,200));await settle();
+ assert.equal(args.at(-1).request.query.percent,55);
+ assert.equal(args.at(-1).request.query.min_count,5);
+ assert.equal(args.at(-1).request.query.min_amount,1000);
+});
+test('hidden advanced controls advertise an active KPI direction filter',async()=>{
+ const f=fixture({unifiedChangesPage:async()=>page()});f.publish();f.view('changes');await settle();
+ const category=f.nodes.get('changesSummary').children[1];
+ category.dispatch('click');await settle();
+ assert.equal(f.nodes.get('changesDirection').value,'down');
+ assert.match(f.nodes.get('changesActiveFilter').textContent,/снижение/);
+ f.nodes.get('changesDirection').value='all';f.nodes.get('changesDirection').dispatch('change');await settle();
+ assert.doesNotMatch(f.nodes.get('changesActiveFilter').textContent,/снижение/);
 });
