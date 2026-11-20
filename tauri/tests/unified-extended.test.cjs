@@ -41,8 +41,8 @@ test('extended SQL scrolling preserves bounded cursors, hides only buttons and r
  const attached=[],reset=[];fx.window.sqlRowScroll={attach:(root,options)=>{attached.push({root,options});return root;},reset:root=>reset.push(root)};
  fx.publish();fx.view('changes');await settle();let entry=attached.findLast(x=>x.root.id==='changesResults');assert.ok(entry);assert.equal(entry.options.size,50);assert.equal(entry.options.direct,false);assert.equal(entry.options.total,120);
  assert.equal(fx.nodes.get('changesPrev').hidden,true);assert.equal(fx.nodes.get('changesNext').hidden,true);assert.match(fx.nodes.get('changesPage').textContent,/120 строк/);
- await entry.options.go(4);assert.equal(requests.length,1);await entry.options.go(1);assert.equal(requests[1][2],'changes-cursor');entry=attached.at(-1);assert.equal(entry.options.index,1);
- await entry.options.go(0);assert.equal(requests[2][2],null);entry=attached.at(-1);fail=true;await entry.options.go(1);assert.match(entry.root.textContent,/scroll SQL failed/);assert.ok(reset.includes(entry.root));
+ const resets=reset.filter(root=>root.id==='changesResults').length;await entry.options.go(4);assert.equal(requests.length,1);await entry.options.go(1);assert.equal(requests[1][2],'changes-cursor');entry=attached.at(-1);assert.equal(entry.options.index,1);
+ await entry.options.go(0);assert.equal(requests[2][2],null);assert.equal(reset.filter(root=>root.id==='changesResults').length,resets,'successful paging must preserve shared pending edge');assert.doesNotMatch(fx.nodes.get('changesPage').textContent,/Страница/);entry=attached.at(-1);fail=true;await entry.options.go(1);assert.match(entry.root.textContent,/scroll SQL failed/);assert.ok(reset.includes(entry.root));
  const count=requests.length;await entry.options.go(0);assert.equal(requests.length,count);fx.publish(null);assert.ok(reset.includes(entry.root));
 });
 test('original controls initialize once and changes discard a late SQL response',async()=>{

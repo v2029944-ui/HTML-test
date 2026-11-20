@@ -57,12 +57,21 @@ test('SQL name scrolling follows only adjacent opaque cursors and resets on sear
  const attached=[],reset=[];f.window.sqlRowScroll={attach:(root,options)=>{attached.push({root,options});return root;},reset:root=>reset.push(root)};
  await f.bootstrap();let entry=attached.findLast(x=>x.root===f.nodes.get('categories'));assert.ok(entry);assert.equal(entry.options.size,50);assert.equal(entry.options.direct,false);assert.equal(entry.options.total,120);
  assert.ok(descendants(entry.root).filter(n=>n.tagName==='BUTTON').every(n=>n.hidden));
- const before=f.calls.length;await entry.options.go(3);assert.equal(f.calls.length,before);
+ const before=f.calls.length,resets=reset.length;await entry.options.go(3);assert.equal(f.calls.length,before);
  await entry.options.go(1);entry=attached.findLast(x=>x.root===entry.root);assert.equal(entry.options.index,1);assert.equal(f.calls.at(-1).args[2],'name-cursor');
- await entry.options.go(0);assert.equal(f.calls.at(-1).args[2],null);
+ await entry.options.go(0);assert.equal(f.calls.at(-1).args[2],null);assert.equal(reset.length,resets,'paging preserves pending position/stride');assert.doesNotMatch(entry.root.textContent,/Страница/);
  fail=true;entry=attached.findLast(x=>x.root===entry.root);await entry.options.go(1);assert.match(entry.root.textContent,/name read failed/);assert.ok(reset.includes(entry.root));
  const stale=entry.options.go;f.nodes.get('categorySearch').value='New';f.nodes.get('categorySearch').dispatch('input');const reads=f.calls.length;await stale(1);assert.equal(f.calls.length,reads);
  await new Promise(resolve=>setTimeout(resolve,180));
+});
+test('bounded selected chart rows can seek by offset without fetching intermediate SQL windows',async()=>{
+ const entries=Array.from({length:24},(_,i)=>({key:'work:W'+i,name:'W'+i,kind:'work'}));
+ const f=fixture({unifiedNameOptions:async()=>({rows:entries,total_rows:24,next:null})}),attached=[];
+ f.window.sqlRowScroll={attach:(root,options)=>{attached.push({root,options});return root;},reset(){}};
+ await f.bootstrap();await f.window.unifiedAnalytics.applyReferenceScope({...f.published.at(-1),metric:'amount',overviewMode:'single',allNames:false,nameRows:entries});
+ f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ const entry=attached.findLast(x=>x.root.id==='chartsContainer');assert.ok(entry);assert.equal(entry.options.direct,true);assert.equal(entry.options.size,8);assert.equal(entry.options.total,24);
+ const before=f.calls.length;await entry.options.go(2);assert.deepEqual(f.calls.slice(before).filter(c=>c.key==='nativeWorkTimeline').map(c=>c.args[6]),entries.slice(16).map(r=>r.key));assert.equal(attached.at(-1).options.index,2);
 });
 test('incomplete coverage remains visible and opens a missing-org/day matrix',async()=>{
  const complete={complete:true,periods:1,missing:0,total:{count:2,amount:20,average:10},available_reports:1,available_total:{count:2,amount:20,average:10},invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};

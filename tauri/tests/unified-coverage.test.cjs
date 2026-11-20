@@ -39,6 +39,11 @@ test('coverage report and diagnostic scrolling keeps cursor/offset bounds and sa
  let reports=attached.findLast(x=>x.root.attributes['data-sql-scroll-host']==='coverage-reports');assert.ok(reports);assert.equal(reports.options.size,20);assert.equal(reports.options.direct,false);await reports.options.go(4);assert.equal(f.calls.length,2);await reports.options.go(1);assert.equal(f.calls.at(-1).args[4],'report-cursor');assert.equal(attached.at(-1).root,reports.root);
  const details=all(f.root).find(n=>n.tagName==='DETAILS');details.open=true;details.dispatch('toggle');await settle();let notes=attached.findLast(x=>x.root.attributes['data-sql-scroll-host']==='coverage-notes');assert.ok(notes);assert.equal(notes.options.size,50);assert.equal(notes.options.direct,false);await notes.options.go(1);assert.equal(f.calls.at(-1).args[3],50);assert.match(f.root.textContent,/Записи о пропусках дней источника: 53/);find(f.root,'BUTTON','Замечания источника').dispatch('click');await settle();assert.equal(f.calls.at(-1).args[2],'source');assert.equal(attached.at(-1).options.index,0);const before=f.calls.length;await notes.options.go(0);assert.equal(f.calls.length,before);
 });
+test('a replacement coverage render invalidates the previous range and its pending scrolling data',async()=>{
+ const pending=deferred();let reads=0;const f=fixture({nativeQualityMatrixPage:async(_r,_kind,from,to,orgs)=>++reads===1?pending.promise:page(from,to,orgs)});
+ const old=f.render();f.scope.from='2024-03-01';f.scope.to='2024-03-01';await f.render();pending.resolve(page('2024-02-01','2024-02-01',['A']));await old;
+ assert.match(f.root.textContent,/01\.03\.2024/);assert.doesNotMatch(f.root.textContent,/01\.02\.2024/);
+});
 test('quality labels distinguish missing, invalid, conflicts, warnings, zeros and cancellation',async()=>{
  const patches=[{available:false,matching_reports:0,count:null,amount:null,has_activity:false},{available:false,invalid_reports:1,count:null,amount:null},{available:false,duplicate_reports:2,count:null,amount:null},{available:false,overlap_reports:1,count:null,amount:null},{warned_reports:1},{count:0,amount:0,numeric_zero:true,has_activity:false},{count:0,amount:0,numeric_zero:true,has_activity:true}];
  const f=fixture({nativeQualityMatrixPage:async(_r,_k,from,to,orgs)=>page(from,to,orgs,(_o,start)=>patches[Number(start.slice(-2))-1])});
