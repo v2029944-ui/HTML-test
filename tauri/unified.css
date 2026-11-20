@@ -62,3 +62,10 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
 .changes-more-options>summary{cursor:pointer;font-weight:650;padding:8px 2px}
 #changesActiveFilter{font-weight:400;margin-left:8px}
 .changes-more-options .changes-filters{padding:10px 0}
+
+/* One display control for different SQL analysis views; filters and exports survive. */
+.work-view-switcher{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;margin:10px 0;border:1px solid var(--border);border-radius:var(--radius-control)}
+.work-view-switcher label{font-weight:700}
+.work-view-switcher select{min-height:38px;min-width:210px;max-width:100%;padding:7px 10px;border:1px solid var(--field-border);border-radius:var(--radius-control);background:var(--surface);color:var(--text)}
+.work-view-switcher p{flex-basis:100%;margin:0}
+#chartPanel[hidden],#structurePanel[hidden]{display:none!important}

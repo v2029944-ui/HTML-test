@@ -21,7 +21,7 @@ class Element {
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 function fixture(overrides={}){
  const nodes=new Map();for(const match of original.matchAll(/<([a-z][\w-]*)\b[^>]*\bid="([^"]+)"[^>]*>/gi)){const el=new Element(match[1]);el.id=match[2];nodes.set(el.id,el);}
- for(const id of ['comparisonPeriodOverride','structurePeriodOverride','changesPeriodOverride','comparisonPeriodReset','structurePeriodReset','changesPeriodReset','changesSensitivityValue','changesSensitivityExample','changesActiveFilter']){const el=new Element('div');el.id=id;nodes.set(id,el);}
+ for(const id of ['comparisonPeriodOverride','structurePeriodOverride','changesPeriodOverride','comparisonPeriodReset','structurePeriodReset','changesPeriodReset','changesSensitivityValue','changesSensitivityExample','changesActiveFilter','workViewMode','workViewDescription']){const el=new Element('div');el.id=id;nodes.set(id,el);}
  const defaults={changesType:'day',changesMethod:'previous',changesFrom:'2024-01-01',changesTo:'2024-01-02',changesPercent:'30',changesCountMin:'5',changesAmountMin:'1000',changesMode:'all',changesDirection:'all',changesSort:'name',comparisonMode:'periods',periodComparisonScope:'single',comparisonScope:'single',structureMetric:'amount',structureLimit:'10',structureScope:'selected',usualWindow:'4',usualPercent:'30',regularityGap:'4',regularityStatus:'all'};
  for(const [id,value]of Object.entries(defaults))nodes.get(id).value=value;
  const hooks={scope:[],snapshot:[],views:{}},tables=[],calls=[];
@@ -186,4 +186,28 @@ test('missing report pairs are reported separately with formatted dates',async()
  assert.match(message,/Нет полной пары отчётов: 2/);
  assert.match(message,/не включены в сопоставление/);
  assert.match(message,/01\.01\.2024/);
+});
+
+test('work view toggle keeps composition SQL request limited and uses existing controls',async()=>{
+ const queries=[];
+ const f=fixture({nativeCompositionPage:async(request,base,mode,metric,cursor,limit)=>{
+  queries.push({request,base,mode,metric,cursor,limit});
+  return {currentComplete:true,baseComplete:true,sharesValid:true,total:0,rows:[]};
+ }});
+ f.publish();
+ assert.equal(f.nodes.get('chartPanel').hidden,false);
+ assert.equal(f.nodes.get('structurePanel').hidden,true);
+ f.nodes.get('workViewMode').value='composition';
+ f.nodes.get('workViewMode').dispatch('change');
+ assert.equal(f.nodes.get('chartPanel').hidden,true);
+ assert.equal(f.nodes.get('structurePanel').hidden,false);
+ f.nodes.get('structurePanel').dispatch('toggle');await settle();
+ assert.equal(queries.length,1);
+ assert.equal(queries[0].mode,'structure');
+ assert.equal(queries[0].limit,10);
+ f.nodes.get('workViewMode').value='trend';
+ f.nodes.get('workViewMode').dispatch('change');
+ assert.equal(f.nodes.get('chartPanel').hidden,false);
+ assert.equal(f.nodes.get('structurePanel').hidden,true);
+ assert.equal(queries.length,1,'trends must not fetch composition rows');
 });

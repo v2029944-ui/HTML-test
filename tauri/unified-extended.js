@@ -332,10 +332,27 @@ function resetScope(next){if(!next){scope=null;clearExtended();return;}scope=cop
  checkboxList('changesOrganizations',orgNames.map(o=>[o,o]),changeOrganizations,()=>changes());
  const oldBase=value('comparisonBaseOrg');$('comparisonBaseOrg').replaceChildren(...scope.organizations.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));if(scope.organizations.includes(oldBase))$('comparisonBaseOrg').value=oldBase;
  if(!customComparisonMetrics)comparisonMetrics=new Set(metrics());checkboxList('comparisonMetrics',Object.entries(titles),comparisonMetrics,()=>{customComparisonMetrics=true;comparison();});
- updatePeriodOverrides();if(activeView==='changes')changes();if(activeView==='dashboard'&&$('advancedAnalytics').open){comparison();if($('structurePanel').open)structure();if($('usualPanel').open)patterns('usual');if($('regularityPanel').open)patterns('regularity');}
+ updatePeriodOverrides();if(activeView==='changes')changes();if(activeView==='dashboard'&&$('advancedAnalytics').open){comparison();if(value('workViewMode')==='composition'&&$('structurePanel').open)structure();if($('usualPanel').open)patterns('usual');if($('regularityPanel').open)patterns('regularity');}
 }
 function bind(ids,event,handler){for(const id of ids)$(id)?.addEventListener(event,handler);}
+
+function workView(){
+ const mode=value('workViewMode')==='composition'?'composition':'trend',showComposition=mode==='composition';
+ const chart=$('chartPanel'),composition=$('structurePanel');
+ if(chart)chart.hidden=showComposition;
+ if(composition)composition.hidden=!showComposition;
+ const help=$('workViewDescription');
+ if(help)help.textContent=showComposition?
+  'Рейтинг по доле работ и сравнению с базовым периодом; расчёт выполняется отдельно в SQLite.':
+  'Значения по периодам. Выбранные работы не влияют на итог по всем работам без явного фильтра.';
+ if(showComposition&&composition){
+  if(!composition.open)composition.open=true;
+  else if(scope&&$('advancedAnalytics').open)void structure();
+ }
+}
 function init(){if(initialized)return;initialized=true;explainSensitivity();describeActiveFilters();
+ $('workViewMode')?.addEventListener('change',workView);
+ workView();
  const dateIds=['changesFrom','changesTo','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','structureBase','structureCurrent','usualPeriod'];for(const id of dateIds){for(const event of ['input','change'])$(id)?.addEventListener(event,()=>{$(id).dataset.unifiedTouched='true';updatePeriodOverrides();});}
  $('periodComparisonScope')?.addEventListener('change',()=>{$('periodComparisonScope').dataset.unifiedTouched='true';updatePeriodOverrides();});
  for(const name of Object.keys(localPeriods))$(name+'PeriodReset')?.addEventListener('click',()=>resetLocalPeriod(name));

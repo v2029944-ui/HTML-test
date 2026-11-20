@@ -129,3 +129,14 @@ test('installed analytics uses an accessible sensitivity slider and folds second
  assert.match(html,/<details class="changes-more-options" id="changesMoreOptions">/);
  assert.doesNotMatch(html,/Сначала обычная база, затем малая/);
 });
+
+test('trend and composition occupy one presentation switch, retaining native SQL controls',()=>{
+ const html=prepareHtml(original);
+ const selector=html.indexOf('id="workViewMode"'),chart=html.indexOf('id="chartPanel"'),composition=html.indexOf('id="structurePanel"'),comparison=html.indexOf('id="comparison"');
+ assert.ok(selector>=0&&selector<chart&&chart<composition&&composition<comparison);
+ assert.match(html,/<details class="panel" id="structurePanel" hidden>/);
+ assert.match(html,/id="structureLimit"/);
+ assert.match(html,/id="chartsContainer"/);
+ assert.equal([...html.matchAll(/id="structurePanel"/g)].length,1);
+ assert.equal([...html.matchAll(/id="chartPanel"/g)].length,1);
+});

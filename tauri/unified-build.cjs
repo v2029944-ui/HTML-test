@@ -90,6 +90,24 @@ function buildUnified(source){
  // Issue67: hide only confirmed zero periods, keep missing periods and natural vertical layout.
  if(!html.includes("<div class=\"segmented chart-mode-controls\"><button data-chart=\"line\" class=\"active\" title=\"Показывать изменение значений по периодам линиями\">Линейный график</button><button data-chart=\"bar\" title=\"Сравнивать значения столбцами\">Столбцы</button><button data-chart=\"table\" title=\"Показывать точные значения по периодам\">Таблица значений</button></div>"))throw Error('Canonical chart modes changed');
  html=html.replace("<div class=\"segmented chart-mode-controls\"><button data-chart=\"line\" class=\"active\" title=\"Показывать изменение значений по периодам линиями\">Линейный график</button><button data-chart=\"bar\" title=\"Сравнивать значения столбцами\">Столбцы</button><button data-chart=\"table\" title=\"Показывать точные значения по периодам\">Таблица значений</button></div>",'<label class="checkline"><input id="hideEmptyPeriods" type="checkbox"> Скрывать подтверждённые нулевые периоды</label>'+"<div class=\"chart-mode-line\"><div class=\"segmented chart-mode-controls\"><button type=\"button\" data-chart=\"bar\" class=\"active\" title=\"Сравнить значения по периодам\">Диаграмма</button><button type=\"button\" data-chart=\"table\" title=\"Показать точные значения\">Таблица значений</button></div><label>Расположение столбцов<select id=\"chartOrientation\"><option value=\"vertical\">Вертикально</option><option value=\"horizontal\">Горизонтально</option></select></label></div>");
+
+ // Keep the original SQLite chart and composition renderers, but give them one
+ // visible presentation switch. Relocate markup, not the report calculations.
+ const structureStart=html.indexOf('<details class="panel" id="structurePanel">');
+ const structureEnd=html.indexOf('<details class="panel" id="usualPanel">',structureStart);
+ const comparisonStart=html.indexOf('<section class="panel" id="comparison"');
+ if(structureStart<0||structureEnd<=structureStart||comparisonStart<0||comparisonStart>=structureStart)
+  throw Error('Canonical work views layout changed');
+ const structure=html.slice(structureStart,structureEnd).trimEnd().replace('id="structurePanel"','id="structurePanel" hidden');
+ html=html.slice(0,structureStart)+html.slice(structureEnd);
+ const switcher='<div class="work-view-switcher" role="group" aria-labelledby="workViewLabel">'+
+ '<label id="workViewLabel" for="workViewMode">Показать</label>'+
+ '<select id="workViewMode"><option value="trend">Динамика работ и подразделений</option><option value="composition">Состав работ и доли</option></select>'+
+ '<p id="workViewDescription" class="muted small">Изменение значений по выбранным периодам. Для долей переключите представление.</p></div>\n      ';
+ html=html.slice(0,comparisonStart)+switcher+html.slice(comparisonStart);
+ const relocated=html.indexOf('<section class="panel" id="comparison"');
+ html=html.slice(0,relocated)+'      '+structure+'\n      '+html.slice(relocated);
+
  html=html.replace('</head>','<meta name="analiz-unified-sql" content="true"><link rel="stylesheet" href="tauri-app-status.css"><link rel="stylesheet" href="tauri-unified.css"><script src="tauri-bridge.js"></script></head>');
  html=html.replace('Данные остаются в этом браузере','Локальная база SQLite');
  html=html.replace('и защиты от очистки данных браузера.','и защиты от потери данных.');
