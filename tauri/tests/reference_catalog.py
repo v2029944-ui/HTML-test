@@ -85,6 +85,9 @@ def check_reference_catalog(page, confirmations, output):
     # Delete only the exact test row created above, through its normal UI action.
     confirmations.cancel_then_accept(rows.first.get_by_role('button', name='Удалить', exact=True),
                                      'Удалить «' + name + '» из справочника?')
+    # Clearing the old rows starts the post-write refresh. Wait for the
+    # management controls to unlock before checking the refreshed list.
+    expect(search).to_be_enabled(timeout=120_000)
     expect(rows).to_have_count(0, timeout=120_000)
     search.fill('')
     after = page.evaluate('window.desktopAPI.nativeSettingsBootstrap()')
