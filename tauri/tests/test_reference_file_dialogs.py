@@ -61,6 +61,114 @@ class FileDialogCancelTests(unittest.TestCase):
             self.dialog.cancel_control(101, self.facts)
 
 
+class FileDialogInspectionTests(unittest.TestCase):
+    transient = 'FindAll failed: Unrecognized error. FullyQualifiedErrorId: ElementNotAvailableException'
+
+    def setUp(self):
+        self.state = {'owner': 102, 'pid': 41, 'title': 'Verified file dialog', 'visible': True}
+        self.dialog = OwnedFileDialogs.__new__(OwnedFileDialogs)
+        self.dialog.native = SimpleNamespace(pid=41,
+            process=Mock(side_effect=lambda hwnd: self.state['pid']),
+            window_class=Mock(return_value='#32770'))
+        self.dialog.title = Mock(side_effect=lambda hwnd: self.state['title'])
+        self.dialog.user32 = SimpleNamespace(
+            GetWindow=Mock(side_effect=lambda hwnd, relation: self.state['owner']),
+            IsWindowVisible=Mock(side_effect=lambda hwnd: self.state['visible']),
+            IsWindowEnabled=Mock(side_effect=lambda hwnd: hwnd == 101),
+            SendInput=Mock(), SendMessageTimeoutW=Mock())
+        self.dialog.native_inventory = Mock(return_value=[])
+        self.dialog.cancel_control = Mock(return_value=103)
+        self.dialog.message = Mock()
+        self.run = patch('reference_file_dialogs.subprocess.run').start()
+        self.sleep = patch('reference_file_dialogs.time.sleep').start()
+        self.addCleanup(patch.stopall)
+
+    def result(self, error=None, **changes):
+        facts = {'pid': 41, 'title': 'Verified file dialog', 'cancel': [], 'inventory': []}
+        facts.update(changes)
+        return SimpleNamespace(returncode=1 if error else 0, stderr=error or '', stdout=json.dumps(facts))
+
+    def assert_no_input(self):
+        self.dialog.user32.SendInput.assert_not_called()
+        self.dialog.user32.SendMessageTimeoutW.assert_not_called()
+        self.dialog.message.assert_not_called()
+
+    def test_transient_tree_is_read_again_from_the_same_verified_window(self):
+        self.run.side_effect = [self.result(self.transient), self.result()]
+        facts, cancel = self.dialog.inspect(101, 'Verified file dialog')
+        self.assertEqual((facts['uiaReadAttempts'], cancel), (2, 103))
+        self.assertEqual(self.run.call_count, 2)
+        for call in self.run.call_args_list:
+            self.assertEqual(call.kwargs['env']['ANALIZ_SMOKE_DIALOG_HWND'], '101')
+            self.assertEqual(call.kwargs['env']['ANALIZ_SMOKE_DIALOG_PID'], '41')
+            self.assertEqual(call.kwargs['env']['ANALIZ_SMOKE_FILE_TITLE'], 'Verified file dialog')
+        self.dialog.native_inventory.assert_called_once_with(101)
+        self.dialog.cancel_control.assert_called_once()
+        self.assert_no_input()
+
+    def test_repeated_transient_failure_is_bounded_and_never_acts(self):
+        self.run.return_value = self.result(self.transient)
+        with self.assertRaisesRegex(AssertionError, 'UIA verification failed'):
+            self.dialog.dismiss(101, 102, 'Verified file dialog', 'cancel')
+        self.assertEqual(self.run.call_count, 3)
+        self.dialog.native_inventory.assert_not_called()
+        self.dialog.cancel_control.assert_not_called()
+        self.assert_no_input()
+
+    def test_identity_change_after_failed_read_is_not_retried(self):
+        for key, value in [('owner', 999), ('pid', 99), ('title', 'Other dialog'), ('visible', False)]:
+            with self.subTest(key=key):
+                self.state.update(owner=102, pid=41, title='Verified file dialog', visible=True)
+                self.run.reset_mock()
+                def changed(*args, **kwargs):
+                    self.state[key] = value
+                    return self.result(self.transient)
+                self.run.side_effect = changed
+                with self.assertRaises(AssertionError):
+                    self.dialog.inspect(101, 'Verified file dialog')
+                self.assertEqual(self.run.call_count, 1)
+                self.assert_no_input()
+
+    def test_invalid_window_is_refused_before_provider_read(self):
+        self.state['visible'] = False
+        self.run.return_value = self.result()
+        with self.assertRaises(AssertionError):
+            self.dialog.inspect(101, 'Verified file dialog')
+        self.run.assert_not_called()
+        self.assert_no_input()
+
+    def test_owner_change_during_successful_provider_read_is_refused(self):
+        def changed(*args, **kwargs):
+            self.state['owner'] = 999
+            return self.result()
+        self.run.side_effect = changed
+        with self.assertRaises(AssertionError):
+            self.dialog.inspect(101, 'Verified file dialog')
+        self.assertEqual(self.run.call_count, 1)
+        self.dialog.native_inventory.assert_not_called()
+        self.dialog.cancel_control.assert_not_called()
+        self.assert_no_input()
+
+    def test_unrelated_error_is_not_retried_or_acted_on(self):
+        self.run.return_value = self.result('Access denied')
+        with self.assertRaisesRegex(AssertionError, 'Access denied'):
+            self.dialog.inspect(101, 'Verified file dialog')
+        self.assertEqual(self.run.call_count, 1)
+        self.sleep.assert_not_called()
+        self.assert_no_input()
+
+    def test_successful_read_with_wrong_identity_is_not_accepted(self):
+        for changes in [{'pid': 99}, {'title': 'Other dialog'}]:
+            with self.subTest(changes=changes):
+                self.run.reset_mock()
+                self.run.return_value = self.result(**changes)
+                with self.assertRaises(AssertionError):
+                    self.dialog.inspect(101, 'Verified file dialog')
+                self.assertEqual(self.run.call_count, 1)
+                self.dialog.cancel_control.assert_not_called()
+                self.assert_no_input()
+
+
 class DraftChangesTests(unittest.TestCase):
     def test_empty_restore_can_show_cancellation_notice_without_a_selected_backup(self):
         self.assertEqual(draft_changes({'restorePreview': ''}, {'restorePreview': 'Выбор отменён.'},
