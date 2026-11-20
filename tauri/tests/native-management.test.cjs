@@ -17,7 +17,7 @@ function mount(){
  const html=fs.readFileSync(path.join(root,'native-workspace.html'),'utf8');
  const e=Object.fromEntries([...html.matchAll(/id="(management[^"]+)"/g)].map(([,id])=>[id,new Element()]));
  const reads=[],writes=[],confirmations=[];
- let confirmed=true,backupPath=null;
+ let confirmed=true;
  const window={
   desktopAPI:{
    nativeMemberPage:async(...args)=>{
@@ -28,9 +28,9 @@ function mount(){
     reads.push(args);
     return [{handle,work:'<img src=x>',organization:'Цех'}];
    },
-   chooseSqliteBackupPath:async()=>backupPath,
-   nativeDeleteReport:async(revision,id,backup)=>{
-    writes.push({revision,id,backup});
+   chooseSqliteBackupPath:async()=>{throw Error('Deletion must not open the backup picker');},
+   nativeDeleteReport:async(revision,id)=>{
+    writes.push({revision,id});
     return {revision:revision+1,deleted:1};
    },
    nativeSettingsEdit:async(revision,action)=>{
@@ -47,7 +47,7 @@ function mount(){
  };
  const document={getElementById:id=>e[id],createElement:()=>new Element()};
  vm.runInNewContext(fs.readFileSync(path.join(root,'native-management.js'),'utf8'),{window,document});
- return {m:window.nativeManagement,e,reads,writes,confirmations,setBackup:path=>{backupPath=path;},deny:()=>{confirmed=false;}};
+ return {m:window.nativeManagement,e,reads,writes,confirmations,setConfirm:value=>{confirmed=value;},deny:()=>{confirmed=false;}};
 }
 test('member pages use the group and cursor strings unchanged; removal targets the rendered revision',async()=>{
  const {m,e,reads,writes,confirmations}=mount();
@@ -130,17 +130,14 @@ test('management bridge tracks revision-checked settings reads and writes',async
  assert.equal(window.tauriOperations.saves,0);
 });
 
-test('report deletion requires affirmative confirmation and a backup destination',async()=>{
+test('report deletion requires affirmative confirmation without choosing a backup',async()=>{
  const report={id:'report-id',period_start:'2025-05-01',period_end:'2025-05-07'};
- const {m,e,writes,confirmations,setBackup}=mount();
+ const {m,e,writes,confirmations}=mount();
  await m.setContext({revision:7});
  const actions=new Element();
  m.addReportAction(actions,report,7);
  await actions.children[0].fire();
- assert.equal(writes.length,0,'cancelled backup dialog');
- setBackup('D:/backups/report.sqlite3');
- await actions.children[0].fire();
- assert.deepEqual(writes,[{revision:7,id:'report-id',backup:'D:/backups/report.sqlite3'}]);
+ assert.deepEqual(writes,[{revision:7,id:'report-id'}]);
  assert.match(confirmations[0],/2025-05-01.*2025-05-07.*report-id/);
  assert.match(e.managementReportStatus.textContent,/Отчёт удалён/);
  await actions.children[0].fire();
@@ -149,8 +146,27 @@ test('report deletion requires affirmative confirmation and a backup destination
  await declined.m.setContext({revision:7});
  const buttons=new Element();
  declined.m.addReportAction(buttons,report,7);
- declined.setBackup('D:/backups/report.sqlite3');
  declined.deny();
  await buttons.children[0].fire();
  assert.equal(declined.writes.length,0,'declined confirmation');
+});
+
+test('SQL workspace deletion awaits the native answer, blocks duplicates and rejects a stale answer',async()=>{
+ const report={id:'report-id',period_start:'2025-05-01',period_end:'2025-05-07'};
+ for(const answer of [false,true,'stale','reject']){
+  const {m,e,writes,confirmations,setConfirm}=mount();
+  await m.setContext({revision:7});
+  let resolve,reject;setConfirm(new Promise((yes,no)=>{resolve=yes;reject=no;}));
+  const actions=new Element();m.addReportAction(actions,report,7);
+  const pending=actions.children[0].fire();
+  await new Promise(done=>setImmediate(done));
+  await actions.children[0].fire();
+  assert.equal(confirmations.length,1);assert.equal(writes.length,0);
+  if(answer==='stale')await m.setContext({revision:8});
+  if(answer==='reject')reject(Error('native dialog unavailable'));else resolve(answer!==false);
+  await pending;
+  assert.equal(writes.length,answer===true?1:0);
+  if(answer==='stale')assert.match(e.managementReportStatus.textContent,/База изменилась/);
+  if(answer==='reject')assert.match(e.managementReportStatus.textContent,/Отчёт не удалён/);
+ }
 });

@@ -1,7 +1,7 @@
 //! Revision-checked settings pages and one-edit transactional publication for the SQL workspace.
 use crate::storage::{ManagementJob, ManagementReceipt, Storage};
 use serde::{Deserialize, Serialize};
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 const PAGE_LIMIT: usize = 50;
@@ -188,20 +188,15 @@ pub async fn native_delete_report(
     app: AppHandle,
     revision: i64,
     id: String,
-    backup_destination: String,
 ) -> Result<ManagementReceipt, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let store = app.state::<Storage>();
         if id.len() > 65_536 || id.is_empty() {
             return Err("Недопустимый идентификатор отчёта.".into());
         }
-        if backup_destination.is_empty() || backup_destination.len() > 32_767 {
-            return Err("Выберите место для резервной копии SQLite.".into());
-        }
-        store.management_delete_report_with_backup(
+        store.management_delete_report(
             revision,
             &id,
-            Path::new(&backup_destination),
             &ManagementJob::new(),
         )
     })

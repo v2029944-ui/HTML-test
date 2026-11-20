@@ -185,29 +185,23 @@ function addReportAction(cell,report,expected){
  cell.append(button('Удалить отчёт',async()=>{
   if(writing||expected!==revision)return;
   const period=report.period_start+' — '+report.period_end;
-  if(!window.confirm('Удалить отчёт за '+period+' («'+report.id+'»)? Сначала сохраните резервную копию SQLite.'))return;
   writing=true;
   controls();
   let deleted=false;
   try{
-   const date=new Date().toISOString().slice(0,10);
-   const destination=await api.chooseSqliteBackupPath('analiz-before-delete-'+date+'.sqlite3');
-   if(!destination){
-    status('ReportStatus','Удаление отменено.');
-    return;
-   }
+   if(await window.confirm('Удалить отчёт за '+period+' («'+report.id+'»)?')!==true)return;
    if(expected!==revision){
     status('ReportStatus','База изменилась. Выберите отчёт заново.',true);
     return;
    }
-   status('ReportStatus','Создаётся резервная копия. Затем отчёт будет удалён…');
-   await api.nativeDeleteReport(expected,report.id,destination);
+   status('ReportStatus','Удаляется отчёт…');
+   await api.nativeDeleteReport(expected,report.id);
    deleted=true;
    const refreshed=await window.nativeWorkspaceRefresh();
-   status('ReportStatus',refreshed?'Отчёт удалён. Резервная копия сохранена.':
-    'Отчёт удалён. Резервная копия сохранена. Обновите данные рабочей области.');
+   status('ReportStatus',refreshed?'Отчёт удалён.':
+    'Отчёт удалён. Обновите данные рабочей области.');
   }catch(error){
-   status('ReportStatus',deleted?'Отчёт удалён. Резервная копия сохранена. Обновите данные рабочей области.':
+   status('ReportStatus',deleted?'Отчёт удалён. Обновите данные рабочей области.':
     'Отчёт не удалён. '+managementError(error),!deleted);
   }finally{
    if(deleted&&revision===expected)void setContext(null);

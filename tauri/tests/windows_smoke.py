@@ -466,8 +466,7 @@ def check_cancelled_management_confirmations(page, confirmations):
         'Сначала будет создана резервная копия SQLite.',drafts=drafts)
     fields.first.fill(original)
     confirmations.cancel_only(page.locator('#clearReports'),
-        'Удалить все импортированные отчёты? Группы останутся. '
-        'Перед удалением будет создана резервная копия SQLite.',drafts=drafts)
+        'Удалить все импортированные отчёты? Группы останутся.',drafts=drafts)
     # This button is offered even without a scheduled restore. We cancel its
     # real confirmation; no pending restore is fabricated or cancelled via IPC.
     confirmations.cancel_only(
@@ -482,7 +481,7 @@ def check_cancelled_management_confirmations(page, confirmations):
     dates=re.search(r'· (\d{4}-\d{2}-\d{2}) — (\d{4}-\d{2}-\d{2})',card.locator('strong').inner_text())
     assert dates, 'Saved report card must expose its real period'
     confirmations.cancel_only(card.get_by_role('button',name='Удалить отчёт',exact=True),
-        'Удалить отчёт '+dates[1]+' — '+dates[2]+' после создания резервной копии SQLite?')
+        'Удалить отчёт '+dates[1]+' — '+dates[2]+'?')
     assert confirmations.revision()==revision
     after=api(page,'nativeSettingsBootstrap')
     assert after==before,('Cancelled management confirmations changed SQLite snapshot',before,after)
@@ -1014,6 +1013,57 @@ def backup_contents(path):
     return reports,settings,metrics
 
 
+def check_delete_without_backup(page, temporary, confirmations):
+    """Last destructive fixture: real confirmation and SQLite, no Save dialog."""
+    source=temporary/'delete-without-backup.xlsx'
+    source.write_bytes(daily_workbook_bytes())
+    original=source.read_bytes()
+    before=api(page,'nativeSettingsBootstrap')
+    options={'sheet':'xl/worksheets/sheet1.xml','kind':'day','start':'2030-01-01',
+             'organizations':before['org_names']}
+    preview=api(page,'nativeLegacyImportPreview',str(source),options)
+    assert preview['reportCount']==6 and preview['conflicts']['replacements']==0
+    receipt=api(page,'nativeLegacyImportApply',str(source),options,preview['reviewToken'],
+                {'replaceExact':False,'acceptCrossType':False,'acceptQuality':True})
+    page.evaluate('window.unifiedUI.refresh()')
+    revision=receipt['revision']
+    rows=api(page,'managementReportPage',revision,{'from':'2030-01-01','to':'2030-01-06'},None,50)
+    assert len(rows)==6 and rows[0]['start']=='2030-01-06'
+    database=Path(api(page,'info')['dataFile'])
+    files={p.name for p in database.parent.glob('*.sqlite3')}
+    stored=backup_contents(database)
+    navigate(page,'upload')
+    loaded=page.locator('#uploadedReports')
+    if not loaded.evaluate('node=>node.open'):
+        loaded.locator(':scope > summary').click()
+    card=page.locator('#reports .calendar-source').first
+    expect(card.locator('strong')).to_contain_text('2030-01-06',timeout=90_000)
+    confirmations.cancel_then_accept(card.get_by_role('button',name='Удалить отчёт',exact=True),
+        'Удалить отчёт 2030-01-06 — 2030-01-06?')
+    page.wait_for_function('count=>window.unifiedUI.snapshot?.reports===count',
+                           arg=before['reports']+5,timeout=90_000)
+    remaining=backup_contents(database)
+    assert remaining[0]==[row for row in stored[0] if row[0]!=rows[0]['id']]
+    assert remaining[1:]==stored[1:]
+    assert_rejected(lambda:api(page,'nativeDeleteReport',revision,rows[1]['id']),
+                    'An old single-delete selection was accepted','Stale storage revision')
+    navigate(page,'storage')
+    clear_revision=api(page,'nativeSettingsBootstrap')['revision']
+    confirmations.cancel_then_accept(page.locator('#clearReports'),
+                                    'Удалить все импортированные отчёты? Группы останутся.')
+    page.wait_for_function('window.unifiedUI.snapshot?.reports===0',timeout=90_000)
+    cleared=backup_contents(database)
+    assert cleared[0]==[] and cleared[1:]==stored[1:]
+    assert {p.name for p in database.parent.glob('*.sqlite3')}==files,'Deletion created an unsolicited SQLite backup'
+    assert_rejected(lambda:api(page,'unifiedClearReports',clear_revision),
+                    'An old clear-all selection was accepted','Stale storage revision')
+    with closing(sqlite3.connect(database)) as check:
+        assert check.execute('PRAGMA foreign_key_check').fetchall()==[]
+        for table in ['report_source_diagnostic_links','report_source_ownership']:
+            assert check.execute('SELECT COUNT(*) FROM '+table).fetchone()==(0,)
+    assert source.read_bytes()==original
+
+
 def check_backup_and_replace(page, temporary, snapshot):
     revision=api(page,'nativeBackupSqlite',str(snapshot))
     assert isinstance(revision,int) and snapshot.is_file()
@@ -1376,7 +1426,7 @@ def run():
                 assert api(page,'list')['rules'][workbook.name]['year']==2024
                 report['checks'].append('Pending restore leaves the changed live SQLite and its Excel rules in place until restart')
 
-            with installed_page() as (page,_,_):
+            with installed_page() as (page,_,pid):
                 ready(page,366)
                 open_full_workspace(page)
                 restored=tmp/'after-restore.sqlite3'
@@ -1396,6 +1446,9 @@ def run():
                 report['checks'].append('Saved source evidence distinguishes zero provenance, source-day gaps, unknown organization and acknowledgment without changing source XLSX or read-only revision')
                 check_omitted_detail_evidence(page,tmp,output)
                 report['checks'].append('Native omitted-detail tags distinguish invalid data, unknown organizations, invalid controls and included unnamed rows; persisted totals remain 3 and 8 with explicit acknowledgment')
+                confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
+                check_delete_without_backup(page,tmp,confirmations)
+                report['checks'].append('Single report and clear-all deletion keep Cancel/Close/Escape, reject stale revisions and preserve settings, metrics and XLSX without a backup chooser')
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     if independent_failures:
         raise ExceptionGroup('Installed WebView2 walkthroughs failed',independent_failures)

@@ -1,6 +1,6 @@
 //! Original-interface data administration without materializing report history.
-//! The verified backup is published before any live mutation. All JSON changes,
-//! source ownership and diagnostic links then commit in one SQLite transaction.
+//! Organization renaming publishes a verified backup before mutation. Changes
+//! to reports, source ownership and diagnostics commit in one SQLite transaction.
 use super::*;
 
 fn normalized_org(s: &str) -> String {
@@ -249,15 +249,13 @@ impl Storage {
         })
     }
 
-    /// Caller must show the original destructive-action confirmation and ask
-    /// for a fresh backup destination. Excel source files are never touched.
+    /// Caller must show the destructive-action confirmation. Deletion does not
+    /// create a backup; Excel source files are never touched.
     pub fn unified_clear_reports(
         &self,
         expected: i64,
-        destination: &Path,
         job: &ManagementJob,
     ) -> Result<ManagementReceipt, String> {
-        backup_before(self, expected, destination, job)?;
         let live = self.management_connect()?;
         job.run(&live, || {
             let tx = live.unchecked_transaction().map_err(err)?;
@@ -267,6 +265,8 @@ impl Storage {
             )
             .map_err(err)?;
             check_revision(&tx, expected)?;
+            check_metadata_bounds(&tx)?;
+            check_delete_integrity(&tx)?;
             // All target reports disappear together. No surviving day can lose
             // its diagnostic anchor. Delete triggers release ownership/indexes.
             tx.execute("DELETE FROM report_source_diagnostic_links", [])
@@ -424,7 +424,6 @@ mod tests {
         let receipt = store
             .unified_clear_reports(
                 store.revision().unwrap(),
-                &dir.path().join("clear.sqlite3"),
                 &ManagementJob::new(),
             )
             .unwrap();
@@ -464,10 +463,10 @@ mod tests {
         assert!(cancelled.cancel());
         let backup = dir.path().join("no.sqlite3");
         assert!(store
-            .unified_clear_reports(revision, &backup, &cancelled)
+            .unified_clear_reports(revision, &cancelled)
             .is_err());
         assert!(store
-            .unified_clear_reports(revision - 1, &backup, &ManagementJob::new())
+            .unified_clear_reports(revision - 1, &ManagementJob::new())
             .is_err());
         assert!(store
             .unified_rename_organizations(
@@ -515,7 +514,6 @@ mod tests {
         assert!(store
             .unified_clear_reports(
                 revision,
-                &dir.path().join("delete-fault.sqlite3"),
                 &ManagementJob::new()
             )
             .unwrap_err()

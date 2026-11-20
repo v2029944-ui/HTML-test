@@ -42,11 +42,9 @@ function init(){
   const orgs=el('details'),list=el('p');orgs.append(el('summary','Подразделения ('+r.organizations+')'),list);let loaded=false;orgs.addEventListener('toggle',()=>{if(orgs.open&&!loaded){loaded=true;void reportOrgs(r.id,list,rev);}});card.append(orgs,qualityAction(r));
   if(api.nativeDeleteReport){let deleting=false;const action=button('Удалить отчёт',async()=>{
    if(deleting||UI.revision!==rev)return;deleting=true;action.disabled=true;
-   try{if(await window.confirm('Удалить отчёт '+r.start+' — '+r.end+' после создания резервной копии SQLite?')!==true)return;
+   try{if(await window.confirm('Удалить отчёт '+r.start+' — '+r.end+'?')!==true)return;
     if(UI.revision!==rev)throw Error('Данные изменились. Обновите список отчётов.');
-    const destination=await api.chooseSqliteBackupPath('analiz-before-delete-'+new Date().toISOString().slice(0,10)+'.sqlite3');if(!destination){UI.notice?.('Удаление отменено: резервная копия не выбрана.');return;}
-    if(UI.revision!==rev)throw Error('Данные изменились. Обновите список отчётов.');
-    await api.nativeDeleteReport(rev,r.id,destination);
+    await api.nativeDeleteReport(rev,r.id);
      try{await UI.refresh();}catch(error){UI.notice?.('Отчёт удалён из SQLite, но не удалось обновить отображение: '+String(error.message||error)+'. Обновите данные.',true);}
    }catch(error){UI.notice?.('Не удалось удалить отчёт: '+String(error.message||error),true);}finally{deleting=false;action.disabled=false;}
   });card.append(action);}

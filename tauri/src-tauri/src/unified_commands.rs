@@ -227,12 +227,10 @@ pub async fn unified_rename_organizations(
 pub async fn unified_clear_reports(
     app: AppHandle,
     revision: i64,
-    destination: String,
 ) -> Result<ManagementReceipt, String> {
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<Storage>().unified_clear_reports(
             revision,
-            Path::new(&destination),
             &ManagementJob::new(),
         )
     })
