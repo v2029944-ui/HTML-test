@@ -95,6 +95,20 @@ async function suggestWeeklyReports(s){
   message.append(button);$('overviewAlerts').append(message);
  }catch{/* Подсказка о другом источнике не влияет на расчёты. */}
 }
+async function suggestWeeklyWhenDailyEmpty(revision,mine){
+ try{
+  const weekly=await api.unifiedPeriodOptions(revision,'week',null,null,1);
+  if(!valid(mine,revision)||!weekly.total_rows)return;
+  const message=UI.el('p','Дневных отчётов пока нет, но в базе загружены недельные. Для их просмотра выберите недельный источник.','warn small');
+  const button=UI.el('button','Открыть недельные отчёты','button secondary');button.type='button';
+  button.addEventListener('click',()=>{if(UI.revision!==revision)return;
+   $('unifiedSource').value='imported';$('periodType').value='week';
+   if(weekly.max){for(const id of ['overviewPeriod','rangeStart','rangeEnd'])UI.setPeriodInput(id,'week',weekly.max);}
+   void configure(UI.snapshot);
+  });
+  message.append(button);$('overviewAlerts').append(message);
+ }catch{/* Подсказка не заменяет обязательную проверку источников. */}
+}
 function drawOverview(result,organizations,s,before){
  for(const id of ['overviewKpis','overviewInsights','overviewOrganizations','overviewAlerts'])clear(id);
  const summary=result.summary,current=summary.after,previous=summary.before,root=$('overviewKpis'),insights=$('overviewInsights');
@@ -188,7 +202,7 @@ async function configure(snapshot){
  if(kind==='year'&&source!=='daily'){$('unifiedSource').value='daily';UI.notice('Для календарного года используются дневные отчёты.');}
  try{const actualSource=value('unifiedSource'),reportType=actualSource==='daily'?'day':kind,options=await api.unifiedPeriodOptions(revision,reportType,actualSource==='daily'?kind:null,null,1);if(!valid(mine,revision))return;
   for(const id of ['overviewPeriod','rangeStart','rangeEnd']){const old=$(id).dataset.periodType,reset=old!==kind||!$(id).value;UI.setPeriodInput(id,kind,reset?(options.max||new Date().toISOString().slice(0,10)):undefined);}
-  if(!options.total_rows){scope=null;for(const id of ['overviewKpis','overviewInsights','overviewOrganizations','chartsContainer','dataTable','chartOrgTotals'])clear(id);clear('overviewAlerts','За выбранным источником и типом периода нет отчётов. Загрузите отчёты или измените источник.');$('printSummary').disabled=true;void names();return;}
+  if(!options.total_rows){scope=null;for(const id of ['overviewKpis','overviewInsights','overviewOrganizations','chartsContainer','dataTable','chartOrgTotals'])clear(id);clear('overviewAlerts','Для выбранного источника нет отчётов. Загрузите данные или выберите другой источник.');$('printSummary').disabled=true;void names();if(actualSource==='daily'&&kind==='week')void suggestWeeklyWhenDailyEmpty(revision,mine);return;}
   namePositions=[null];seriesPositions=[null];await calculate();
  }catch(error){if(valid(mine,revision)){scope=null;clear('overviewAlerts','Не удалось открыть периоды. '+errorText(error));}}
 }
