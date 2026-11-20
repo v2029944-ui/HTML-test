@@ -16,6 +16,7 @@ def set_client_width(page, app, width):
         function.restype, function.argtypes = result, arguments
 
     windows = [hwnd for hwnd in app.windows() if app.process(hwnd) == app.pid and
+               app.window_class(hwnd) == 'Tauri Window' and
                user32.IsWindowVisible(hwnd) and not user32.GetWindow(hwnd, 4)]
     assert len(windows) == 1, ('Expected one visible, unowned test application window', app.pid, windows)
     hwnd = windows[0]

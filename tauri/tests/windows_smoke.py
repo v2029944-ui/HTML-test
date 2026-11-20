@@ -697,6 +697,7 @@ def check_source_evidence(page, temporary, output):
     assert gap['date']=='2020-02-29' and gap['organization'] is None and gap['relevant'] is True and gap['scope']=='source-period',gap
     navigate(page,'dashboard');page.locator('#periodType').select_option('day')
     wait_for_app_state(page,'document.getElementById("overviewPeriod").type==="date" && window.unifiedUI.scope?.displayType==="day"','Day input and scope are ready')
+    page.locator('#overviewMode').select_option('single')
     set_calendar_field(page, 'overviewPeriod', '2020-02-28')
     wait_for_app_state(page,'window.unifiedUI.scope?.from==="2020-02-28"','Synthetic zero report is selected')
     details=page.locator('#overviewAlerts .coverage-details');details.locator(':scope > summary').click()
@@ -750,6 +751,9 @@ def check_omitted_detail_evidence(page, temporary, output):
     assert by_row[5]['kind']=='empty-name' and by_row[5]['skipped'] is None,notes
     assert by_row[6]['kind']=='invalid' and by_row[6]['skipped'] is None,notes
     assert by_row[7]['kind']=='skipped' and by_row[7]['skipped'] is True and by_row[7]['organization'] is None,notes
+    navigate(page,'dashboard')
+    page.locator('#periodType').select_option('day')
+    page.locator('#overviewMode').select_option('single')
     set_calendar_field(page, 'overviewPeriod', '2020-03-01')
     wait_for_app_state(page,'window.unifiedUI.scope?.from==="2020-03-01"','Imported omitted-detail report is selected')
     details=page.locator('#overviewAlerts .coverage-details');details.locator(':scope > summary').click()
