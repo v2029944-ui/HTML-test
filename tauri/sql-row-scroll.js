@@ -15,7 +15,16 @@ function attach(root,options){
   viewport.className='sql-scroll';viewport.dataset.sqlRowScroll=axis;viewport.tabIndex=0;viewport.setAttribute('role','region');
   for(const gap of [before,after]){gap.className='sql-scroll-gap';gap.setAttribute('aria-hidden','true');}
   body.className='sql-scroll-page';root.before(viewport);viewport.append(before,body,after);body.append(root);root.classList.add('sql-scroll-content');
-  state={viewport,before,after,body,step:0,target:null,queued:0,options:null};states.set(root,state);
+  state={viewport,before,after,body,step:0,target:null,queued:0,options:null,rowFocus:null};states.set(root,state);
+  const rowFocus=event=>{
+   if(!state.options||state.target||!body.contains(event.target))return;
+   const marker={};state.rowFocus=marker;
+   // Native focus/scrollIntoView can center an edge row inside the virtual
+   // gap. Finish the click first, then keep focus within its existing rows.
+   requestAnimationFrame(()=>{if(state.rowFocus!==marker)return;clampToRows(state);state.rowFocus=null;});
+  };
+  viewport.addEventListener('pointerdown',rowFocus,true);
+  viewport.addEventListener('focusin',rowFocus);
   viewport.addEventListener('keydown',event=>{
    if(event.target!==viewport||!state.options||event.altKey||event.metaKey)return;
    const horizontal=state.options.horizontal,offset=horizontal?'scrollLeft':'scrollTop';
@@ -64,6 +73,7 @@ function attach(root,options){
 }
 function onScroll(state){
  const opts=state.options;if(!opts||state.target)return;
+ if(state.rowFocus){clampToRows(state);return;}
  const {viewport,body}=state,{horizontal,index,head,stride,pages,hasNext,direct,go}=opts;
  const position=horizontal?viewport.scrollLeft:viewport.scrollTop,visible=horizontal?viewport.clientWidth:viewport.clientHeight;
  if(!visible)return;
@@ -94,9 +104,16 @@ function onScroll(state){
   else{const alert=document.createElement('p');alert.role='alert';alert.textContent=message;body.append(alert);}
  });
 }
+function clampToRows(state){
+ const opts=state.options;if(!opts||state.target)return;
+ const {viewport,body}=state,{horizontal,head}=opts,offset=horizontal?'scrollLeft':'scrollTop';
+ const visible=horizontal?viewport.clientWidth:viewport.clientHeight;
+ const extent=horizontal?body.scrollWidth:body.getBoundingClientRect().height;
+ viewport[offset]=Math.max(head,Math.min(viewport[offset],head+Math.max(0,extent-visible)));
+}
 function reset(root){
  const state=states.get(root);if(!state)return;
- state.options=null;state.target=null;state.step=0;
+ state.options=null;state.target=null;state.step=0;state.rowFocus=null;
  for(const n of [state.before,state.after]){n.style.height=n.style.width='0px';}
  state.body.style.minHeight=state.body.style.minWidth='';
  state.viewport.scrollTop=state.viewport.scrollLeft=0;state.viewport.classList.remove('sql-scroll-multiple');delete state.viewport.dataset.sqlWindow;

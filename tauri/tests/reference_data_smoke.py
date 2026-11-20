@@ -453,6 +453,19 @@ def check_reference_data(page, output):
         expect(periods).to_have_attribute('data-sql-window', '11', timeout=TIMEOUT)
         expect(sheet.locator('.coverage-matrix thead')).to_contain_text('31.12.2024')
         expect(sheet.locator('td.coverage-ok')).to_have_count(100)
+        # Cross one SQL boundary backwards, then activate the first cell. Its
+        # automatic scroll into view must keep the selected November window.
+        periods.evaluate('node => { node.scrollLeft = node.firstElementChild.offsetWidth - 3 }')
+        expect(periods).to_have_attribute('data-sql-window', '10', timeout=TIMEOUT)
+        expect(sheet.locator('td.coverage-ok')).to_have_count(124)
+        november_cell = sheet.locator('.coverage-cell-action').first
+        november_cell.click()
+        inspection = sheet.locator('.coverage-inspection')
+        expect(inspection.locator('.coverage-report')).to_have_count(1, timeout=TIMEOUT)
+        expect(inspection.get_by_role('heading').first).to_contain_text('06.11.2024')
+        expect(periods).to_have_attribute('data-sql-window', '10')
+        inspection.get_by_role('button', name='Закрыть подробности', exact=True).click()
+        expect(november_cell).to_be_focused()
         periods.evaluate('node => { node.scrollLeft = 0 }')
         expect(periods).to_have_attribute('data-sql-window', '0', timeout=TIMEOUT)
         expect(sheet.locator('.coverage-matrix thead')).to_contain_text('01.01.2024')
