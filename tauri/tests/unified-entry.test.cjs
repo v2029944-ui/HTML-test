@@ -110,7 +110,7 @@ test('generated original presentation uses quantity/volume terminology, standalo
 test('Windows CRLF presentation still generates the column-orientation controls',()=>{
  const windows=original.replace(/\r?\n/g,'\r\n');
  const html=prepareHtml(windows);
- assert.match(html,/id="chartOrientation"/);assert.doesNotMatch(html,/data-chart="line"/);
+ assert.match(html,/id="chartOrientation"/);assert.match(html,/id="changesPeriodOverride"/);assert.match(html,/id="analysisBasePeriod"/);assert.doesNotMatch(html,/data-chart="line"/);
 });
 
 test('Tauri canonical page exposes one shared baseline and visible local period overrides',()=>{
