@@ -48,6 +48,7 @@ pub struct NativeWideConfirmation {
 }
 fn with_prepared<T>(
     store: &Storage,
+    stage_directory: &str,
     source: &str,
     options: WideOptions,
     action: impl FnOnce(&PreparedImport<'_>, &ImportPreview, &WideOptions) -> Result<T,String>,
@@ -60,7 +61,7 @@ fn with_prepared<T>(
     // First initialize / migrate the owner's database through the normal safe
     // path; raw import_connection is intentionally not allowed to migrate.
     store.revision()?;
-    let area=StageArea::open(store.root().join("native-import-stages"))
+    let area=StageArea::open(store.root().join(stage_directory))
         .map_err(|e|e.to_string())?;
     let cancelled=Arc::new(AtomicBool::new(false));
     let mut stage=area.ingest(path, Limits::default(), &cancelled, |_|{})
@@ -154,7 +155,7 @@ pub async fn native_wide_import_preview(
 ) -> Result<NativeWideReview,String> {
     tauri::async_runtime::spawn_blocking(move || {
         let storage=app.state::<Storage>();
-        with_prepared(&storage,&source,options,|prepared,preview,options| {
+        with_prepared(&storage,"native-import-stages",&source,options,|prepared,preview,options| {
             review(prepared,preview,options,b"wide-manual-review-v1\0",&options.organizations)
         })
     }).await.map_err(|e|e.to_string())?
@@ -172,7 +173,7 @@ pub async fn native_wide_import_apply(
             return Err("Invalid import review token".into());
         }
         let storage=app.state::<Storage>();
-        with_prepared(&storage,&source,options,|prepared,preview,options| {
+        with_prepared(&storage,"native-import-stages",&source,options,|prepared,preview,options| {
             let current=review(prepared,preview,options,b"wide-manual-review-v1\0",&options.organizations)?;
             if current.review_token!=review_token {
                 return Err("Source, report quality, conflicts or database changed. Preview again.".into());
@@ -216,6 +217,7 @@ pub async fn native_wide_import_apply(
 /// disk-backed native import, with a separately domain-bound review token.
 fn with_legacy_prepared<T>(
     store: &Storage,
+    stage_directory: &str,
     source: &str,
     options: LegacyOptions,
     action: impl FnOnce(&PreparedImport<'_>, &ImportPreview, &LegacyOptions) -> Result<T,String>,
@@ -226,7 +228,7 @@ fn with_legacy_prepared<T>(
         return Err("Choose an absolute .xlsx file".into());
     }
     store.revision()?;
-    let area=StageArea::open(store.root().join("native-import-stages"))
+    let area=StageArea::open(store.root().join(stage_directory))
         .map_err(|e|e.to_string())?;
     let cancelled=Arc::new(AtomicBool::new(false));
     let mut stage=area.ingest(path,Limits::default(),&cancelled,|_|{})
@@ -306,7 +308,7 @@ pub async fn native_legacy_import_preview(
 ) -> Result<NativeWideReview,String> {
     tauri::async_runtime::spawn_blocking(move || {
         let storage=app.state::<Storage>();
-        with_legacy_prepared(&storage,&source,options,|prepared,preview,options| {
+        with_legacy_prepared(&storage,"native-import-stages",&source,options,|prepared,preview,options| {
             review(prepared,preview,options,b"legacy-manual-review-v1\0",&options.organizations)
         })
     }).await.map_err(|e|e.to_string())?
@@ -325,7 +327,7 @@ pub async fn native_legacy_import_apply(
             return Err("Invalid import review token".into());
         }
         let storage=app.state::<Storage>();
-        with_legacy_prepared(&storage,&source,options,|prepared,preview,options| {
+        with_legacy_prepared(&storage,"native-import-stages",&source,options,|prepared,preview,options| {
             let current=review(prepared,preview,options,b"legacy-manual-review-v1\0",&options.organizations)?;
             if current.review_token!=review_token {
                 return Err("Excel, report quality, conflicts or SQLite changed. Preview again.".into());
@@ -483,9 +485,13 @@ impl ReviewedQualityQuery {
             if current.review_token!=self.review_token{return Err("Excel, report quality, conflicts or SQLite changed. Preview again.".into());}
             action(prepared,preview.revision(),&self.filter)
         };
+        // A quality read can outlive the WebView filter which started it. Keep
+        // that scratch area separate from preview/apply and serialize readers.
+        static READING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = READING.lock().map_err(|_| "Quality staging is unavailable")?;
         match self.selection{
-            QualityImportOptions::Wide(options)=>with_prepared(store,&self.source,options,|p,v,o|accept(p,v,review(p,v,o,b"wide-manual-review-v1\0",&o.organizations)?)),
-            QualityImportOptions::Legacy(options)=>with_legacy_prepared(store,&self.source,options,|p,v,o|accept(p,v,review(p,v,o,b"legacy-manual-review-v1\0",&o.organizations)?)),
+            QualityImportOptions::Wide(options)=>with_prepared(store,"native-quality-stages",&self.source,options,|p,v,o|accept(p,v,review(p,v,o,b"wide-manual-review-v1\0",&o.organizations)?)),
+            QualityImportOptions::Legacy(options)=>with_legacy_prepared(store,"native-quality-stages",&self.source,options,|p,v,o|accept(p,v,review(p,v,o,b"legacy-manual-review-v1\0",&o.organizations)?)),
         }
     }
 }
@@ -502,4 +508,42 @@ pub async fn native_preview_quality_csv(app:tauri::AppHandle,query:ReviewedQuali
         let store=app.state::<Storage>();
         query.read(&store,|prepared,revision,filter|store.prepared_quality_csv(revision,prepared,filter,Path::new(&destination)))
     }).await.map_err(|e|e.to_string())?
+}
+
+#[cfg(test)]
+mod reviewed_quality_tests {
+    use super::*;
+    use std::io::Write;
+    use zip::{write::SimpleFileOptions, ZipWriter};
+
+    fn workbook(path: &Path, name: &str) {
+        let mut writer = ZipWriter::new(std::fs::File::create(path).unwrap());
+        writer.start_file("xl/worksheets/sheet1.xml", SimpleFileOptions::default()).unwrap();
+        write!(writer,r#"<worksheet><sheetData><row r="2"><c r="A2" t="inlineStr"><is><t>СМУ16</t></is></c><c r="B2"><v>1</v></c><c r="C2"><v>2</v></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>{name}</t></is></c><c r="B3"><v>1</v></c><c r="C3"><v>2</v></c></row></sheetData></worksheet>"#).unwrap();
+        writer.finish().unwrap();
+    }
+
+    #[test]
+    fn reviewed_quality_rejects_same_path_different_bytes_before_creating_csv() {
+        let dir=tempfile::tempdir().unwrap();
+        let path=dir.path().join("quality.xlsx");
+        workbook(&path,"Исходная работа");
+        let source=path.to_str().unwrap();
+        let store=Storage::new(dir.path().join("db")).unwrap();
+        let options=||LegacyOptions{
+            period_dates:None,sheet:"xl/worksheets/sheet1.xml".into(),kind:"day".into(),start:"2024-01-01".into(),
+            organizations:["СМУ16".into(),"АВТО".into(),"ТРАК".into(),"ЦЕНТР".into()],
+            mappings:Some(vec![analiz_import_core::TripleMapping{header_row:1,work_col:1,count_col:2,amount_col:3}]),
+        };
+        let reviewed=with_legacy_prepared(&store,"native-import-stages",source,options(),|p,v,o|review(p,v,o,b"legacy-manual-review-v1\0",&o.organizations)).unwrap();
+        let make_query=||ReviewedQualityQuery{
+            source:source.into(),selection:QualityImportOptions::Legacy(options()),review_token:reviewed.review_token.clone(),filter:Default::default(),
+        };
+        make_query().read(&store,|p,r,f|store.prepared_quality_page(r,p,f,0)).unwrap();
+        workbook(&path,"Изменённая работа");
+        let output=dir.path().join("stale.csv");
+        let result=make_query().read(&store,|p,r,f|store.prepared_quality_csv(r,p,f,&output));
+        assert!(result.unwrap_err().contains("Preview again"));
+        assert!(!output.exists());assert_eq!(store.revision().unwrap(),reviewed.revision);
+    }
 }

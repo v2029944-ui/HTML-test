@@ -80,7 +80,7 @@ test('changing XLSX A to B clears dates year and manual mappings before B review
  await ui.nodes.inspectFile.click();assert.equal(previews,0);assert.match(ui.nodes.unifiedImportStatus.textContent,/первую дату/);
 });
 
-test('canceling replacement consistently retains A parameters but invalidates its review',async()=>{const choices=['/tmp/A.xlsx',null];const ui=mount({chooseWideXlsx:async()=>choices.shift()});await ui.nodes.excelFile.click();ui.nodes.importWeek.value='2024-03-01';await ui.nodes.inspectFile.click();assert.equal(ui.nodes.saveImport.disabled,false);await ui.nodes.excelFile.click();assert.equal(ui.nodes.excelFileStatus.textContent,'A.xlsx');assert.equal(ui.nodes.importWeek.value,'2024-03-01');assert.equal(ui.nodes.inspectFile.disabled,false);assert.equal(ui.nodes.saveImport.disabled,true);assert.match(ui.nodes.unifiedImportStatus.textContent,/отменён/);});
+test('canceling the replacement chooser retains the reviewed workbook and its parameters',async()=>{const choices=['/tmp/A.xlsx',null];const ui=mount({chooseWideXlsx:async()=>choices.shift()});await ui.nodes.excelFile.click();ui.nodes.importWeek.value='2024-03-01';await ui.nodes.inspectFile.click();assert.equal(ui.nodes.saveImport.disabled,false);await ui.nodes.excelFile.click();assert.equal(ui.nodes.excelFileStatus.textContent,'A.xlsx');assert.equal(ui.nodes.importWeek.value,'2024-03-01');assert.equal(ui.nodes.inspectFile.disabled,false);assert.equal(ui.nodes.saveImport.disabled,false);assert.match(ui.nodes.unifiedImportStatus.textContent,/отменён/);});
 
 test('a selected Windows source receives only its checked folder rule',async()=>{const ui=mount({chooseWideXlsx:async()=>String.raw`C:\Excel\B.xlsx`,list:async()=>({folder:String.raw`C:\Excel`,files:[],rules:{'B.xlsx':{format:'daily-wide',type:'day',start:'',year:2025,sheets:['Дни'],mappings:{'Дни':{workCol:0,headerRow:1,firstDayCol:1}}}}})});await ui.nodes.excelFile.click();assert.equal(ui.nodes.excelFileStatus.textContent,'B.xlsx');assert.equal(ui.nodes.importFormat.value,'daily-wide');assert.equal(ui.nodes.dailyYear.value,2025);assert.equal(ui.nodes.unifiedWideSheets.value,'Дни');assert.match(ui.nodes.unifiedWideMapping.value,/Дни; 2; A; B/);});
 
@@ -188,4 +188,33 @@ test('choosing a report calendar year loads the confirmed year and keeps the sam
  assert.deepEqual(years,[first,2020]);assert.equal(ui.nodes.referenceReportYear,button);
  assert.equal(ui.nodes.calendarRange.children[0],button);assert.match(button.textContent,/2020/);
  await ui.nodes.calendarNext.click();await flush();assert.equal(years.at(-1),2021);
+});
+
+test('saved and staged quality export the full native query, invalidate stale destinations and keep advice and Excel addresses',async()=>{
+ const saved=[],staged=[],reads=[];
+ const page={issues:[{date:'2024-01-01',kind:'invalid',reason:'Координата',source_row:11,sheet:'Лист A',cells:['D11']}],total:64,next_offset:50,counts:{invalid:64}};
+ const ui=mount({chooseWideXlsx:async()=>'/tmp/reviewed.xlsx',unifiedQualityPage:async()=>page,nativePreviewQualityPage:async(...args)=>{reads.push(args);return page;},chooseCsvPath:async()=>'/tmp/selected.csv',unifiedQualityCsv:async(...args)=>saved.push(args),nativePreviewQualityCsv:async(...args)=>staged.push(args)});
+ await ui.refresh();
+ assert.match(text(ui.nodes.qualityTable),/Как проверить и исправить/);
+ assert.match(text(ui.nodes.qualityTable),/'Лист A'!D11/);
+ await ui.nodes.qualityExportCsv.click();assert.equal(saved.length,1);
+ await ui.nodes.excelFile.click();ui.nodes.importWeek.value='2024-01-01';await ui.nodes.inspectFile.click();
+ ui.nodes.qualitySource.value='pending';await ui.nodes.qualitySource.fire('change');await flush();
+ ui.nodes.qualitySearch.value='Координата';await ui.nodes.qualitySearch.fire('input');await flush();
+ await ui.nodes.qualityNext.click();await flush();
+ assert.equal(reads.at(-1)[1],50);
+ await ui.nodes.qualityExportCsv.click();
+ assert.equal(staged[0][0].source,'/tmp/reviewed.xlsx');assert.equal(staged[0][0].selection.format,'legacy');assert.equal(staged[0][0].reviewToken,'a'.repeat(64));assert.equal(staged[0][0].filter.search,'Координата');
+ let finish;ui.UI.api.chooseCsvPath=()=>new Promise(r=>finish=r);
+ const opened=ui.nodes.qualityExportCsv.click();await flush();
+ ui.nodes.importWeek.value='2024-01-02';await ui.nodes.importWeek.fire('change');
+ finish('/tmp/wrong-source.csv');await opened;
+ assert.equal(staged.length,1);assert.match(ui.nodes.qualitySummary.textContent,/Сначала проверьте/);
+});
+
+test('a failed native picker keeps the reviewed workbook and source together',async()=>{
+ let first=true;const ui=mount({chooseWideXlsx:async()=>{if(first){first=false;return '/tmp/first.xlsx';}throw Error('picker failed');}});
+ await ui.nodes.excelFile.click();ui.nodes.importWeek.value='2024-01-01';await ui.nodes.inspectFile.click();
+ await ui.nodes.excelFile.click();assert.equal(ui.nodes.saveImport.disabled,false);assert.equal(ui.nodes.inspectFile.disabled,false);
+ assert.equal(ui.nodes.excelFileStatus.textContent,'first.xlsx');assert.match(ui.nodes.unifiedImportStatus.textContent,/picker failed/);
 });

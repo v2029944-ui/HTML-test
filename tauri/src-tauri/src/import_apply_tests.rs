@@ -1434,3 +1434,33 @@ fn native_omitted_detail_evidence_survives_apply_without_changing_recognized_tot
     store.analysis_index_report(&report.id,receipt.revision).unwrap();let matrix=store.quality_matrix_page(receipt.revision,"day","2020-03-01","2020-03-01",&["СМУ16".into()]).unwrap();let cell=&matrix.rows[0].cells[0];assert!(cell.available);assert_eq!(cell.count,Some(3.));assert_eq!(cell.amount,Some(8.));assert_eq!(cell.warned_reports,1);
     assert_eq!(fs::read(&source).unwrap(),original_bytes);assert_eq!(store.revision().unwrap(),receipt.revision);
 }
+
+#[test]
+fn staged_quality_page_and_csv_keep_all_filtered_rows_without_importing_the_workbook() {
+    let root=tempfile::tempdir().unwrap();
+    let path=root.path().join("review.xlsx");
+    let mut xml=String::from(r#"<worksheet><sheetData><row r="2"><c r="A2" t="inlineStr"><is><t>СМУ16</t></is></c><c r="B2"><v>1</v></c><c r="C2"><v>2</v></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>Работа</t></is></c><c r="B3"><v>1</v></c><c r="C3"><v>2</v></c></row>"#);
+    for n in 4..68 {
+        xml.push_str(&format!(r#"<row r="{n}"><c r="A{n}" t="inlineStr"><is><t>Работа {n}</t></is></c><c r="B{n}" t="inlineStr"><is><t>bad</t></is></c><c r="C{n}"><v>2</v></c></row>"#));
+    }
+    xml.push_str("</sheetData></worksheet>");
+    let mut zip=ZipWriter::new(fs::File::create(&path).unwrap());
+    zip.start_file("xl/worksheets/sheet1.xml",SimpleFileOptions::default()).unwrap();
+    zip.write_all(xml.as_bytes()).unwrap();zip.finish().unwrap();
+    let original=fs::read(&path).unwrap();
+    let area=StageArea::open(root.path().join("stage")).unwrap();
+    let stage=prepared(&area,&path,"day","2024-01-01");
+    let store=Storage::new(root.path().join("db")).unwrap();
+    let rev=store.revision().unwrap();
+    let filter=UnifiedQualityFilter{kind:Some("invalid".into()),source:Some("review".into()),..Default::default()};
+    let next=store.prepared_quality_page(rev,&stage,&filter,50).unwrap();
+    assert_eq!(next.total,64);assert_eq!(next.issues.len(),14);
+    let target=root.path().join("pending.csv");store.prepared_quality_csv(rev,&stage,&filter,&target).unwrap();
+    let out=fs::read_to_string(&target).unwrap();assert_eq!(out.lines().count(),65);assert!(out.contains("B67"));
+    let stale=root.path().join("stale.csv");
+    assert!(store.prepared_quality_csv(rev+1,&stage,&filter,&stale).is_err());assert!(!stale.exists());
+    let other=UnifiedQualityFilter{source:Some("different.xlsx".into()),..Default::default()};
+    assert_eq!(store.prepared_quality_page(rev,&stage,&other,0).unwrap().total,0);
+    assert_eq!(fs::read(&path).unwrap(),original);
+    assert!(store.load().unwrap()["reports"].as_array().unwrap().is_empty());
+}

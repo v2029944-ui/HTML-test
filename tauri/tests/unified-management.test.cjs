@@ -71,3 +71,23 @@ test('all management destructive confirmations await native false promises',asyn
  }
 });
 test('restore destination result cannot write after revision changes',async()=>{const m=mount();m.snapshot(7);m.setSource('/backup.sqlite3');await m.nodes.importBackup.fire();const destination=deferred();m.api.chooseRestoreDestination=()=>destination.promise;const pending=actionByText(m.backupPanel,'Создать отдельную восстановленную копию').fire();await tick();m.snapshot(8);destination.resolve('/new.sqlite3');await pending;assert.equal(m.writes.length,0);assert.match(m.messages.at(-1)[0],/База или выбранная копия изменилась/);});
+
+test('canceling restore file selection retains the first reviewed backup for a later copy',async()=>{
+ const m=mount();m.snapshot(7);m.setSource('/A.sqlite3');await m.nodes.importBackup.fire();
+ m.setSource(null);await m.nodes.importBackup.fire();
+ m.setBackup('/safe-copy.sqlite3');
+ await actionByText(m.backupPanel,'Создать отдельную восстановленную копию').fire();
+ assert.deepEqual(m.writes,[['copy','/A.sqlite3','a'.repeat(64),'/safe-copy.sqlite3']]);
+});
+test('audit export captures the filter for all pages and rejects a stale destination choice',async()=>{
+ const m=mount(),writes=[];m.api.unifiedGroupAuditPage=async()=>({rows:[],total:64,coverage:{complete:false}});
+ m.api.chooseCsvPath=async()=>'/tmp/audit.csv';m.api.unifiedGroupAuditCsv=async(...args)=>writes.push(args);
+ m.snapshot(7);for(const fn of m.scopes)fn(m.UI.scope);
+ m.nodes.groupAuditSearch.value='игла';m.nodes.groupAuditMode.value='unused';
+ m.nodes.groupAuditPanel.open=true;await m.nodes.groupAuditPanel.fire('toggle');await tick();
+ await actionByText(m.nodes.groupAuditResults,'Скачать CSV').fire();
+ assert.equal(writes[0][0].from,m.UI.scope.from);assert.deepEqual(writes[0].slice(1),['unused','игла','/tmp/audit.csv']);
+ const picker=deferred();m.api.chooseCsvPath=()=>picker.promise;
+ const opened=actionByText(m.nodes.groupAuditResults,'Скачать CSV').fire();
+ m.snapshot(8);picker.resolve('/tmp/stale.csv');await opened;assert.equal(writes.length,1);
+});

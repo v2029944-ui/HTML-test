@@ -33,7 +33,7 @@ fn checked_filter(f: &UnifiedQualityFilter) -> Result<(),String> {
 }
 fn matches_issue(v:&Value,f:&UnifiedQualityFilter)->bool {
     f.organization.as_deref().is_none_or(|o|v["organization"].as_str()==Some(o)) &&
-    f.kind.as_deref().is_none_or(|k|v["kind"].as_str()==Some(k)) &&
+    f.kind.as_deref().is_none_or(|k|v["kind"].as_str()==Some(k) || (k=="skipped" && v["skipped"].as_bool()==Some(true))) &&
     f.search.as_deref().is_none_or(|s|v.to_string().to_lowercase().contains(&s.to_lowercase()))
 }
 impl UnifiedQualityPage {
@@ -54,7 +54,7 @@ impl UnifiedQualityPage {
 fn write_quality_export(destination:&Path,write:impl FnOnce(&mut std::io::BufWriter<std::fs::File>)->Result<(),String>)->Result<(),String>{
     if !destination.is_absolute() || destination.as_os_str().len()>32767 || !destination.extension().and_then(|s|s.to_str()).is_some_and(|s|s.eq_ignore_ascii_case("csv")) {return Err("Choose an absolute CSV file path".into());}
     export(destination,|writer|{
-        let names=["Дата","Период с","Период до","Файл","Тип","Подразделение","Причина","Лист","Строка Excel","Ячейки","Отчёт хранения","Связанный файл","Область"];
+        let names=["Дата","Период с","Период до","Файл","Тип","Подразделение","Причина","Лист","Строка Excel","Ячейки","Отчёт хранения","Связанный файл","Область","Значения при чтении","Итог Excel","Факт"];
         csv_record(writer,&names.map(Cell::Text))?;
         write(writer)
     })
@@ -67,7 +67,9 @@ fn write_quality_row(w:&mut impl Write,issue:&Value)->Result<(),String>{
     for x in ["work_cell","count_cell","amount_cell"]{if let Some(c)=issue[x].as_str(){if !cells.contains(&c){cells.push(c);}}}
     let cells=cells.join(" · ");
     let row=issue["source_row"].as_u64().or_else(||issue["row"].as_u64()).map(|n|n.to_string()).unwrap_or_default();
-    csv_record(w,&[text("date"),text("period_start"),text("period_end"),text("source_name"),text("kind"),text("organization"),text("reason"),text("sheet"),&row,&cells,text("source_anchor"),text("other_source_name"),issue["scope"].as_str().unwrap_or(text("diagnostic_scope"))].map(Cell::Text))
+    let detail=|key:&str|if issue[key].is_null(){String::new()}else{issue[key].to_string()};
+    let (raw,expected,actual)=(detail("raw"),detail("expected"),detail("actual"));
+    csv_record(w,&[text("date"),text("period_start"),text("period_end"),text("source_name"),text("kind"),text("organization"),text("reason"),text("sheet"),&row,&cells,text("source_anchor"),text("other_source_name"),issue["scope"].as_str().unwrap_or(text("diagnostic_scope")),&raw,&expected,&actual].map(Cell::Text))
 }
 impl Storage {
     /// Presence is deliberately independent of completeness; analytics daily
@@ -159,6 +161,32 @@ mod tests {
  use super::*;
  #[test] fn quality_filters_are_global_and_bounded(){let d=tempfile::tempdir().unwrap();let s=Storage::new(d.path().into()).unwrap();let c=s.connect().unwrap();for n in 0..65 {let id=format!("r{n:03}");let doc=json!({"issues":[{"type":"invalid","reason":format!("needle {n}"),"organization":"A"}]});c.execute("INSERT INTO reports VALUES(?1,'day','2024-01-01','2024-01-01','file.xlsx',?2)",params![id,serde_json::to_vec(&doc).unwrap()]).unwrap();}let rev=s.revision().unwrap();let f=UnifiedQualityFilter{search:Some("needle 64".into()),..Default::default()};let p=s.unified_quality_page(rev,&f,0,50).unwrap();assert_eq!(p.total,1);assert_eq!(p.issues[0]["report_id"],"r064");assert!(s.unified_quality_page(rev-1,&f,0,50).is_err());assert!(s.unified_quality_page(rev,&f,0,51).is_err());}
  #[test] fn calendar_presence_does_not_claim_completeness(){let d=tempfile::tempdir().unwrap();let s=Storage::new(d.path().into()).unwrap();let c=s.connect().unwrap();c.execute("INSERT INTO reports VALUES('a','day','2024-02-29','2024-02-29',NULL,x'FF')",[]).unwrap();let v=s.unified_calendar(s.revision().unwrap(),2024).unwrap();assert_eq!(v.days.len(),1);assert!(v.days[0]["complete"].is_null());}
+ #[test]
+ fn saved_quality_csv_streams_all_matching_rows_and_refuses_stale_or_existing_files() {
+    let root=tempfile::tempdir().unwrap();
+    let store=Storage::new(root.path().join("db")).unwrap();
+    let conn=store.connect().unwrap();
+    let issues=(0..64).map(|n|json!({"type":"invalid","reason":format!("=needle {n}"),"organization":"A","skipped":true,"cells":["B7"],"expected":{"count":null,"amount":-2.5},"actual":{"count":1,"amount":0},"raw":["bad",null,-2.5]})).collect::<Vec<_>>();
+    let doc=serde_json::to_vec(&json!({"issues":issues})).unwrap();
+    for (id,file) in [("filtered","selected.xlsx"),("other","other.xlsx")] {
+        conn.execute("INSERT INTO reports VALUES(?1,'day','2024-01-01','2024-01-01',?2,?3)",params![id,file,&doc]).unwrap();
+    }
+    let rev=store.revision().unwrap();
+    let filter=UnifiedQualityFilter{source:Some("selected".into()),kind:Some("skipped".into()),..Default::default()};
+    let page=store.unified_quality_page(rev,&filter,50,50).unwrap();
+    assert_eq!(page.issues.len(),14);assert_eq!(page.issues[0]["expected"],json!({"count":null,"amount":-2.5}));assert_eq!(page.issues[0]["raw"],json!(["bad",null,-2.5]));
+    let target=root.path().join("issues.csv");
+    store.unified_quality_csv(rev,&filter,&target).unwrap();
+    let content=std::fs::read_to_string(&target).unwrap();
+    assert!(content.starts_with('\u{feff}'));assert_eq!(content.lines().count(),65);
+    assert!(content.contains("'=needle 63"));assert!(!content.contains("other.xlsx"));assert!(content.contains("-2.5"));assert!(content.contains("bad"));
+    assert!(store.unified_quality_csv(rev,&filter,&target).is_err());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(),content);
+    let stale=root.path().join("stale.csv");
+    assert!(store.unified_quality_csv(rev+1,&filter,&stale).is_err());assert!(!stale.exists());
+    assert!(store.unified_quality_csv(rev,&filter,&root.path().join("not-csv.sqlite3")).is_err());
+    assert_eq!(store.revision().unwrap(),rev);
+ }
  #[test] fn quality_reports_missing_duplicate_and_offset_across_history(){
   let d=tempfile::tempdir().unwrap();let s=Storage::new(d.path().into()).unwrap();let c=s.connect().unwrap();
   for (id,date) in [("a","2024-01-01"),("b","2024-01-03"),("c","2024-01-03")] {

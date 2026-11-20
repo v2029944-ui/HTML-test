@@ -50,7 +50,7 @@ test('summary CSV uses native save and rejects a stale scope while its chooser i
  const wait=deferred();f.api.chooseCsvPath=()=>wait.promise;const pending=f.s1.querySelector('.data-card button').click();await f.window.referenceResults.refresh(null);wait.resolve('/tmp/stale.csv');await pending;assert.equal(f.exports.length,1);
 });
 test('null and empty selections are informative instead of loading forever and print styles are cleared',async()=>{
- const f=fixture();f.window.referenceResults.init();await f.window.referenceResults.refresh(null);assert.doesNotMatch(f.s1.textContent,/Загрузка/);await f.window.referenceResults.refresh({...f.scope,organizations:[]});assert.doesNotMatch(f.s1.textContent,/Загрузка/);assert.match(f.s1.textContent,/Выберите периоды/);
+ const f=fixture();f.window.referenceResults.init();await f.window.referenceResults.refresh(null);assert.doesNotMatch(f.s1.textContent,/Загрузка/);await f.window.referenceResults.refresh({...f.scope,organizations:[]});assert.doesNotMatch(f.s1.textContent,/Загрузка/);assert.match(f.s1.textContent,/Выберите периоды/);assert.doesNotMatch(f.s2.textContent,/Загрузка/);assert.match(f.s2.querySelector('.table-empty').textContent,/Выберите периоды/);assert.equal(f.s2.querySelector('[data-export-changes]').disabled,true);
  await f.window.referenceResults.refresh(f.scope);const print=f.s1.querySelectorAll('button').find(n=>n.textContent.includes('Печать'));await print.click();assert.equal(f.document.body.dataset.referencePrint,undefined);
 });
 

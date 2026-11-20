@@ -11,6 +11,8 @@ sys.path.insert(0,str(ROOT/'tauri'/'examples'))
 from make_metric_xlsx import create_example
 from reference_smoke import check_reference
 from reference_data_smoke import check_reference_data
+from reference_gallery import write_reference_gallery
+from reference_file_dialogs import check_reference_file_dialogs
 
 def diagnostics(error):
     output=ROOT/'tauri/test-artifacts';output.mkdir(exist_ok=True)
@@ -1119,8 +1121,10 @@ def run():
                 ready(page,0)
                 check_reference(page,output,False)
                 report['checks'].append('Reference interface walkthrough and close/cancel/focus checks on an empty database')
-                open_full_workspace(page)
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
+                check_reference_file_dialogs(page,confirmations,output)
+                report['checks'].append('Native file pickers cancel without modifying SQLite and return focus to their openers')
+                open_full_workspace(page)
                 entry_url=page.url
                 check_runtime(page)
                 report['webview2']=engine.get('Browser')
@@ -1217,6 +1221,7 @@ def run():
                 check_omitted_detail_evidence(page,tmp,output)
                 report['checks'].append('Native omitted-detail tags distinguish invalid data, unknown organizations, invalid controls and included unnamed rows; persisted totals remain 3 and 8 with explicit acknowledgment')
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+    write_reference_gallery(output, os.environ.get('REFERENCE_HEAD_SHA', ''), report['webview2'])
     print(json.dumps(report,ensure_ascii=False),flush=True)
 
 if __name__=='__main__':

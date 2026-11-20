@@ -32,6 +32,105 @@ def _api(page, method, *args):
                          {'method': method, 'args': args})
 
 
+
+def _check_detail_exports(page, scratch, scope, evidence):
+    """Check the six real native detail tables on the known complete intervals."""
+    req = {
+        'revision': scope['revision'], 'source': 'daily', 'displayType': 'day',
+        'organizations': scope['organizations'], 'selectedNames': [],
+        'query': {'method': 'range', 'from': scope['from'], 'to': scope['to'],
+                  'percent': 30, 'min_count': 5, 'min_amount': 1000},
+    }
+    before = {'from': scope['baseFrom'], 'to': scope['baseTo']}
+    checks = {}
+    for section in ['comparison', 'contributions', 'organizations', 'structure', 'usual', 'regularity']:
+        payload = {'request': req, 'section': section, 'metric': 'amount'}
+        if section == 'organizations':
+            payload['baseOrg'] = req['organizations'][0]
+        elif section in ('usual', 'regularity'):
+            payload.update(window=4, options={'status': 'all', 'search': 'Альфа'})
+            if section == 'regularity':
+                payload['options']['baseline'] = before
+            else:
+                payload['options']['range_window'] = True
+        else:
+            payload['before'] = before
+            if section == 'structure':
+                payload['limit'] = 10
+        path = scratch / ('detail-' + section + '.csv')
+        _api(page, 'referenceDetailCsv', payload, str(path))
+        raw = path.read_bytes()
+        assert raw.startswith(b'\xef\xbb\xbf')
+        records = list(csv.reader(io.StringIO(raw.decode('utf-8-sig')), delimiter=';'))
+        rows = [r for r in records if r and r[0] == 'Альфа']
+        assert len(rows) == 1, (section, records)
+        row = rows[0]
+        if section in ('comparison', 'contributions', 'structure'):
+            assert [_number(row[1]), _number(row[2])] == [620, 580], (section, row)
+            if section != 'structure':
+                assert _number(row[3]) == -40, row
+            if section == 'contributions':
+                assert _number(row[-1]) == 100, row
+        elif section == 'organizations':
+            assert [_number(n) for n in row[1:]] == [145] + [145, 0, 0] * 3, row
+        elif section == 'usual':
+            assert _number(row[2]) == 580, row
+        else:
+            assert [_number(n) for n in row[1:5]] == [29, 100, 31, 100], row
+        checks[section] = row
+    evidence['csv']['referenceDetailCsv'] = checks
+
+
+def _check_trend_exports(page, scratch, scope, evidence):
+    """Use the same monthly bucket as the selected reference filter scope."""
+    assert (scope['displayType'], scope['from'], scope['to']) == (
+        'month', '2024-02-01', '2024-02-29'), scope
+    request = {
+        'revision': scope['revision'], 'source': 'daily',
+        'displayType': scope['displayType'],
+        'organizations': scope['organizations'], 'selectedNames': [],
+        'query': {'method': 'range', 'from': scope['from'], 'to': scope['to'],
+                  'percent': 30, 'min_count': 5, 'min_amount': 1000},
+    }
+    checks = {}
+    for table in ['works', 'organizations', 'organizationTotals']:
+        metrics = ['amount'] if table == 'works' else ['amount', 'count', 'average']
+        options = {'table': table, 'metrics': metrics, 'hideEmpty': False}
+        path = scratch / ('trend-' + table + '.csv')
+        _api(page, 'referenceTrendCsv', request, options, str(path))
+        raw = path.read_bytes()
+        assert raw.startswith(b'\xef\xbb\xbf')
+        records = list(csv.reader(io.StringIO(raw.decode('utf-8-sig')), delimiter=';'))
+        if table == 'works':
+            assert records[0][1:] == ['2024-02'], records
+            assert [row for row in records[1:] if row and row[0] == 'Альфа'] == [['Альфа', '580']], records
+            assert records[1] == ['Итого по выбранным работам', '580'], records
+        elif table == 'organizations':
+            assert records[0][2:] == ['2024-02'], records
+            data = [row for row in records[1:] if row and row[0] in scope['organizations']]
+            assert len(data) == 12, records
+            expected = {'Сумма': 145, 'Количество / объём': 14.5,
+                        'Сумма / количество (объём)': 10}
+            assert {(row[0], row[1]) for row in data} == {
+                (org, metric) for org in scope['organizations'] for metric in expected}, records
+            assert all(len(row) == 3 and _number(row[2]) == expected[row[1]]
+                       for row in data), records
+        else:
+            data = records[1:]
+            assert len(data) == 4 and {row[0] for row in data} == set(scope['organizations']), records
+            assert all([_number(value) for value in row[1:4]] == [145, 14.5, 10]
+                       and row[4] == 'Полные данные' for row in data), records
+        try:
+            _api(page, 'referenceTrendCsv', request, options, str(path))
+        except PlaywrightError:
+            pass
+        else:
+            raise AssertionError('Native trend CSV export overwrote a scratch file')
+        assert path.read_bytes() == raw
+        checks[table] = records
+    evidence['csv']['referenceTrendCsv'] = checks
+
+
 def check_reference_data(page, output):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
@@ -46,6 +145,8 @@ def check_reference_data(page, output):
 
     def record(name, root='#s1'):
         page.locator(root).scroll_into_view_if_needed()
+        if name == '01-complete-current-and-base':
+            page.evaluate('window.scrollTo(0, 0)')
         page.screenshot(path=str(output / ('reference-data-' + name + '.png')))
         evidence['checks'].append(name)
         (output / 'reference-data-proof.json').write_text(
@@ -159,7 +260,7 @@ def check_reference_data(page, output):
         try:
             # Printing intentionally hides the button itself; invoke its actual
             # DOM click handler without inventing a second print entrypoint.
-            page.locator(screen).get_by_role('button', name='Печать / PDF', exact=True).first.evaluate('(node) => node.click()')
+            page.locator(screen).get_by_role('button', name='Печать / PDF', exact=True, include_hidden=True).first.evaluate('(node) => node.click()')
             frames = page.evaluate('window.__referenceSmokePrintFrames')
             assert len(frames) == 1 and frames[0]['screen'] == screen[1:], frames
             assert frames[0]['visible'] == {key: key == screen for key in frames[0]['visible']}, frames
@@ -293,6 +394,8 @@ def check_reference_data(page, output):
             scratch = Path(scratch)
             csv_export('referenceChangesCsv', scratch / 'changes.csv')
             csv_export('referenceSummaryCsv', scratch / 'summary.csv')
+            _check_detail_exports(page, scratch, scope(), evidence)
+            _check_trend_exports(page, scratch, scope(), evidence)
             # Partially observed current interval and wholly absent baseline.
             navigate('Сводка')
             select_period('День', '2023-12-31', '2024-01-01')
@@ -404,3 +507,10 @@ def check_reference_data(page, output):
         page.locator('#sharedHeader .main-nav').get_by_role('button', name='Сводка', exact=True).click()
         if initial_viewport:
             page.set_viewport_size(initial_viewport)
+        else:
+            # Installed WebView2 connected over CDP has no configured viewport.
+            session = page.context.new_cdp_session(page)
+            try:
+                session.send('Emulation.clearDeviceMetricsOverride')
+            finally:
+                session.detach()

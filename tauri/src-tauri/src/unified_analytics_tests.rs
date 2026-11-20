@@ -414,3 +414,29 @@ fn reference_frequency_counts_overlapping_and_future_baseline_days_separately() 
 
 #[path="reference_detail_csv_tests.rs"]
 mod reference_detail_csv_tests;
+
+#[test]
+fn group_audit_csv_keeps_all_filtered_rows_and_unknown_coverage() {
+    let (root, store, _, _) = fixture();
+    let mut data = store.load().unwrap();
+    data["settings"]["catalog"] = json!((0..64).map(|n|json!({"work":format!("=export {n:02}"),"organization":"A"})).collect::<Vec<_>>());
+    store.save(data).unwrap();
+    let rev=store.revision().unwrap();
+    for id in ["d0","d1"]{store.analysis_index_report(id,rev).unwrap();}
+    store.analysis_index_settings(rev).unwrap();
+    store.management_index_settings(rev,&ManagementJob::new()).unwrap();
+    let org=store.analysis_filter_create(rev,"organizations").unwrap();
+    store.analysis_filter_append(rev,&org,&["A".into()]).unwrap();store.analysis_filter_seal(rev,&org).unwrap();
+    let scope=AnalysisScope{report_type:"day".into(),organizations:org,names:None};
+    let query=RangeQuery{from:"2024-01-01".into(),to:"2024-01-03".into()};
+    let last=store.unified_group_audit_page(rev,&scope,&query,"ungrouped","export",50,50).unwrap();
+    assert_eq!(last.rows.len(),14);assert!(last.rows.iter().all(|r|r.active.is_none()));
+    let target=root.path().join("audit.csv");
+    store.unified_group_audit_csv(rev,&scope,&query,"ungrouped","export",&target).unwrap();
+    let text=std::fs::read_to_string(&target).unwrap();
+    assert_eq!(text.lines().count(),65);assert!(text.contains("'=export 63"));assert_eq!(text.matches("Недостаточно данных").count(),64);
+    assert!(store.unified_group_audit_csv(rev,&scope,&query,"ungrouped","export",&target).is_err());
+    let stale=root.path().join("stale.csv");
+    assert!(store.unified_group_audit_csv(rev+1,&scope,&query,"ungrouped","export",&stale).is_err());
+    assert!(!stale.exists());
+}

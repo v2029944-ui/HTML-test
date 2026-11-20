@@ -26,12 +26,12 @@ def check_reference(page, output, has_reports):
     initial_theme = page.locator('#appearanceTheme').input_value()
     initial_size = page.locator('#appearanceSize').input_value()
 
-    def record(name, root=None):
+    def record(name, root=None, scroll=True):
         root = root if root is not None else page.locator('body')
         page.wait_for_function('''() => !window.tauriOperations?.reads &&
           !window.tauriOperations?.saves && ![...document.querySelectorAll('[aria-busy="true"]')]
           .some(node => node.getClientRects().length)''', timeout=TIMEOUT)
-        if root is not None and root.count() == 1:
+        if scroll and root.count() == 1:
             root.scroll_into_view_if_needed()
         controls = root.locator('button,input,select,textarea,summary,a').evaluate_all('''nodes => nodes
           .filter(node => node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden')
@@ -63,6 +63,31 @@ def check_reference(page, output, has_reports):
             page.keyboard.press('Tab')
             assert dialog.evaluate('(node) => document.activeElement === document.body || node.contains(document.activeElement)'), 'Modal focused a background control'
 
+    checked_disclosures = set()
+
+    def check_disclosures(root, step):
+        ids = root.locator('details[id]').evaluate_all('nodes => nodes.map(node => node.id)')
+        for key in ids:
+            if key in checked_disclosures:
+                continue
+            box = root.locator('details[id=' + json.dumps(key) + ']')
+            summary = box.locator(':scope > summary').first
+            if not summary.is_visible():
+                continue
+            was_open = box.evaluate('node => node.open')
+            modals = page.locator('dialog:modal').count()
+            # Exercise a full close/reopen cycle from this actual section.
+            # Restore its entry state so subsequent routes see the same screen.
+            states = [False, True] if was_open else [True, False, True, False]
+            for expanded in states:
+                summary.click()
+                expect(box).to_have_js_property('open', expanded)
+                expect(summary).to_be_focused()
+                expect(page.locator('dialog:modal')).to_have_count(modals)
+            checked_disclosures.add(key)
+            inventory.append({'step': step, 'disclosure': key, 'initiallyOpen': was_open,
+                              'closedAndReopened': True, 'focusRestored': True})
+
     def close_sheet(trigger, how='button'):
         sheet = page.locator('#sheet')
         if how == 'escape':
@@ -91,6 +116,35 @@ def check_reference(page, output, has_reports):
         expect(page.locator('#toolsPage')).not_to_be_visible(timeout=TIMEOUT)
         focused(trigger)
 
+    def export_available(selector, has_rows, name):
+        control = page.locator(selector)
+        if has_rows:
+            expect(control).to_be_visible(timeout=TIMEOUT)
+            expect(control).to_be_enabled(timeout=TIMEOUT)
+        else:
+            expect(control).to_have_count(0)
+        inventory.append({'step': name, 'available': bool(has_rows),
+                          'reason': None if has_rows else 'The current result has no rows to export.'})
+
+    def quality_controls():
+        expect(page.locator('#qualitySummary')).to_contain_text('Найдено:', timeout=TIMEOUT)
+        has_issues = page.locator('#qualityTable tbody tr').count() > 0
+        export_available('#qualityExportCsv', has_issues, '04-quality-csv-availability')
+        inventory.append({'step': '04-quality-advice-availability', 'available': has_issues,
+                          'reason': None if has_issues else 'The current result has no issue advice.'})
+        if has_issues:
+            advice = page.locator('#qualityTable .quality-advice').first
+            summary = advice.locator(':scope > summary')
+            expect(summary).to_have_text('Как проверить и исправить')
+            if advice.evaluate('(node) => node.open'):
+                summary.click()
+            for expanded in [True, False, True]:
+                summary.click()
+                expect(advice).to_have_js_property('open', expanded)
+                focused(summary)
+            expect(advice.locator('p')).to_be_visible()
+        record('04-quality', page.locator('#qualityTable'))
+
     def calendar(trigger, name, mode=None, commit=False):
         """A calendar selection stays a draft until the explicit confirm button."""
         before = trigger.inner_text()
@@ -114,8 +168,9 @@ def check_reference(page, output, has_reports):
         dialog = page.locator('dialog.period-calendar[open]')
         expect(dialog).to_be_visible()
         box = dialog.bounding_box()
-        viewport = page.viewport_size
-        assert box and viewport
+        # CDP-attached WebView2 pages have no emulated Playwright viewport.
+        viewport = page.evaluate('({width: window.innerWidth, height: window.innerHeight})')
+        assert box and viewport['width'] > 0 and viewport['height'] > 0
         # The calendar supports backdrop dismissal; click outside its box.
         point = {'x': 2, 'y': 2}
         if box['x'] <= 2 <= box['x'] + box['width'] and box['y'] <= 2 <= box['y'] + box['height']:
@@ -177,7 +232,10 @@ def check_reference(page, output, has_reports):
             latest_week = page.locator('#reportShell .quick-actions').get_by_role('button', name='Неделя', exact=True)
             expect(latest_week).to_be_enabled(timeout=TIMEOUT)
             latest_week.click()
-        record('01-summary', page.locator('#s1'))
+        # Preserve the initial overview, including the header, before any panel scroll.
+        page.evaluate('window.scrollTo(0, 0)')
+        page.locator('#sharedHeader').scroll_into_view_if_needed()
+        record('01-summary', page.locator('body'), scroll=False)
         for selector in ['#s1 .metric-sample', '#s1 .quality-notice button']:
             source = page.locator(selector).first
             if not source.count() or not source.is_visible():
@@ -226,6 +284,8 @@ def check_reference(page, output, has_reports):
             expect(sheet).not_to_be_visible()
             panel(target)
             record('04-menu-' + target, page.locator('#toolsPage'))
+            if target == 'upload':
+                quality_controls()
             if target == 'groups':
                 page.locator('#createGroup').click()
                 expect(page.locator('#groupEditor')).to_have_attribute('open', '')
@@ -236,12 +296,26 @@ def check_reference(page, output, has_reports):
                 expect(page.locator('#groupName')).to_have_value('')
                 if not page.locator('#groupAuditPanel').evaluate('(node) => node.open'):
                     page.locator('#groupAuditPanel > summary').click()
+                if page.evaluate('Boolean(window.unifiedUI.scope)'):
+                    # A completed pager avoids reading the previous range's coverage
+                    # while the newly opened audit is still loading.
+                    page.wait_for_function("""() => /^(Страница [0-9]+|Записей нет[.])/.test(
+                      document.getElementById('groupAuditPage').textContent)""", timeout=TIMEOUT)
+                    expect(page.locator('#groupAuditCoverage')).to_contain_text('Найдено:', timeout=TIMEOUT)
+                    audit_total = int(page.locator('#groupAuditCoverage').inner_text()
+                                      .split('Найдено:', 1)[1].split('·', 1)[0].strip())
+                    export_available('#groupAuditExportCsv', audit_total > 0, '04-group-audit-csv-availability')
+                else:
+                    expect(page.locator('#groupAuditCoverage')).to_have_text(
+                        'Выберите корректный период в аналитике.', timeout=TIMEOUT)
+                    export_available('#groupAuditExportCsv', False, '04-group-audit-csv-availability')
                 record('04-group-audit', page.locator('#groups'))
                 if not page.locator('#groupCatalog').evaluate('(node) => node.open'):
                     page.locator('#groupCatalog > summary').click()
                 record('04-group-catalog', page.locator('#groups'))
             # Menu actions disappear when the menu closes, so closure must focus
             # the durable Data trigger rather than a detached menu child.
+            check_disclosures(page.locator('#' + target), '04-management-disclosures')
             close_panel(trigger)
 
         importer = page.locator('#refImport')
@@ -317,6 +391,7 @@ def check_reference(page, output, has_reports):
                 expect(work).to_be_visible(timeout=TIMEOUT)
                 history_close(work, 'analyticsDetails', 'analyticsDetailContent', 'closeAnalyticsDetails', '08-analytics-work-history')
                 expect(page.locator('#toolsPage')).to_be_visible()
+            check_disclosures(page.locator('#toolsPage'), '08-analytics-disclosures')
             record('08-analytics-' + target, page.locator('#toolsPage'))
         close_panel(analytics)
         analytics.click()
@@ -486,5 +561,12 @@ def check_reference(page, output, has_reports):
     finally:
         # A failing assertion must not leave zoom/viewport settings for later native tests.
         page.locator('html').evaluate('(node, zoom) => node.style.zoom = zoom', initial_zoom)
-        if initial_viewport:
+        if initial_viewport is not None:
             page.set_viewport_size(initial_viewport)
+        else:
+            # Restore the real installed window after our responsive emulation.
+            session = page.context.new_cdp_session(page)
+            try:
+                session.send('Emulation.clearDeviceMetricsOverride')
+            finally:
+                session.detach()

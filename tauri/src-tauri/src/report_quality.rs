@@ -56,6 +56,9 @@ struct QualityIssue {
     count_cell: Option<String>,
     amount_cell: Option<String>,
     cells: Vec<String>,
+    expected: Option<serde_json::Value>,
+    actual: Option<serde_json::Value>,
+    raw: Option<Vec<serde_json::Value>>,
     relevant: Option<bool>,
     scope: Option<String>,
     skipped: Option<bool>,
@@ -86,6 +89,10 @@ enum Field {
     Null,
     Text(String),
     Number(u64),
+    Signed(i64),
+    Decimal(f64),
+    Comparison(serde_json::Value),
+    Raw(Vec<serde_json::Value>),
     Boolean(bool),
     Cells(Vec<String>),
     Coverage(EvidenceCoverage),
@@ -100,6 +107,16 @@ impl Field {
         if let Self::Number(number) = self { Some(number) } else { None }
     }
 
+    fn metric(self) -> Option<serde_json::Value> {
+        match self {
+            Self::Number(n) => Some(n.into()),
+            Self::Signed(n) => Some(n.into()),
+            Self::Decimal(n) if n.is_finite() => Some(n.into()),
+            Self::Null => Some(serde_json::Value::Null),
+            _ => None,
+        }
+    }
+
     fn nullable_text(self) -> Result<Option<String>, ()> {
         match self {
             Self::Null => Ok(None),
@@ -110,7 +127,7 @@ impl Field {
 }
 
 #[derive(Clone, Copy)]
-enum ValueShape { Issue, Warning, Scalar, Cells, Coverage }
+enum ValueShape { Issue, Warning, Scalar, Cells, Coverage, Comparison, Raw }
 
 #[derive(Default)]
 struct Entry {
@@ -140,13 +157,30 @@ impl<'de> Visitor<'de> for ValueShape {
 
     fn visit_u64<E: Error>(self, value: u64) -> Result<Field, E> { Ok(Field::Number(value)) }
     fn visit_i64<E: Error>(self, value: i64) -> Result<Field, E> {
-        Ok(u64::try_from(value).map(Field::Number).unwrap_or_default())
+        Ok(u64::try_from(value).map(Field::Number).unwrap_or(Field::Signed(value)))
     }
     fn visit_bool<E: Error>(self, value: bool) -> Result<Field, E> { Ok(Field::Boolean(value)) }
     fn visit_unit<E: Error>(self) -> Result<Field, E> { Ok(Field::Null) }
-    fn visit_f64<E: Error>(self, _: f64) -> Result<Field, E> { Ok(Field::Unsupported) }
+    fn visit_f64<E: Error>(self, n: f64) -> Result<Field, E> { Ok(Field::Decimal(n)) }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Field, A::Error> {
+        if matches!(self, Self::Comparison) {
+            let mut values = serde_json::Map::new();
+            let mut valid = true;
+            while let Some(key) = map.next_key::<String>()? {
+                if matches!(key.as_str(), "count" | "amount") {
+                    match map.next_value_seed(Self::Scalar)?.metric() {
+                        Some(n) if !values.contains_key(&key) => { values.insert(key,n); }
+                        _ => valid = false,
+                    }
+                } else {
+                    map.next_value::<IgnoredAny>()?;
+                }
+            }
+            return Ok(if valid && !values.is_empty() {
+                Field::Comparison(serde_json::Value::Object(values))
+            } else { Field::Unsupported });
+        }
         if matches!(self, Self::Coverage) {
             let (mut start, mut end) = (None, None);
             let (mut seen_start, mut seen_end) = (false, false);
@@ -176,6 +210,23 @@ impl<'de> Visitor<'de> for ValueShape {
     }
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Field, A::Error> {
+        if matches!(self, Self::Raw) {
+            let mut values = Vec::new();
+            // Importers store one value per Excel input cell. Keep malformed
+            // historical arrays bounded without shifting the remaining cells.
+            while let Some(field) = seq.next_element_seed(Self::Scalar)? {
+                if values.len() == 8 { continue; }
+                match field {
+                    Field::Text(s) => values.push(clip(s,256).into()),
+                    Field::Boolean(b) => values.push(b.into()),
+                    scalar => if let Some(value)=scalar.metric() {values.push(value)} else {
+                        while seq.next_element::<IgnoredAny>()?.is_some() {}
+                        return Ok(Field::Unsupported);
+                    }
+                }
+            }
+            return Ok(Field::Raw(values));
+        }
         if !matches!(self, Self::Cells) {
             while seq.next_element::<IgnoredAny>()?.is_some() {}
             return Ok(Field::Unsupported);
@@ -278,6 +329,9 @@ impl<'de> Visitor<'de> for EntryRead {
                 "work_cell" | "workCell" => issue.work_cell = label(map.next_value_seed(scalar)?.text()),
                 "count_cell" | "countCell" => issue.count_cell = label(map.next_value_seed(scalar)?.text()),
                 "amount_cell" | "amountCell" => issue.amount_cell = label(map.next_value_seed(scalar)?.text()),
+                "expected" => if let Field::Comparison(v)=map.next_value_seed(ValueShape::Comparison)? {issue.expected=Some(v)},
+                "actual" => if let Field::Comparison(v)=map.next_value_seed(ValueShape::Comparison)? {issue.actual=Some(v)},
+                "raw" => if let Field::Raw(v)=map.next_value_seed(ValueShape::Raw)? {issue.raw=Some(v)},
                 "cells" => {
                     if let Field::Cells(cells) = map.next_value_seed(ValueShape::Cells)? { issue.cells = cells; }
                 }
