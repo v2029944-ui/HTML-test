@@ -1040,8 +1040,9 @@ def check_delete_without_backup(page, temporary, confirmations):
     expect(card.locator('strong')).to_contain_text('2030-01-06',timeout=90_000)
     confirmations.cancel_then_accept(card.get_by_role('button',name='Удалить отчёт',exact=True),
         'Удалить отчёт 2030-01-06 — 2030-01-06?')
-    page.wait_for_function('count=>window.unifiedUI.snapshot?.reports===count',
-                           arg=before['reports']+5,timeout=90_000)
+    wait_for_app_state(page,
+        "typeof window.unifiedUI.snapshot?.reports==='number' && window.unifiedUI.snapshot.reports==="+
+        str(before['reports']+5),'Confirmed single-report deletion',90_000)
     remaining=backup_contents(database)
     assert remaining[0]==[row for row in stored[0] if row[0]!=rows[0]['id']]
     assert remaining[1:]==stored[1:]
@@ -1051,7 +1052,9 @@ def check_delete_without_backup(page, temporary, confirmations):
     clear_revision=api(page,'nativeSettingsBootstrap')['revision']
     confirmations.cancel_then_accept(page.locator('#clearReports'),
                                     'Удалить все импортированные отчёты? Группы останутся.')
-    page.wait_for_function('() => window.unifiedUI.snapshot?.reports===0',timeout=90_000)
+    wait_for_app_state(page,
+        "typeof window.unifiedUI.snapshot?.reports==='number' && window.unifiedUI.snapshot.reports===0",
+        'Confirmed report clearing',90_000)
     cleared=backup_contents(database)
     assert cleared[0]==[] and cleared[1:]==stored[1:]
     assert {p.name for p in database.parent.glob('*.sqlite3')}==files,'Deletion created an unsolicited SQLite backup'
