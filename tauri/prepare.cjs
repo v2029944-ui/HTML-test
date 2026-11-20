@@ -1,7 +1,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path');
 const {buildUnified}=require('./unified-build.cjs');
-const scripts=['bridge','native-errors','native-period-selection','app-status','unified-base','unified-management','unified-reports','native-metric-kinds','unified-extended','unified-analytics','unified-app','updates'];
+const scripts=['bridge','native-errors','native-period-selection','app-status','unified-base','unified-management','unified-reports','native-metric-kinds','unified-horizontal-bars','unified-extended','unified-analytics','unified-app','updates'];
 const styles=['unified','app-status'];
 function prepareHtml(source){return buildUnified(source).html;}
 function prepare(options={}){
