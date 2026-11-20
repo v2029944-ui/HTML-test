@@ -38,5 +38,5 @@ test('horizontal chart paginates long periods and keeps the renderer bounded',()
  assert.equal(buttons.length,2);buttons[1].listeners.click();
  assert.equal(options.periodPage,1);
  assert.equal(all(root).filter(node=>node.tagName==='RECT').length,24);
- buttons[0].listeners.click();assert.equal(options.periodPage,0);
+ all(root).filter(node=>node.tagName==='BUTTON')[0].listeners.click();assert.equal(options.periodPage,0);
 });
