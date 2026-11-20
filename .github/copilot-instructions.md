@@ -7,3 +7,5 @@ Read [AGENTS.md](../AGENTS.md) and [docs/RELEASE_POLICY.md](../docs/RELEASE_POLI
 **The application is still under development: backward compatibility between versions (including 0.1.3) is NOT a release or PR merge requirement.** Old-version migrations and upgrade tests are optional unless the owner explicitly requests them. Schema, internal formats and APIs may change incompatibly. Disclose known incompatibilities in release notes; do not claim automatic migration. Keep data-integrity tests, safe backups and no-unapproved-data-loss safeguards for the current version.
 
 Keep standalone `index.html` and existing user SQLite safe from unapproved deletion or overwrite. Avoid merging draft PRs or publishing diagnostic WebView2 installers.
+
+**Для всех задач Codex обязательны [правила безопасности](../docs/CODEX_SAFETY_RULES.md):** только ветка/PR, запрет самостоятельного merge/release/изменения обновлений или секретов, тесты по уровню риска, сохранение реальных данных и точный SHA в результате. Общий список задач — [#79](https://github.com/v2029944-ui/HTML-test/issues/79).
