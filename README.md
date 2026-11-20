@@ -4,7 +4,9 @@
 
 [Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.9.5/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.9.5/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.9.5](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.9.5)
 
-## Предварительный выпуск 1.7.0
+Обновление до 1.9.5 доступно через «Настройки → Проверить обновления». [Ход разработки и оставшиеся задачи](docs/ROADMAP.md).
+
+## История выпуска 1.7.0
 
 [**Скачать установщик 1.7.0 (Windows x64)**](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.7.0/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.7.0/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [GitHub Release](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.7.0) · [проверенный Windows/WebView2 CI](https://github.com/v2029944-ui/HTML-test/actions/runs/44534276975).
 
