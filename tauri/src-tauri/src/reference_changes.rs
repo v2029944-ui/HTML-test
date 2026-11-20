@@ -41,6 +41,8 @@ pub struct ReferenceChangeCounts {
 pub struct ReferenceChangesPage {
     pub rows: Vec<ReferenceChangeRow>,
     pub total: i64,
+    pub searched: i64,
+    pub significant: i64,
     pub counts: ReferenceChangeCounts,
     pub leader: Option<ReferenceChangeRow>,
     pub comparable: Vec<String>,
@@ -222,9 +224,14 @@ impl Storage {
             let leader=tx.query_row("SELECT name,org,before,after,delta,percent FROM ref_changes ORDER BY abs(delta) DESC,name COLLATE classic_ru,org COLLATE classic_ru,name,org LIMIT 1",[],change_row).optional().map_err(err)?;
             let comparable=tx.prepare("SELECT f.item FROM analysis_filter_items f JOIN ref_orgs o ON o.org=f.item WHERE f.id=?1 ORDER BY f.ordinal").map_err(err)?.query_map([&scope.organizations],|r|r.get(0)).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
             let search=unified_analytics::normalized(&q.search);
-            let total=tx.query_row(&format!("SELECT count(*) FROM ref_changes WHERE {FILTER}"),params![q.kind,search],|r|r.get(0)).map_err(err)?;
+            let (total,searched,significant)=tx.query_row(
+                "SELECT count(*) FILTER (WHERE ?1='all' OR (?1='significant' AND kind<>'') OR kind=?1),
+                        count(*), count(*) FILTER (WHERE kind<>'')
+                 FROM ref_changes WHERE instr(classic_normalized(name),?2)>0",
+                params![q.kind,search],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))
+            ).map_err(err)?;
             let rows=tx.prepare(&format!("SELECT name,org,before,after,delta,percent FROM ref_changes WHERE {FILTER} ORDER BY {} LIMIT 12 OFFSET ?3",order(q))).map_err(err)?.query_map(params![q.kind,search,i64::from(q.page)*12],change_row).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
-            Ok(ReferenceChangesPage {rows,total,counts,leader,comparable})
+            Ok(ReferenceChangesPage {rows,total,searched,significant,counts,leader,comparable})
         })
     }
     pub fn reference_changes_csv(

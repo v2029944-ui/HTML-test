@@ -75,6 +75,7 @@ pub struct AnalysisTotals {
 }
 #[derive(Debug, Serialize)]
 pub struct RangeSummary {
+    pub single_missing: Option<MissingPeriod>,
     pub complete: bool,
     pub periods: i64,
     pub organizations: i64,
@@ -1302,7 +1303,25 @@ fn range_summary(c: &Connection, s: &AnalysisScope, slot: i64) -> Result<RangeSu
         [slot],
         |r| r.get(0),
     ).map_err(err)?;
+    let single_missing = if missing == 1 {
+        Some(
+            c.query_row(
+                "SELECT org,start FROM temp.an_missing WHERE slot=?1",
+                [slot],
+                |r| {
+                    Ok(MissingPeriod {
+                        org: r.get(0)?,
+                        start: r.get(1)?,
+                    })
+                },
+            )
+            .map_err(err)?,
+        )
+    } else {
+        None
+    };
     Ok(RangeSummary {
+        single_missing,
         complete,
         periods,
         organizations,

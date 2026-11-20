@@ -74,8 +74,22 @@ fn independent_unequal_intervals_require_complete_org_coverage_and_keep_real_wor
     );
     let q = request(revision);
     let result = store.reference_changes(&q).unwrap();
+    let (current, baseline) = store
+        .reference_scope(&q, |scope| {
+            Ok((
+                store.analysis_range_summary(revision, scope, &q.current())?,
+                store.analysis_range_summary(revision, scope, &q.baseline())?,
+            ))
+        })
+        .unwrap();
+    let gap = current.single_missing.unwrap();
+    assert_eq!((gap.org.as_str(), gap.start.as_str()), ("B", "2024-01-11"));
+    assert!(baseline.single_missing.is_none());
     assert_eq!(result.comparable, ["A", "Empty"]);
-    assert_eq!(result.total, 4);
+    assert_eq!(
+        (result.total, result.searched, result.significant),
+        (4, 4, 3)
+    );
     assert!(result.rows.iter().all(|r| r.org == "A"));
     assert!(result.rows.iter().all(|r| r.name != "Combined"));
     let work = result.rows.iter().find(|r| r.name == "Work").unwrap();
@@ -99,7 +113,14 @@ fn independent_unequal_intervals_require_complete_org_coverage_and_keep_real_wor
     filtered.kind = "significant".into();
     filtered.search = "new".into();
     let found = store.reference_changes(&filtered).unwrap();
-    assert_eq!(found.total, 1);
+    assert_eq!((found.total, found.searched, found.significant), (1, 1, 1));
+    filtered.kind = "down".into();
+    filtered.search = "o".into();
+    let result = store.reference_changes(&filtered).unwrap();
+    assert_eq!(
+        (result.total, result.searched, result.significant),
+        (0, 3, 2)
+    );
     assert_eq!(found.rows[0].name, "New");
     assert_eq!(found.counts.up, 1);
     assert_eq!(found.leader.unwrap().name, "Work");
