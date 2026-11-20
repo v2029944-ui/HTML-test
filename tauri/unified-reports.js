@@ -15,11 +15,13 @@ function init(){
  const button=(text,fn)=>{const b=el('button',text,'button secondary');b.type='button';b.addEventListener('click',fn);return b;};
  const live=(rev,ticket,current)=>UI.revision===rev&&ticket===current;
  function status(id,text){$(id).textContent=text;}
- function page(root,caption,headers,rows){
+ function page(root,caption,headers,rows,help){
   root.replaceChildren();
   const wrap=el('div',undefined,'table-scroll'),table=el('table');table.append(el('caption',caption));
   const head=el('thead'),hr=el('tr');for(const h of headers){const th=el('th',h);th.scope='col';hr.append(th);}head.append(hr);table.append(head);
-  const body=el('tbody');for(const row of rows){const tr=el('tr');for(const value of row){const td=el('td');if(value&&typeof value==='object'&&value.nodeType)td.append(value);else td.textContent=show(value);tr.append(td);}body.append(tr);}table.append(body);wrap.append(table);root.append(wrap);
+  const body=el('tbody');for(const row of rows){const tr=el('tr');for(const value of row){const td=el('td');if(value&&typeof value==='object'&&value.nodeType)td.append(value);else td.textContent=show(value);tr.append(td);}body.append(tr);}table.append(body);wrap.append(table);
+  if(help){const section=el('section');section.append(wrap);root.append(section);UI.tableHelp(section,table,headers,help);}
+  else root.append(wrap);
  }
  function reportFilter(extra={}){return {report_type:null,organization:null,from:null,to:null,...extra};}
  const reportPager=el('div',undefined,'unified-pager'),reportPageStatus=el('span','Страница 1'),reportPrev=button('← Предыдущие',()=>{if(!reportBack.length)return;reportAfter=reportBack.pop();void loadReports();}),reportMore=button('Следующие →',()=>{if(!reportNext)return;reportBack.push(reportAfter);reportAfter=reportNext;void loadReports();});
@@ -191,7 +193,8 @@ function init(){
    const address=cells.map(c=>sheet?sheet+'!'+c:c).join(', ');
    const period=i.date?date(i.date):i.period_start===i.period_end?date(i.period_start):[date(i.period_start),date(i.period_end)].filter(Boolean).join(' — ');
    return [period||'Даты не сохранены',i.organization||'Не указано / общий итог',types[i.kind]||i.kind,[i.source_name,i.sheet,i.source_anchor?'Отчёт хранения: '+i.source_anchor:null].filter(Boolean).join(' · ')||'Отчёт отсутствует',i.source_row||i.row,address||'—',qualityReason(i,address)];
-  }));
+  }),[null,null,null,null,'Номер строки исходного листа, если он сохранён при проверке или импорте.',
+   'Адреса ячеек на исходном листе, если они сохранены. При расхождении итогов указаны контрольные ячейки. Причина расхождения может находиться в строках детализации.',null]);
  }
  async function loadQuality(){
   const rev=UI.revision,ticket=++qualityTicket,pending=$('qualitySource').value==='pending',checked=review;

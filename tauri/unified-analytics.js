@@ -213,7 +213,11 @@ async function departmentCharts(base,isCurrent){
  }else if(chosen.length>1&&value('chartSeriesLayout')==='combined'&&orientation()!=='horizontal')UI.drawDepartments(periods,s.organizations,chosen,data,plotSection($('chartsContainer'),'amount','Совместное сравнение: '+s.organizations.length+' подразделений × '+chosen.length+' показателя'));
  else for(const metric of chosen)UI.drawChart(periods,new Set(s.organizations),metric,plotSection($('chartsContainer'),metric),{chart:state.chart,orientation:orientation(),seriesType:'organizations',categories:s.organizations,data});
  const raw=organizations.map(org=>[org.org,...chosen.map(metric=>org.total[metric]),org.complete?'Полные данные':'Пропусков: '+org.missing]);
- UI.table($('chartOrgTotals'),'amount',s.from+' — '+s.to,['Подразделение',...chosen.map(m=>titles[m]),'Полнота данных'],raw.map(row=>[row[0],...row.slice(1,-1).map((n,i)=>fmt(n,chosen[i])),row.at(-1)]),{title:'Итог по подразделениям за диапазон',totalRow:false,csvRows:raw,csvContext:chartExport(s,isCurrent,'organizationTotals',chosen)});
+ UI.table($('chartOrgTotals'),'amount',s.from+' — '+s.to,['Подразделение',...chosen.map(m=>titles[m]),'Полнота данных'],raw.map(row=>[row[0],...row.slice(1,-1).map((n,i)=>fmt(n,chosen[i])),row.at(-1)]),{title:'Итог по подразделениям за диапазон',totalRow:false,csvRows:raw,
+  headerHelp:['Подразделение из выбранного списка.',...chosen.map(m=>
+   (m==='average'?'Общая сумма / суммарное количество (объём)':'Итоговый показатель «'+titles[m]+'»')+' за весь выбранный диапазон. При пропуске отчёта значение недоступно.'),
+   'Полнота отчётов этого подразделения за диапазон. При неполных данных показано число пропущенных периодов.'],
+  csvContext:chartExport(s,isCurrent,'organizationTotals',chosen)});
  $('chartHelp').textContent='Сравниваются '+s.organizations.length+' подразделений. Учитываются '+(all?'все выполненные работы.':'отмеченные работы и группы.')+' Прочерк — неполные данные; средняя сумма рассчитана из общей суммы и количества. Данные сгруппированы '+({day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам',period:'по выбранным периодам'}[trends.granularity]||'по периодам')+'.';
 }
 async function configure(snapshot){

@@ -4,9 +4,12 @@ Called by windows_smoke.py on an isolated installed WebView2, both before and
 after real synthetic XLSX import. Never replace native APIs or write storage.
 """
 import json
+from math import isfinite
 from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect
+
+from reference_table_help import check_table_help
 
 
 TIMEOUT = 90_000
@@ -21,6 +24,7 @@ def check_reference(page, output, has_reports):
       && window.unifiedUI.snapshot''', timeout=TIMEOUT)
     assert page.evaluate('window.appReady') is True
     initial_viewport = page.viewport_size
+    initial_window_size = page.evaluate('({width: window.innerWidth, height: window.innerHeight})')
     initial_zoom = page.locator('html').evaluate('(node) => node.style.zoom')
     initial_revision = page.evaluate('window.unifiedUI.revision')
     initial_theme = page.locator('#appearanceTheme').input_value()
@@ -32,7 +36,15 @@ def check_reference(page, output, has_reports):
           !window.tauriOperations?.saves && ![...document.querySelectorAll('[aria-busy="true"]')]
           .some(node => node.getClientRects().length)''', timeout=TIMEOUT)
         if scroll and root.count() == 1:
-            root.scroll_into_view_if_needed()
+            # Large sections must start at their heading; centering them crops
+            # the top of import forms and analytics tabs out of the inventory.
+            large_section = root.evaluate("""node => node.tagName !== 'DIALOG' &&
+              !node.closest('dialog') && node.getBoundingClientRect().height >
+              document.documentElement.clientHeight""")
+            if large_section:
+                root.evaluate("node => node.scrollIntoView({block:'start',inline:'nearest',behavior:'instant'})")
+            else:
+                root.scroll_into_view_if_needed()
         controls = root.locator('button,input,select,textarea,summary,a').evaluate_all('''nodes => nodes
           .filter(node => node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden')
           .map(node => ({tag:node.tagName,id:node.id,
@@ -126,6 +138,51 @@ def check_reference(page, output, has_reports):
         inventory.append({'step': name, 'available': bool(has_rows),
                           'reason': None if has_rows else 'The current result has no rows to export.'})
 
+    def chart_hover(root):
+        marks = root.locator('svg rect[aria-label]:visible, svg circle[aria-label]:visible')
+        for index in range(marks.count()):
+            mark = marks.nth(index)
+            label = mark.get_attribute('aria-label')
+            value_text = label.rsplit(':', 1)[-1].strip()
+            normalized = ''.join(value_text.split()).replace(',', '.')
+            value = float(normalized)
+            assert isfinite(value), 'A chart mark exposes a nonfinite value'
+            if value == 0:
+                continue
+            title = mark.locator('title')
+            tooltip = title.text_content() if title.count() else mark.get_attribute('data-chart-tooltip')
+            if tooltip is not None:
+                assert tooltip == label, 'Chart tooltip differs from its accessible data label'
+            mark.hover()
+            assert mark.evaluate('(node) => node.matches(":hover")'), 'The chart mark was not hovered'
+            inventory.append({'step': '08-horizontal-chart-hover', 'available': True,
+                              'accessibleLabel': label, 'tooltip': tooltip or label,
+                              'displayedValue': value_text, 'numericValue': value})
+            return
+        inventory.append({'step': '08-horizontal-chart-hover', 'available': False,
+                          'visibleMarks': marks.count(),
+                          'reason': 'No visible nonzero SVG series mark for the current filters.'})
+
+    def table_help(selector, name, expected_count=None):
+        # A missing conditional table is meaningful only after its SQL is done.
+        page.wait_for_function('''() => !window.tauriOperations?.reads &&
+          !window.tauriOperations?.saves && ![...document.querySelectorAll('[aria-busy="true"]')]
+          .some(node => node.getClientRects().length)''', timeout=TIMEOUT)
+        section = page.locator(selector + ':visible').first
+        available = section.count() > 0
+        if available:
+            visible_headers = section.locator('thead th:visible').count()
+            assert visible_headers > 0, 'A rendered results table has no visible headings'
+            expected = visible_headers if expected_count is None else expected_count
+            labels = check_table_help(section, expected)
+            inventory.append({'step': name, 'table': selector, 'available': True,
+                              'visibleHeaders': visible_headers, 'checkedHints': labels})
+        else:
+            root = page.locator(selector.split(' ', 1)[0])
+            reason = root.inner_text().strip()[:500] if root.count() and root.is_visible() else ''
+            inventory.append({'step': name, 'table': selector, 'available': False,
+                              'reason': reason or 'No visible results table for the current filters.'})
+
     def quality_controls():
         expect(page.locator('#qualitySummary')).to_contain_text('Найдено:', timeout=TIMEOUT)
         has_issues = page.locator('#qualityTable tbody tr').count() > 0
@@ -144,6 +201,7 @@ def check_reference(page, output, has_reports):
                 focused(summary)
             expect(advice.locator('p')).to_be_visible()
         record('04-quality', page.locator('#qualityTable'))
+        table_help('#qualityTable > section', '04-quality-table-help', 2)
 
     def calendar(trigger, name, mode=None, commit=False):
         """A calendar selection stays a draft until the explicit confirm button."""
@@ -346,7 +404,7 @@ def check_reference(page, output, has_reports):
         date_trigger = page.locator('#importWeek + .ref-calendar-field')
         calendar(date_trigger, '06-import-day', 'days')
         calendar(page.locator('#referenceReportYear'), '06-report-calendar-year', 'years')
-        record('07-import', page.locator('#upload'))
+        record('07-import', page.locator('#toolsPage'))
         close_panel(importer)
 
         # Tabs must switch actual native sections, not another application route.
@@ -381,6 +439,7 @@ def check_reference(page, output, has_reports):
                 expect(chart.locator('[data-chart="bar"]')).to_have_attribute('aria-pressed', 'true')
                 page.locator('#chartOrientation').select_option('horizontal')
                 record('08-horizontal-chart', chart)
+                chart_hover(chart)
                 page.locator('#chartOrientation').select_option('vertical')
                 chart.locator('[data-chart="table"]').click()
                 expect(chart.locator('[data-chart="table"]')).to_have_attribute('aria-pressed', 'true')
@@ -393,6 +452,28 @@ def check_reference(page, output, has_reports):
                 expect(page.locator('#toolsPage')).to_be_visible()
             check_disclosures(page.locator('#toolsPage'), '08-analytics-disclosures')
             record('08-analytics-' + target, page.locator('#toolsPage'))
+            help_tables = {'structurePanel': '#structureResults .metric-table',
+                           'usualPanel': '#usualResults .metric-table',
+                           'regularityPanel': '#regularityResults .metric-table'}
+            if target in help_tables:
+                table_help(help_tables[target], '08-' + target + '-table-help')
+            if target == 'comparison':
+                contribution = page.locator('#contributions')
+                contribution_summary = contribution.locator(':scope > summary')
+                if contribution_summary.is_visible():
+                    if not contribution.evaluate('(node) => node.open'):
+                        contribution_summary.click()
+                    expect(contribution).to_have_js_property('open', True)
+                table_help('#contributionResults .metric-table', '08-contributions-table-help')
+            if target == 'chartPanel':
+                breakdown = page.locator('#chartBreakdown')
+                previous_breakdown = breakdown.input_value()
+                if breakdown.is_visible() and breakdown.is_enabled():
+                    breakdown.select_option('organizations')
+                    record('08-department-totals', page.locator('#toolsPage'))
+                table_help('#chartOrgTotals .metric-table', '08-department-totals-table-help')
+                if breakdown.input_value() != previous_breakdown:
+                    breakdown.select_option(previous_breakdown)
         close_panel(analytics)
         analytics.click()
         panel('chartPanel')
@@ -564,7 +645,8 @@ def check_reference(page, output, has_reports):
         if initial_viewport is not None:
             page.set_viewport_size(initial_viewport)
         else:
-            # Restore the real installed window after our responsive emulation.
+            # Restore the actual window size before clearing responsive emulation.
+            page.set_viewport_size(initial_window_size)
             session = page.context.new_cdp_session(page)
             try:
                 session.send('Emulation.clearDeviceMetricsOverride')

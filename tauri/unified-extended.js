@@ -313,7 +313,14 @@ async function contributions(positions=[null]){
    const check=page.check;$('contributionCheck').append(UI.el('p',titles[metric]+': сумма вкладов '+fmt(check.sum,metric)+'; общее изменение '+fmt(check.delta,metric)+' — '+(check.reconciled?'совпадает':'расхождение '+fmt(check.residual,metric)),check.reconciled?'positive small':'negative small'));
    const rows=page.rows.map(row=>[itemButton(row,{...s,from:before.from<after.from?before.from:after.from,to:before.to>after.to?before.to:after.to}),fmt(row.base,metric),fmt(row.current,metric),delta(row.delta,metric),percent(row.percent),percent(row.contribution)]);
    UI.table($('contributionResults'),metric,caption(before)+' / '+caption(after),['Услуга / группа','Значение раньше','Значение сейчас','Изменение значения','Изменение, %','Вклад в общее изменение, %'],rows,{totalRow:false,
-    headerHelp:[null,null,null,'Значение сейчас минус значение раньше.','Изменение относительно модуля прежнего значения.','Изменение работы, делённое на изменение общего итога, в процентах.'],
+    headerHelp:[
+     'Работа или группа, которая внесла вклад в изменение общего итога.',
+     'Значение работы или группы за выбранный базовый период.',
+     'Значение работы или группы за выбранный анализируемый период.',
+     'Значение сейчас минус значение раньше. Положительная разница увеличивает общий итог, отрицательная уменьшает.',
+     'Изменение значения / модуль прежнего значения × 100%. При нулевой базе процент недоступен.',
+     'Изменение работы / изменение общего итога × 100%. Вклад может быть отрицательным или больше 100%, если изменения других работ его компенсируют. При нулевом общем изменении доля недоступна.'
+    ],
     csvContext:fullExport(task,request(s),'contributions',metric,{before:{from:before.from,to:before.to}}),
     csvRows:page.rows.map(r=>[r.name,r.base,r.current,r.delta,r.percent,r.contribution])});next[metric]=page.next||false;
   });
@@ -352,7 +359,15 @@ async function structure(){
   const headers=baselineValid?['Услуга / группа','Значение раньше','Значение сейчас','Доля раньше','Доля сейчас','Накопленная доля','Изменение доли']:
    ['Услуга / группа','Значение сейчас','Доля сейчас','Накопленная доля'];
   UI.table(root,metric,caption(before)+' / '+caption(after),headers,rows,{totalRow:false,csvRows:raw,
-   headerHelp:headers.map(header=>({'Доля раньше':'Значение работы относительно итога базового периода.','Доля сейчас':'Значение работы относительно итога анализируемого периода.','Накопленная доля':'Сумма долей от первой строки до этой позиции.','Изменение доли':'Разница между текущей и базовой долей в процентных пунктах.'})[header]),
+   headerHelp:headers.map(header=>({
+    'Услуга / группа':'Название работы или объединяющей её группы. Строка «Остальные услуги» суммирует работы за пределами выбранного топа.',
+    'Значение раньше':'Количество / объём или сумма за базовый период по выбранным подразделениям.',
+    'Значение сейчас':'Количество / объём или сумма за анализируемый период по выбранным подразделениям.',
+    'Доля раньше':'Значение работы за базовый период / общий итог работ в выбранном составе за этот же период × 100%.',
+    'Доля сейчас':'Значение работы за анализируемый период / общий итог работ в выбранном составе за этот же период × 100%.',
+    'Накопленная доля':'Сумма текущих долей от первой строки до этой включительно. Строка «Остальные услуги» учитывает оставшиеся работы.',
+    'Изменение доли':'Доля сейчас минус доля раньше, в процентных пунктах.'
+   })[header]),
    csvContext:fullExport(task,request(s),'structure',metric,{before:{from:before.from,to:before.to},limit:selectedLimit})});
   const plot=UI.el('div',null,'metric-plot');root.append(plot);
   const key=row=>row.other?'others':row.key;
@@ -380,10 +395,28 @@ async function patterns(mode,positions=[null]){
   $(name+'Coverage').append(UI.el('p','Полных периодов: '+page.used+' из '+page.expected+'. В предыдущем диапазоне: '+page.previous_used+'.'+(page.current_complete?'':' Анализируемый диапазон неполон.'),'muted small'));
   const root=$(name+'Results');if(!page.rows.length)root.append(UI.el('p','Нет услуг по выбранным фильтрам.','muted small'));
   if(mode==='usual')for(const metric of usualMetrics){const rows=page.rows.map(row=>{const m=row[metric];return [row.key?itemButton(row,{...s,from:page.baseline_from,to:s.to}):row.name,fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent),UI.el('span',usualLabels[m.status]||m.status,m.status==='high'?'numeric-rise':m.status==='low'?'numeric-fall':'')];});UI.table(root,metric,'Среднее: '+page.baseline_from+' — '+page.baseline_to+'; анализ: '+page.current_from+' — '+page.current_to,['Услуга / группа','Среднее раньше','Сейчас','Отклонение','Отклонение, %','Оценка'],rows,{
-   headerHelp:[null,'Среднее по полностью загруженным интервалам окна.',null,'Значение сейчас минус среднее за прошлые интервалы.','Разница относительно модуля среднего. При нулевой базе процент недоступен.','Для оценки нужны как минимум два полных предыдущих интервала.'],
+   headerHelp:[
+    'Отмеченная работа, группа или итог по всем выбранным работам.',
+    'Для суммы и количества / объёма берётся среднее по полным предыдущим интервалам. Для отношения суммы к количеству / объёму суммарная стоимость делится на суммарное количество за эти интервалы.',
+    'Значение за анализируемый интервал. При неполном отчёте значение недоступно.',
+    'Значение сейчас минус среднее раньше. Положительное отклонение означает рост, отрицательное — снижение.',
+    'Отклонение / модуль среднего раньше × 100%. При нулевой базе процент недоступен.',
+    'Для оценки нужны два или более полных предыдущих интервала. Отклонение отмечается при достижении порога, а при нулевой базе — при любом ненулевом изменении.'
+   ],
    csvContext:fullExport(task,req,'usual',metric,{options:opts,window:windowSize}),csvRows:page.rows.map(row=>{const m=row[metric];return [row.name,m.base,m.current,m.delta,m.percent,usualLabels[m.status]||m.status];})});}
   else {const raw=page.rows.map(row=>[row.name,page.used?row.hits:null,row.frequency,page.previous_used?row.previousHits:null,row.previousFrequency,Number.isFinite(row.frequency)&&Number.isFinite(row.previousFrequency)?row.frequency-row.previousFrequency:null,row.first,row.last,row.trailing,(row.statuses||[]).map(s=>regularLabels[s]||s).join('; ')]);const rows=raw.map((row,i)=>[itemButton(page.rows[i],s),row[1]??'—',percent(row[2]),row[3]??'—',percent(row[4]),Number.isFinite(row[5])?fmt(row[5],'count')+' п. п.':'—',row[6]||'—',row[7]||'—',row[8]??'—',row[9]]);UI.table(root,'count',caption(s),['Услуга / группа','Была в периодах','Частота сейчас, %','Была раньше','Частота раньше, %','Разница частоты, п. п.','Впервые в истории','Последний раз','Подряд без активности','Что это значит'],rows,{title:'Как часто выполнялись услуги',totalRow:false,csvRows:raw,
-   headerHelp:[null,null,'Доля полных периодов, в которых была активность.',null,'Доля активных периодов среди полных базовых периодов.',null,null,null,'Количество полных периодов подряд без выполнений.','Признаки частоты относятся к фактически загруженной истории.'],
+   headerHelp:[
+    'Название выбранной работы или группы. Для группы учитывается активность входящих в неё работ.',
+    'Количество полных периодов анализируемого диапазона, в которых была ненулевая активность.',
+    'Число полных периодов с активностью / число всех полных периодов анализируемого диапазона × 100%.',
+    'Число полных периодов с активностью в базовом диапазоне.',
+    'Число полных периодов с активностью / число всех полных периодов базового диапазона × 100%.',
+    'Частота сейчас минус частота раньше, в процентных пунктах.',
+    'Первый период с активностью в загруженной истории выбранных подразделений по конец анализируемого диапазона.',
+    'Последний период с активностью в загруженной истории выбранных подразделений по конец анализируемого диапазона.',
+    'Число полных периодов без активности подряд к концу диапазона. Пропуск отчёта прерывает подсчёт.',
+    'Признаки описывают частоту в загруженных отчётах. У одной работы может быть несколько признаков.'
+   ],
    csvContext:fullExport(task,req,'regularity','count',{options:opts,window:windowSize})});}
   pager(name,page,positions,page.next);
  }catch(error){task.error(error);}finally{task.done();}

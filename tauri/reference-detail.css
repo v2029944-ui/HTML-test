@@ -15,7 +15,7 @@
 #refNative[data-panel] #advancedAnalytics {margin:0;padding:0;border:0;background:transparent}
 #refNative[data-panel] :is(.view,.panel,.sectionbar,.chart-wrap,.extended-filters,.import-controls,.table-scroll) {min-width:0;max-width:100%}
 #refNative[data-panel] .panel {box-shadow:none;margin:0 0 14px;border:1px solid var(--border);border-radius:var(--radius-panel,14px);background:var(--surface);color:var(--text)}
-#refNative[data-panel] .view.active {display:grid;gap:12px}
+#refNative[data-panel] .view.active {display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
 #refNative[data-panel] .view.active > .panel {margin:0}
 #refNative[data-panel] :is(button,select,input,label,summary) {overflow-wrap:anywhere}
 #refNative[data-panel] .chart-view-controls {grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr))}
