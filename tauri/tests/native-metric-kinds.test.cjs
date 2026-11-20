@@ -182,3 +182,27 @@ test('metric commit is reported as successful after a failed dashboard refresh',
  assert.match(m.elements.metricKindStatus.textContent,/Не удалось обновить экран/);
  assert.doesNotMatch(m.elements.metricKindStatus.textContent,/Импорт отклонён/);
 });
+
+test('fresh SQLite snapshot invalidates pending metric preview and previously reviewed token',async()=>{
+ let notify;
+ const ui={revision:1,refresh:async()=>{},onSnapshot:fn=>{notify=fn;}};
+ const m=mount({ui});await m.window.metricKindWorkspaceReady;
+ await m.elements.metricKindChoose.events.click();assert.equal(m.elements.metricKindApply.disabled,false);
+ ui.revision=2;notify(null);
+ assert.equal(m.elements.metricKindApply.disabled,true);
+ assert.match(m.elements.metricKindStatus.textContent,/повторно проверьте источник/);
+ await m.elements.metricKindApply.events.click();
+ assert.equal(m.calls.some(c=>c[0]==='apply'),false);
+});
+test('metric calculate does not publish a stale response after SQLite revision changes',async()=>{
+ let resolve;
+ const ui={revision:1,refresh:async()=>{},onSnapshot:()=>{}};
+ const m=mount({ui});await m.window.metricKindWorkspaceReady;
+ m.window.desktopAPI.nativeMetricSummary=()=>new Promise(r=>resolve=r);
+ const pending=m.elements.metricKindCalculate.events.click();
+ ui.revision=2;
+ resolve({reportCount:10,rowCount:12,values:{hours:100}});
+ await pending;
+ assert.equal(m.elements.metricKindTotals.children.length,0);
+ assert.match(m.elements.metricKindStatus.textContent,/Ошибка расчёта/);
+});

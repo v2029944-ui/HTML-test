@@ -42,6 +42,13 @@ function render(values,kind,container){
   el.append(box);
  }
 }
+if(typeof ui?.onSnapshot==='function')ui.onSnapshot(()=>{
+ clearReview();
+ $('metricKindTotals').replaceChildren();
+ $('metricKindCount').textContent='Данные изменились. Повторите расчёт.';
+ status('База обновилась. Перед импортом повторно проверьте источник.');
+ controls();
+});
 function findKind(id){return kinds.find(k=>k.id===id);}
 function showPreview(result){
  if(!result||!findKind(result.kind)||typeof result.reviewToken!=='string'||
@@ -54,7 +61,7 @@ function showPreview(result){
 }
 async function calculate(){
  if(busy||!kinds.length)return;
- const id=$('metricKindSelect').value,kind=findKind(id);
+ const id=$('metricKindSelect').value,kind=findKind(id),revision=currentRevision();
  if(!kind)return;
  const from=$('metricKindFrom').value||'0001-01-01';
  const to=$('metricKindTo').value||'9999-12-31';
@@ -62,6 +69,7 @@ async function calculate(){
  busy=true;controls();
  try{
   const summary=await api.nativeMetricSummary(id,from,to);
+  if(currentRevision()!==revision)throw Error('Данные изменились. Повторите расчёт.');
   render(summary.values,kind,'metricKindTotals');
   $('metricKindCount').textContent='Отчётов: '+summary.reportCount+
     '. Строк: '+summary.rowCount+'. Суммы по загруженным данным, без проверки полноты периодов.';
@@ -94,7 +102,8 @@ $('metricKindChoose').addEventListener('click',async()=>{
   const selected=await api.chooseMetricJson();
   if(!selected){status('Выбор JSON отменён.');return;}
   $('metricKindFile').textContent='Проверяется JSON: '+selected.split(/[\\/]/).pop();
-  const result=await api.nativeMetricPreview(selected);
+  const revision=currentRevision(),result=await api.nativeMetricPreview(selected);
+  if(currentRevision()!==revision)throw Error('База изменилась во время проверки файла.');
   showPreview(result);
   source=selected;format='json';
  }catch(err){
@@ -115,7 +124,8 @@ $('metricKindChooseXlsx').addEventListener('click',async()=>{
   const selected=await api.chooseMetricXlsx();
   if(!selected){status('Выбор XLSX отменён.');return;}
   $('metricKindFile').textContent='Проверяется XLSX: '+selected.split(/[\\/]/).pop();
-  const result=await api.nativeMetricXlsxPreview(selected,profile,start,end);
+  const revision=currentRevision(),result=await api.nativeMetricXlsxPreview(selected,profile,start,end);
+  if(currentRevision()!==revision)throw Error('База изменилась во время проверки файла.');
   showPreview(result);
   source=selected;format='xlsx';xlsxArgs={profile,start,end};
  }catch(err){
