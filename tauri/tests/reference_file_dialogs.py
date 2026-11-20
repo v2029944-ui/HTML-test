@@ -13,10 +13,33 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
+from itertools import zip_longest
 
 from playwright.sync_api import expect
 
 TIMEOUT = 90_000
+
+
+def draft_changes(before, after, picker=None):
+    """Compare saved choices/parameters, keeping exact values in failures.
+
+    Only the cancelled restore-source chooser may replace an empty status with
+    its cancellation notice. Every other picker, reverse transition and existing
+    verified preview stays exact.
+    """
+    changes = []
+    for left, right in zip_longest(before.get('fields', []), after.get('fields', [])):
+        if left != right:
+            changes.append({'id': (left or right).get('id'), 'before': left, 'after': right})
+    for key in sorted((before.keys() | after.keys()) - {'fields'}):
+        left, right = before.get(key), after.get(key)
+        if left == right:
+            continue
+        if (picker == 'sqlite-restore' and key == 'restorePreview' and
+                left == '' and right == 'Выбор отменён.'):
+            continue
+        changes.append({'id': key, 'before': left, 'after': right})
+    return changes
 
 
 def windows_input_type():
@@ -439,7 +462,13 @@ class ReferenceFileDialogWalkthrough:
             self.settled()
             expect(trigger).to_be_enabled(timeout=TIMEOUT)
             expect(trigger).to_be_focused(timeout=TIMEOUT)
-            assert self.drafts() == before, ('Cancel changed file/parameter drafts', name, how)
+            after = self.drafts()
+            changes = draft_changes(before, after, picker=name)
+            if changes:
+                record = self.output / ('native-file-dialogs-draft-diff-' + name + '-' + how + '.json')
+                record.write_text(json.dumps({'before': before, 'after': after, 'changes': changes},
+                                             ensure_ascii=False, indent=2), encoding='utf-8')
+            assert not changes, ('Cancel changed file/parameter drafts', name, how, changes)
             assert self.native.revision() == self.revision, ('Cancel wrote SQLite', name)
             caption = {'cancel': 'настоящая кнопка Cancel (IDCANCEL=2)',
                        'close': 'видимая кнопка × (SendInput, Win32 HTCLOSE)',

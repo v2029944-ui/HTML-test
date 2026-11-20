@@ -2,7 +2,7 @@
 
 Call probe_reference_print(page, output, app_pid) last in a disposable installed_page.
 The caller selects a usable Summary first. No print function replacement, printer
-selection, OK, global keyboard input, database writes, or application exports.
+selection, OK, unverified keyboard input, database writes, or application exports.
 Only a newly discovered, strictly attributed print target may receive Cancel/Esc.
 """
 import json
@@ -30,6 +30,17 @@ public static class PrintProbeNative {
   public IntPtr hwndActive,hwndFocus,hwndCapture,hwndMenuOwner,hwndMoveSize,hwndCaret;
   public Rect rcCaret;
  }
+ [StructLayout(LayoutKind.Sequential)] public struct MouseInput {
+  public int dx,dy; public uint mouseData,dwFlags,time; public UIntPtr dwExtraInfo;
+ }
+ [StructLayout(LayoutKind.Sequential)] public struct KeyboardInput {
+  public ushort wVk,wScan; public uint dwFlags,time; public UIntPtr dwExtraInfo;
+ }
+ [StructLayout(LayoutKind.Explicit)] public struct InputData {
+  [FieldOffset(0)] public MouseInput mouse;
+  [FieldOffset(0)] public KeyboardInput keyboard;
+ }
+ [StructLayout(LayoutKind.Sequential)] public struct Input { public uint type; public InputData data; }
  public delegate bool Callback(IntPtr hwnd, IntPtr arg);
  [DllImport("user32.dll")] public static extern bool EnumWindows(Callback callback,IntPtr arg);
  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
@@ -44,7 +55,30 @@ public static class PrintProbeNative {
  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd,uint flags);
  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll")] public static extern bool GetGUIThreadInfo(uint thread,ref GuiThreadInfo info);
+ [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
+ [DllImport("user32.dll",SetLastError=true)] private static extern uint SendInput(uint count,Input[] input,int size);
  [DllImport("user32.dll",SetLastError=true)] public static extern bool PostMessage(IntPtr hwnd,uint message,UIntPtr wp,IntPtr lp);
+ public static Input[] EscapeInputs() {
+  Input[] keys=new Input[2];
+  keys[0].type=keys[1].type=1;
+  keys[0].data.keyboard.wVk=keys[1].data.keyboard.wVk=0x1B;
+  keys[1].data.keyboard.dwFlags=2;
+  return keys;
+ }
+ public static uint SendGuardedEscape(IntPtr root,IntPtr focus,uint appPid,uint browserPid) {
+  if(root==IntPtr.Zero || focus==IntPtr.Zero || appPid==0 || browserPid==0)
+   throw new InvalidOperationException("Unproven input target");
+  GuiThreadInfo gui=new GuiThreadInfo();gui.cbSize=(uint)Marshal.SizeOf(typeof(GuiThreadInfo));
+  uint currentRootPid,currentFocusPid;
+  GetWindowThreadProcessId(root,out currentRootPid);
+  GetWindowThreadProcessId(focus,out currentFocusPid);
+  if(currentRootPid!=appPid || currentFocusPid!=browserPid || !IsWindowVisible(root) || !IsWindowEnabled(root) ||
+     GetAncestor(GetForegroundWindow(),3)!=root || !GetGUIThreadInfo(0,ref gui) || gui.hwndFocus!=focus ||
+     GetAncestor(focus,3)!=root) throw new InvalidOperationException("Print focus changed before physical Escape");
+  foreach(int key in new int[]{0x10,0x11,0x12,0x5B,0x5C,0x1B})
+   if((GetAsyncKeyState(key)&0x8000)!=0) throw new InvalidOperationException("Modifier/Escape already held; refusing input");
+  return SendInput(2,EscapeInputs(),Marshal.SizeOf(typeof(Input)));
+ }
 }
 '@
 $appId=[int]$env:ANALIZ_PRINT_APP_PID
@@ -137,11 +171,10 @@ if ($action -in @('embedded-inspect','embedded-cancel','embedded-escape')) {
       (ProcessOf $gui.hwndFocus) -ne $browserId) {throw 'Embedded Escape focus is not proven inside the same Print UI and Tauri root'}
   $facts['focus_hwnd']=$gui.hwndFocus.ToInt64()
   $facts['focus_name']=$focus.Current.Name
-  if (-not [PrintProbeNative]::PostMessage($gui.hwndFocus,0x100,[UIntPtr]27,[IntPtr]0x00010001)) {throw 'Addressed embedded Escape keydown failed'}
-  $facts['keyup_posted']=$false
-  if ([PrintProbeNative]::IsWindow($gui.hwndFocus)) {
-   $facts['keyup_posted']=[PrintProbeNative]::PostMessage($gui.hwndFocus,0x101,[UIntPtr]27,[IntPtr]0xC0010001)
-  }
+  $facts['delivery']='SendInput VK_ESCAPE down/up'
+  $facts['foreground_hwnd']=[PrintProbeNative]::GetForegroundWindow().ToInt64()
+  $facts['input_count']=[PrintProbeNative]::SendGuardedEscape($handle,$gui.hwndFocus,[uint32]$appId,[uint32]$browserId)
+  if ($facts.input_count -ne 2) {throw ('Physical Escape SendInput inserted {0}/2 events; Win32 error {1}' -f $facts.input_count,[System.Runtime.InteropServices.Marshal]::GetLastWin32Error())}
   $facts.dispatched=$true
  }
  [PSCustomObject]$facts | ConvertTo-Json -Depth 4 -Compress
@@ -179,12 +212,12 @@ if ($action) {
   ([System.Windows.Automation.InvokePattern]$pattern).Invoke()
  } elseif ($action -eq 'escape') {
   # Queue Escape for this verified HWND only; no SendKeys/SendInput/focus changes.
-  if (-not [PrintProbeNative]::PostMessage($handle,0x100,[UIntPtr]27,[IntPtr]1)) {throw 'Targeted Escape keydown failed'}
+  if (-not [PrintProbeNative]::PostMessage($handle,0x100,[UIntPtr]::new([uint64]27),[IntPtr]1)) {throw 'Targeted Escape keydown failed'}
   # Escape keydown may already destroy the dialog; do not turn that close
   # into an artificial failure by requiring delivery of keyup to a dead HWND.
   $keyUpSent=$false
   if ([PrintProbeNative]::IsWindow($handle)) {
-   $keyUpSent=[PrintProbeNative]::PostMessage($handle,0x101,[UIntPtr]27,[IntPtr]0xC0000001)
+   $keyUpSent=[PrintProbeNative]::PostMessage($handle,0x101,[UIntPtr]::new([uint64]27),[IntPtr]0xC0000001)
   }
  } else {throw 'Unsupported print probe action'}
  [PSCustomObject]@{action=$action;hwnd=$handle.ToInt64();dispatched=$true;keyup_posted=$keyUpSent} | ConvertTo-Json -Compress
@@ -458,7 +491,7 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     report = {'app_pid': app_pid, 'status': 'started', 'attempts': [], 'snapshots': [],
-              'restrictions': 'No mocks, printer selection, print-to-file, OK, or global input.'}
+              'restrictions': 'No mocks, printer selection, print-to-file, OK, or unverified input; one foreground/UIA-guarded physical Escape.'}
     path = output / 'reference-print-probe.json'
     browser_session = None
 
@@ -526,9 +559,13 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
                             main_hwnd=proof['main'], browser_pid=proof['browser_pid'])
             result['uia_' + mode] = facts
             if mode != 'inspect':
-                result['strategy'] = 'verified-embedded-uia' if mode == 'cancel' else 'verified-focused-hwnd'
+                result['strategy'] = 'verified-embedded-uia' if mode == 'cancel' else 'verified-physical-escape'
                 result['dispatched'] = facts['dispatched']
             return result
+
+        if action == 'escape':
+            # One actual Windows keypress; no prior no-op renderer key and no retry.
+            return embedded('escape')
 
         try:
             if browser_session is None:
@@ -568,34 +605,6 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
                     return embedded('cancel')
                 result['cancel_dispatch'] = clicked
                 result['strategy'] = 'exact-preview-cdp-cancel-control'
-            else:
-                key = {'key': 'Escape', 'code': 'Escape', 'windowsVirtualKeyCode': 27,
-                       'nativeVirtualKeyCode': 27}
-                try:
-                    result['keydown'] = preview.send('Input.dispatchKeyEvent',
-                        dict(key, type='keyDown'), allow_detach=True)
-                except _PreviewProtocolError as error:
-                    result['cdp_escape_error'] = str(error)
-                    return embedded('escape')
-                except PlaywrightError as error:
-                    if preview.last_command_dispatched:
-                        raise  # Delivery is unknown: never queue a second Escape.
-                    result['cdp_escape_error'] = str(error)
-                    return embedded('escape')
-                if not preview.detached:
-                    live = browser_session.send('Target.getTargets')['targetInfos']
-                    if any(item['targetId'] == target['id'] for item in live):
-                        try:
-                            result['keyup'] = preview.send('Input.dispatchKeyEvent',
-                                dict(key, type='keyUp'), allow_detach=True)
-                        except (PlaywrightError, RuntimeError) as error:
-                            live = browser_session.send('Target.getTargets')['targetInfos']
-                            if any(item['targetId'] == target['id'] for item in live):
-                                raise
-                            result['keyup'] = {'target_closed_before_keyup': True, 'error': str(error)}
-                    else:
-                        result['keyup'] = {'target_closed_before_keyup': True}
-                result['strategy'] = 'exact-preview-cdp-escape'
             result['dispatched'] = True
             return result
         finally:
@@ -671,7 +680,7 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
                 return report
             action_result['closed'] = observed_close(target, action + '-after')
             proof = target.get('attribution', {})
-            if (not action_result['closed'] and target['kind'] == 'html'
+            if (not action_result['closed'] and action == 'cancel' and target['kind'] == 'html'
                     and 'main' in proof and 'browser_pid' in proof):
                 # A renderer command can be accepted without closing Edge UI.
                 # Revalidate the actual embedded Print/Cancel controls. Escape

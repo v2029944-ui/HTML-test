@@ -7,7 +7,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from reference_file_dialogs import OwnedFileDialogs, TitleBarInfoEx
+from reference_file_dialogs import OwnedFileDialogs, TitleBarInfoEx, draft_changes
 from windows_smoke import NativeConfirmations
 
 
@@ -59,6 +59,44 @@ class FileDialogCancelTests(unittest.TestCase):
     def assert_refused(self):
         with self.assertRaises(AssertionError):
             self.dialog.cancel_control(101, self.facts)
+
+
+class DraftChangesTests(unittest.TestCase):
+    def test_empty_restore_can_show_cancellation_notice_without_a_selected_backup(self):
+        self.assertEqual(draft_changes({'restorePreview': ''}, {'restorePreview': 'Выбор отменён.'},
+                                       picker='sqlite-restore'), [])
+
+    def test_reverse_notice_transition_is_not_ignored(self):
+        self.assertEqual(len(draft_changes({'restorePreview': 'Выбор отменён.'}, {'restorePreview': ''},
+                                           picker='sqlite-restore')), 1)
+
+    def test_other_pickers_cannot_replace_restore_status_with_notice(self):
+        for picker in (None, 'groups-import', 'metric-json', 'sqlite-backup'):
+            self.assertEqual(len(draft_changes({'restorePreview': ''}, {'restorePreview': 'Выбор отменён.'},
+                                               picker=picker)), 1)
+
+    def test_verified_backup_preview_cannot_be_replaced_by_empty_or_cancel_notice(self):
+        verified = {'restorePreview': 'Копия проверена. Отчётов: 366. Выберите способ восстановления.'}
+        for status in ('', 'Выбор отменён.'):
+            changes = draft_changes(verified, {'restorePreview': status}, picker='sqlite-restore')
+            self.assertEqual(changes, [{'id': 'restorePreview', 'before': verified['restorePreview'],
+                                        'after': status}])
+
+    def test_unrelated_restore_status_is_not_hidden(self):
+        self.assertEqual(len(draft_changes({'restorePreview': 'Восстановление ожидает перезапуска.'},
+                                           {'restorePreview': 'Выбор отменён.'})), 1)
+
+    def test_field_values_checked_state_and_removed_fields_are_exact_in_diagnostics(self):
+        before = {'fields': [{'id': 'metricKindFrom', 'value': '2024-01-01'},
+                             {'id': 'sourceAutoImport', 'checked': False},
+                             {'id': 'metricKindTo', 'value': '2024-01-31'}]}
+        after = {'fields': [{'id': 'metricKindFrom', 'value': ''},
+                            {'id': 'sourceAutoImport', 'checked': True}]}
+        changes = draft_changes(before, after)
+        self.assertEqual([row['id'] for row in changes], ['metricKindFrom', 'sourceAutoImport', 'metricKindTo'])
+        self.assertEqual(changes[0]['before']['value'], '2024-01-01')
+        self.assertTrue(changes[1]['after']['checked'])
+        self.assertIsNone(changes[2]['after'])
 
 
 class TitlebarClickTests(unittest.TestCase):

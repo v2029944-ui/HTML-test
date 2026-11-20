@@ -2,9 +2,14 @@
 No Windows automation is performed by these attribution tests.
 """
 import copy
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
 import unittest
 
-from reference_print_probe import _attribute_preview
+from reference_print_probe import _NATIVE, _attribute_preview
 
 
 CAPTURED = {'app_pid': 1500,
@@ -325,6 +330,43 @@ class PrintAttributionTests(unittest.TestCase):
         before_main=next(w for w in self.f['before']['native']['windows'] if w['class']=='Tauri Window')
         before_main['controls']=copy.deepcopy(self.main['controls'])
         self.assertIsNone(self.target())
+
+
+class PhysicalEscapePacketTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('powershell') or shutil.which('pwsh'), 'PowerShell runtime required')
+    def test_real_native_packet_layout_and_unknown_target_refusal(self):
+        # Compile actual C# declarations and inspect the Win32 INPUT bytes.
+        # No Win32 functions or input injection are invoked by this test.
+        declarations = re.search("Add-Type @'\\n(.*?)\\n'@", _NATIVE, re.S).group(1)
+        validation = r'''
+$ErrorActionPreference='Stop'
+$tokens=$null;$errors=$null
+[void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'native.ps1'),[ref]$tokens,[ref]$errors)
+if($errors.Count){throw ($errors | Out-String)}
+Add-Type -Path (Join-Path $PSScriptRoot 'native.cs')
+$keys=[PrintProbeNative]::EscapeInputs()
+if($keys.Length -ne 2){throw 'Escape must contain exactly one down/up pair'}
+if([System.Runtime.InteropServices.Marshal]::SizeOf([type][PrintProbeNative+Input]) -ne 40){throw 'Invalid x64 INPUT size'}
+if([System.Runtime.InteropServices.Marshal]::OffsetOf([type][PrintProbeNative+Input],'data').ToInt32() -ne 8){throw 'Invalid INPUT union alignment'}
+if($keys[0].type -ne 1 -or $keys[1].type -ne 1 -or
+   $keys[0].data.keyboard.wVk -ne 27 -or $keys[1].data.keyboard.wVk -ne 27 -or
+   $keys[0].data.keyboard.dwFlags -ne 0 -or $keys[1].data.keyboard.dwFlags -ne 2){throw 'Not one physical VK_ESCAPE down/up pair'}
+$refused=$false
+try{[void][PrintProbeNative]::SendGuardedEscape([IntPtr]::Zero,[IntPtr]::Zero,0,0)}
+catch{if($_.Exception.ToString().Contains('Unproven input target')){$refused=$true}else{throw}}
+if(-not $refused){throw 'Unknown target was not refused before any Win32 call'}
+'PASS physical Escape packet and unknown-target refusal'
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'native.ps1').write_text(_NATIVE, encoding='utf-8')
+            (root / 'native.cs').write_text(declarations, encoding='utf-8')
+            (root / 'validate.ps1').write_text(validation, encoding='utf-8')
+            result = subprocess.run([shutil.which('powershell') or shutil.which('pwsh'),
+                                     '-NoProfile', '-NonInteractive', '-File', str(root / 'validate.ps1')],
+                                    capture_output=True, encoding='utf-8', errors='replace', timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('PASS physical Escape packet', result.stdout)
 
 
 if __name__ == '__main__':
