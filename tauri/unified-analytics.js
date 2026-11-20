@@ -54,33 +54,75 @@ async function top(eager=false){
   selectedRows=new Map(result.rows.slice(0,8).map(row=>[row.key,{key:row.key,name:row.name,kind:row.kind}]));allNames=false;selectionReady=true;selectionCount();return true;
  }catch(error){if(!eager&&valid(mine,s.revision))UI.notice(errorText(error),true);return false;}
 }
-function overviewDifference(now,before,m){if(!Number.isFinite(now)||!Number.isFinite(before))return 'Нет сопоставимой базы';if(now===before)return 'Без изменений';const delta=now-before,change=(delta>0?'+':'')+fmt(delta,m);return change+' ('+(before===0?'процент не рассчитан':fmt(delta/Math.abs(before)*100,'count')+'%')+')';}
+function overviewDifference(now,before,m){if(!Number.isFinite(now)||!Number.isFinite(before))return 'Недостаточно данных для сравнения';if(now===before)return 'Без изменений';const delta=now-before,change=(delta>0?'+':'')+fmt(delta,m);return change+' ('+(before===0?'процент не рассчитан':fmt(delta/Math.abs(before)*100,'count')+'%')+')';}
+function dateLabel(iso){return /^\d{4}-\d{2}-\d{2}$/.test(iso)?iso.slice(8,10)+'.'+iso.slice(5,7)+'.'+iso.slice(0,4):iso;}
+function rangeLabel(from,to){return dateLabel(from)+(from===to?'':' — '+dateLabel(to));}
+async function renderMissingMatrix(root,s){
+ const days=(Date.parse(s.to)-Date.parse(s.from))/86400000+1;
+ if(s.type==='day'&&days>31){root.replaceChildren(UI.el('p','Для просмотра пропусков по дням выберите диапазон до 31 дня.','muted small'));return;}
+ root.replaceChildren(UI.el('p','Загрузка таблицы пропусков…','muted small'));
+ try{
+  const result=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations,null,s.type==='day'?'day':null,[]);
+  if(UI.revision!==s.revision||printCapture?.scope!==s)return;
+  const series=result.series||[],periods=series[0]?.points||[];
+  if(!periods.length){root.replaceChildren(UI.el('p','Нет отчётов выбранного типа. Проверьте источник.','muted small'));return;}
+  const table=UI.el('table',null,'table coverage-matrix'),header=UI.el('tr');
+  header.append(UI.el('th','Подразделение'));
+  for(const period of periods)header.append(UI.el('th',dateLabel(period.start)));
+  const head=UI.el('thead');head.append(header);table.append(head);
+  const body=UI.el('tbody');
+  for(const name of s.organizations){
+   const serie=series.find(x=>x.organization===name),line=UI.el('tr');
+   line.append(UI.el('th',name));
+   for(let i=0;i<periods.length;i++){
+    const found=serie?.points?.[i],complete=found?.missing===0;
+    const cell=UI.el('td',complete?'Есть':'Нет',complete?'coverage-ok':'coverage-missing');
+    cell.title=complete?'Полный отчёт':'Нет полного отчёта — не означает ноль';line.append(cell);
+   }body.append(line);
+  }
+  table.append(body);const scroll=UI.el('div',null,'coverage-matrix-scroll');scroll.append(table);
+  root.replaceChildren(UI.el('p','«Нет» означает отсутствие полного отчёта, не нулевое значение.','muted small'),scroll);
+ }catch(err){if(UI.revision===s.revision&&printCapture?.scope===s)root.replaceChildren(UI.el('p','Не удалось показать пропуски: '+errorText(err),'warn small'));}
+}
+async function suggestWeeklyReports(s){
+ if(s.source!=='daily'||s.displayType!=='week')return;
+ try{
+  const options=await api.unifiedPeriodOptions(s.revision,'week',null,null,500);
+  if(UI.revision!==s.revision||printCapture?.scope!==s||!options.rows?.some(p=>p.start>=s.from&&p.start<=s.to))return;
+  const message=UI.el('p','В выбранном диапазоне есть недельные отчёты. Сейчас выбраны дневные, поэтому полнота проверяется по каждому дню.','muted small');
+  const button=UI.el('button','Переключить на недельные отчёты','button secondary');
+  button.type='button';button.addEventListener('click',()=>{if(UI.revision!==s.revision)return;$('unifiedSource').value='imported';$('periodType').value='week';void configure(UI.snapshot);});
+  message.append(button);$('overviewAlerts').append(message);
+ }catch{/* Подсказка о другом источнике не влияет на расчёты. */}
+}
 function drawOverview(result,organizations,s,before){
  for(const id of ['overviewKpis','overviewInsights','overviewOrganizations','overviewAlerts'])clear(id);
  const summary=result.summary,current=summary.after,previous=summary.before,root=$('overviewKpis'),insights=$('overviewInsights');
- $('overviewPeriodText').textContent=s.from+' — '+s.to+' · '+s.organizations.join(', ');$('printSummary').disabled=!current.periods;
+ $('overviewPeriodText').textContent=rangeLabel(s.from,s.to)+' · '+s.organizations.join(', ');$('printSummary').disabled=!current.periods;
  for(const [metric,label] of [['amount','Сумма выполненных работ'],['count','Количество / объём'],['average','Сумма / количество (объём)']]){const card=UI.el('div',null,'kpi'),now=current.total[metric],old=previous.total[metric];card.append(UI.el('span',label),UI.el('strong',fmt(now,metric)),UI.el('small',overviewDifference(now,old,metric),Number.isFinite(now)&&Number.isFinite(old)?now>old?'numeric-rise':now<old?'numeric-fall':'':''));root.append(card);}
  const orgCard=UI.el('div',null,'kpi');orgCard.append(UI.el('span','Выбрано подразделений'),UI.el('strong',String(s.organizations.length)),UI.el('small','Из '+UI.snapshot.org_names.length+' подразделений'));root.append(orgCard);
  for(const item of organizations){const line=UI.el('div',null,'overview-unit');line.append(UI.el('span',item.org),UI.el('strong',item.complete?fmt(item.total.amount,'amount')+' · '+'Количество / объём: '+fmt(item.total.count,'count'):'Нет полного отчёта (пропусков '+item.missing+')',item.complete?'':'quality-bad'));$('overviewOrganizations').append(line);}
  const flagged=!current.complete||Boolean(current.invalid_reports||current.duplicate_issues||current.overlap_issues||current.import_warning_reports);
- const coverageKey=flagged?'sql-coverage-ack-v1:'+JSON.stringify([s.revision,s.type,s.from,s.to,s.organizations.slice().sort(),[],current.periods,current.missing,current.invalid_reports,current.duplicate_issues,current.overlap_issues,current.import_warning_reports,current.available_reports]):null;
- let accepted=false;try{accepted=Boolean(coverageKey&&window.localStorage?.getItem(coverageKey)==='accepted');}catch{}
- if(!current.complete){$('overviewAlerts').append(UI.el('p',accepted?'Полнота: неполная (известно). Полный итог остаётся неизвестным.':'Полнота: есть пропуски. Полный итог не рассчитан.',accepted?'muted small':'overview-alert warn'));
-  if(current.available_reports>0)$('overviewAlerts').append(UI.el('p','По доступным отчётам ('+current.available_reports+'): сумма '+fmt(current.available_total.amount,'amount')+' · количество / объём '+fmt(current.available_total.count,'count')+' · сумма / количество (объём) '+fmt(current.available_total.average,'average')+'. Это частичный итог.','muted small'));
+ if(!current.complete){
+  const alert=UI.el('div',null,'overview-alert warn');
+  alert.setAttribute('role','status');
+  alert.append(UI.el('p','Неполные данные: '+current.missing+' пропусков (подразделение × '+({day:'день',week:'неделя',month:'месяц'}[s.type]||'период')+') за '+rangeLabel(s.from,s.to)+'.'));
+  const details=UI.el('details',null,'coverage-details'),matrix=UI.el('div');
+  details.append(UI.el('summary','Показать где'),matrix);
+  let loaded=false;details.addEventListener('toggle',()=>{if(details.open&&!loaded){loaded=true;void renderMissingMatrix(matrix,s);}});
+  alert.append(details);
+  if(current.available_reports>0)alert.append(UI.el('p','Частичный итог по '+current.available_reports+' доступным отчётам: сумма '+fmt(current.available_total.amount,'amount')+' · количество / объём '+fmt(current.available_total.count,'count')+'.','muted small'));
+  $('overviewAlerts').append(alert);
  }
- if(flagged&&!accepted){
-  const warning=UI.el('div',null,'overview-alert warn');warning.setAttribute('role','status');
-  warning.append(UI.el('p','Данные неполные или содержат замечания. Пропусков: '+current.missing+', некорректных отчётов: '+current.invalid_reports+', дубликатов: '+current.duplicate_issues+', перекрытий: '+current.overlap_issues+', отчётов с замечаниями импорта: '+current.import_warning_reports+'. Подтверждение скрывает предупреждение для неизменённой ревизии и выборки; оно не исправляет отчёты и не подтверждает отсутствующие периоды.'));
-  const acknowledge=UI.el('button','Понятно, замечание известно','button secondary');acknowledge.type='button';acknowledge.addEventListener('click',()=>{
-   if(UI.revision!==s.revision||printCapture?.scope!==s)return;
-   try{if(!window.localStorage)throw Error('Хранилище недоступно');window.localStorage.setItem(coverageKey,'accepted');}
-   catch{UI.notice('Подтверждение не удалось сохранить. Проверьте настройки хранилища приложения.',true);return;}
-   drawOverview(result,organizations,s,before);
-  });
-  const inspect=UI.el('button','Проверить данные','text-button');inspect.type='button';inspect.addEventListener('click',()=>UI.activate('upload'));warning.append(acknowledge,inspect);$('overviewAlerts').append(warning);
+ if(flagged){
+  const info=UI.el('div',null,'overview-alert');
+  if(current.invalid_reports||current.duplicate_issues||current.overlap_issues||current.import_warning_reports)
+   info.append(UI.el('p','Есть замечания к отчётам: некорректных '+current.invalid_reports+', повторов '+current.duplicate_issues+', пересечений '+current.overlap_issues+', с предупреждениями импорта '+current.import_warning_reports+'.','muted small'));
+  const inspect=UI.el('button','Проверить данные','button primary');inspect.type='button';
+  inspect.addEventListener('click',()=>UI.activate('upload'));info.append(inspect);$('overviewAlerts').append(info);
  }
  if(!current.complete||!previous.complete)insights.append(UI.el('p',!current.complete?'Для выводов нужны полные отчёты выбранных подразделений.':'Предыдущий интервал заполнен не полностью; процентные изменения не оцениваются.','muted small'));
- else {insights.append(UI.el('p','Сравнение с предыдущим интервалом: '+before.from+' — '+before.to+'.','muted small'));for(const metric of ['amount','count']){const line=UI.el('div',null,'overview-line');line.append(UI.el('strong',titles[metric]+': '+overviewDifference(current.total[metric],previous.total[metric],metric)));insights.append(line);}const metric=state.selectedMetrics.has('amount')?'amount':'count';for(const row of (result['top_'+metric]||[]).filter(row=>row[metric]?.delta!==0).slice(0,2)){const m=row[metric],line=UI.el('div',null,'overview-line');line.append(UI.el('strong',row.name+': '+(m.delta>0?'+':'')+fmt(m.delta,metric),m.delta>0?'numeric-rise':'numeric-fall'),UI.el('small','Один из крупнейших вкладов в изменение '+titles[metric].toLowerCase()));insights.append(line);}}
+ else {insights.append(UI.el('p','Сравнение с предыдущим интервалом: '+rangeLabel(before.from,before.to)+'.','muted small'));for(const metric of ['amount','count']){const line=UI.el('div',null,'overview-line');line.append(UI.el('strong',titles[metric]+': '+overviewDifference(current.total[metric],previous.total[metric],metric)));insights.append(line);}const metric=state.selectedMetrics.has('amount')?'amount':'count';for(const row of (result['top_'+metric]||[]).filter(row=>row[metric]?.delta!==0).slice(0,2)){const m=row[metric],line=UI.el('div',null,'overview-line');line.append(UI.el('strong',row.name+': '+(m.delta>0?'+':'')+fmt(m.delta,metric),m.delta>0?'numeric-rise':'numeric-fall'),UI.el('small','Один из крупнейших вкладов в изменение '+titles[metric].toLowerCase()));insights.append(line);}}
  insights.append(UI.el('p','Единицы суммы и количества / объёма необходимо сверять с источником. Дробное количество может означать объём, а не число работ.','muted small'));
  printCapture={revision:s.revision,scope:s,before,summary,organizations,result};
 }
@@ -89,6 +131,7 @@ async function calculate(){
  try{if(!Number.isSafeInteger(revision))throw Error('Дождитесь подготовки данных.');layout();const displayType=value('periodType'),source=value('unifiedSource'),range=UI.range(displayType,value('rangeStart'),value('rangeEnd'),source);if(!range||!orgs().length)throw Error('Выберите корректный период и подразделения.');const s={...range,revision,organizations:orgs(),selectedNames:[],selectedKeys:[],allNames:false,nameRows:[]},before=previousRange(s);if(!before)throw Error('Предыдущий интервал выходит за допустимые календарные границы.');scope=s;
   const [overview,organizations]=await Promise.all([api.nativeAnalysisCompare(revision,s.type,before.from,before.to,s.from,s.to,s.organizations,null,null),api.nativeAnalysisOrganizations(revision,s.type,s.from,s.to,s.organizations,null,null)]);
   if(!valid(mine,revision))return;drawOverview(overview,organizations,s,before);
+   if(!overview.summary.after.complete)void suggestWeeklyReports(s);
   if(!selectionReady){const ranked=await top(true);if(!valid(mine,revision))return;if(!ranked){const page=await api.unifiedNameOptions(revision,'',null,8);if(!valid(mine,revision))return;selectedRows=new Map(page.rows.map(r=>[r.key,r]));}selectionReady=true;}
   publish();selectionCount();void names(namePositions);if($('advancedAnalytics').open)await renderCharts();
  }catch(error){if(valid(mine,revision)){scope=null;for(const id of ['overviewKpis','overviewInsights','overviewOrganizations'])clear(id);clear('overviewAlerts','Не удалось загрузить обзор. '+errorText(error));for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id);}}
@@ -149,7 +192,7 @@ async function configure(snapshot){
   namePositions=[null];seriesPositions=[null];await calculate();
  }catch(error){if(valid(mine,revision)){scope=null;clear('overviewAlerts','Не удалось открыть периоды. '+errorText(error));}}
 }
-function print(){const captured=printCapture;if(!captured||captured.revision!==UI.revision){UI.notice('Дождитесь загрузки сводки.',true);return;}const root=$('printReport');root.replaceChildren();root.append(UI.el('h1','Сводка выполненных работ'),UI.el('p','Период: '+captured.scope.from+' — '+captured.scope.to),UI.el('p','Подразделения: '+captured.scope.organizations.join(', ')),UI.el('p','Дата подготовки: '+new Date().toLocaleDateString('ru-RU')));
+function print(){const captured=printCapture;if(!captured||captured.revision!==UI.revision){UI.notice('Дождитесь загрузки сводки.',true);return;}const root=$('printReport');root.replaceChildren();root.append(UI.el('h1','Сводка выполненных работ'),UI.el('p','Период: '+rangeLabel(captured.scope.from,captured.scope.to)),UI.el('p','Подразделения: '+captured.scope.organizations.join(', ')),UI.el('p','Дата подготовки: '+new Date().toLocaleDateString('ru-RU')));
  const add=(title,headers,rows)=>{root.append(UI.el('h2',title));const table=UI.el('table'),head=UI.el('thead'),tr=UI.el('tr');for(const label of headers)tr.append(UI.el('th',label));head.append(tr);table.append(head);const body=UI.el('tbody');for(const values of rows){const line=UI.el('tr');for(const v of values)line.append(UI.el('td',v));body.append(line);}table.append(body);root.append(table);};
  add('Основные показатели',['Показатель','Текущий результат','Относительно предыдущего интервала'],Object.keys(titles).map(metric=>[titles[metric],fmt(captured.summary.after.total[metric],metric),overviewDifference(captured.summary.after.total[metric],captured.summary.before.total[metric],metric)]));
  if(!captured.summary.after.complete)root.append(UI.el('p','ВНИМАНИЕ: отчёты некоторых выбранных подразделений неполны. Пропуски не считаются нулём.'));
