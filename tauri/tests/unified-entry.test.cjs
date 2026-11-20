@@ -31,6 +31,7 @@ test('canonical DOM and all styles survive except duplicate source/year calendar
  const groupToolbar=html.slice(html.indexOf('id="createGroup"'),html.indexOf('id="groupCoverage"'));
  assert.match(groupToolbar,/id="importGroups"/);assert.match(groupToolbar,/id="catalogFile"/);
  assert.match(html,/id="hideEmptyPeriods"/);assert.match(html,/id="unifiedSource"/);
+ for(const id of ['additionalMetrics','metricKindSelect','metricKindCalculate','metricKindChooseXlsx','metricKindChoose','metricKindApply','metricKindPreview','metricKindStatus'])assert.match(html,new RegExp('id="'+id+'"'));
  assert.doesNotMatch(html,/<script>([\s\S]*?)<\/script>/);
 });
 test('boot initializes each SQL module once and waits for refresh without invoking legacy entrypoints',async()=>{
@@ -55,6 +56,7 @@ test('distribution contains every referenced script and dynamically loaded nativ
  try{prepare({output});const html=fs.readFileSync(path.join(output,'index.html'),'utf8');
   for(const [,src]of html.matchAll(/<script[^>]+src="([^"]+)"/g))assert.ok(fs.existsSync(path.join(output,src)),'missing referenced script '+src);
   for(const [,href]of html.matchAll(/<link[^>]+href="([^"]+)"/g))assert.ok(fs.existsSync(path.join(output,href)),'missing stylesheet '+href);
+  assert.ok(fs.existsSync(path.join(output,'tauri-native-metric-kinds.js')),'additional metrics controller must ship');
   for(const name of ['native-folder-auto-import.js','native-folder-status.js'])assert.equal(fs.readFileSync(path.join(output,name),'utf8'),fs.readFileSync(path.resolve(__dirname,'..',name),'utf8'));
   assert.ok(html.indexOf('tauri-unified-app.js')<html.indexOf('tauri-updates.js'),'updates must await the installed appReady promise');
   assert.deepEqual(fs.readdirSync(output).filter(n=>n.endsWith('.html')),['index.html']);

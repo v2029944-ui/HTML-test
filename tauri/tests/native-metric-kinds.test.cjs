@@ -52,7 +52,7 @@ function mount(opts={}){
   nativeMetricApply:async(source,token)=>{calls.push(['apply',source,token]);
     return {reportId:'lab1',rowCount:2};}
  };
- const window={desktopAPI:api,confirm:()=>{confirmations++;return !opts.decline;},analizUserError:userError};
+ const window={desktopAPI:api,unifiedUI:opts.ui||null,confirm:()=>{confirmations++;return !opts.decline;},analizUserError:userError};
  vm.runInNewContext(script,{window,document:{
   getElementById:id=>elements[id],createElement:tag=>new Node(tag)
  }});
@@ -145,4 +145,40 @@ test('cancelled or rejected XLSX import never reports success',async()=>{
  assert.match(failed.elements.metricKindStatus.textContent,/Импорт отклонён/);
  assert.match(failed.elements.metricKindStatus.textContent,/Файл изменился после проверки/);
  assert.ok(!failed.elements.metricKindStatus.textContent.includes('source changed'));
+});
+
+const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
+test('native asynchronous metric confirmation awaits decision and blocks duplicate writes',async()=>{
+ const {elements:e,calls,window}=mount();await window.metricKindWorkspaceReady;
+ await e.metricKindChoose.events.click();
+ const approval=deferred();window.confirm=()=>approval.promise;
+ const pending=e.metricKindApply.events.click();
+ assert.equal(e.metricKindApply.disabled,true);assert.equal(calls.some(c=>c[0]==='apply'),false);
+ await e.metricKindApply.events.click();assert.equal(calls.some(c=>c[0]==='apply'),false);
+ approval.resolve(false);await pending;assert.equal(calls.some(c=>c[0]==='apply'),false);
+ const again=deferred();window.confirm=()=>again.promise;
+ const requested=e.metricKindApply.events.click();again.resolve(true);await requested;
+ assert.equal(calls.filter(c=>c[0]==='apply').length,1);
+});
+test('metric confirmation refuses stale revision and changed parameters',async()=>{
+ const ui={revision:1,refresh:async()=>{}};
+ const a=mount({ui});await a.window.metricKindWorkspaceReady;await a.elements.metricKindChoose.events.click();
+ const approval=deferred();a.window.confirm=()=>approval.promise;
+ const pending=a.elements.metricKindApply.events.click();ui.revision=2;approval.resolve(true);await pending;
+ assert.equal(a.calls.some(c=>c[0]==='apply'),false);
+ const b=mount();await b.window.metricKindWorkspaceReady;
+ b.elements.metricKindFrom.value='2026-11-18';b.elements.metricKindTo.value='2026-11-18';await b.elements.metricKindChooseXlsx.events.click();
+ const approval2=deferred();b.window.confirm=()=>approval2.promise;
+ const pending2=b.elements.metricKindApply.events.click();b.elements.metricKindFrom.value='2026-11-19';
+ approval2.resolve(true);await pending2;
+ assert.equal(b.calls.some(c=>c[0]==='xlsx_apply'),false);
+});
+test('metric commit is reported as successful after a failed dashboard refresh',async()=>{
+ const ui={revision:1,refresh:async()=>{throw Error('refresh fail');}};
+ const m=mount({ui});await m.window.metricKindWorkspaceReady;await m.elements.metricKindChoose.events.click();
+ await m.elements.metricKindApply.events.click();
+ assert.equal(m.calls.filter(c=>c[0]==='apply').length,1);
+ assert.match(m.elements.metricKindStatus.textContent,/Отчёт добавлен/);
+ assert.match(m.elements.metricKindStatus.textContent,/Не удалось обновить экран/);
+ assert.doesNotMatch(m.elements.metricKindStatus.textContent,/Импорт отклонён/);
 });

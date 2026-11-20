@@ -10,3 +10,12 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
 @media(max-width:740px){.filters{grid-template-columns:1fr 1fr}.period-pair{min-width:0}:is(.unified-pager,.change-pagination){flex-wrap:wrap}}
 @media(max-width:480px){.filters{grid-template-columns:1fr}}
 @media print{.unified-load-status,:is(.unified-pager,.change-pagination){display:none!important}*,*::before,*::after{animation:none!important;transition:none!important}}
+
+/* Additional metric kinds stay inside the canonical Excel/report view. */
+#additionalMetrics .metric-controls{display:flex;align-items:end;flex-wrap:wrap;gap:10px;margin:12px 0}
+#additionalMetrics .metric-controls label{display:flex;flex-direction:column;gap:5px;min-width:145px;flex:1 1 175px}
+#additionalMetrics .metric-controls select,#additionalMetrics .metric-controls input{max-width:100%;min-width:0}
+#additionalMetrics .metric-results{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:10px 0}
+#additionalMetrics .metric-results .metric{padding:12px;border:1px solid var(--border);border-radius:var(--radius-control);min-width:0}
+#additionalMetrics .metric-results .metric strong{display:block;font-size:1.2rem;font-variant-numeric:tabular-nums}
+#additionalMetrics .metric-results .metric span{display:block;font-size:.85rem;color:var(--muted);overflow-wrap:anywhere}
