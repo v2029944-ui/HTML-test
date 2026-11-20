@@ -1,4 +1,4 @@
-"""Chromium checks for the desktop changes table and cursor-backed scroll windows."""
+"""Chromium checks for the desktop SQL page chooser, focus and exact ranges."""
 from pathlib import Path
 import unittest
 from playwright.sync_api import expect, sync_playwright
@@ -6,7 +6,7 @@ from playwright.sync_api import expect, sync_playwright
 TAURI = Path(__file__).resolve().parents[1] / 'tauri'
 
 
-class DesktopTableScroll(unittest.TestCase):
+class DesktopTablePager(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.playwright = sync_playwright().start()
@@ -26,7 +26,7 @@ class DesktopTableScroll(unittest.TestCase):
         self.page.add_style_tag(path=str(TAURI/'sql-row-scroll.css'))
         self.page.add_script_tag(path=str(TAURI/'sql-row-scroll.js'))
 
-    def test_changes_scrollbar_drag_seeks_without_reading_intermediate_pages_and_filter_resets(self):
+    def test_changes_number_picker_seeks_directly_and_preserves_position_on_short_page(self):
         p=self.page
         p.set_content((TAURI/'reference-shell.html').read_text())
         p.add_style_tag(path=str(TAURI/'reference-shell.css'))
@@ -51,60 +51,156 @@ class DesktopTableScroll(unittest.TestCase):
         p.evaluate("""async()=>{referenceResults.init();await referenceResults.refresh({revision:1,type:'day',
             from:'2024-01-02',to:'2024-01-02',baseFrom:'2024-01-01',baseTo:'2024-01-01',
             organizations:['A'],metric:'amount',source:'daily',displayType:'day'});await referenceResults.setScreen('s2');}""")
-        viewport=p.locator('#s2 [data-sql-row-scroll]')
+        nav=p.locator('[data-sql-pager="reference-changes"]')
         rows=p.locator('#s2 .changes-table tbody tr')
         expect(rows).to_have_count(12)
         p.locator('#reportShell .filter-fold > summary').click()
-        viewport.scroll_into_view_if_needed()
-        x,y,bottom=viewport.evaluate("""e=>{const r=e.getBoundingClientRect();
-           return [r.right-6,r.top+30,r.bottom+25]}""")
-        p.mouse.move(x,y);p.mouse.down();p.mouse.move(x,bottom);p.mouse.up()
-        expect(viewport).to_have_attribute('data-sql-window','7')
+        choose=nav.locator('[data-page-action=choose]')
+        choose.scroll_into_view_if_needed()
+        before=choose.bounding_box()['y']
+        choose.click();nav.locator('[data-page-number="8"]').click()
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 85–91 из 91')
         expect(rows).to_have_count(7)
         expect(rows.last).to_contain_text('Работа 91')
         self.assertEqual(p.evaluate('reads.map(r=>r[0])'),[0,7])
-        viewport.focus();viewport.press('Home')
-        expect(viewport).to_have_attribute('data-sql-window','0')
-        expect(rows.first).to_contain_text('Работа 1')
-        self.assertTrue(viewport.evaluate('e=>e.scrollTop<2'))
+        expect(choose).to_be_focused()
+        self.assertAlmostEqual(before,choose.bounding_box()['y'],delta=2)
+        expect(nav.locator('[data-page-action=next]')).to_be_disabled()
+        nav.locator('[data-page-action=previous]').click()
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 73–84 из 91')
         p.locator('#s2 input[placeholder]').fill('Другая работа')
         expect(rows).to_have_count(1)
         expect(rows.first).to_contain_text('Другая работа')
         self.assertEqual(p.evaluate('reads.at(-1)'),[0,'Другая работа'])
-        expect(p.locator('#s2 .pager-footer input,#s2 .pager-footer button')).to_have_count(0)
+        expect(nav.locator('[data-page-total]')).to_have_text('из 1')
+        expect(choose).to_be_disabled()
 
-    def test_cursor_windows_wheel_keyboard_retry_and_retarget(self):
+    def test_large_direct_chooser_escape_validation_failure_retry_and_focus_in_dialog(self):
         p=self.page
-        p.set_content('<div id="rows"></div><p id="notice"></p>')
+        p.set_viewport_size({'width':360,'height':500})
+        p.set_content('<div id="refRoot" style="--ui-accent:#315e49"><dialog id="sheet"><div id="rows"></div></dialog></div>')
         self.assets()
-        p.evaluate("""() => {
-           window.log=[];window.failOnce=true;
-           window.unifiedUI={notice:msg=>document.querySelector('#notice').textContent=msg};
-           const root=document.querySelector('#rows');
-           function render(index){
-             log.push(index);
-             root.replaceChildren(...Array.from({length:6},(_,i)=>{const n=document.createElement('div');
-               n.style.height='80px';n.textContent=String(6*index+i);return n;}));
-             sqlRowScroll.attach(root,{index,count:6,size:6,hasNext:index<2,go:async i=>{
-               if(failOnce){failOnce=false;throw Error('test SQL failure');}
-               render(i);
-             }});
-           }
-           render(0);
-         }""")
-        box=p.locator('[data-sql-row-scroll]')
-        box.focus();box.press('End')
-        expect(p.locator('#notice')).to_contain_text('test SQL failure')
-        box.hover();p.mouse.wheel(0,75)
-        expect(box).to_have_attribute('data-sql-window','1')
-        box.press('End');expect(box).to_have_attribute('data-sql-window','2')
-        expect(p.locator('#rows > div').last).to_have_text('17')
-        box.press('Home');expect(box).to_have_attribute('data-sql-window','1')
-        box.press('Home');expect(box).to_have_attribute('data-sql-window','0')
-        self.assertEqual(p.evaluate('log'),[0,1,2,1,0])
-        expect(box).to_be_focused()
+        p.add_style_tag(path=str(TAURI/'reference-shell.css'))
+        p.evaluate("""()=>{
+          const sheet=document.getElementById('sheet'),root=document.getElementById('rows');
+          sheet.showModal();window.calls=[];window.fail=true;
+          function show(index){
+            root.textContent='Страница '+(index+1);
+            sqlRowScroll.attach(root,{index,size:2,count:index===999999?1:2,total:1999999,go:async next=>{
+              calls.push(next);if(fail){fail=false;throw Error('SQL read failed');}show(next);
+            }});
+          }show(0);
+        }""")
+        nav=p.locator('[data-sql-pager="rows"]')
+        choose=nav.locator('[data-page-action=choose]')
+        entry=nav.locator('[data-page-input]')
+        expect(choose).to_have_css('background-color','rgb(49, 94, 73)')
+        choose.click()
+        self.assertLessEqual(nav.locator('[data-page-number]').count(),200)
+        expect(entry).to_be_focused()
+        entry.fill('918262');entry.press('Escape')
+        expect(p.locator('#sheet')).to_have_attribute('open','')
+        expect(entry).not_to_be_visible()
+        expect(choose).to_be_focused()
+        choose.click();expect(entry).to_have_value('1')
+        entry.fill('4');nav.locator('[data-page-action=cancel]').click()
+        expect(choose).to_be_focused()
+        choose.click();expect(entry).to_have_value('1')
+        entry.fill('1000001');entry.press('Enter');expect(entry).to_be_visible()
+        self.assertEqual(p.evaluate('calls'),[])
+        entry.fill('918262');entry.press('Enter')
+        expect(nav.get_by_role('alert')).to_contain_text('SQL read failed')
+        expect(choose).to_be_focused()
+        choose.click();entry.fill('918262');entry.press('Enter')
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 1836523–1836524 из 1999999')
+        choose.click();nav.locator('[data-page-action="ranges"]').click()
+        for _ in range(6):
+            if nav.locator('[data-page-number="1000000"]').count():
+                break
+            self.assertLessEqual(nav.locator('[data-page-from]').count(),10)
+            nav.locator('[data-page-to="1000000"]').click()
+        self.assertEqual(p.evaluate('calls'),[918261,918261])
+        self.assertLessEqual(nav.locator('[data-page-number]').count(),200)
+        nav.locator('[data-page-number="1000000"]').click()
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 1999999–1999999 из 1999999')
+        expect(nav.locator('[data-page-action=next]')).to_be_disabled()
+        self.assertEqual(p.evaluate('calls'),[918261,918261,999999])
 
-    def test_horizontal_periods_and_short_final_window_remain_reachable(self):
+    def test_mouse_opens_every_page_of_a_200_page_list_with_enlarged_type(self):
+        p=self.page;p.set_viewport_size({'width':380,'height':500})
+        p.set_content('<div style="font-size:24px"><div id="rows"></div></div>')
+        self.assets()
+        p.evaluate("""()=>{
+          const root=document.getElementById('rows');window.requested=[];
+          function render(index){
+            root.textContent='Строка '+(index+1);
+            sqlRowScroll.attach(root,{index,size:1,count:1,total:200,go:i=>{requested.push(i);render(i);}});
+          }render(0);
+        }""")
+        nav=p.locator('[data-sql-pager=rows]');choose=nav.locator('[data-page-action=choose]')
+        choose.click();numbers=nav.locator('[data-page-number]')
+        expect(numbers).to_have_count(200)
+        nav.locator('[data-page-number="7"]').click()
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 7–7 из 200')
+        choose.click();choices=nav.locator('.sql-page-choices')
+        self.assertTrue(choices.evaluate('e=>e.scrollHeight>e.clientHeight && e.scrollWidth<=e.clientWidth+1'))
+        menu=nav.locator('[popover]').bounding_box()
+        self.assertGreaterEqual(menu['x'],0)
+        self.assertLessEqual(menu['x']+menu['width'],381)
+        choices.hover();p.mouse.wheel(0,4000)
+        nav.locator('[data-page-number="198"]').click()
+        expect(choose).to_be_focused()
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 198–198 из 200')
+        self.assertEqual(p.evaluate('requested'),[6,197])
+
+    def test_controls_only_banner_keeps_chart_layout_and_focus_after_redraw(self):
+        p=self.page;p.set_content('<div class="metric-plot"><div id="chart-pages" style="min-height:1em"></div></div>')
+        self.assets()
+        p.evaluate("""()=>{
+          const root=document.getElementById('chart-pages');
+          function render(index){
+            root.replaceChildren();
+            sqlRowScroll.attach(root,{index,size:5,count:5,total:15,footer:root,controlsOnly:true,go:render});
+          }render(0);window.initialNav=root.firstElementChild;
+        }""")
+        nav=p.locator('[data-sql-pager="chart-pages"]');choose=nav.locator('[data-page-action=choose]')
+        choose.click();nav.locator('[data-page-number="3"]').click()
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 11–15 из 15')
+        expect(choose).to_be_focused()
+        self.assertTrue(p.evaluate("document.querySelector('#chart-pages > nav')===initialNav"))
+        self.assertTrue(p.locator('#chart-pages').evaluate("r=>!r.matches('.sql-page-content,[data-page-axis]')"))
+        p.evaluate("sqlRowScroll.reset(document.getElementById('chart-pages'))")
+        self.assertEqual(p.locator('#chart-pages').evaluate("r=>r.style.minHeight"),'1em')
+
+    def test_visible_chooser_only_targets_current_scope_and_handles_empty_results(self):
+        p=self.page;p.set_content('<div id="rows"></div><button id="filter">Фильтр</button>')
+        self.assets()
+        p.evaluate("""()=>{
+          const root=document.getElementById('rows');window.reads=[];
+          function initial(){sqlRowScroll.attach(root,{index:0,size:50,count:50,total:305,go:async index=>{
+            reads.push(index);await new Promise((_resolve,reject)=>window.failOld=reject);
+          }});}
+          document.getElementById('filter').onclick=()=>{
+            sqlRowScroll.reset(root);root.textContent='Совпадений нет';
+            sqlRowScroll.attach(root,{index:0,size:50,count:0,total:0,go:()=>reads.push('unexpected')});
+          };initial();
+        }""")
+        nav=p.locator('[data-sql-pager=rows]')
+        choose=nav.locator('[data-page-action=choose]')
+        choose.click();expect(nav.locator('[data-page-input]')).to_be_visible()
+        choose.click();expect(nav.locator('[data-page-input]')).not_to_be_visible()
+        nav.locator('[data-page-action=next]').click()
+        expect(nav).to_have_attribute('aria-busy','true')
+        p.locator('#filter').click()
+        p.evaluate("failOld(Error('stale read failed'))")
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 0 из 0')
+        expect(nav.locator('[data-page-total]')).to_have_text('из 0')
+        expect(choose).to_be_disabled()
+        expect(nav.locator('[role=alert]')).not_to_be_visible()
+        expect(p.locator('#filter')).to_be_focused()
+        self.assertEqual(p.evaluate('reads'),[1])
+
+    def test_horizontal_periods_keep_real_horizontal_scroll_and_direct_pages(self):
         p=self.page;p.set_content('<div style="width:380px"><div id="periods"></div></div>')
         self.assets()
         p.evaluate("""()=>{
@@ -113,27 +209,30 @@ class DesktopTableScroll(unittest.TestCase):
             calls.push(index);const count=index===4?1:8,table=document.createElement('table'),row=table.insertRow();
             for(let i=0;i<count;i++){const c=row.insertCell();c.style.minWidth='85px';c.textContent=String(index*8+i);}
             root.replaceChildren(table);
-            sqlRowScroll.attach(root,{axis:'x',index,count,size:8,total:33,hasNext:index<4,direct:true,go:render});
+            sqlRowScroll.attach(root,{axis:'x',index,count,size:8,total:33,go:render});
           }render(0);
         }""")
-        scroll=p.locator('[data-sql-scroll-host=periods]')
-        scroll.focus();scroll.press('End')
-        expect(scroll).to_have_attribute('data-sql-window','4')
+        nav=p.locator('[data-sql-pager=periods]')
+        self.assertTrue(p.locator('#periods').evaluate("e=>e.scrollWidth>e.clientWidth"))
+        p.locator('#periods').evaluate('e=>e.scrollLeft=e.scrollWidth')
+        expect(nav).to_have_attribute('data-sql-window','0')
+        nav.locator('[data-page-action=choose]').click();nav.locator('[data-page-number="5"]').click()
+        expect(nav.locator('[data-page-range]')).to_have_text('Периоды 33–33 из 33')
         expect(p.locator('#periods td')).to_have_text('32')
-        scroll.press('Home')
-        expect(scroll).to_have_attribute('data-sql-window','0')
+        nav.locator('[data-page-action=choose]').click();nav.locator('[data-page-number="1"]').click()
         expect(p.locator('#periods td').first).to_have_text('0')
         self.assertEqual(p.evaluate('calls'),[0,4,0])
 
-    def test_sql_work_selection_survives_scroll_and_search(self):
+    def test_sql_work_selection_survives_page_changes_and_search(self):
         p=self.page;p.set_content((TAURI/'reference-shell.html').read_text())
         p.add_style_tag(path=str(TAURI/'reference-shell.css'))
         self.assets()
         p.evaluate("""()=>{
           window.calls=[];const snap={revision:1,org_names:['A','B']};
           window.unifiedUI={api:{unifiedPeriodOptions:async()=>({max:'2024-02-29'}),
-            unifiedNameOptions:async(revision,search,cursor,limit)=>{
-              const offset=Number(cursor||0),total=search?1:128;calls.push({search,offset,limit});
+            unifiedNameOptions:async()=>({total_rows:128}),
+            unifiedNameOptionsAtPage:async(revision,search,index,limit)=>{
+              const offset=index*limit,total=search?1:128;calls.push({search,offset,limit});
               return {total_rows:total,next:offset+limit<total?String(offset+limit):null,
               rows:Array.from({length:Math.min(limit,total-offset)},(_,i)=>({key:String(search?93:offset+i),kind:'work',name:'Работа '+(search?93:offset+i)}))};
             }},revision:1,snapshot:snap,onSnapshot(){},notice:t=>{throw Error(t)}};
@@ -146,19 +245,20 @@ class DesktopTableScroll(unittest.TestCase):
         p.evaluate('referenceFilters.init()')
         p.wait_for_function('window.testScope?.revision===1')
         p.locator('[data-pick=works]').click()
-        box=p.locator('[data-sql-row-scroll][data-sql-scroll-host=reference-work-options]')
+        nav=p.locator('[data-sql-pager=reference-work-options]')
+        box=p.locator('#sheet .filter-checkboxes')
         p.get_by_role('button',name='Снять выбор',exact=True).click()
-        box.focus();box.press('End')
-        expect(box).to_have_attribute('data-sql-window','1')
+        nav.locator('[data-page-action=next]').click()
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 51–100 из 128')
         p.get_by_role('checkbox',name='Работа 93',exact=True).check()
-        box.focus();box.press('End')
-        expect(box).to_have_attribute('data-sql-window','2')
+        nav.locator('[data-page-action=next]').click()
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 101–128 из 128')
         expect(box.get_by_role('checkbox')).to_have_count(28)
-        box.press('Home');expect(box).to_have_attribute('data-sql-window','1')
+        nav.locator('[data-page-action=previous]').click()
         expect(p.get_by_role('checkbox',name='Работа 93',exact=True)).to_be_checked()
         p.get_by_placeholder('Найти работу').fill('93')
         expect(box.get_by_role('checkbox')).to_have_count(1)
-        expect(box).to_have_attribute('data-sql-window','0')
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 1–1 из 1')
         p.get_by_role('button',name='Применить',exact=True).click()
         self.assertEqual(p.evaluate('referenceFilters.scope.selectedKeys'),['93'])
         self.assertEqual(p.evaluate("calls.filter(r=>r.limit===50).map(r=>r.offset)"),[0,50,100,50,0])

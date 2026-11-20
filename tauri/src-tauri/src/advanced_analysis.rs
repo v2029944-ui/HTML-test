@@ -416,7 +416,7 @@ impl Storage {
         window: i32,
         after: Option<&str>,
     ) -> Result<PatternPage, String> {
-        self.patterns_filtered(revision,s,q,grouping,mode,window,after,None,None)
+        self.patterns_filtered(revision,s,q,grouping,mode,window,after,None,None,None)
     }
 
     pub fn unified_pattern_page(
@@ -431,15 +431,17 @@ impl Storage {
         mode:&str, window:i32, options:&UnifiedPatternOptions, after:Option<&str>,
         csv:Option<(&Path,&DetailCsvOptions)>,
     )->Result<PatternPage,String> {
-        if options.search.len()>512 || !matches!(options.status.as_str(),"all"|"frequent"|"rare"|"rarer"|"disappeared"|"new"|"dormant")
-            || (mode=="usual" && (options.status!="all" || options.baseline.is_some()))
-            || (mode!="usual" && options.range_window) {return Err("Invalid pattern filters".into())}
-        self.patterns_filtered(revision,s,q,grouping,mode,window,after,Some(options),csv)
+        validate_pattern_options(mode,options)?;
+        self.patterns_filtered(revision,s,q,grouping,mode,window,after,Some(options),csv,None)
     }
 
+    pub fn unified_pattern_page_at_page(&self,revision:i64,s:&AnalysisScope,q:&ChangeQuery,grouping:Option<&str>,mode:&str,window:i32,options:&UnifiedPatternOptions,page_index:usize)->Result<PatternPage,String> {
+        validate_pattern_options(mode,options)?;
+        self.patterns_filtered(revision,s,q,grouping,mode,window,None,Some(options),None,Some(page_index))
+    }
     fn patterns_filtered(
         &self, revision:i64, s:&AnalysisScope, q:&ChangeQuery, grouping:Option<&str>,
-        mode:&str, window:i32, after:Option<&str>, options:Option<&UnifiedPatternOptions>, csv:Option<(&Path,&DetailCsvOptions)>,
+        mode:&str, window:i32, after:Option<&str>, options:Option<&UnifiedPatternOptions>, csv:Option<(&Path,&DetailCsvOptions)>, page_index:Option<usize>,
     )->Result<PatternPage,String> {
         if !matches!(mode, "usual" | "regularity") || !matches!(window, 4 | 8) {
             return Err("Invalid pattern mode or window".into());
@@ -455,7 +457,7 @@ impl Storage {
             super::unified_analytics::presentation_functions(&tx)?;
             Some(super::unified_analytics::fingerprint(&tx,revision,s,json!([q,grouping,mode,window,options]))?)
         }else{None};
-        let offset=if let Some(fingerprint)=fingerprint.as_deref() {
+        let cursor_offset=if let Some(fingerprint)=fingerprint.as_deref() {
             super::unified_analytics::page_offset(after,fingerprint)?
         }else{0};
         calendar.facts(&tx, s, None)?;
@@ -596,6 +598,7 @@ impl Storage {
             let term=super::unified_analytics::normalized(&options.search);
             tx.execute("DELETE FROM unified_patterns WHERE instr(classic_normalized(name),?1)=0 OR (?2<>'all' AND NOT EXISTS(SELECT 1 FROM json_each(json_extract(data,'$.statuses')) WHERE value=?2))",params![term,options.status]).map_err(err)?;
             total_rows=count_sql(&tx,"SELECT count(*) FROM unified_patterns")?;
+            let offset=match page_index {Some(index)=>crate::storage::direct_page_offset(index,50,total_rows)?,None=>cursor_offset};
             let order=if term.is_empty(){"key"}else{"(instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key"};
             if let Some((path,table))=csv {
                 super::reference_detail_csv::export_patterns(&tx,path,table,s,q,&term,order,used,previous,&baseline_from.to_string(),&baseline_to.to_string())?;
@@ -654,6 +657,16 @@ impl Storage {
     pub fn advanced_composition_limit(
         &self, revision:i64, s:&AnalysisScope, selection:&ChangeQuery, grouping:Option<&str>,
         before:&RangeQuery, mode:&str, metric:&str, after:Option<&ContributionCursor>, structure_limit:usize,
+    )->Result<Value,String> {
+        self.composition_window(revision,s,selection,grouping,before,mode,metric,after,structure_limit,None)
+    }
+    pub fn advanced_composition_at_page(&self, revision:i64, s:&AnalysisScope, selection:&ChangeQuery, grouping:Option<&str>, before:&RangeQuery,mode:&str,metric:&str,structure_limit:usize,page_index:usize)->Result<Value,String> {
+        if mode!="contributions" {return Err("Direct pages require contribution rows".into());}
+        self.composition_window(revision,s,selection,grouping,before,mode,metric,None,structure_limit,Some(page_index))
+    }
+    fn composition_window(
+        &self, revision:i64, s:&AnalysisScope, selection:&ChangeQuery, grouping:Option<&str>,
+        before:&RangeQuery, mode:&str, metric:&str, after:Option<&ContributionCursor>, structure_limit:usize,page_index:Option<usize>,
     )->Result<Value,String> {
         if !matches!(structure_limit,10|12|20) {return Err("Structure limit must be 10 or 20".into());}
         let mut base = selection.clone();
@@ -758,6 +771,7 @@ impl Storage {
                 &tx,
                 &format!("SELECT count(*) FROM an_comparison WHERE {a}<>{b}")
             )?);
+            let offset=match page_index {Some(index)=>crate::storage::direct_page_offset(index,50,result["total_rows"].as_i64().ok_or("Invalid contribution count")?)?,None=>0};
             let delta = finite(at - bt)?;
             let sum: f64 = tx
                 .query_row(
@@ -787,11 +801,11 @@ impl Storage {
             let mut stmt = tx
                 .prepare(&format!(
                     "SELECT key,name,kind,{b},{a},abs({a}-{b}) m FROM an_comparison WHERE {a}<>{b}
-                 AND (?1 IS NULL OR m<?1 OR (m=?1 AND key>?2)) ORDER BY m DESC,key LIMIT 51"
+                 AND (?1 IS NULL OR m<?1 OR (m=?1 AND key>?2)) ORDER BY m DESC,key LIMIT 51 OFFSET ?3"
                 ))
                 .map_err(err)?;
             let mut data = stmt
-                .query(params![after.map(|c| c.magnitude), after.map(|c| &c.key)])
+                .query(params![after.map(|c| c.magnitude), after.map(|c| &c.key),offset])
                 .map_err(err)?;
             let mut cursor = Value::Null;
             while let Some(r) = data.next().map_err(err)? {
@@ -813,4 +827,11 @@ impl Storage {
         result["rows"] = json!(rows);
         Ok(result)
     }
+}
+
+fn validate_pattern_options(mode:&str,options:&UnifiedPatternOptions)->Result<(),String> {
+    if options.search.len()>512 || !matches!(options.status.as_str(),"all"|"frequent"|"rare"|"rarer"|"disappeared"|"new"|"dormant")
+        || (mode=="usual" && (options.status!="all" || options.baseline.is_some()))
+        || (mode!="usual" && options.range_window) {return Err("Invalid pattern filters".into());}
+    Ok(())
 }

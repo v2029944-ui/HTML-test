@@ -16,11 +16,14 @@ def write_reference_gallery(output, revision, webview):
         ('Сравнение', 'reference-reports-08-analytics-comparison.png'),
         ('Отклонения', 'reference-reports-08-analytics-usualPanel.png'),
         ('Частота', 'reference-reports-08-analytics-regularityPanel.png'),
+        ('Итоги и рейтинги', 'reference-reports-09-rankings.png'),
+        ('Соседние периоды', 'reference-reports-08-analytics-changes.png'),
         ('Отчёты и импорт Excel', 'reference-reports-07-import.png'),
         ('Группы работ', 'reference-reports-04-menu-groups.png'),
         ('Настройки с увеличенным шрифтом', 'reference-reports-09-settings-large.png'),
         ('Качество данных', 'reference-data-05-current-quality-evidence.png'),
-        ('Узкое окно, 390 px', 'reference-reports-17-summary-390.png'),
+        ('Подробная аналитика в окне 720 px', 'reference-reports-720px-08-analytics-comparison.png'),
+        ('Сводка при ширине страницы 390 px', 'reference-reports-17-summary-390.png'),
     ]
     figures = []
     for title, filename in screens:

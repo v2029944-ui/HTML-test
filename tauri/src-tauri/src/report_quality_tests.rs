@@ -115,10 +115,12 @@ fn keeps_distinct_warnings_after_structured_issues_across_pages() {
     insert(&conn, "mixed", r#"{"warnings":["shared","by itself","by itself"],"issues":[{"reason":"shared"}]}"#);
     let rev = store.revision().unwrap();
     let first = store.report_quality_page(rev, "mixed", QualityScope::Report, 0, 1).unwrap();
+    assert_eq!(serde_json::to_value(&first).unwrap()["total_rows"], 2);
     assert_eq!(first.issues[0].reason, "shared");
     let second = store.report_quality_page(rev, "mixed", QualityScope::Report, first.next_offset.unwrap(), 1).unwrap();
     assert_eq!(second.issues[0].reason, "by itself");
     assert_eq!(second.next_offset, None);
+    assert_eq!(serde_json::to_value(&second).unwrap()["total_rows"], 2);
 }
 
 #[test]

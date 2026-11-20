@@ -409,43 +409,23 @@ test('SQL read failures show a Russian action rather than a Rust exception',asyn
  assert.equal(e.reportRows.children.length,0);
 });
 
-test('recovery UI validates a chosen backup before offering a separate copy',async()=>{
+test('native verification is read-only and exposes no restore actions before or after review',async()=>{
  const {e,calls,window}=mount();await window.nativeWorkspaceReady;
- assert.equal(e.restoreCopy.disabled,true);
+ for(const id of ['restoreCopy','restoreSchedule','restoreCancel'])assert.equal(e[id],undefined);
  await e.restoreChoose.events.click();
  assert.equal(calls.some(x=>x.kind==='restore_preview'),true);
- assert.equal(e.restoreCopy.disabled,false);
- assert.match(e.restoreStatus.textContent,/Копия проверена/);
+ assert.match(e.restoreStatus.textContent,/Копия проверена.*Рабочая база не изменена/);
  assert.match(e.restoreSelected.textContent,/snapshot\.sqlite3/);
- assert.equal(calls.some(x=>x.kind==='restore_copy'),false);
- await e.restoreCopy.events.click();
- const restore=calls.find(x=>x.kind==='restore_copy');
- assert.equal(restore.source,'C:/Backups/snapshot.sqlite3');
- assert.equal(restore.verification,'a'.repeat(64));
- assert.equal(restore.destination,'C:/Backups/recovered.sqlite3');
- assert.match(e.restoreStatus.textContent,/Рабочая база не изменена/);
- assert.equal(calls.some(x=>x.kind==='sqlite_backup'),false);
- assert.equal(calls.some(x=>x.kind==='rename'),false);
+ assert.equal(calls.some(x=>['restore_copy','restore_schedule','restore_cancel','restore_dest'].includes(x.kind)),false);
+ assert.equal(calls.some(x=>x.kind==='sqlite_backup'||x.kind==='rename'),false);
 });
 
-test('requesting live SQLite restore requires explicit review, confirmation and restart',async()=>{
- const {e,calls,window}=mount();
- await window.nativeWorkspaceReady;
- assert.equal(e.restoreSchedule.disabled,true);
+test('native verification rejects malformed review evidence without offering a write',async()=>{
+ const {e,calls,window}=mount();await window.nativeWorkspaceReady;
+ window.desktopAPI.nativeRestorePreview=async()=>({reportCount:366,verification:'invalid'});
  await e.restoreChoose.events.click();
- assert.equal(e.restoreSchedule.disabled,false);
- assert.equal(calls.some(c=>c.kind==='restore_schedule'),false);
- await e.restoreSchedule.events.click();
- const request=calls.find(c=>c.kind==='restore_schedule');
- assert.ok(request,'a verified source can be scheduled after confirmation');
- assert.equal(request.source,'C:/Backups/snapshot.sqlite3');
- assert.equal(request.verification,'a'.repeat(64));
- assert.match(e.restoreStatus.textContent,/Полностью закройте приложение/);
- assert.equal(e.restoreSchedule.disabled,true);
- assert.equal(calls.some(c=>c.kind==='sqlite_backup'),false,'do not overwrite or back up live SQLite in the running WebView');
- await e.restoreCancel.events.click();
- assert.equal(calls.filter(c=>c.kind==='restore_cancel').length,1);
- assert.match(e.restoreStatus.textContent,/отменено/);
+ assert.match(e.restoreStatus.textContent,/целостность/);
+ assert.equal(calls.some(x=>['restore_copy','restore_schedule','restore_cancel','restore_dest'].includes(x.kind)),false);
 });
 
 test('SQL timeline uses identical date and organization filters and clears stale graphics',async()=>{

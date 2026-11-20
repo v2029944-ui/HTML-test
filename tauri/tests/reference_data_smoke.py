@@ -368,7 +368,7 @@ def check_reference_data(page, output):
             assert [_number(v) for v in values[2:5]] == [155, 145, -10], values
             assert math.isclose(_number(values[5]), -6.5, abs_tol=.01), values
         expect(page.locator('#s2 .pager-footer')).to_contain_text('Позиции 1–4 из 4')
-        expect(page.locator('#s2 [aria-label="Следующая страница"]')).to_have_count(0)
+        expect(page.locator('#s2 [data-page-action="next"]')).to_have_attribute('aria-disabled', 'true')
         search = page.locator('#s2 input[placeholder]')
         search.fill('no such fixture work')
         expect(page.locator('#s2 .table-empty')).to_contain_text('Совпадений нет', timeout=TIMEOUT)
@@ -444,18 +444,18 @@ def check_reference_data(page, output):
         trigger = page.locator('#s1 .metric-sample').first
         sheet = open_quality(trigger)
         expect(sheet).to_be_visible()
-        periods = sheet.locator('[data-sql-row-scroll="x"]')
+        periods = sheet.locator('[data-sql-pager="coverage-periods"]')
         expect(periods).to_have_attribute('data-sql-window', '0', timeout=TIMEOUT)
         expect(sheet.locator('td.coverage-ok')).to_have_count(124)
-        # Dragging the horizontal thumb to the end must reach December without
-        # retaining earlier SQL windows. The last window contains 25 days.
-        periods.evaluate('node => { node.scrollLeft = node.scrollWidth }')
+        # Jump directly to December, whose final window contains 25 days.
+        periods.locator('[data-page-action="choose"]').click()
+        periods.locator('[data-page-number="12"]').click()
         expect(periods).to_have_attribute('data-sql-window', '11', timeout=TIMEOUT)
         expect(sheet.locator('.coverage-matrix thead')).to_contain_text('31.12.2024')
         expect(sheet.locator('td.coverage-ok')).to_have_count(100)
         # Cross one SQL boundary backwards, then activate the first cell. Its
         # automatic scroll into view must keep the selected November window.
-        periods.evaluate('node => { node.scrollLeft = node.firstElementChild.offsetWidth - 3 }')
+        periods.locator('[data-page-action="previous"]').click()
         expect(periods).to_have_attribute('data-sql-window', '10', timeout=TIMEOUT)
         expect(sheet.locator('td.coverage-ok')).to_have_count(124)
         november_cell = sheet.locator('.coverage-cell-action').first
@@ -466,7 +466,8 @@ def check_reference_data(page, output):
         expect(periods).to_have_attribute('data-sql-window', '10')
         inspection.get_by_role('button', name='Закрыть подробности', exact=True).click()
         expect(november_cell).to_be_focused()
-        periods.evaluate('node => { node.scrollLeft = 0 }')
+        periods.locator('[data-page-action="choose"]').click()
+        periods.locator('[data-page-number="1"]').click()
         expect(periods).to_have_attribute('data-sql-window', '0', timeout=TIMEOUT)
         expect(sheet.locator('.coverage-matrix thead')).to_contain_text('01.01.2024')
         expect(sheet.locator('td.coverage-ok')).to_have_count(124)
@@ -488,7 +489,7 @@ def check_reference_data(page, output):
             inspection.get_by_role('button', name='Замечания выбранного отчёта', exact=True).click()
             expect(inspection).to_contain_text('Признак явного нуля: нет.', timeout=TIMEOUT)
         expect(inspection.get_by_role('button', name='Следующие замечания →', exact=True)).to_have_count(0)
-        expect(inspection.locator('[data-sql-scroll-host="coverage-notes"].sql-scroll-multiple')).to_have_count(0)
+        expect(inspection.locator('[data-sql-pager="coverage-notes"] [data-page-action="next"]')).to_have_attribute('aria-disabled', 'true')
         evidence['diagnostic_paging'] = 'No further diagnostic rows in the zero-issue fixture.'
         record('05-current-quality-evidence', '#sheet')
         detail.locator(':scope > summary').focus()

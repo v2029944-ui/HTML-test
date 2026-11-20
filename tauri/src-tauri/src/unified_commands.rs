@@ -33,10 +33,14 @@ pub async fn unified_name_options(
     search: String,
     after: Option<String>,
     limit: usize,
+    page_index: Option<usize>,
 ) -> Result<UnifiedNameOptions, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        app.state::<Storage>()
-            .unified_name_options(revision, &search, after.as_deref(), limit)
+        let store=app.state::<Storage>();
+        if let Some(index)=page_index {
+            if after.is_some(){return Err("Do not combine a cursor and a page index".into());}
+            store.unified_name_options_at_page(revision,&search,index,limit)
+        }else{store.unified_name_options(revision,&search,after.as_deref(),limit)}
     })
     .await
     .map_err(|e| e.to_string())?
@@ -48,10 +52,13 @@ pub async fn unified_changes_page(
     request: AdvancedRequest,
     options: UnifiedChangeOptions,
     after: Option<String>,
+    page_index: Option<usize>,
 ) -> Result<UnifiedChangesPage, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if page_index.is_some()&&after.is_some(){return Err("Do not combine a cursor and a page index".into());}
         let store = app.state::<Storage>();
         request.with_scope(&store, |scope, grouping| {
+            if let Some(index)=page_index{return store.unified_changes_page_at_page(request.revision,scope,&request.query,grouping,&options,index);}
             store.unified_changes_page(
                 request.revision,
                 scope,
@@ -108,10 +115,13 @@ pub async fn unified_pattern_page(
     window_size: i32,
     options: UnifiedPatternOptions,
     after: Option<String>,
+    page_index: Option<usize>,
 ) -> Result<PatternPage, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if page_index.is_some()&&after.is_some(){return Err("Do not combine a cursor and a page index".into());}
         let store = app.state::<Storage>();
         request.with_scope(&store, |scope, grouping| {
+            if let Some(index)=page_index{return store.unified_pattern_page_at_page(request.revision,scope,&request.query,grouping,&mode,window_size,&options,index);}
             store.unified_pattern_page(
                 request.revision,
                 scope,
@@ -165,6 +175,52 @@ pub async fn unified_comparison_page(
                 &query,
                 organization.as_deref(),
                 after.as_deref(),
+                limit,
+            )
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+
+#[tauri::command]
+pub async fn unified_comparison_window(
+    app: AppHandle,
+    request: AdvancedRequest,
+    before: RangeQuery,
+    organization: Option<String>,
+    page_index: usize,
+    limit: usize,
+) -> Result<SqlPage<ComparisonValue>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !(1..=50).contains(&limit) {
+            return Err("Comparison page must contain 1..=50 rows".into());
+        }
+        if organization
+            .as_ref()
+            .is_some_and(|org| !request.organizations.contains(org))
+        {
+            return Err("Selected organization is outside the analysis scope".into());
+        }
+        let query = ComparisonQuery {
+            before,
+            after: RangeQuery {
+                from: request.query.from.clone(),
+                to: request.query.to.clone(),
+            },
+            percent: request.query.percent,
+            min_count: request.query.min_count,
+            min_amount: request.query.min_amount,
+        };
+        let store = app.state::<Storage>();
+        request.with_scope(&store, |scope, _| {
+            store.analysis_comparison_window(
+                request.revision,
+                scope,
+                &query,
+                organization.as_deref(),
+                page_index,
                 limit,
             )
         })

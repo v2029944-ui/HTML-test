@@ -184,7 +184,7 @@ class DraftChangesTests(unittest.TestCase):
                                                picker=picker)), 1)
 
     def test_verified_backup_preview_cannot_be_replaced_by_empty_or_cancel_notice(self):
-        verified = {'restorePreview': 'Копия проверена. Отчётов: 366. Выберите способ восстановления.'}
+        verified = {'restorePreview': 'Копия проверена. Отчётов: 366. Рабочая база не изменена.'}
         for status in ('', 'Выбор отменён.'):
             changes = draft_changes(verified, {'restorePreview': status}, picker='sqlite-restore')
             self.assertEqual(changes, [{'id': 'restorePreview', 'before': verified['restorePreview'],

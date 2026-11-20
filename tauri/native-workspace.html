@@ -422,17 +422,13 @@ th{background:var(--subtle);font-weight:650}td input{width:100%;min-width:150px}
 <button id="backupSqlite" type="button">Сохранить резервную копию SQLite</button>
 </div>
 <p id="backupStatus" class="status muted" role="status" aria-live="polite">Копия включает отчёты, настройки и служебные данные SQLite. Не заменяйте файл открытой базы вручную.</p>
-<h3>Проверить и подготовить восстановление</h3>
-<p class="intro">Выберите существующую резервную копию SQLite. Приложение проверит её целостность, структуру, JSON отчётов и настроек. После проверки можно создать <strong>отдельный восстановленный файл</strong>, не заменяя рабочую базу. Для переключения рабочей базы необходим дополнительный безопасный этап при закрытой программе.</p>
+<h3>Проверить резервную копию</h3>
+<p class="intro">Выберите существующую резервную копию SQLite. Приложение проверит её целостность, структуру, JSON отчётов и настроек. Рабочая база не изменяется.</p>
 <div class="controls">
 <button id="restoreChoose" type="button">Проверить резервную копию</button>
-<button id="restoreCopy" type="button" disabled>Создать отдельную восстановленную копию</button>
-<button id="restoreSchedule" type="button" disabled>Восстановить рабочую базу при следующем запуске</button>
-<button id="restoreCancel" type="button">Отменить отложенное восстановление</button>
 </div>
 <p id="restoreSelected" class="intro">Резервная копия не выбрана.</p>
 <p id="restoreStatus" class="status muted" role="status" aria-live="polite">Рабочая база не изменяется.</p>
-<p class="intro">Переключение рабочей базы доступно только после явного подтверждения. Приложение сохранит две защитные копии прежних данных и выполнит замену до открытия SQLite при следующем запуске. После подтверждения полностью закройте программу и откройте снова. Если проверка или безопасное переключение не удастся, приложение не начнёт работать с сомнительными данными.</p>
 </section>
 <section class="panel" id="sqlReports" data-nav-panel="reports" aria-label="Отчёты SQL">
 <div class="sectionbar"><div><h2>Отчёты по периодам</h2><p class="muted small">Загруженные отчёты по датам начала периода. Наличие отчёта не подтверждает полноту всех подразделений.</p></div><a class="button primary" href="#excel">Выбрать Excel</a></div>

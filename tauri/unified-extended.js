@@ -9,7 +9,7 @@ const channels=new Map();
 let initialized=false,scope=null,activeView='dashboard',dateKind=null,changesKind=null;
 let changeOrganizations=new Set(),changeMetrics=new Set(['count','amount']),usualMetrics=new Set(['count','amount','average']),comparisonMetrics=new Set(['amount']);
 let customComparisonMetrics=false;
-function slot(name){if(!channels.has(name))channels.set(name,{ticket:0,positions:[null],page:null,captured:null,timer:null});return channels.get(name);}
+function slot(name){if(!channels.has(name))channels.set(name,{ticket:0,index:0,page:null,captured:null,timer:null});return channels.get(name);}
 function clear(id,text='',reset=true){const node=$(id);if(node){if(reset)window.sqlRowScroll?.reset(node);node.replaceChildren();if(text)node.append(UI.el('p',text,'muted small'));}}
 function value(id){return $(id)?.value||'';}
  function orientation(){return value('chartOrientation')==='horizontal'?'horizontal':'vertical';}
@@ -23,16 +23,15 @@ function difference(now,base,m){return [Number.isFinite(now)&&Number.isFinite(ba
 function number(id){const raw=value(id).trim(),n=Number(raw);if(!raw||!Number.isFinite(n)||n<0)throw Error('Укажите неотрицательные числовые пороги.');return n;}
 function textError(e){return window.analizUserError?window.analizUserError(e):(e?.message||String(e));}
 function current(s,t,revision){return s.ticket===t&&UI.revision===revision;}
-function invalidate(name){const s=slot(name);for(const id of s.ids||[]){$(id)?.setAttribute('aria-busy','false');window.sqlRowScroll?.reset($(id));}s.ticket++;s.page=null;s.captured=null;s.positions=[null];if(s.timer){clearTimeout(s.timer);s.timer=null;}return s;}
-function pager(name,result,positions,next){
- const s=slot(name);s.page=result;s.positions=positions;
- const previous=$(name+'Prev'),forward=$(name+'Next'),label=$(name+'Page');
- if(previous)previous.disabled=positions.length<=1;
- if(forward)forward.disabled=!next;
- if(label)label.textContent='Страница '+positions.length+' · '+(result.total_rows??result.summary?.rows??result.rows?.length??0)+' строк';
- const root=$(name+'Results'),mine=s.ticket,revision=UI.revision,index=positions.length-1,run=name==='changes'?p=>changes(p,true):name==='contribution'?p=>contributions(p,true):p=>patterns(name,p,true);
- const viewport=root&&window.sqlRowScroll?.attach(root,{index,size:name==='contribution'?12:50,total:result.total_rows,count:result.rows?.length??result.count??0,hasNext:Boolean(next),label:'Показано '+(result.rows?.length??result.count??0)+' строк',direct:false,go:i=>{if(!current(s,mine,revision)||s.page!==result)return;if(i===index-1&&index>0)return run(positions.slice(0,-1));if(i===index+1&&next)return run([...positions,next]);}});
- if(previous)previous.hidden=Boolean(viewport);if(forward)forward.hidden=Boolean(viewport);if(viewport){if(label)label.textContent='Показано '+(result.rows?.length??result.count??0)+(Number.isSafeInteger(result.total_rows)?' из '+result.total_rows:'')+' строк';window.sqlRowScroll?.retire?.(previous,forward);}
+function invalidate(name){const s=slot(name);for(const id of s.ids||[]){$(id)?.setAttribute('aria-busy','false');window.sqlRowScroll?.reset($(id));}s.ticket++;s.page=null;s.captured=null;s.index=0;delete s.metricTotals;if(s.timer){clearTimeout(s.timer);s.timer=null;}return s;}
+function pager(name,result,index){
+ const state=slot(name);state.page=result;state.index=index;
+ const root=$(name+'Results'),previous=$(name+'Prev'),next=$(name+'Next'),label=$(name+'Page'),revision=UI.revision,mine=state.ticket;
+ const count=result.rows?.length??result.count??0,total=result.total_rows,size=50,pages=Math.max(1,Math.ceil(total/size));
+ const run=name==='changes'?i=>changes(i,true):name==='contribution'?i=>contributions(i,true):i=>patterns(name,i,true);
+ const go=i=>{if(current(state,mine,revision)&&state.page===result&&Number.isSafeInteger(i)&&i>=0&&i<pages&&i!==index)return run(i);return false;};
+ if(root&&window.sqlRowScroll?.attach(root,{index,size,count,total,label:'Результаты анализа',direct:true,go,footer:previous?.parentElement})){window.sqlRowScroll?.retire?.(previous,next,label);if(label)label.textContent='';return;}
+ if(previous)previous.disabled=index===0;if(next)next.disabled=index+1>=pages;if(label)label.textContent='Показано '+count+' из '+total+' позиций';
 }
 function loading(name,ids,paging=false){const s=slot(name),ticket=++s.ticket,revision=UI.revision;s.page=null;s.captured=null;s.ids=ids;if($(name+'Page'))$(name+'Page').textContent='Загрузка…';
  for(const id of ids){clear(id,'Загрузка…',!paging);$(id)?.setAttribute('aria-busy','true');}
@@ -101,7 +100,7 @@ function describeActiveFilters(){
  if(labels[direction])tags.push('фильтр: '+labels[direction]);
  if(value('changesMode')==='strong')tags.push('только заметные');
  if(search)tags.push('поиск: '+search.slice(0,30));
- node.textContent=tags.length?' · '+tags.join(' · '):'';
+ node.textContent=tags.join(', ');
 }
 function changeLayout(){explainSensitivity();describeActiveFilters();const single=value('changesMethod')==='previous';$('changesFromLabel').hidden=single;$('changeDatePair').classList.toggle('single',single);$('changesToText').textContent=single?'Текущий период':'По';if(single)delete $('changesTo').dataset.rangeBoundary;else $('changesTo').dataset.rangeBoundary='end';
  const search=Boolean(value('changesSearch').trim());$('changesSort').disabled=search;$('changesSort').title=search?'Сначала начала названий, затем совпадения внутри, по алфавиту.':'';
@@ -128,11 +127,11 @@ function renderChangeSummary(summary,chosen){clear('changesSummary');const root=
   card.addEventListener('click',()=>{$('changesDirection').value=direction;invalidate('changes');void changes();$('changesResults').scrollIntoView?.({block:'start'});});
   root.append(card);
  }
- for(const metric of chosen){const top=summary['top_'+metric],m=top&&changeMeasure(top,metric),card=UI.el('div',null,'kpi');card.append(UI.el('span','Наибольшее абсолютное изменение · '+titles[metric]),UI.el('strong',m?delta(m.delta,metric):'—',m?.delta>0?'numeric-rise':m?.delta<0?'numeric-fall':''));if(top)card.append(UI.el('small',workLabel(top.name)+' · '+top.org+' · '+periodLabel(top.baseStart,value('changesType'))+' / '+periodLabel(top.currentStart,value('changesType'))));root.append(card);}
+ for(const metric of chosen){const top=summary['top_'+metric],m=top&&changeMeasure(top,metric),card=UI.el('div',null,'kpi');card.append(UI.el('span','Наибольшее абсолютное изменение ('+titles[metric]+')'),UI.el('strong',m?delta(m.delta,metric):'—',m?.delta>0?'numeric-rise':m?.delta<0?'numeric-fall':''));if(top)card.append(UI.el('small',workLabel(top.name)+' · '+top.org+' · '+periodLabel(top.baseStart,value('changesType'))+' / '+periodLabel(top.currentStart,value('changesType'))));root.append(card);}
 }
-async function changes(positions=[null],paging=false){
+async function changes(index=0,paging=false){
  changeLayout();const task=loading('changes',['changesResults','changesSummary','changesWarnings'],paging);$('changeDetails').hidden=true;
- try{const captured=changeContext(),result=await api.unifiedChangesPage(captured.request,captured.options,positions.at(-1));if(!task.valid())return;
+ try{const captured=changeContext(),result=await api.unifiedChangesPageAtPage(captured.request,captured.options,index);if(!task.valid())return;
   clear('changesResults','',false);clear('changesWarnings','',false);renderChangeSummary(result.summary,captured.options.metrics);
   const diagnostic=result.summary.totals;
   if(diagnostic?.missing_pairs||diagnostic?.invalid_reports||diagnostic?.duplicate_issues||diagnostic?.overlap_issues||diagnostic?.import_warning_pairs){
@@ -153,7 +152,7 @@ async function changes(positions=[null],paging=false){
   if(rows.length)UI.table($('changesResults'),'count',caption(captured.scope),['Работа / группа','Подразделение','Базовый период','Текущий период','Показатель','Было','Стало','Изменение','Изменение, %','Направление'],rows,{title:'Анализ изменений',totalRow:false,csvRows:raw,csvContext:{text:'Все строки по текущим фильтрам',export:async()=>{
    if(!task.valid())throw Error('Параметры анализа изменились. Рассчитайте заново.');const path=await api.chooseCsvPath('izmeneniya-'+captured.scope.from+'-'+captured.scope.to+'.csv');if(!path)return;if(!task.valid())throw Error('Данные изменились. Рассчитайте заново.');await api.unifiedChangesCsv(captured.request,captured.options,path);
   }}});
-  task.s.captured=captured;pager('changes',result,positions,result.next);
+  task.s.captured=captured;pager('changes',result,index);
  }catch(error){task.error(error);}finally{task.done();}
 }
 function referencePanel(id){return window.referenceDetail?.active===id;}
@@ -198,23 +197,26 @@ function comparisonLayout(){const organizations=value('comparisonMode')==='organ
  $('periodComparisonFilters').hidden=organizations;$('orgComparisonFilters').hidden=!organizations;$('kpis').hidden=organizations;$('comparisonCharts').hidden=!organizations;$('comparisonDynamics').hidden=!organizations;$('contributions').hidden=organizations;
  $('periodComparisonSingle').hidden=ranges;$('periodComparisonRanges').hidden=!ranges;$('comparisonPeriodLabel').hidden=orgRange;$('comparisonRangeGroup').hidden=!orgRange;
 }
-function addBoundedPager(root,s,rows,run,nextCursor=rows.length===50?rows.at(-1).key:null,total){const positions=s.positions,index=positions.length-1,mine=s.ticket,revision=UI.revision,bar=UI.el('div',null,'change-pagination'),prev=UI.el('button','← Предыдущая','button secondary'),next=UI.el('button','Следующая →','button secondary');prev.type=next.type='button';prev.disabled=index===0;next.disabled=!nextCursor;prev.addEventListener('click',()=>run(positions.slice(0,-1)));next.addEventListener('click',()=>{if(nextCursor)return run([...positions,nextCursor]);});const label='Страница '+positions.length+(Number.isSafeInteger(total)?' · '+total+' работ':'');const caption=UI.el('span',label,'muted small');bar.append(prev,caption,next);root.append(bar);
- const viewport=window.sqlRowScroll?.attach(root,{index,size:50,total,count:rows.length,hasNext:Boolean(nextCursor),label,direct:false,go:i=>{if(!current(s,mine,revision))return;if(i===index-1&&index>0)return run(positions.slice(0,-1));if(i===index+1&&nextCursor)return run([...positions,nextCursor]);}});prev.hidden=next.hidden=Boolean(viewport);if(viewport){caption.textContent='Показано '+rows.length+(Number.isSafeInteger(total)?' из '+total:'')+' работ';window.sqlRowScroll?.retire?.(prev,next);}
+function addBoundedPager(root,state,rows,run,total){
+ const index=state.index,mine=state.ticket,revision=UI.revision,pages=Math.max(1,Math.ceil(total/50));
+ const go=i=>{if(current(state,mine,revision)&&Number.isSafeInteger(i)&&i>=0&&i<pages&&i!==index)return run(i);return false;};
+ if(window.sqlRowScroll?.attach(root,{index,size:50,total,count:rows.length,label:'Сравнение работ',direct:true,go}))return;
+ const bar=UI.el('div',null,'change-pagination'),previous=UI.el('button','← Предыдущая','button secondary'),next=UI.el('button','Следующая →','button secondary');previous.type=next.type='button';previous.disabled=index===0;next.disabled=index+1>=pages;previous.addEventListener('click',()=>go(index-1));next.addEventListener('click',()=>go(index+1));bar.append(previous,UI.el('span','Показано '+rows.length+' из '+total,'muted small'),next);root.append(bar);
 }
-async function comparison(positions=[null],paging=false){
+async function comparison(index=0,paging=false){
  if(window.referenceDetail?.active&&!referencePanel('comparison'))return;
  comparisonLayout();if(!scope)return;
  const task=loading('comparison',['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis'],paging);$('analyticsDetails').hidden=true;
  try{if(!selected())throw Error('Отметьте работы или группы для сравнения.');
-  if(value('comparisonMode')==='organizations'){await departmentComparison(task,positions);return;}
+  if(value('comparisonMode')==='organizations'){await departmentComparison(task,index);return;}
   const {before,after}=comparisonRanges(),s=scopeFor(after);
   const sample=referencePanel('comparison')?await sampleFor(s,[before,after]):null;
   if(!task.valid())return;
   if(sample?.included.length)s.organizations=sample.included;
   const req=request(s,{percent:0,min_count:0,min_amount:0});
-  const [dashboard,page]=await Promise.all([api.nativeAnalysisCompare(s.revision,s.type,before.from,before.to,after.from,after.to,s.organizations,null,s.selectedNames),api.unifiedComparisonPage(req,{from:before.from,to:before.to},null,positions.at(-1),50)]);
+  const [dashboard,windowPage]=await Promise.all([api.nativeAnalysisCompare(s.revision,s.type,before.from,before.to,after.from,after.to,s.organizations,null,s.selectedNames),api.unifiedComparisonWindow(req,{from:before.from,to:before.to},null,index,50)]);
   if(!task.valid())return;for(const id of ['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis'])clear(id,'',false);
-  const summary=dashboard.summary;sampleNote($('comparisonCoverage'),sample,true);
+  const page=windowPage.rows,summary=dashboard.summary;sampleNote($('comparisonCoverage'),sample,true);
   $('comparisonHelp').textContent='Второй интервал сравнивается с первым по отмеченным работам. Прочерк — неполные данные; при нулевой базе процент не рассчитывается.';
   for(const [label,total] of [['Первый интервал',summary.before],['Второй интервал',summary.after]])$('comparisonCoverage').append(UI.el('p',label+': '+(total.complete?'Полные данные':'Неполные данные')+' · периодов '+total.periods+', пропусков: '+total.missing+' (подразделение × период)',total.complete?'muted small':'warn small'));
   const beforeComplete=summary.before.complete,afterComplete=summary.after.complete;
@@ -258,11 +260,11 @@ async function comparison(positions=[null],paging=false){
    UI.table($('comparisonTable'),metric,caption(before)+' / '+caption(after),
     ['Работа / группа','Значение раньше','Значение сейчас','Разница','Изменение, %'],rows,{csvRows:raw,csvContext:fullExport(task,req,'comparison',metric,{before:{from:before.from,to:before.to}})});
   }
-  task.s.positions=positions;addBoundedPager($('comparisonTable'),task.s,page,p=>comparison(p,true));
+  task.s.index=index;addBoundedPager($('comparisonTable'),task.s,page,i=>comparison(i,true),windowPage.total_rows);
   if($('contributions').open)contributions();
  }catch(error){task.error(error);}finally{task.done();}
 }
-async function departmentComparison(task,positions){
+async function departmentComparison(task,index){
  const range=value('comparisonScope')==='range'?fieldsRange('comparisonRangeStart','comparisonRangeEnd'):fieldsRange('comparisonPeriod'),s=scopeFor(range),chosen=[...comparisonMetrics];let baseOrg=value('comparisonBaseOrg');
  const organizations=await api.nativeAnalysisOrganizations(s.revision,s.type,s.from,s.to,s.organizations,null,s.selectedNames);
  if(!task.valid())return;for(const id of ['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis'])clear(id,'',false);
@@ -278,7 +280,7 @@ async function departmentComparison(task,positions){
  for(const org of organizations)$('comparisonCoverage').append(UI.el('p',org.org+': '+(org.complete?'Полные данные':'Неполные данные')+' · пропусков '+org.missing,org.complete?'muted small':'warn small'));
  // Bounded selected-name set: each SQL query aggregates one actual service;
  // no full-report loading and no inference from an absent page row.
- const namePage=s.allNames===true?await api.unifiedNameOptions(s.revision,'',positions.at(-1),50):null;
+ const namePage=s.allNames===true?await api.unifiedNameOptionsAtPage(s.revision,'',index,50):null;
  const names=namePage?namePage.rows:(s.nameRows||[]).filter(row=>s.selectedKeys.includes(row.key)).slice(0,50);
  if(!task.valid())return;
  const perName=[];for(let i=0;i<names.length;i+=4){const batch=await Promise.all(names.slice(i,i+4).map(async entry=>({entry,rows:await api.nativeAnalysisOrganizations(s.revision,s.type,s.from,s.to,s.organizations,null,[entry.name])})));if(!task.valid())return;perName.push(...batch);}
@@ -292,7 +294,7 @@ async function departmentComparison(task,positions){
   const plot=UI.el('div',null,'metric-plot');$('comparisonCharts').append(plot);
   UI.drawChart([{type:s.displayType,start:s.from,end:visibleEnd(s)}],new Set(s.organizations),metric,plot,{chart:'bar',seriesType:'organizations',categories:s.organizations,data:[new Map(organizations.map(o=>[o.org,o.total]))]});
  }
- if(namePage){task.s.positions=positions;addBoundedPager($('comparisonTable'),task.s,names,p=>comparison(p,true),namePage.next,namePage.total_rows);}
+ if(namePage){task.s.index=index;addBoundedPager($('comparisonTable'),task.s,names,i=>comparison(i,true),namePage.total_rows);}
  const trends=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(0,8),null,s.source==='daily'?s.displayType:null,s.selectedNames);
  if(!task.valid())return;
  for(let offset=8;offset<s.organizations.length;offset+=8){
@@ -304,7 +306,7 @@ async function departmentComparison(task,positions){
  const data=first.map((p,i)=>new Map(trends.series.map(series=>[series.organization,series.points[i]?.missing===0?series.points[i].total:{count:null,amount:null,average:null}])));
  for(const metric of chosen){const plot=UI.el('div',null,'metric-plot');$('comparisonDynamicsPlots').append(plot);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'bar',orientation:orientation(),seriesType:'organizations',categories:s.organizations,data});}
 }
-async function contributions(positions=[null],paging=false){
+async function contributions(index=0,paging=false){
  const task=loading('contribution',['contributionResults','contributionCheck'],paging);
  try{if(!scope)throw Error('Выберите периоды.');const {before,after}=comparisonRanges(),s=scopeFor(after,{selectedNames:[],allNames:true}),chosen=metrics().filter(m=>m!=='average');
   if(referencePanel('comparison')){
@@ -312,9 +314,10 @@ async function contributions(positions=[null],paging=false){
    if(!sample.included.length){clear('contributionCheck','Нет сопоставимых подразделений.');clear('contributionResults');return;}
    s.organizations=sample.included;
   }
-  const result=await Promise.all(chosen.map(metric=>positions.at(-1)?.[metric]===false?null:api.nativeCompositionPage(request(s,{percent:0,min_count:0,min_amount:0}),{from:before.from,to:before.to},'contributions',metric,positions.at(-1)?.[metric]||null)));
-  if(!task.valid())return;clear('contributionResults','',false);clear('contributionCheck','',false);const next={};
-  result.forEach((page,i)=>{const metric=chosen[i];if(!page){next[metric]=false;return;}if(!page.baseComplete||!page.currentComplete){$('contributionCheck').append(UI.el('p','Нет полного набора отчётов для обоих интервалов. Вклад не рассчитывается.','warn small'));return;}
+  if(index===0)task.s.metricTotals={};const metricTotals=task.s.metricTotals||{};
+  const result=await Promise.all(chosen.map(metric=>index>0&&Number.isSafeInteger(metricTotals[metric])&&index*50>=metricTotals[metric]?null:api.nativeCompositionPageAtPage(request(s,{percent:0,min_count:0,min_amount:0}),{from:before.from,to:before.to},'contributions',metric,index)));
+  if(!task.valid())return;clear('contributionResults','',false);clear('contributionCheck','',false);
+  result.forEach((page,i)=>{const metric=chosen[i];if(!page)return;metricTotals[metric]=page.total_rows;if(!page.baseComplete||!page.currentComplete){$('contributionCheck').append(UI.el('p','Нет полного набора отчётов для обоих интервалов. Вклад не рассчитывается.','warn small'));return;}
    const check=page.check;$('contributionCheck').append(UI.el('p',titles[metric]+': сумма вкладов '+fmt(check.sum,metric)+'; общее изменение '+fmt(check.delta,metric)+' — '+(check.reconciled?'совпадает':'расхождение '+fmt(check.residual,metric)),check.reconciled?'positive small':'negative small'));
    const rows=page.rows.map(row=>[itemButton(row,{...s,from:before.from<after.from?before.from:after.from,to:before.to>after.to?before.to:after.to}),fmt(row.base,metric),fmt(row.current,metric),delta(row.delta,metric),percent(row.percent),percent(row.contribution)]);
    UI.table($('contributionResults'),metric,caption(before)+' / '+caption(after),['Услуга / группа','Значение раньше','Значение сейчас','Изменение значения','Изменение, %','Вклад в общее изменение, %'],rows,{totalRow:false,
@@ -327,9 +330,9 @@ async function contributions(positions=[null],paging=false){
      'Изменение работы / изменение общего итога × 100%. Вклад может быть отрицательным или больше 100%, если изменения других работ его компенсируют. При нулевом общем изменении доля недоступна.'
     ],
     csvContext:fullExport(task,request(s),'contributions',metric,{before:{from:before.from,to:before.to}}),
-    csvRows:page.rows.map(r=>[r.name,r.base,r.current,r.delta,r.percent,r.contribution])});next[metric]=page.next||false;
+    csvRows:page.rows.map(r=>[r.name,r.base,r.current,r.delta,r.percent,r.contribution])});
   });
-  const total=Math.max(0,...result.filter(Boolean).map(p=>p.total_rows)),cursor=Object.values(next).some(Boolean)?next:null;pager('contribution',{total_rows:total,count:Math.max(0,...result.filter(Boolean).map(p=>p.rows.length)),next:cursor},positions,cursor);
+  task.s.metricTotals=metricTotals;const total=Math.max(0,...chosen.map(metric=>metricTotals[metric]||0));pager('contribution',{total_rows:total,count:Math.max(0,...result.filter(Boolean).map(p=>p.rows.length))},index);
  }catch(error){task.error(error);}finally{task.done();}
 }
 async function structure(){
@@ -381,7 +384,7 @@ async function structure(){
     data:[new Map(visible.map(r=>[key(r),{[metric]:r.current}]))],label:k=>workLabel(visible.find(r=>key(r)===k).name)});
  }catch(error){task.error(error);}finally{task.done();}
 }
-async function patterns(mode,positions=[null],paging=false){
+async function patterns(mode,index=0,paging=false){
  const name=mode==='usual'?'usual':'regularity',task=loading(name,[name+'Results',name+'Coverage'],paging);
  try{if(!scope||!selected())throw Error('Отметьте услуги или группы в списке работ.');const normal=referencePanel(mode==='usual'?'usualPanel':'regularityPanel'),range=mode==='usual'&&(!normal||$('usualPeriod').dataset.unifiedTouched)?fieldsRange('usualPeriod'):scope,s=scopeFor(range),windowSize=Number(value(mode==='usual'?'usualWindow':'regularityGap'));
   const opts={search:mode==='usual'?'':value('regularitySearch'),status:mode==='usual'?'all':value('regularityStatus')};
@@ -390,13 +393,13 @@ async function patterns(mode,positions=[null],paging=false){
    const baseline={from:scope.baseFrom,to:scope.baseTo};
    const ranges=mode==='regularity'?[baseline,range]:[range];
    sample=await sampleFor(s,ranges);if(!task.valid())return;
-   if(!sample.included.length){clear(name+'Results','Нет сопоставимых подразделений.');clear(name+'Coverage');sampleNote($(name+'Coverage'),sample);pager(name,{total_rows:0},[null],null);return;}
+   if(!sample.included.length){clear(name+'Results','Нет сопоставимых подразделений.');clear(name+'Coverage');sampleNote($(name+'Coverage'),sample);pager(name,{total_rows:0},0);return;}
    s.organizations=sample.included;
    if(s.source==='daily')s.displayType='day';
    if(mode==='regularity')opts.baseline=baseline;else opts.range_window=true;
   }
   const req=request(s,{method:'range',percent:mode==='usual'?number('usualPercent'):0,min_count:0,min_amount:0});
-  const page=await api.unifiedPatternPage(req,mode,windowSize,opts,positions.at(-1));if(!task.valid())return;clear(name+'Results','',false);clear(name+'Coverage','',false);sampleNote($(name+'Coverage'),sample);
+  const page=await api.unifiedPatternPageAtPage(req,mode,windowSize,opts,index);if(!task.valid())return;clear(name+'Results','',false);clear(name+'Coverage','',false);sampleNote($(name+'Coverage'),sample);
   $(name+'Coverage').append(UI.el('p','Полных периодов: '+page.used+' из '+page.expected+'. В предыдущем диапазоне: '+page.previous_used+'.'+(page.current_complete?'':' Анализируемый диапазон неполон.'),'muted small'));
   const root=$(name+'Results');if(!page.rows.length)root.append(UI.el('p','Нет услуг по выбранным фильтрам.','muted small'));
   if(mode==='usual')for(const metric of usualMetrics){const rows=page.rows.map(row=>{const m=row[metric];return [row.key?itemButton(row,{...s,from:page.baseline_from,to:s.to}):row.name,fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent),UI.el('span',usualLabels[m.status]||m.status,m.status==='high'?'numeric-rise':m.status==='low'?'numeric-fall':'')];});UI.table(root,metric,'Среднее: '+page.baseline_from+' — '+page.baseline_to+'; анализ: '+page.current_from+' — '+page.current_to,['Услуга / группа','Среднее раньше','Сейчас','Отклонение','Отклонение, %','Оценка'],rows,{
@@ -423,7 +426,7 @@ async function patterns(mode,positions=[null],paging=false){
     'Признаки описывают частоту в загруженных отчётах. У одной работы может быть несколько признаков.'
    ],
    csvContext:fullExport(task,req,'regularity','count',{options:opts,window:windowSize})});}
-  pager(name,page,positions,page.next);
+  pager(name,page,index);
  }catch(error){task.error(error);}finally{task.done();}
 }
 function clearExtended(){for(const name of channels.keys())invalidate(name);for(const id of ['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis','contributionResults','contributionCheck','structureResults','usualResults','usualCoverage','regularityResults','regularityCoverage','changesResults','changesWarnings','changesSummary'])clear(id);$('analyticsDetails').hidden=true;$('changeDetails').hidden=true;}
@@ -514,7 +517,7 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
  bind(['changesMethod','changesFrom','changesTo','changesMode','changesDirection','changesSort'],'change',()=>{invalidate('changes');changes();});
  bind(['changesPercent','changesCountMin','changesAmountMin','changesSearch'],'input',()=>{explainSensitivity();describeActiveFilters();schedule('changes',changes);});
  $('changesType').addEventListener('change',()=>{changesKind=value('changesType');for(const id of ['changesFrom','changesTo'])setDate(id,changesKind,scope?.to||new Date().toISOString().slice(0,10),true);invalidate('changes');changes();});
- for(const name of ['changes','contribution','usual','regularity']){const run=name==='changes'?changes:name==='contribution'?contributions:positions=>patterns(name,positions);$(name+'Prev').addEventListener('click',()=>{const s=slot(name);if(s.positions.length>1)run(s.positions.slice(0,-1));});$(name+'Next').addEventListener('click',()=>{const s=slot(name);if(s.page?.next)run([...s.positions,s.page.next]);});}
+ for(const name of ['changes','contribution','usual','regularity']){const run=name==='changes'?changes:name==='contribution'?contributions:index=>patterns(name,index);$(name+'Prev').addEventListener('click',()=>{const state=slot(name);if(state.index>0)return run(state.index-1);});$(name+'Next').addEventListener('click',()=>{const state=slot(name);if((state.index+1)*50<(state.page?.total_rows||0))return run(state.index+1);});}
  bind(['comparisonMode','periodComparisonScope','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonScope','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','comparisonBaseOrg'],'change',()=>{invalidate('comparison');invalidate('contribution');comparison();});
  bind(['structureBase','structureCurrent','structureMetric','structureLimit','structureScope'],'change',structure);bind(['usualPeriod','usualWindow'],'change',()=>patterns('usual'));bind(['usualPercent'],'input',()=>schedule('usual',()=>patterns('usual')));bind(['regularityGap','regularityStatus'],'change',()=>patterns('regularity'));bind(['regularitySearch'],'input',()=>schedule('regularity',()=>patterns('regularity')));
  for(const [id,run] of [['advancedAnalytics',comparison],['contributions',contributions],['structurePanel',structure],['usualPanel',()=>patterns('usual')],['regularityPanel',()=>patterns('regularity')]])$(id).addEventListener('toggle',()=>{if($(id).open&&scope)run();});

@@ -36,6 +36,15 @@ function buildUnified(source){
  const chartPoint="if(raw===null){flush();return;}";
  if(!script.includes(chartPoint))throw Error('Original chart point marker changed');
  script=script.replace(chartPoint,"if(!Number.isFinite(raw)){flush();return;}");
+ const seriesStart=script.indexOf('  if(pages>1){',script.indexOf('function drawChart('));
+ const seriesEnd=script.indexOf('  const seriesColor=',seriesStart);
+ if(seriesStart<0||seriesEnd<0||!script.slice(seriesStart,seriesEnd).includes('Видимые серии графика'))throw Error('Original chart series control changed');
+ script=script.slice(0,seriesStart)+`  if(pages>1){
+    window.unifiedChartPager(root,'chart-series',{index:page,size:limit,count:shown.length,total:groups.length,
+      label:'Серии графика',go:index=>{options.seriesPage=index;drawChart(periods,orgs,metric,root,options);}});
+  }
+`+script.slice(seriesEnd);
+ script=script.replace("  const restoreSeriesFocus=root.contains(document.activeElement)&&document.activeElement?.matches('.chart-series-control select');\n",'');
  const horizontalMarker="  const data=options.data||periods.map(p=>reportHasOrganizations(p,orgs)?summary(p,orgs).by:null);\n  if(periods.length===1){";
  if(!script.includes(horizontalMarker))throw Error('Original chart geometry changed');
  script=script.replace(horizontalMarker,"  const data=options.data||periods.map(p=>reportHasOrganizations(p,orgs)?summary(p,orgs).by:null);\n  if(bar&&options.orientation==='horizontal'){\n    if(typeof window.unifiedHorizontalBars!=='function')throw Error('Не загружена горизонтальная диаграмма.');\n    window.unifiedHorizontalBars(periods,shown,data,metric,root,options,seriesColor,()=>drawChart(periods,orgs,metric,root,options));\n    return;\n  }\n  if(periods.length===1){");
@@ -60,6 +69,7 @@ function buildUnified(source){
 
  // Never allow a paged UI to reach an old whole-database writer by accident.
  script+='\nmain=wire=loadData=saveSettings=storeReports=storeAllData=saveImport=saveGroup=moveWork=saveOrganizations=importGroupFile=importBackupFile=()=>{throw Error("Полная загрузка истории и старые обработчики отключены.");};\n';
+ script+='notice=(message,error)=>window.showDesktopNotice(message,error);\n';
  script+='window.unifiedOriginal=Object.freeze({state,$,el:elem,notice,fmt:formatMetric,fmtNumber,drawChart,drawDepartments:drawDepartmentMultiChart,makeTable,tableCsvButton,initTheme,initChartTooltip,redrawCharts,renderMultiFilter,periodEnd,shiftPeriod,displayDay,displayPeriod,metricTitle,chartRenders});\n';
  let html=source.replace(/<script>[\s\S]*?<\/script>/g,'');
  const metricMarkup="<details id=\"additionalMetrics\" class=\"panel group-section\"><summary>Другие показатели — трудозатраты и план / факт</summary>\n<p class=\"muted small\">Независимые виды отчётов со своими полями и единицами измерения. Их показатели не прибавляются к суммам выполненных работ.</p>\n<div class=\"metric-controls\">\n<label>Вид отчёта<select id=\"metricKindSelect\"></select></label>\n<label>С<input id=\"metricKindFrom\" type=\"date\"></label>\n<label>По<input id=\"metricKindTo\" type=\"date\"></label>\n<button type=\"button\" id=\"metricKindCalculate\" class=\"button secondary\">Рассчитать</button></div>\n<p id=\"metricKindCount\" class=\"muted small\">Пустые даты при расчёте означают всю историю.</p>\n<div id=\"metricKindTotals\" class=\"metric-results\"></div>\n<div class=\"metric-controls\">\n<label>Шаблон XLSX<select id=\"metricXlsxProfile\"></select></label>\n<button type=\"button\" id=\"metricKindChooseXlsx\" class=\"button secondary\">Импорт XLSX</button>\n<button type=\"button\" id=\"metricKindChoose\" class=\"button secondary\">Импорт JSON</button>\n<button type=\"button\" id=\"metricKindApply\" class=\"button primary\" disabled>Подтвердить импорт</button></div>\n<p class=\"muted small\">Для XLSX сначала укажите обе даты и шаблон. Перед записью проверьте значения: импорт не заменяет существующие отчёты. Лимит XLSX — 30 МиБ, JSON — 8 МиБ, не более 10 000 строк в отчёте.</p>\n<p id=\"metricKindFile\" class=\"muted small\">Файл ещё не выбран.</p>\n<div id=\"metricKindPreview\" class=\"metric-results\"></div>\n<p id=\"metricKindStatus\" class=\"status muted\" role=\"status\" aria-live=\"polite\">Загрузка видов отчётов…</p></details>";
@@ -93,7 +103,7 @@ function buildUnified(source){
  html=html.replace(sensitivityInput,"<div class=\"changes-sensitivity-quick\" role=\"group\" aria-labelledby=\"changesSensitivityLabel\">\n          <label id=\"changesSensitivityLabel\" for=\"changesPercent\">Чувствительность: процентный порог</label>\n          <div class=\"changes-sensitivity-row\"><input id=\"changesPercent\" type=\"range\" min=\"0\" max=\"200\" step=\"5\" value=\"30\" aria-describedby=\"changesSensitivityExample\"><output id=\"changesSensitivityValue\" for=\"changesPercent\">30%</output></div>\n          <p id=\"changesSensitivityExample\" class=\"muted small\" aria-live=\"polite\">При базе 100 единиц изменение на 30 достигает порога 30%. Для сильного изменения необходим также минимальный абсолютный порог.</p>\n        </div>\n        <details class=\"change-sensitivity\">\n          <summary>Дополнительно: минимальные изменения</summary>\n          <div class=\"changes-filters\">");
  const extraToolbar=/<div class="changes-filters change-toolbar">([\s\S]*?)<\/div>/;
  if(!extraToolbar.test(html))throw Error('Original changes toolbar changed');
- html=html.replace(extraToolbar,(_match,contents)=>'<details class="changes-more-options" id="changesMoreOptions"><summary>Дополнительно: режим, поиск и сортировка<span id="changesActiveFilter" class="muted small" aria-live="polite"></span></summary><div class="changes-filters change-toolbar">'+contents+'</div></details>');
+ html=html.replace(extraToolbar,(_match,contents)=>'<details class="changes-more-options" id="changesMoreOptions"><summary>Дополнительно: режим, поиск и сортировка <span id="changesActiveFilter" class="muted small" aria-live="polite"></span></summary><div class="changes-filters change-toolbar">'+contents+'</div></details>');
  html=html.replace('Значимость по количеству','Сначала самые заметные · количество / объём').replace('Значимость по сумме','Сначала самые заметные · сумма');
  html=html.replace('Сначала обычная база, затем малая. Значимость: выполнение порогов, затем абсолютная разница выбранного показателя. Каждая строка указывает конкретную пару соседних периодов.',
  'Сильные изменения достигают одновременно процентного и абсолютного порогов. Услуги с малой базой показаны отдельно. Каждая строка относится к конкретной паре периодов.');
@@ -128,8 +138,7 @@ function buildUnified(source){
  html=html.replace('>Скачать группы (JSON)</button>','>Экспорт групп</button>').replace('>Импорт групп JSON<input','>Импорт групп<input').replace('Добавить справочник услуг из Excel\n','Импорт справочника Excel\n');
  const catalog=html.match(/<div class="catalog-toolbar">[\s\S]*?<\/div>/);
  if(catalog){html=html.replace(catalog[0],'');const groups=html.indexOf('id="importGroups"');const end=html.indexOf('</div>',groups);if(groups<0||end<0)throw Error('Missing group import toolbar');html=html.slice(0,end)+catalog[0]+html.slice(end);}
- // Mount the reference and the existing SQL forms in one document. Moving the
- // native workspace between the panel and the modal preserves inputs and listeners.
+ // Mount the shared navigation and SQL forms once, retaining their inputs and listeners.
  const nativeStart=html.indexOf('<header class="topbar">');
  const nativeEnd=html.indexOf('<section id="printReport"');
  if(nativeStart<0||nativeEnd<nativeStart)throw Error('Missing native workspace layout');

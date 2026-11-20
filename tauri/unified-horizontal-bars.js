@@ -8,10 +8,16 @@ function make(name,attributes={},text){
  if(text!==undefined)node.textContent=String(text);
  return node;
 }
-function navButton(text,disabled,action){
- const node=document.createElement('button');
- node.type='button';node.className='button secondary';node.textContent=text;
- node.disabled=disabled;node.addEventListener('click',action);return node;
+// drawChart replaces its children. Reuse each control so changing the SVG
+// does not discard the page chooser or its keyboard focus.
+const chartPagers=new WeakMap();
+function chartPager(plot,key,options){
+ let pagers=chartPagers.get(plot);
+ if(!pagers){pagers=new Map();chartPagers.set(plot,pagers);}
+ let host=pagers.get(key);
+ if(!host){host=document.createElement('div');host.dataset.sqlScrollHost=key;pagers.set(key,host);}
+ plot.append(host);
+ window.sqlRowScroll.attach(host,{...options,footer:host,controlsOnly:true});
 }
 function horizontalBars(periods,shown,data,metric,root,options,color,redraw){
  if(!periods.length||!shown.length)return;
@@ -20,11 +26,8 @@ function horizontalBars(periods,shown,data,metric,root,options,color,redraw){
  const start=page*pageSize,visible=periods.slice(start,start+pageSize);
  const presentation=window.unifiedOriginal;
  if(pageCount>1){
-  const nav=document.createElement('div');nav.className='horizontal-bar-pager';
-  nav.append(navButton('← Предыдущие периоды',page===0,()=>{options.periodPage=page-1;redraw();}),
-    document.createTextNode('Периоды '+(start+1)+'–'+(start+visible.length)+' из '+periods.length),
-    navButton('Следующие периоды →',page===pageCount-1,()=>{options.periodPage=page+1;redraw();}));
-  root.append(nav);
+  chartPager(root,'chart-periods',{index:page,size:pageSize,count:visible.length,total:periods.length,
+   axis:'x',label:'Периоды горизонтальной диаграммы',go:index=>{options.periodPage=index;redraw();}});
  }
  const values=[];
  for(let i=start;i<start+visible.length;i++){
@@ -78,6 +81,7 @@ function horizontalBars(periods,shown,data,metric,root,options,color,redraw){
  root.append(legend);
  if(!values.length){const message=document.createElement('p');message.className='muted small';message.textContent='Нет полных данных за показанные периоды. Пропуски не заменены нулями.';root.append(message);}
 }
+window.unifiedChartPager=chartPager;
 window.unifiedHorizontalBars=horizontalBars;
 if(typeof module==='object'&&module?.exports)module.exports={horizontalBars};
 })();

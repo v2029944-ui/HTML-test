@@ -17,10 +17,12 @@ from reference_data_smoke import choose_calendar_date
 TIMEOUT = 90_000
 
 
-def check_reference(page, output, has_reports):
+def check_reference(page, output, has_reports, *, screenshot_scope=None):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     prefix = 'reference-reports' if has_reports else 'reference-empty'
+    if screenshot_scope:
+        prefix += '-' + screenshot_scope
     inventory = []
     page.wait_for_function('''() => window.appReady && Number.isSafeInteger(window.unifiedUI?.revision)
       && window.unifiedUI.snapshot''', timeout=TIMEOUT)
@@ -67,11 +69,11 @@ def check_reference(page, output, has_reports):
         assert dialog.evaluate('(node) => node.open && node.matches(":modal")')
         # Browser top-layer dialogs must intercept actual background interaction.
         try:
-            page.locator('#refData').click(trial=True, timeout=600)
+            page.locator('#refImport').click(trial=True, timeout=600)
         except PlaywrightTimeoutError:
             pass
         else:
-            raise AssertionError('An open modal did not block the background Data button')
+            raise AssertionError('An open modal did not block the background import button')
         # Native dialogs may hand Tab to browser chrome (activeElement=body).
         # A focusable control in the underlying application must never receive it.
         for _ in range(4):
@@ -112,14 +114,12 @@ def check_reference(page, output, has_reports):
         expect(sheet).not_to_be_visible(timeout=TIMEOUT)
         focused(trigger)
 
-    def open_menu():
-        trigger = page.locator('#refData')
+    def open_management(key):
+        trigger = page.locator('#refImport' if key == 'upload' else '#refSettings')
         trigger.click()
-        sheet = page.locator('#sheet')
-        modal(sheet)
-        for name in ['Отчёты', 'Группы работ', 'Настройки', 'Исходный макет']:
-            expect(sheet.get_by_role('button', name=name, exact=True)).to_be_visible()
-        return trigger, sheet
+        if key == 'groups':
+            page.locator('.tool-tabs [data-section="groups"]').click()
+        return trigger
 
     def panel(target):
         expect(page.locator('#toolsPage')).to_be_visible(timeout=TIMEOUT)
@@ -318,37 +318,9 @@ def check_reference(page, output, has_reports):
             record('01-quality-' + ('sample' if 'metric-sample' in selector else 'notice'), quality)
             close_sheet(source)
 
-        trigger, sheet = open_menu()
-        record('02-data-menu', sheet)
-        close_sheet(trigger)
-        trigger, sheet = open_menu()
-        close_sheet(trigger, 'escape')
-
-        trigger, sheet = open_menu()
-        original = sheet.get_by_role('button', name='Исходный макет', exact=True)
-        original.click()
-        workspace = page.locator('#refWorkspaceDialog')
-        expect(workspace).to_be_visible(timeout=TIMEOUT)
-        assert workspace.evaluate('(node) => node.matches(":modal")')
-        assert sheet.evaluate('(node) => node.open'), 'Underlying Data menu must remain open'
-        record('03-native-workspace', workspace)
-        page.locator('#refWorkspaceClose').click()
-        expect(workspace).not_to_be_visible(timeout=TIMEOUT)
-        expect(sheet).to_be_visible()
-        focused(original)
-        original.click()
-        expect(workspace).to_be_visible(timeout=TIMEOUT)
-        page.keyboard.press('Escape')
-        expect(workspace).not_to_be_visible(timeout=TIMEOUT)
-        expect(sheet).to_be_visible()
-        focused(original)
-        close_sheet(trigger)
-
-        # Every real management entry is reachable through the user-facing menu.
-        for title, target in [('Отчёты', 'upload'), ('Группы работ', 'groups'), ('Настройки', 'storage')]:
-            trigger, sheet = open_menu()
-            sheet.get_by_role('button', name=title, exact=True).click()
-            expect(sheet).not_to_be_visible()
+        expect(page.locator('#refData,#refWorkspaceDialog')).to_have_count(0)
+        for target in ('upload', 'groups', 'storage'):
+            trigger = open_management(target)
             panel(target)
             record('04-menu-' + target, page.locator('#toolsPage'))
             if target == 'upload':
@@ -366,8 +338,7 @@ def check_reference(page, output, has_reports):
                 if page.evaluate('Boolean(window.unifiedUI.scope)'):
                     # A completed pager avoids reading the previous range's coverage
                     # while the newly opened audit is still loading.
-                    page.wait_for_function("""() => /^([0-9]+–[0-9]+ из [0-9]+|Записей нет[.])/.test(
-                      document.getElementById('groupAuditPage').textContent)""", timeout=TIMEOUT)
+                    expect(page.locator('[data-sql-pager="groupAuditResults"] [data-page-range]')).to_be_visible(timeout=TIMEOUT)
                     expect(page.locator('#groupAuditCoverage')).to_contain_text('Найдено:', timeout=TIMEOUT)
                     audit_total = int(page.locator('#groupAuditCoverage').inner_text()
                                       .split('Найдено:', 1)[1].split('·', 1)[0].strip())
@@ -421,7 +392,8 @@ def check_reference(page, output, has_reports):
         analytics.click()
         panel('chartPanel')
         sections = [('Состав работ', 'structurePanel'), ('Сравнение', 'comparison'),
-                    ('Отклонения', 'usualPanel'), ('Частота', 'regularityPanel'), ('Динамика', 'chartPanel')]
+                    ('Отклонения', 'usualPanel'), ('Частота', 'regularityPanel'),
+                    ('Итоги и рейтинги', 'overviewPanel'), ('Соседние периоды', 'changes'), ('Динамика', 'chartPanel')]
         for title, target in sections:
             page.locator('#toolsPage .tool-tabs').get_by_role('button', name=title, exact=True).click()
             panel(target)
@@ -526,14 +498,13 @@ def check_reference(page, output, has_reports):
         focused(settings)
 
         if has_reports:
-            # The unchanged daily fixture is intentionally included by selecting
-            # the native "All works" filter through the preserved workspace.
-            trigger, sheet = open_menu()
-            original = sheet.get_by_role('button', name='Исходный макет', exact=True)
-            original.click()
-            workspace = page.locator('#refWorkspaceDialog')
-            expect(workspace).to_be_visible(timeout=TIMEOUT)
-            workspace.locator('.tabs [data-view="changes"]').click()
+            page.locator('#sharedHeader .main-nav button').first.click()
+            analytics = page.locator('#refAnalytics')
+            analytics.click()
+            page.locator('.tool-tabs [data-section="overviewPanel"]').click()
+            panel('overviewPanel')
+            record('09-rankings', page.locator('#overviewPanel'))
+            page.locator('.tool-tabs [data-section="changes"]').click()
             expect(page.locator('#changes')).to_be_visible()
             latest = page.evaluate('''() => window.desktopAPI.unifiedPeriodOptions(
               window.unifiedUI.revision, 'day', null, null, 1)''')['max']
@@ -553,10 +524,8 @@ def check_reference(page, output, has_reports):
             work = page.locator('#changesResults .service-link').first
             expect(work).to_be_visible(timeout=TIMEOUT)
             history_close(work, 'changeDetails', 'changeDetailContent', 'closeChangeDetails', '09-native-change-history')
-            expect(workspace).to_be_visible()
-            page.locator('#refWorkspaceClose').click()
-            focused(original)
-            close_sheet(trigger)
+            panel('changes')
+            close_panel(analytics)
         settings.click()
         panel('storage')
         settings.click()

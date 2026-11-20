@@ -47,6 +47,35 @@ def check_control_layout(page):
             !close(field.left,parent.left) || !close(field.right,parent.right))
           errors.push([button.textContent, 'calendar button misaligned with period label']);
       }
+      for (const range of document.querySelectorAll('.report-range')) {
+        const [period, baseline, edit] = range.children;
+        if (visible(edit) && (rect(edit).bottom < rect(period).top-tolerance ||
+            rect(edit).bottom < rect(baseline).top-tolerance))
+          errors.push(['Период отчёта', 'edit link displayed above selected dates']);
+      }
+      // Captions may wrap, including at larger text sizes. Compare the actual
+      // glyph positions on each side of a separator instead of parsing innerText.
+      for (const label of document.querySelectorAll('.report-range > span,.filter-summary,.source-state,' +
+          '.detail-date-scope > span,#changesActiveFilter')) {
+        if (!visible(label)) continue;
+        for (const text of label.childNodes) {
+          if (text.nodeType !== Node.TEXT_NODE) continue;
+          const value = text.nodeValue;
+          const glyphTop = index => {
+            const glyph = document.createRange();
+            glyph.setStart(text, index);
+            glyph.setEnd(text, index + 1);
+            return glyph.getBoundingClientRect().top;
+          };
+          for (let index = value.indexOf('·'); index >= 0; index = value.indexOf('·', index + 1)) {
+            const before = value.slice(0,index).trimEnd().length - 1;
+            const after = value.length - value.slice(index+1).trimStart().length;
+            if (before < 0 || after === value.length || !close(glyphTop(before), glyphTop(index)) ||
+                !close(glyphTop(index), glyphTop(after)))
+              errors.push([value, 'separator stranded at a line boundary']);
+          }
+        }
+      }
       const metric = document.querySelector('#reportShell [data-measure]');
       if (visible(metric)) {
         for (const next of document.querySelectorAll('#reportShell .filter-options [data-pick]')) {

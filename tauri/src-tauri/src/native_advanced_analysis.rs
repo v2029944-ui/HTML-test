@@ -128,10 +128,13 @@ pub async fn native_composition_page(
     metric: String,
     after: Option<ContributionCursor>,
     structure_limit: Option<usize>,
+    page_index: Option<usize>,
 ) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if page_index.is_some()&&after.is_some(){return Err("Do not combine a cursor and a page index".into());}
         let store = app.state::<Storage>();
         request.with_scope(&store, |s, g| {
+            if let Some(index)=page_index{return store.advanced_composition_at_page(request.revision,s,&request.query,g,&before,&mode,&metric,structure_limit.unwrap_or(12),index);}
             store.advanced_composition_limit(
                 request.revision,
                 s,

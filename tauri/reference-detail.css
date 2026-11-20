@@ -1,8 +1,8 @@
-/* One SQL workspace is mounted inside the chosen tab. Its full presentation
-   remains available in the original layout dialog. */
+/* The active tool shows its own desktop SQL controls. */
 #refNative[data-panel] > .topbar,
 #refNative[data-panel] > .container > :is(.pagehead,.tabs,.mobile-help),
-#refNative[data-panel] #dashboard > :not(#advancedAnalytics),
+#refNative[data-panel]:not([data-panel="overviewPanel"]) #dashboard > :not(#advancedAnalytics),
+#refNative[data-panel="overviewPanel"] #advancedAnalytics,
 #refNative[data-panel] #advancedAnalytics > summary,
 #refNative[data-panel] #advancedAnalytics > .work-view-switcher,
 #refNative[data-panel]:not([data-panel="chartPanel"]) #chartPanel,

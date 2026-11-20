@@ -83,3 +83,18 @@ test('classic shell receives accessible version and activity mounts without HTML
 test('no DOM mounts or Tauri API does not throw',()=>{
  assert.doesNotThrow(()=>vm.runInNewContext(statusSource(),{window:{},document:{getElementById:()=>null,querySelector:()=>null}}));
 });
+
+test('dismissing an activity notification preserves the operation and resets for the next one',async()=>{
+ const ui=setup();ui.loadBridge();ui.loadStatus();
+ const read=ui.window.desktopAPI.nativeRevision();
+ const dismiss=ui.ids.appActivity.children.find(n=>n.className==='status-dismiss');
+ dismiss.onclick();
+ assert.equal(ui.ids.appActivity.hidden,true);
+ assert.equal(ui.main.attributes['aria-busy'],'true');
+ assert.equal(ui.window.tauriOperations.reads,1);
+ ui.pending[0].resolve(1);await read;
+ assert.equal(ui.main.attributes['aria-busy'],'false');
+ const next=ui.window.desktopAPI.nativeRevision();
+ assert.equal(ui.ids.appActivity.hidden,false);
+ ui.pending[1].resolve(1);await next;
+});

@@ -44,7 +44,7 @@ async function render(root,s,active){
  const pages=Math.ceil(count/pageSize);let page=0,sequence=0,inspectionSequence=0;
  const matrixHost=host('coverage-periods','coverage-matrix-scroll'),matrixSlot=el('div'),pager=el('div',null,'coverage-matrix-pager'),inspection=el('section',null,'coverage-inspection'),unassigned=el('div');
  inspection.hidden=true;inspection.setAttribute('aria-label','Подробности выбранной ячейки');matrixSlot.append(matrixHost);
- root.replaceChildren(pager,el('p','Статус не подтверждает полноту источника. Замечание относится к отчёту целиком; его связь с подразделением проверяйте в подробностях. Нулевой итог может включать ненулевые строки.','muted small'),matrixSlot,inspection,unassigned);
+ root.replaceChildren(el('p','Статус не подтверждает полноту источника. Замечание относится к отчёту целиком; его связь с подразделением проверяйте в подробностях. Нулевой итог может включать ненулевые строки.','muted small'),matrixSlot,pager,inspection,unassigned);
  const clearInspection=keep=>{for(const node of hosts)if(node!==matrixHost&&node!==keep){window.sqlRowScroll?.reset(node);hosts.delete(node);}};
  const shift=(start,n)=>{const d=new Date(start+'T00:00:00Z');if(kind==='month')d.setUTCMonth(d.getUTCMonth()+n);else d.setUTCDate(d.getUTCDate()+n*(kind==='week'?7:1));return d.toISOString().slice(0,10);};
  async function drawPage(){
@@ -69,8 +69,6 @@ async function render(root,s,active){
    }
    if(!current())return;
    pager.replaceChildren();
-   let previous,next;const label='Страница '+(page+1)+' из '+pages+': '+range(from,periods.at(-1).end);
-   if(pages>1){previous=button('← Ранее',()=>{if(current()&&page>0){page--;void drawPage();}});next=button('Позднее →',()=>{if(current()&&page<pages-1){page++;void drawPage();}});previous.disabled=page===0;next.disabled=page===pages-1;pager.append(previous,el('span',label,'muted small'),next);}
    const table=el('table',null,'table coverage-matrix'),head=el('thead'),heading=el('tr'),body=el('tbody');heading.append(el('th','Подразделение'));
    for(const period of periods){const th=el('th',range(period.start,period.end));th.setAttribute('scope','col');heading.append(th);}head.append(heading);table.append(head);
    for(const row of rows){
@@ -84,7 +82,8 @@ async function render(root,s,active){
     body.append(tr);
    }
    table.append(body);matrixHost.replaceChildren(table);
-   const periodStatus='Периоды: '+range(from,periods.at(-1).end)+' · показано '+periods.length+' из '+count,index=page,viewport=window.sqlRowScroll?.attach(matrixHost,{axis:'x',index,size:pageSize,total:count,count:periods.length,hasNext:page<pages-1,label:periodStatus,direct:true,go:i=>{if(current()&&Number.isInteger(i)&&i>=0&&i<pages&&i!==index){page=i;return drawPage();}return false;}});if(previous){previous.hidden=next.hidden=Boolean(viewport);if(viewport){window.sqlRowScroll?.retire?.(previous,next);pager.children[1].textContent=periodStatus;}}
+   const index=page,go=i=>{if(current()&&Number.isSafeInteger(i)&&i>=0&&i<pages&&i!==index){page=i;return drawPage();}return false;};
+   if(!window.sqlRowScroll?.attach(matrixHost,{axis:'x',index,size:pageSize,total:count,count:periods.length,label:'Периоды качества данных',direct:true,go,footer:pager})&&pages>1){const previous=button('← Ранее',()=>go(index-1)),next=button('Позднее →',()=>go(index+1));previous.disabled=index===0;next.disabled=index+1>=pages;pager.append(previous,el('span',range(from,periods.at(-1).end),'muted small'),next);}
    for(const period of periods)if(period.unassigned_invalid){const note=el('div',null,'coverage-unassigned');note.append(el('p',range(period.start,period.end)+' · Без распознанного подразделения: '+period.unassigned_invalid+'. Эти ошибки не отнесены к строкам матрицы.','warn small'));const action=button('Показать отчёты без подразделения',()=>openCell(inspection,null,period,action,current));note.append(action);unassigned.append(note);}
    }catch(error){if(current()){window.sqlRowScroll?.reset(matrixHost);pager.replaceChildren();matrixHost.replaceChildren(el('p','Не удалось показать качество данных: '+errorText(error),'warn small'));}}
   finally{if(current())root.setAttribute('aria-busy','false');}
@@ -103,14 +102,14 @@ async function render(root,s,active){
    else close();
    event.preventDefault?.();event.stopPropagation?.();
   };
-  async function load(positions=[null]){
+  async function load(index=0){
    clearInspection(cards);
    const request=++listSequence;cards.replaceChildren(el('p','Загрузка отчётов…','muted small'));
    const valid=()=>current()&&request===listSequence;
    try{
-    const result=await api.nativeQualityMatrixReports(s.revision,kind,period.start,organization,positions.at(-1),20);
+    const result=await api.nativeQualityMatrixReportsAtPage(s.revision,kind,period.start,organization,index,20);
     if(!valid())return;
-    if(result.revision!==s.revision||!Array.isArray(result.rows)||result.rows.length>20)throw Error('Некорректная страница отчётов.');
+    if(result.revision!==s.revision||!Array.isArray(result.rows)||result.rows.length>20||!Number.isSafeInteger(result.total_rows)||result.total_rows<0)throw Error('Некорректная страница отчётов.');
     cards.replaceChildren();reportsStatus.replaceChildren();
     if(!result.rows.length)cards.append(el('p','Нет сохранённого отчёта с распознанным подразделением и нужным началом периода. Причина отсутствия неизвестна; значение не заменено нулём.','muted small'));
     for(const report of result.rows){
@@ -121,8 +120,8 @@ async function render(root,s,active){
      const details=el('details'),notes=el('div');details.append(el('summary','Замечания отчёта'),notes);let loaded=false;
      details.addEventListener('toggle',()=>{if(details.open&&!loaded&&valid()){loaded=true;void loadNotes(notes,report.id,valid);}});card.append(details);cards.append(card);
     }
-    const previous=button('← Предыдущие отчёты',()=>{if(valid()&&positions.length>1)void load(positions.slice(0,-1));}),next=button('Следующие отчёты →',()=>{if(valid()&&result.next)void load([...positions,result.next]);}),caption=el('span',' Страница '+positions.length+' · показано '+result.rows.length+' отчётов ','muted small');previous.disabled=positions.length<2;next.disabled=!result.next;reportsStatus.append(previous,caption,next);
-    const index=positions.length-1,status='Показано '+result.rows.length+' отчётов выбранной ячейки',viewport=window.sqlRowScroll?.attach(cards,{index,size:20,count:result.rows.length,hasNext:Boolean(result.next),label:status,direct:false,go:i=>{if(!valid())return false;if(i===index-1&&index>0)return load(positions.slice(0,-1));if(i===index+1&&result.next)return load([...positions,result.next]);return false;}});previous.hidden=next.hidden=Boolean(viewport);if(viewport){caption.textContent=status;window.sqlRowScroll?.retire?.(previous,next);}
+    const pages=Math.max(1,Math.ceil(result.total_rows/20)),go=i=>{if(valid()&&Number.isSafeInteger(i)&&i>=0&&i<pages&&i!==index)return load(i);return false;};
+    if(!window.sqlRowScroll?.attach(cards,{index,size:20,count:result.rows.length,total:result.total_rows,label:'Отчёты выбранной ячейки',direct:true,go,footer:reportsStatus})){const previous=button('← Предыдущие отчёты',()=>go(index-1)),next=button('Следующие отчёты →',()=>go(index+1));previous.disabled=index===0;next.disabled=index+1>=pages;reportsStatus.append(previous,el('span','Показано '+result.rows.length+' из '+result.total_rows,'muted small'),next);}
    }catch(error){if(valid()){window.sqlRowScroll?.reset(cards);content.replaceChildren(el('p','Не удалось прочитать отчёты: '+errorText(error),'warn small'));}}
   }
   void load();
@@ -133,7 +132,7 @@ async function render(root,s,active){
    const request=++sequence;issues.replaceChildren(el('p','Загрузка сохранённых замечаний…','muted small'));
    try{
     const result=await api.nativeReportQualityPage(s.revision,id,scope,offset,50);if(!current()||request!==sequence)return;
-    if(!Array.isArray(result.issues)||result.issues.length>50)throw Error('Некорректная страница замечаний.');summary.replaceChildren();notesStatus.replaceChildren();
+    if(!Array.isArray(result.issues)||result.issues.length>50||!Number.isSafeInteger(result.total_rows)||result.total_rows<0)throw Error('Некорректная страница замечаний.');summary.replaceChildren();notesStatus.replaceChildren();
     if(scope==='source')summary.append(el('p','Общие замечания источника могут относиться к другим датам и подразделениям.','muted small'));
     sourceEvidence(summary,result.evidence,scope);issues.replaceChildren();
     for(const issue of result.issues){
@@ -150,8 +149,8 @@ async function render(root,s,active){
     if(!result.issues.length)summary.append(el('p','Подробные замечания не найдены. Это не подтверждает полноту источника.','muted small'));
     if(result.warning_fallback)summary.append(el('p','Есть признак замечания без сохранённого подробного описания.','warn small'));
     if(result.invalid_entries)summary.append(el('p','Неподдерживаемых записей диагностики: '+result.invalid_entries+'.','warn small'));
-    const previous=button('← Предыдущие замечания',()=>{if(current()&&offset>0)void load(Math.max(0,offset-50));}),next=button('Следующие замечания →',()=>{if(current()&&result.next_offset!==null)void load(result.next_offset);}),caption=el('span',' Страница '+(Math.floor(offset/50)+1)+' ','muted small');previous.disabled=offset===0;next.disabled=result.next_offset===null;notesStatus.append(previous,caption,next);
-    const index=Math.floor(offset/50),status='Показано '+result.issues.length+' сохранённых замечаний',viewport=window.sqlRowScroll?.attach(issues,{index,size:50,count:result.issues.length,hasNext:result.next_offset!==null,label:status,direct:false,go:i=>{if(!current()||request!==sequence)return false;if(i===index-1&&index>0)return load(Math.max(0,offset-50));if(i===index+1&&result.next_offset!==null)return load(result.next_offset);return false;}});previous.hidden=next.hidden=Boolean(viewport);if(viewport){caption.textContent=status;window.sqlRowScroll?.retire?.(previous,next);}
+    const index=Math.floor(offset/50),pages=Math.max(1,Math.ceil(result.total_rows/50)),go=i=>{if(current()&&request===sequence&&Number.isSafeInteger(i)&&i>=0&&i<pages&&i!==index)return load(i*50);return false;};
+    if(!window.sqlRowScroll?.attach(issues,{index,size:50,count:result.issues.length,total:result.total_rows,label:'Сохранённые замечания',direct:true,go,footer:notesStatus})){const previous=button('← Предыдущие замечания',()=>go(index-1)),next=button('Следующие замечания →',()=>go(index+1));previous.disabled=index===0;next.disabled=index+1>=pages;notesStatus.append(previous,el('span','Показано '+result.issues.length+' из '+result.total_rows,'muted small'),next);}
     if(scope==='report'&&result.source_anchor)notesStatus.append(button('Замечания источника',()=>{if(current()){scope='source';window.sqlRowScroll?.reset(issues);void load();}}));
     if(scope==='source')notesStatus.append(button('Замечания выбранного отчёта',()=>{if(current()){scope='report';window.sqlRowScroll?.reset(issues);void load();}}));
    }catch(error){if(current()&&request===sequence){window.sqlRowScroll?.reset(issues);root.replaceChildren(el('p','Не удалось прочитать замечания: '+errorText(error),'warn small'));}}

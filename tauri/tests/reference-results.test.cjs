@@ -38,6 +38,7 @@ test('summary presents observed partial totals separately from the comparable sa
  assert.match(f.s1.querySelector('.metric-value').textContent,/70/);assert.match(f.s1.querySelector('.quality-notice').textContent,/1 из 2/);assert.ok(f.calls.some(x=>x[6].length===1&&x[6][0]==='A'));assert.doesNotMatch(f.s1.textContent,/₽|ед\./);
  assert.match(f.s1.querySelector('.quality-notice').textContent,/B · 02\.01\.2024: нет пригодного отчёта/);
  assert.match(f.s1.querySelector('.report-range').textContent,/2 янв\. 2024/);
+ for(const screen of [f.s1,f.s2]) assert.match(screen.querySelector('.report-range').children[1].textContent,/^Сравнение с /);
  await f.s1.querySelector('.metric-sample').click();const cells=f.document.querySelectorAll('.sample-values tbody tr');
  assert.deepEqual(cells.map(row=>row.children.map(c=>c.textContent)),[['Сумма','100,00','100,00'],['Количество / объём','10,000','10,000']]);
  incomplete.missing=2;await f.window.referenceResults.refresh(f.scope);assert.doesNotMatch(f.s1.querySelector('.quality-notice').textContent,/02\.01\.2024/);
@@ -63,7 +64,7 @@ test('summary orders observed amounts with null last and warns for either missin
  const f=fixture(),tot=amount=>({count:1,amount,average:amount});f.scope.organizations=['A','B','C','D'];
  f.api.nativeAnalysisCompare=async(...args)=>({summary:{before:f.full,after:f.full},divisions:args[6].map(organization=>({organization,before:organization==='B'?{count:null,amount:null,average:null}:tot(1),after:organization==='C'?{count:null,amount:null,average:null}:tot(1)})),top_amount:[],top_count:[]});
  f.api.nativeAnalysisOrganizations=async()=>[{org:'A',complete:true,total:tot(50)},{org:'B',complete:true,total:tot(100)},{org:'C',complete:false,total:{count:null,amount:null,average:null}},{org:'D',complete:true,total:tot(-5)}];f.api.nativeAnalysisRange=async()=>({...f.full,available_reports:0,available_total:{count:null,amount:null,average:null}});
- f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);const rows=f.s1.querySelectorAll('tbody tr');assert.deepEqual(rows.map(row=>row.children[0].textContent),['B','A','D','C · частичные данные']);
+ f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);const rows=f.s1.querySelectorAll('tbody tr');assert.deepEqual(rows.map(row=>row.children[0].textContent),['B','A','D','C (частичные данные)']);
  const warnings=f.s1.querySelectorAll('.org-warning');assert.equal(warnings.length,2);assert.match(warnings[0].getAttribute('aria-label'),/^B/);await warnings[0].click();assert.match(f.document.getElementById('sheet').textContent,/неполный базовый интервал/);await f.document.getElementById('sheet').close();assert.equal(warnings[0].focused,true);await warnings[0].click();await f.window.referenceResults.refresh(null);assert.equal(f.document.getElementById('sheet').open,false,'stale sample modal must close on refresh');
 });
 test('KPI direction follows the displayed precision and preserves measurable differences',async()=>{

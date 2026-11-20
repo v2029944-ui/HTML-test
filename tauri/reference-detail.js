@@ -1,4 +1,4 @@
-// The detail tabs and the full workspace share the same native controllers and DOM.
+// Each analytic tab displays its own native SQL controls.
 (function () {
   'use strict';
   const $ = id => document.getElementById(id);
@@ -48,16 +48,17 @@
         toggle.focus({preventScroll:true});
         fold.scrollIntoView({block:'start'});
       };
-      line.append(document.createElement('span'), edit);
+      line.append(document.createElement('span'), document.createElement('span'), edit);
       panel.querySelector(':scope > summary, :scope > .sectionbar')?.after(line);
     }
     const scope = window.unifiedUI.scope;
     const showDate = value => value.split('-').reverse().join('.');
     const interval = (lo, hi) => lo === hi ? showDate(lo) : showDate(lo) + ' — ' + showDate(hi);
     const end = raw => scope.source === 'daily' ? raw : window.unifiedOriginal.periodEnd(raw, scope.displayType);
-    line.firstChild.textContent = scope ? 'Общий период ' + interval(scope.from, end(scope.to)) +
-      (scope.baseFrom && scope.baseTo && ['structurePanel','comparison','regularityPanel'].includes(key) ?
-        ' · База ' + interval(scope.baseFrom, end(scope.baseTo)) : '') : 'Нет выбранного периода';
+    const [period, base] = line.children;
+    period.textContent = scope ? 'Общий период ' + interval(scope.from, end(scope.to)) : 'Нет выбранного периода';
+    base.hidden = !(scope?.baseFrom && scope.baseTo && ['structurePanel','comparison','regularityPanel'].includes(key));
+    base.textContent = base.hidden ? '' : 'База ' + interval(scope.baseFrom, end(scope.baseTo));
   }
 
   function chartButtons() {
@@ -88,7 +89,7 @@
     }
   }
 
-  let comparisonOrigin = '', dates = null, dateMode = 'shared';
+  let comparisonOrigin = '', comparisonWindow = '', dates = null, dateMode = 'shared';
   const dateCaptions = ['Базовый период · С','Базовый период · По','Анализируемый период · С','Анализируемый период · По'];
   function previousEqual(lo,hi) {
     return [window.referenceCalendar.day(lo, -(1 + Math.round((Date.parse(hi)-Date.parse(lo))/86400000))),
@@ -103,12 +104,17 @@
     if(!scope || scope.source!=='daily' || !scope.baseFrom || !scope.baseTo) {
       if(toolbar) toolbar.hidden=true;
       $('periodComparisonFilters').classList.remove('ref-local-date-fields');
-      dates=null;comparisonOrigin='';
+      // A pending SQL refresh can temporarily clear scope before publishing the same interval.
+      if(scope){dates=null;comparisonOrigin='';}
       return;
     }
-    const signature=[scope.revision,scope.from,scope.to,scope.baseFrom,scope.baseTo].join('/');
+    const range=[scope.revision,scope.from,scope.to].join('/');
+    const signature=[range,scope.baseFrom,scope.baseTo].join('/');
     if(signature!==comparisonOrigin) {
-      dates=[scope.baseFrom,scope.baseTo,scope.from,scope.to];comparisonOrigin=signature;dateMode='shared';
+      if (!comparisonOrigin || comparisonWindow!==range || dateMode!=='manual') {
+        dates=[scope.baseFrom,scope.baseTo,scope.from,scope.to];dateMode='shared';
+      }
+      comparisonOrigin=signature;comparisonWindow=range;
     }
     if(!toolbar) buildComparisonToolbar();
     const root=$('refComparisonDates'),periods=$('comparisonMode').value==='periods';

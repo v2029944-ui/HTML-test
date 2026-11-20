@@ -11,6 +11,8 @@ mod native_reference_detail_csv;
 use native_reference_detail_csv::reference_detail_csv;
 mod native_report_quality;
 mod native_coverage;
+mod native_pagination;
+use native_pagination::{unified_report_window, unified_report_org_window, native_quality_matrix_reports_at_page};
 mod native_reference_changes;
 use native_reference_changes::{reference_changes,reference_changes_csv,reference_summary_csv};
 use native_coverage::{native_quality_matrix_page,native_quality_matrix_reports};
@@ -1076,9 +1078,10 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             reference_changes, reference_changes_csv, reference_summary_csv,
             unified_period_options, unified_name_options, unified_changes_page, unified_changes_csv,
-            reference_trend_csv, reference_detail_csv, unified_pattern_page, unified_comparison_page, unified_group_audit_page,
+            reference_trend_csv, reference_detail_csv, unified_pattern_page, unified_comparison_page, unified_comparison_window, unified_group_audit_page,
             unified_rename_organizations, unified_clear_reports,
             unified_report_page, unified_report_summary, unified_report_org_page,
+            unified_report_window, unified_report_org_window, native_quality_matrix_reports_at_page,
             unified_quality_page, unified_calendar, unified_group_audit_csv, unified_quality_csv,
             unified_management_page, unified_group_save, unified_work_assign,
             unified_groups_preview, unified_groups_import, unified_groups_export,

@@ -109,6 +109,40 @@ fn options() -> UnifiedChangeOptions {
     }
 }
 #[test]
+fn direct_sql_pages_seek_without_cursor_walk_and_keep_filtered_totals() {
+    let (_dir, store, revision, scope) = fixture();
+    let first = store.unified_name_options(revision, "", None, 50).unwrap();
+    let rest = store.unified_name_options(revision, "", first.next.as_deref(), 50).unwrap();
+    let all: Vec<_> = first.rows.iter().chain(&rest.rows).map(|row| row.key.clone()).collect();
+    let seek = store.unified_name_options_at_page(revision, "", 6, 10).unwrap();
+    assert_eq!(seek.total_rows, 75);
+    assert_eq!(seek.rows.iter().map(|row| row.key.clone()).collect::<Vec<_>>(), all[60..70]);
+    assert!(store.unified_name_options_at_page(revision, "яркая", 1, 10).is_err());
+    assert!(store.unified_name_options_at_page(revision, "", usize::MAX, 50).is_err());
+    assert!(store.unified_name_options_at_page(revision + 1, "", 0, 50).is_err());
+    let q = query();
+    let options = options();
+    let first = store.unified_changes_page(revision, &scope, &q, None, &options, None).unwrap();
+    let expected = store.unified_changes_page(revision, &scope, &q, None, &options, first.next.as_deref()).unwrap();
+    let seek = store.unified_changes_page_at_page(revision, &scope, &q, None, &options, 1).unwrap();
+    assert_eq!(seek.total_rows, first.total_rows);
+    assert_eq!(serde_json::to_value(seek.rows).unwrap(), serde_json::to_value(expected.rows).unwrap());
+    let before = RangeQuery { from: "2024-01-01".into(), to: "2024-01-01".into() };
+    let compare = ComparisonQuery { before: before.clone(), after: RangeQuery { from: q.from.clone(), to: q.to.clone() }, percent: 0., min_count: 0., min_amount: 0. };
+    let window = store.analysis_comparison_window(revision, &scope, &compare, None, 6, 10).unwrap();
+    assert_eq!(window.total_rows, 75);
+    assert_eq!(window.rows.len(), 10);
+    let pattern_options=UnifiedPatternOptions { range_window:false, baseline:None, search:String::new(), status:"all".into() };
+    let first = store.unified_pattern_page(revision,&scope,&q,None,"regularity",4,&pattern_options,None).unwrap();
+    let tail = store.unified_pattern_page_at_page(revision,&scope,&q,None,"regularity",4,&pattern_options,1).unwrap();
+    assert_eq!(tail.total_rows, first.total_rows);
+    assert_eq!(tail.rows.len(), 25);
+    let first = store.advanced_composition(revision,&scope,&q,None,&before,"contributions","amount",None).unwrap();
+    let tail = store.advanced_composition_at_page(revision,&scope,&q,None,&before,"contributions","amount",12,1).unwrap();
+    assert_eq!(tail["total_rows"], first["total_rows"]);
+    assert_eq!(tail["rows"].as_array().unwrap().len(), first["total_rows"].as_u64().unwrap().saturating_sub(50) as usize);
+}
+#[test]
 fn unified_search_before_limit_unicode_and_stable_cursor() {
     let (_dir, s, r, scope) = fixture();
     let q = query();

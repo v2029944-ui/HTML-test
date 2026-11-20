@@ -17,6 +17,7 @@ pub enum QualityScope {
 #[derive(Debug, Serialize)]
 pub struct ReportQualityPage {
     issues: Vec<QualityIssue>,
+    total_rows: u32,
     next_offset: Option<u32>,
     source_anchor: Option<String>,
     warning_fallback: bool,
@@ -446,6 +447,10 @@ impl WarningIndex {
         Ok(Self { db })
     }
 
+    fn unmatched_count(&self)->Result<u32,String> {
+        let total:i64=self.db.query_row("SELECT count(*) FROM warnings w WHERE NOT EXISTS(SELECT 1 FROM known WHERE reason=w.reason)",[],|row|row.get(0)).map_err(err)?;
+        u32::try_from(total).map_err(|_|"Слишком много сохранённых замечаний.".into())
+    }
     fn append(&self, window: &mut Window, page: Page) -> Result<bool, String> {
         let offset = page.offset.saturating_sub(window.total);
         let available = page.limit - window.issues.len();
@@ -713,8 +718,10 @@ impl Storage {
         };
         let after = offset.saturating_add(limit as u32);
         let mut more = window.total > after;
+        let mut total_rows=window.total;
         let mut warning_fallback = false;
         if let (Some(index), Some(warnings)) = (index, doc.warnings) {
+            total_rows=total_rows.checked_add(index.unmatched_count()?).ok_or("Слишком много сохранённых замечаний.")?;
             window.invalid_entries += warnings.invalid_entries;
             if !more {
                 more = index.append(&mut window, page)?;
@@ -736,6 +743,7 @@ impl Storage {
         tx.commit().map_err(err)?;
         Ok(ReportQualityPage {
             issues: window.issues,
+            total_rows,
             next_offset: more.then_some(after),
             source_anchor,
             warning_fallback,

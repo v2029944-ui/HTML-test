@@ -116,7 +116,7 @@ async function refresh(){
    const selected=[...state.selectedOrganizations].filter(name=>next.org_names.includes(name));
    state.selectedOrganizations=new Set(selected.length?selected:next.org_names);
    revision=rev;snapshot=next;
-   label.textContent='Отчётов: '+next.reports+' · Локальная база SQLite';
+   label.textContent='Локальная база SQLite. Отчётов: '+next.reports;
    cancel.hidden=true;retry.hidden=false;
    await notify(next);
    return next;

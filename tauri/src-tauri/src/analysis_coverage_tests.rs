@@ -423,6 +423,15 @@ fn reports_keyset_is_bounded_and_cursor_binds_all_query_state() {
     assert_eq!(second.rows.len(), 5);
     assert!(second.next.is_none());
     assert_eq!(second.rows[0].id, "r20");
+    let direct = store.quality_matrix_reports_at_page(rev, "day", "2024-01-01", Some("A"), 1, 20).unwrap();
+    assert_eq!((direct.total_rows, direct.rows.len()), (25, 5));
+    assert_eq!(direct.rows[0].id, second.rows[0].id);
+    assert!(direct.next.is_none());
+    assert!(direct.rows.iter().all(|r| r.duplicate && !r.overlap && !r.shifted));
+    assert!(store.quality_matrix_reports_at_page(rev, "day", "2024-01-01", Some("A"), 2, 20).is_err());
+    let empty = store.quality_matrix_reports_at_page(rev, "day", "2024-01-01", Some("B"), 0, 20).unwrap();
+    assert_eq!(empty.total_rows, 0);
+    assert!(empty.rows.is_empty());
     for (kind, start, org) in [
         ("day", "2024-01-02", Some("A")),
         ("week", "2024-01-01", Some("A")),

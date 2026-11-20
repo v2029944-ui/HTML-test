@@ -57,6 +57,25 @@ const MAX_PAYLOAD_BYTES: usize = 200 * 1024 * 1024;
 // Keep synchronized with REPORT_TYPES in the root index.html.
 const REPORT_TYPES: [&str; 3] = ["week", "month", "day"];
 
+#[derive(Debug, Serialize)]
+pub struct SqlPage<T> {
+    pub rows: Vec<T>,
+    pub total_rows: i64,
+}
+
+pub(crate) fn direct_page_offset(index: usize, size: usize, total: i64) -> Result<i64, String> {
+    if size == 0 || total < 0 {
+        return Err("Invalid page size or row count".into());
+    }
+    let offset = index.checked_mul(size)
+        .and_then(|value| i64::try_from(value).ok())
+        .ok_or("Page offset exceeds SQLite bounds")?;
+    if offset > 0 && offset >= total {
+        return Err("Page lies outside the result".into());
+    }
+    Ok(offset)
+}
+
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }

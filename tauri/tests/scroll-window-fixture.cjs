@@ -1,5 +1,5 @@
 // Controller unit tests capture the bounded SQL callback. Chromium tests use
-// the real scrollbar, its layout and native keyboard/mouse input.
+// the real page selector, its layout and native keyboard/mouse input.
 module.exports={
  attach(root,spec){root.scrollWindow=spec;return root;},
  reset(root){if(root)root.scrollWindow=null;},
