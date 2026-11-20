@@ -507,6 +507,8 @@ def check_report_views(page):
     assert daily['reports']==366 and abs(daily['amount']-7320)<.001,daily
     assert api(page,'managementReportPage',snapshot['revision'],{'report_type':'week'},None,50)==[]
     wait_for_app_state(page,'document.querySelectorAll("#reportCalendar > button").length===12','Calendar loaded')
+    expect(page.locator('#calendarType')).to_be_hidden()
+    expect(page.locator('#calendarYearSelect')).to_be_hidden()
     year=int(page.locator('#calendarRange').inner_text().split()[0])
     for current in range(year,2024,-1):
         page.locator('#calendarPrev').click()

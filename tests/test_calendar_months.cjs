@@ -80,3 +80,29 @@ test('legacy coverage is inferred only within the same identified source and she
  assert.equal(result.same.missing,1);
  for(const key of ['different','sheets','anonymous'])assert.equal(result[key].missing,0,key);
 });
+
+
+test('Issue 64 month detail closes instead of scrolling back to an open section',()=>{
+ run("state.reports=[];state.settings.orgNames=['A'];$('calendarType').value='all';calendarYear=2024;calendarSelectedMonth=null;renderReportCalendar();");
+ nodes.get('reportCalendar').children[1].listeners.click();
+ const details=nodes.get('calendarDetails');
+ assert.equal(details.querySelectorAll('button').filter(n=>n.dataset.date).length,29);
+ assert.equal(details.children[1].textContent,'Закрыть дни месяца');
+ details.children[1].listeners.click();
+ assert.equal(details.children.length,0);
+ assert.equal(run('calendarSelectedMonth'),null);
+ assert.equal(nodes.get('reportCalendar').children.length,12);
+ assert.ok(nodes.get('reportCalendar').children.every(n=>n.attributes['aria-expanded']==='false'));
+});
+test('Issue 64 classic calendar hides redundant source/year selectors and catalog upload sits with group imports',()=>{
+ const filter=html.match(/<div class="section-filter-row" hidden style="display:none">[\s\S]*?<\/div>/);
+ assert.ok(filter,'legacy filter controls are retained for existing code but not rendered');
+ assert.match(filter[0],/id="calendarType"/);
+ assert.match(filter[0],/id="calendarYearSelect"/);
+ const groups=html.slice(html.indexOf('<section class="panel" id="groupWorkspace"'),html.indexOf('<details class="group-section" id="groupEditor">'));
+ assert.ok(groups.includes('id="catalogFile"'));
+ assert.ok(groups.includes('id="importGroups"'));
+ assert.ok(groups.indexOf('id="catalogFile"')>groups.indexOf('id="importGroups"'));
+ assert.equal((html.match(/id="catalogFile"/g)||[]).length,1);
+ assert.ok(!html.match(/<details class="group-section" id="groupCatalog">[\s\S]*?<\/details>/)?.[0].includes('id="catalogFile"'));
+});
