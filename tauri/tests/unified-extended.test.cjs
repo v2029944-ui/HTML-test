@@ -95,3 +95,12 @@ test('composition hides base-share columns and zero-valued rows when baseline is
  assert.equal(table.rows.length,1);assert.equal(table.rows[0][0].textContent,'АКБ Замена');
  assert.match(f.nodes.get('structureResults').textContent,/Показано 1 из 10/);
 });
+
+test('clicking a change KPI filters the SQL rows by the selected category',async()=>{
+ const selected=[];const f=fixture({unifiedChangesPage:async(_request,options)=>{selected.push(options.direction);return page();}});
+ f.publish();f.view('changes');await settle();
+ const cards=f.nodes.get('changesSummary').children;
+ assert.equal(cards[1].tagName,'BUTTON');assert.match(cards[1].attributes['aria-label'],/Значительно снизилось/);
+ cards[1].dispatch('click');await settle();
+ assert.equal(f.nodes.get('changesDirection').value,'down');assert.equal(selected.at(-1),'down');
+});
