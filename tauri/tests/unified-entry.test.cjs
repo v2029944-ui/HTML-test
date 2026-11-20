@@ -106,3 +106,9 @@ test('generated original presentation uses quantity/volume terminology, standalo
  assert.match(html,/Сумма \/ количество \(объём\)/);
  assert.match(original,/Средняя сумма на работу/);
 });
+
+test('Windows CRLF presentation still generates the column-orientation controls',()=>{
+ const windows=original.replace(/\r?\n/g,'\r\n');
+ const html=prepareHtml(windows);
+ assert.match(html,/id="chartOrientation"/);assert.doesNotMatch(html,/data-chart="line"/);
+});
