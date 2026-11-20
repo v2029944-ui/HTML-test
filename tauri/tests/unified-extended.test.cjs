@@ -62,7 +62,9 @@ test('comparison uses bounded SQL rows and preserves unavailable values',async()
  const fx=fixture({nativeAnalysisCompare:async(...args)=>{calls.push(['summary',args]);return {summary:{before:total,after:{...total,complete:false,total:{count:null,amount:null,average:null}}}};},unifiedComparisonPage:async(...args)=>{calls.push(['page',args]);return [{key:'work:Known',name:'Known',kind:'work',count:null,amount:null,average:{base:null,current:null,delta:null,percent:null}}];}});
  fx.publish();fx.nodes.get('advancedAnalytics').open=true;fx.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
  assert.equal(calls.length,2);assert.equal(calls[1][1][4],50);assert.equal(fx.tables.length,2);
- const row=fx.tables[0].rows.find(row=>row[0]?.textContent==='Known');assert.deepEqual(Array.from(row.slice(1)),['—','—','—','—']);assert.match(fx.nodes.get('comparisonCoverage').textContent,/Неполные данные/);
+ assert.deepEqual(Array.from(fx.tables[0].headers),['Работа / группа','Значение раньше']);
+ assert.ok(!fx.tables[0].rows.some(row=>row[0]?.textContent==='Known'));
+ assert.match(fx.nodes.get('comparisonCoverage').textContent,/Сравнение недоступно/);
 });
 test('a null dashboard scope invalidates pending changes and clears prior rows',async()=>{
  const wait=deferred();const f=fixture({unifiedChangesPage:()=>wait.promise});f.publish();f.view('changes');f.publish(null);wait.resolve(page('Outdated'));await settle();assert.doesNotMatch(f.nodes.get('changesResults').textContent,/Outdated/);assert.equal(f.nodes.get('changesResults').attributes['aria-busy'],'false');
@@ -79,4 +81,17 @@ test('daily week/month/year usual-level drilldowns retain the expanded final day
   f.UI.range=(type,start,end,source)=>({type:'day',displayType:type,source,from,to});f.publish({displayType:kind,source:'daily',type:'day',from,to});f.nodes.get('usualPeriod').value=from;f.nodes.get('usualPanel').open=true;f.nodes.get('usualPanel').dispatch('toggle');await settle();
   const table=f.tables.find(table=>table.root==='usualResults');assert.ok(table,kind);table.rows[0][0].dispatch('click');await settle();assert.equal(calls.length,1,kind);assert.equal(calls[0][2],baseline,kind);assert.equal(calls[0][3],to,kind);assert.equal(calls[0][8],kind);
  }
+});
+
+test('composition hides base-share columns and zero-valued rows when baseline is missing',async()=>{
+ const f=fixture({nativeCompositionPage:async()=>({
+  currentComplete:true,baseComplete:false,sharesValid:true,total:15,
+  rows:[{key:'work:A',name:'АКБ Замена,',current:15,share:100,cumulative:100,base:null,baseShare:null,shareChange:null},
+        {key:'work:Zero',name:'Нулевая работа',current:0,share:0,cumulative:100,base:null}]
+ })});
+ f.publish();f.nodes.get('structurePanel').open=true;f.nodes.get('structurePanel').dispatch('toggle');await settle();
+ const table=f.tables.find(t=>t.root==='structureResults');
+ assert.ok(table);assert.deepEqual(Array.from(table.headers),['Услуга / группа','Значение сейчас','Доля сейчас','Накопленная доля']);
+ assert.equal(table.rows.length,1);assert.equal(table.rows[0][0].textContent,'АКБ Замена');
+ assert.match(f.nodes.get('structureResults').textContent,/Показано 1 из 10/);
 });
