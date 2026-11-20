@@ -458,9 +458,12 @@ def check_analytics(page, temporary, output):
 
     page.locator('#advancedAnalytics > summary').click()
     page.locator('#chartBreakdown').select_option('organizations')
-    wait_for_text(page,'#chartsContainer','Для динамики подразделений выберите несколько периодов.')
+    assert page.locator('[data-chart="line"]').count()==0
     page.locator('[data-chart="bar"]').click()
     wait_for_app_state(page,'document.querySelector("#chartsContainer svg")!==null','SQLite single-period department bar chart')
+    page.locator('#chartOrientation').select_option('horizontal')
+    assert page.locator('#chartOrientation').input_value()=='horizontal'
+    page.locator('#chartOrientation').select_option('vertical')
     organization=page.locator('#orgFilter input')
     assert organization.count()==4
     if not organization.first.is_visible():
