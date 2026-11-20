@@ -28,3 +28,13 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
 .chart-wrap .horizontal-bar-scroll svg{display:block;width:100%;height:auto;min-height:0;max-height:none;overflow:visible}
 .horizontal-bar-pager{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}
 .horizontal-bar-pager button{min-height:34px}
+
+/* Missing-data quality is persistent and keyboard-accessible, not dismissible. */
+.coverage-details{margin:9px 0}.coverage-details summary{font-weight:700;cursor:pointer}
+.coverage-matrix-scroll{overflow-x:auto;max-width:100%;margin-top:8px}
+.coverage-matrix{min-width:max-content;max-width:none}.coverage-matrix th{white-space:nowrap}
+.coverage-matrix td{padding:8px 11px;text-align:center;font-weight:700}
+.coverage-missing{background:var(--negative-bg);color:var(--negative)}.coverage-ok{background:var(--positive-bg);color:var(--positive)}
+#overviewAlerts .button{margin:6px 0}.kpi strong{white-space:nowrap;overflow-wrap:normal;font-size:clamp(17px,2vw,29px);letter-spacing:-.025em}
+#changesSummary .kpi{padding:14px 16px}#changesSummary .kpi strong{margin:7px 0 3px}
+@media(max-width:700px){#changesSummary .kpi strong{font-size:clamp(16px,3vw,24px)}}
