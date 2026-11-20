@@ -1004,7 +1004,9 @@ def check_extended(page):
     page.locator('#changesType').select_option('month')
     set_calendar_field(page, 'changesTo', '2024-02')
     expect(page.locator('[data-sql-pager="changesResults"]')).to_have_attribute('data-sql-window','0',timeout=90_000)
-    assert page.locator('#changesSummary .kpi').count()>=4
+    # The pager can remain mounted while a date change reloads the KPIs.
+    expect(page.locator('#changesSummary .kpi-action')).to_have_count(4,timeout=90_000)
+    expect(page.locator('#changesSummary')).to_have_attribute('aria-busy','false')
     assert page.locator('#changesResults tbody tr').count()<=100
     slider=page.locator('#changesPercent')
     slider.focus();slider.press('End')
