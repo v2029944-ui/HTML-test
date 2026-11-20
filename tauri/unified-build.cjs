@@ -6,7 +6,7 @@ function buildUnified(source){
  const inline=[...source.matchAll(/<script>([\s\S]*?)<\/script>/g)];
  const presentation=inline.find(item=>item[1].includes('const state =')&&item[1].includes('window.appReady=main();'));
  if(!presentation)throw Error('Original interface presentation markers changed');
- let script=presentation[1].replace('window.appReady=main();','');
+ let script=presentation[1].replace('window.appReady=main();','').replace(/\r\n/g,'\n');
  // The standalone browser UI stays unchanged; only the installed SQL presentation
  // must not describe a fractional quantity/volume as a count of completed jobs.
  const metricMarker="function metricTitle(metric){return {count:'Количество',amount:'Сумма',average:'Средняя сумма на одну работу'}[metric]||metric;}";
