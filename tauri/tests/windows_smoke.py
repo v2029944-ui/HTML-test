@@ -572,6 +572,35 @@ def check_analytics(page, temporary, output):
     details.get_by_role('button',name='← Ранее',exact=True).click()
     expect(details.locator('td.coverage-missing')).to_have_count(124)
     page.screenshot(path=str(output/'windows-sql-coverage-pages.png'))
+    # The installed WebView2 must drill into actual indexed report provenance.
+    page.locator('#rangeStart').fill('2025-W01')
+    page.locator('#rangeEnd').fill('2025-W02')
+    wait_for_app_state(page,'window.unifiedUI.scope?.from==="2024-12-30" && window.unifiedUI.scope?.to==="2025-01-12"','Mixed complete and missing daily quality range')
+    details=alerts.locator('.coverage-details')
+    details.locator(':scope > summary').click()
+    expect(details.locator('td.coverage-ok')).to_have_count(8)
+    expect(details.locator('td.coverage-missing')).to_have_count(48)
+    action=details.locator('td.coverage-ok .coverage-cell-action').first
+    action.focus();page.keyboard.press('Enter')
+    inspection=details.locator('.coverage-inspection')
+    expect(inspection).to_be_visible()
+    evidence=api(page,'nativeQualityMatrixReports',revision,'day','2024-12-30',orgs[0],None,20)
+    assert evidence['revision']==revision and len(evidence['rows'])==1 and evidence['next'] is None,evidence
+    saved=evidence['rows'][0]
+    assert saved['valid'] and not saved['shifted'] and not saved['duplicate'] and not saved['overlap'],saved
+    expect(inspection.locator('.coverage-report strong')).to_have_text(saved['source_name'] or 'Источник не сохранён')
+    inspection.locator('.coverage-report > details > summary').click()
+    expect(inspection).to_contain_text('Подробные замечания не найдены. Это не подтверждает полноту источника.')
+    page.screenshot(path=str(output/'windows-sql-quality-matrix.png'))
+    inspection.get_by_role('button',name='Закрыть подробности',exact=True).focus()
+    page.keyboard.press('Escape')
+    expect(inspection).to_be_hidden()
+    expect(action).to_be_focused()
+    missing=details.locator('td.coverage-missing .coverage-cell-action').first
+    missing.click()
+    expect(inspection).to_contain_text('Причина отсутствия неизвестна; значение не заменено нулём.')
+    expect(inspection.locator('.coverage-report')).to_have_count(0)
+    assert api(page,'nativeSettingsBootstrap')['revision']==revision,'Read-only diagnostics changed stored data'
     page.locator('#overviewMode').select_option('single')
     dashboard_month(page)
 

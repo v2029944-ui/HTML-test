@@ -44,6 +44,8 @@
     managementReportSummary:(revision,filter)=>tracked('unified_report_summary',{revision,filter},'reads'),
     managementReportOrgPage:(revision,id,after=null,limit=50)=>tracked('unified_report_org_page',{revision,id,after,limit},'reads'),
     unifiedQualityPage:(revision,filter,offset=0,limit=50)=>tracked('unified_quality_page',{revision,filter,offset,limit},'reads'),
+    nativeQualityMatrixPage:(revision,reportType,from,to,organizations)=>tracked('native_quality_matrix_page',{revision,reportType,from,to,organizations},'reads'),
+    nativeQualityMatrixReports:(revision,reportType,start,organization=null,after=null,limit=20)=>tracked('native_quality_matrix_reports',{revision,reportType,start,organization,after,limit},'reads'),
     unifiedCalendar:(revision,year)=>tracked('unified_calendar',{revision,year},'reads'),
     chooseXlsx:async()=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');

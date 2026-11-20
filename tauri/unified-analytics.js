@@ -74,74 +74,7 @@ function dateLabel(iso){return /^\d{4}-\d{2}-\d{2}$/.test(iso)?iso.slice(8,10)+'
 function rangeLabel(from,to){return dateLabel(from)+(from===to?'':' — '+dateLabel(to));}
 function sourceRangeLabel(s){return rangeLabel(s.from,s.source==='daily'?s.to:O.periodEnd(s.to,s.displayType));}
 async function renderMissingMatrix(root,s){
- const kind=s.type,pageSize=kind==='day'?31:12;
- const dateMs=86400000,first=Date.parse(s.from+'T00:00:00Z'),last=Date.parse(s.to+'T00:00:00Z');
- if(!Number.isFinite(first)||!Number.isFinite(last)||first>last)return;
- const interval=kind==='month'?
-  (Number(s.to.slice(0,4))-Number(s.from.slice(0,4)))*12+
-   Number(s.to.slice(5,7))-Number(s.from.slice(5,7))+1:
-  Math.floor((last-first)/(dateMs*(kind==='week'?7:1)))+1;
- const pages=Math.ceil(interval/pageSize);
- let page=0,sequence=0;
- const active=()=>UI.revision===s.revision&&printCapture?.scope===s;
- const shift=(start,n)=>{
-  const d=new Date(start+'T00:00:00Z');
-  if(kind==='month')d.setUTCMonth(d.getUTCMonth()+n);
-  else d.setUTCDate(d.getUTCDate()+n*(kind==='week'?7:1));
-  return d.toISOString().slice(0,10);
- };
- async function drawPage(){
-  const requestId=++sequence,start=shift(s.from,page*pageSize);
-  const endDate=shift(start,pageSize-1),to=endDate>s.to?s.to:endDate;
-  root.replaceChildren(UI.el('p','Загрузка таблицы пропусков…','muted small'));
-  try{
-   // The chart API returns at most eight organizations per request.
-   const series=[];
-   for(let offset=0;offset<s.organizations.length;offset+=8){
-    const result=await api.nativeOrganizationTrends(s.revision,kind,start,to,s.organizations.slice(offset,offset+8),null,kind==='day'?'day':null,[]);
-    if(!active()||requestId!==sequence)return;
-    series.push(...(result.series||[]));
-   }
-   if(!active()||requestId!==sequence)return;
-   const periods=series[0]?.points||[];
-   const pager=UI.el('div',null,'coverage-matrix-pager');
-   if(pages>1){
-    const prev=UI.el('button','← Ранее','button secondary'),next=UI.el('button','Позднее →','button secondary');
-    prev.type=next.type='button';prev.disabled=page===0;next.disabled=page>=pages-1;
-    prev.addEventListener('click',()=>{if(page>0&&active()){page--;void drawPage();}});
-    next.addEventListener('click',()=>{if(page<pages-1&&active()){page++;void drawPage();}});
-    pager.append(prev,UI.el('span','Страница '+(page+1)+' из '+pages+': '+rangeLabel(start,kind==='day'?to:O.periodEnd(to,kind)),'muted small'),next);
-   }
-   if(!periods.length){
-    root.replaceChildren(pager,UI.el('p','За показанный диапазон нет полных отчётов. Выберите другой источник или проверьте данные.','muted small'));
-    return;
-   }
-   const table=UI.el('table',null,'table coverage-matrix'),header=UI.el('tr');
-   header.append(UI.el('th','Подразделение'));
-   for(const period of periods){
-    const startDate=period.start.length===7?period.start+'-01':period.start;
-    header.append(UI.el('th',rangeLabel(startDate,kind==='day'?startDate:O.periodEnd(startDate,s.displayType))));
-   }
-   const head=UI.el('thead');head.append(header);table.append(head);
-   const body=UI.el('tbody');
-   for(const name of s.organizations){
-    const serie=series.find(x=>x.organization===name),line=UI.el('tr');
-    line.append(UI.el('th',name));
-    for(let i=0;i<periods.length;i++){
-     const found=serie?.points?.[i],complete=found?.missing===0;
-     const cell=UI.el('td',complete?'Есть':'Нет',complete?'coverage-ok':'coverage-missing');
-     cell.title=complete?'Полный отчёт':'Нет полного отчёта — не означает ноль';line.append(cell);
-    }
-    body.append(line);
-   }
-   table.append(body);
-   const scroll=UI.el('div',null,'coverage-matrix-scroll');scroll.append(table);
-   root.replaceChildren(pager,UI.el('p','«Нет» означает отсутствие полного отчёта, не нулевое значение.','muted small'),scroll);
-  }catch(err){
-   if(active()&&requestId===sequence)root.replaceChildren(UI.el('p','Не удалось показать пропуски: '+errorText(err),'warn small'));
-  }
- }
- await drawPage();
+ await window.unifiedCoverage.render(root,s,()=>UI.revision===s.revision&&printCapture?.scope===s);
 }
 async function suggestWeeklyReports(s){
  if(s.source!=='daily'||s.displayType!=='week')return;
@@ -168,6 +101,12 @@ async function suggestWeeklyWhenDailyEmpty(revision,mine){
   message.append(button);$('overviewAlerts').append(message);
  }catch{/* Подсказка не заменяет обязательную проверку источников. */}
 }
+function coverageDetails(label,s){
+ const details=UI.el('details',null,'coverage-details'),matrix=UI.el('div');
+ details.append(UI.el('summary',label),matrix);let loaded=false;
+ details.addEventListener('toggle',()=>{if(details.open&&!loaded){loaded=true;void renderMissingMatrix(matrix,s);}});
+ return details;
+}
 function drawOverview(result,organizations,s,before){
  for(const id of ['overviewKpis','overviewInsights','overviewOrganizations','overviewAlerts'])clear(id);
  const summary=result.summary,current=summary.after,previous=summary.before,root=$('overviewKpis'),insights=$('overviewInsights');
@@ -180,13 +119,11 @@ function drawOverview(result,organizations,s,before){
   const alert=UI.el('div',null,'overview-alert warn');
   alert.setAttribute('role','status');
   alert.append(UI.el('p','Неполные данные: '+current.missing+' пропусков (подразделение × '+({day:'день',week:'неделя',month:'месяц'}[s.type]||'период')+') за '+sourceRangeLabel(s)+'.'));
-  const details=UI.el('details',null,'coverage-details'),matrix=UI.el('div');
-  details.append(UI.el('summary','Показать где'),matrix);
-  let loaded=false;details.addEventListener('toggle',()=>{if(details.open&&!loaded){loaded=true;void renderMissingMatrix(matrix,s);}});
-  alert.append(details);
+  alert.append(coverageDetails('Показать где',s));
   if(current.available_reports>0)alert.append(UI.el('p','Частичный итог по '+current.available_reports+' доступным отчётам: сумма '+fmt(current.available_total.amount,'amount')+' · количество / объём '+fmt(current.available_total.count,'count')+'.','muted small'));
   $('overviewAlerts').append(alert);
  }
+ if(current.complete)$('overviewAlerts').append(coverageDetails('Качество данных по подразделениям и периодам',s));
  if(flagged){
   const info=UI.el('div',null,'overview-alert');
   if(current.invalid_reports||current.duplicate_issues||current.overlap_issues||current.import_warning_reports)

@@ -6,6 +6,8 @@ mod native_management;
 mod native_advanced_analysis;
 use native_advanced_analysis::{native_changes_page,native_changes_csv,native_pattern_page,native_composition_page};
 mod native_report_quality;
+mod native_coverage;
+use native_coverage::{native_quality_matrix_page,native_quality_matrix_reports};
 mod native_name_selection;
 mod unified_commands;
 mod unified_management;
@@ -1075,7 +1077,7 @@ fn main() {
             unified_groups_preview, unified_groups_import, unified_groups_export,
             unified_catalog_preview, unified_catalog_apply,
             updater_configured, load_data, save_data, native_read_revision, native_report_page,
-            native_report_calendar, native_report_quality_page, native_settings_bootstrap, native_group_page, native_group_rename,
+            native_report_calendar, native_report_quality_page, native_quality_matrix_page, native_quality_matrix_reports, native_settings_bootstrap, native_group_page, native_group_rename,
             native_catalog_page, native_delete_report, native_member_page, native_settings_edit,
             native_analysis_index_page, native_analysis_index_settings, native_analysis_name_options, native_analysis_range,
             native_analysis_timeline, native_analysis_ranking, native_analysis_organization_trends, native_analysis_work_timeline, native_analysis_compare, native_daily_rollup, native_changes_page, native_changes_csv, native_pattern_page, native_composition_page,

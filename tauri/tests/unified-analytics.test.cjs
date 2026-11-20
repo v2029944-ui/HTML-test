@@ -4,6 +4,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const path=require('node:path');
 const script=fs.readFileSync(path.join(__dirname,'../unified-analytics.js'),'utf8');
+const coverageScript=fs.readFileSync(path.join(__dirname,'../unified-coverage.js'),'utf8');
 const original=fs.readFileSync(path.join(__dirname,'../../index.html'),'utf8');
 class Element{
  constructor(tag='div',text=''){this.tagName=tag.toUpperCase();this.children=[];this._text=text??'';this.value='';this.dataset={};this.listeners={};this.hidden=false;this.open=false;this.checked=false;this.classList={toggle(){}};}
@@ -13,6 +14,10 @@ class Element{
 }
 const settle=()=>new Promise(r=>setImmediate(r));
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
+function matrixPage(revision,kind,from,to,organizations,missing=()=>true){
+ const periods=[];for(let start=from;start<=to;){const d=new Date(start+'T00:00:00Z'),end=new Date(d);if(kind==='week')end.setUTCDate(end.getUTCDate()+6);if(kind==='month'){end.setUTCMonth(end.getUTCMonth()+1);end.setUTCDate(0);}periods.push({start,end:end.toISOString().slice(0,10),unassigned_invalid:0});if(kind==='month')d.setUTCMonth(d.getUTCMonth()+1);else d.setUTCDate(d.getUTCDate()+(kind==='week'?7:1));start=d.toISOString().slice(0,10);}
+ return {revision,report_type:kind,periods,rows:organizations.map(organization=>({organization,cells:periods.map(({start})=>({start,available:!missing(organization),matching_reports:missing(organization)?0:1,invalid_reports:0,duplicate_reports:0,overlap_reports:0,shifted_reports:0,warned_reports:0,count:missing(organization)?null:2,amount:missing(organization)?null:20,numeric_zero:false,has_activity:!missing(organization)}))}))};
+}
 function fixture(overrides={}){
  const nodes=new Map();for(const m of original.matchAll(/<([a-z][\w-]*)\b[^>]*\bid="([^"]+)"[^>]*>/gi)){const n=new Element(m[1]);n.id=m[2];nodes.set(n.id,n);}
  for(const id of ['unifiedSource','hideEmptyPeriods','chartOrientation','analysisBasePeriod','workViewMode']){const node=new Element('input');node.id=id;nodes.set(id,node);}
@@ -21,11 +26,12 @@ function fixture(overrides={}){
  let snapshotHook,viewHook,prints=0;
  const totals={count:2,amount:20,average:10},summary={complete:true,periods:1,organizations:1,missing:0,values:1,total:totals,available_reports:1,available_total:totals,invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};
  const points=[{start:'2024-01-01',periods:1,missing:0,total:totals},{start:'2024-01-02',periods:1,missing:0,total:totals}];
- const defaults={unifiedPeriodOptions:async()=>({rows:[{start:'2024-01-01',end:'2024-01-01'}],min:'2024-01-01',max:'2024-01-02',total_rows:2,next:null}),unifiedNameOptions:async()=>({rows:[{key:'work:W',name:'W',kind:'work'}],next:null,total_rows:1}),nativeAnalysisCompare:async()=>({summary:{before:summary,after:summary},top_count:[],top_amount:[]}),nativeAnalysisOrganizations:async()=>[{org:'A',complete:true,missing:0,total:totals}],nativeAnalysisRanking:async()=>({complete:true,rows:[{key:'work:W',name:'W',kind:'work'}]}),nativeAnalysisTimeline:async()=>({granularity:'period',points}),nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points})};
+ const defaults={nativeQualityMatrixPage:async(...args)=>matrixPage(...args),unifiedPeriodOptions:async()=>({rows:[{start:'2024-01-01',end:'2024-01-01'}],min:'2024-01-01',max:'2024-01-02',total_rows:2,next:null}),unifiedNameOptions:async()=>({rows:[{key:'work:W',name:'W',kind:'work'}],next:null,total_rows:1}),nativeAnalysisCompare:async()=>({summary:{before:summary,after:summary},top_count:[],top_amount:[]}),nativeAnalysisOrganizations:async()=>[{org:'A',complete:true,missing:0,total:totals}],nativeAnalysisRanking:async()=>({complete:true,rows:[{key:'work:W',name:'W',kind:'work'}]}),nativeAnalysisTimeline:async()=>({granularity:'period',points}),nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points})};
  const api=new Proxy({...defaults,...overrides},{get(target,key){if(key==='load'||key==='save')throw Error('Forbidden full history');if(!(key in target))throw Error('Unexpected API '+key);return (...args)=>{calls.push({key,args});return target[key](...args);};}});
  const originalHelpers={periodEnd:(start,kind)=>{const d=new Date(start+'T00:00:00Z');if(kind==='week')d.setUTCDate(d.getUTCDate()+6);else if(kind==='month'){d.setUTCMonth(d.getUTCMonth()+1);d.setUTCDate(0);}return d.toISOString().slice(0,10);},displayPeriod:p=>p.start,renderMultiFilter:(id,items,selected,callback)=>multi.set(id,{items,selected,callback})};
  const UI={api,revision:1,snapshot:{revision:1,org_names:['A','B','C','D']},state:{selectedOrganizations:new Set(['A']),selectedMetrics:new Set(['amount','count']),chartMetrics:new Set(['amount','count']),chart:'bar'},$:id=>nodes.get(id),el:(tag,text,cls)=>{const n=new Element(tag,text);n.className=cls;return n;},fmt:n=>Number.isFinite(n)?String(n):'—',notice:(...args)=>notices.push(args),table:(root,metric,caption,headers,rows,options)=>{tables.push({root:root.id,metric,rows,options});root.append(new Element('table',rows.map(r=>r.join('|')).join('\n')));},drawChart:(...args)=>draws.push(args),drawDepartments:(...args)=>draws.push(args),setPeriodInput:(id,kind,date)=>{const node=nodes.get(id);node.dataset.periodType=kind;if(date!==undefined)node.value=date;},range:(kind,from,to,source)=>from&&from<=to?{type:source==='daily'?'day':kind,displayType:kind,source,from,to}:null,publishScope:s=>published.push(s),onSnapshot:fn=>snapshotHook=fn,onView:(view,fn)=>viewHook=fn};
  const window={unifiedUI:UI,unifiedOriginal:originalHelpers,nativePeriodSelection:{fromIsoDate:date=>date,normalize:(_kind,date)=>date},print:()=>prints++};
+ vm.runInNewContext(coverageScript,{window,Date,Map,Set});
  vm.runInNewContext(script,{window,document:{querySelectorAll:selector=>selector==='[data-chart]'?buttons:[]},Date,Map,Set,setTimeout,clearTimeout});window.unifiedAnalytics.init();
  return {UI,window,nodes,buttons,draws,tables,published,multi,calls,notices,get prints(){return prints;},bootstrap:async()=>{await snapshotHook(UI.snapshot);await settle();},invalidate:()=>snapshotHook(null)};
 }
@@ -51,7 +57,7 @@ test('incomplete coverage remains visible and opens a missing-org/day matrix',as
  const partial={...complete,complete:false,missing:1,total:{count:null,amount:null,average:null},import_warning_reports:1};
  const f=fixture({
   nativeAnalysisCompare:async()=>({summary:{before:complete,after:partial},top_count:[],top_amount:[]}),
-  nativeOrganizationTrends:async()=>({series:[{organization:'A',points:[{start:'2024-01-02',missing:1}]}]})
+  nativeQualityMatrixPage:async(...args)=>matrixPage(...args)
  });await f.bootstrap();
  assert.match(f.nodes.get('overviewAlerts').textContent,/Неполные данные: 1 пропуск/);
  assert.doesNotMatch(f.nodes.get('overviewAlerts').textContent,/замечание известно/);
@@ -128,12 +134,12 @@ test('a weekly imported period shows its full calendar dates, not a repeated Mon
  await f.bootstrap();assert.match(f.nodes.get('overviewPeriodText').textContent,/01\.01\.2024 — 07\.01\.2024/);
 });
 
-test('missing-month matrix accepts YYYY-MM native period labels without rendering invalid dates',async()=>{
+test('missing-month quality matrix shows the full native calendar period',async()=>{
  const full={complete:true,periods:1,missing:0,total:{count:2,amount:20,average:10},available_reports:1,available_total:{count:2,amount:20,average:10},invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};
  const f=fixture({
   unifiedPeriodOptions:async()=>({rows:[{start:'2024-01-01',end:'2024-01-31'}],min:'2024-01-01',max:'2024-01-01',total_rows:1,next:null}),
   nativeAnalysisCompare:async()=>({summary:{before:full,after:{...full,complete:false,missing:1,total:{amount:null,count:null,average:null}}}}),
-  nativeOrganizationTrends:async()=>({series:[{organization:'A',points:[{start:'2024-01',missing:1}]}]})
+  nativeQualityMatrixPage:async(...args)=>matrixPage(...args)
  });
  f.nodes.get('periodType').value='month';f.nodes.get('unifiedSource').value='imported';
  await f.bootstrap();const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
@@ -145,8 +151,8 @@ test('daily missing-report matrix pages a long period without a whole-history qu
  const complete={complete:true,periods:1,missing:0,total:{count:2,amount:20,average:10},available_reports:1,available_total:{count:2,amount:20,average:10},invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};
  const queries=[];const f=fixture({
   nativeAnalysisCompare:async()=>({summary:{before:complete,after:{...complete,complete:false,missing:1,total:{count:null,amount:null,average:null}}}}),
-  nativeOrganizationTrends:async(_revision,_kind,from,to)=>{
-   queries.push([from,to]);return {series:[{organization:'A',points:[{start:from,missing:1}]}]};
+  nativeQualityMatrixPage:async(revision,kind,from,to,orgs)=>{
+   queries.push([from,to]);return matrixPage(revision,kind,from,to,orgs);
   }
  });await f.bootstrap();
  f.nodes.get('overviewMode').value='range';
@@ -183,16 +189,16 @@ test('coverage matrix queries every selected organization beyond the eight-serie
  const queries=[],organizations=Array.from({length:10},(_,i)=>'Org '+i);
  const f=fixture({
   nativeAnalysisCompare:async()=>({summary:{before:complete,after:{...complete,complete:false,missing:1}}}),
-  nativeOrganizationTrends:async(_rev,_kind,from,_to,orgs)=>{
+  nativeQualityMatrixPage:async(revision,kind,from,to,orgs)=>{
    queries.push(Array.from(orgs));
-   return {series:orgs.slice(0,8).map(organization=>({organization,points:[{start:from,missing:organization==='Org 0'?1:0}]}))};
+   return matrixPage(revision,kind,from,to,orgs,organization=>organization==='Org 0');
   }
  });
  f.UI.snapshot.org_names=organizations;f.UI.state.selectedOrganizations=new Set(organizations);
  await f.bootstrap();const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
  details.open=true;details.dispatch('toggle');await settle();
  const cells=descendants(details).filter(n=>n.tagName==='TD');
- assert.equal(cells.length,10);assert.equal(cells.filter(n=>n.textContent==='Есть').length,9);
+ assert.equal(cells.length,10);assert.equal(cells.filter(n=>n.textContent==='Есть данные').length,9);
  assert.deepEqual(queries,[organizations.slice(0,8),organizations.slice(8)]);
 });
 
@@ -212,7 +218,7 @@ test('weekly and monthly coverage pages retain exact year-crossing boundaries',a
   const queries=[],full={complete:true,periods:1,missing:0,total:{amount:1,count:1,average:1}};
   const f=fixture({
    nativeAnalysisCompare:async()=>({summary:{before:full,after:{...full,complete:false,missing:1}}}),
-   nativeOrganizationTrends:async(_rev,type,start,end)=>{queries.push([type,start,end]);return {series:[{organization:'A',points:[{start,missing:1}]}]};}
+   nativeQualityMatrixPage:async(revision,type,start,end,orgs)=>{queries.push([type,start,end]);return matrixPage(revision,type,start,end,orgs);}
   });
   f.nodes.get('periodType').value=kind;f.nodes.get('unifiedSource').value='imported';await f.bootstrap();
   f.nodes.get('overviewMode').value='range';f.nodes.get('rangeStart').value=from;f.nodes.get('rangeEnd').value=to;
@@ -228,11 +234,11 @@ test('weekly and monthly coverage pages retain exact year-crossing boundaries',a
 
 test('stale coverage responses cannot populate a replaced period',async()=>{
  const pending=deferred(),full={complete:true,periods:1,missing:0,total:{amount:1,count:1,average:1}};
- const f=fixture({nativeAnalysisCompare:async()=>({summary:{before:full,after:{...full,complete:false,missing:1}}}),nativeOrganizationTrends:()=>pending.promise});
+ const f=fixture({nativeAnalysisCompare:async()=>({summary:{before:full,after:{...full,complete:false,missing:1}}}),nativeQualityMatrixPage:()=>pending.promise});
  await f.bootstrap();const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
  details.open=true;details.dispatch('toggle');await settle();
  f.nodes.get('overviewPeriod').value='2024-01-01';f.nodes.get('overviewPeriod').dispatch('change');await settle();
- pending.resolve({series:[{organization:'A',points:[{start:'2024-01-02',missing:1}]}]});await settle();
+ pending.resolve(matrixPage(1,'day','2024-01-02','2024-01-02',['A']));await settle();
  assert.equal(descendants(details).filter(n=>n.tagName==='TABLE').length,0);
  assert.doesNotMatch(f.nodes.get('overviewAlerts').textContent,/02\.01\.2024/);
 });
@@ -262,4 +268,10 @@ test('horizontal department guide describes original units instead of normalized
  f.nodes.get('chartOrientation').value='horizontal';f.nodes.get('chartOrientation').dispatch('change');await settle();
  assert.match(f.nodes.get('chartReadGuide').textContent,/в исходных единицах/);
  assert.doesNotMatch(f.nodes.get('chartReadGuide').textContent,/% от максимума/);
+});
+
+test('fully available ranges expose lazy quality evidence without hiding source warnings',async()=>{
+ const f=fixture({nativeQualityMatrixPage:async(...args)=>matrixPage(...args,()=>false)});await f.bootstrap();assert.equal(f.calls.filter(c=>c.key==='nativeQualityMatrixPage').length,0);
+ const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');assert.ok(details);assert.match(details.textContent,/Качество данных/);
+ details.open=true;details.dispatch('toggle');await settle();assert.equal(f.calls.filter(c=>c.key==='nativeQualityMatrixPage').length,1);assert.match(details.textContent,/Есть данные/);
 });

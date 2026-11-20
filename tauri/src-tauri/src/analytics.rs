@@ -14,6 +14,9 @@ pub use unified_analytics::*;
 #[path = "unified_group_audit.rs"]
 mod unified_group_audit;
 pub use unified_group_audit::*;
+#[path = "analysis_coverage.rs"]
+mod analysis_coverage;
+pub use analysis_coverage::*;
 const BOUND: usize = 65536;
 
 pub(super) fn initialize(c: &Connection) -> Result<(), String> {

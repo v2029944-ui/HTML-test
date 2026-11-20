@@ -117,7 +117,7 @@ function buildUnified(source){
  html=html.replace('>Скачать группы (JSON)</button>','>Экспорт групп</button>').replace('>Импорт групп JSON<input','>Импорт групп<input').replace('Добавить справочник услуг из Excel\n','Импорт справочника Excel\n');
  const catalog=html.match(/<div class="catalog-toolbar">[\s\S]*?<\/div>/);
  if(catalog){html=html.replace(catalog[0],'');const groups=html.indexOf('id="importGroups"');const end=html.indexOf('</div>',groups);if(groups<0||end<0)throw Error('Missing group import toolbar');html=html.slice(0,end)+catalog[0]+html.slice(end);}
- const modules=['unified-original','unified-horizontal-bars','native-errors','native-period-selection','app-status','unified-base','unified-management','unified-reports','native-metric-kinds','unified-extended','unified-analytics','unified-app','updates'];
+ const modules=['unified-original','unified-horizontal-bars','native-errors','native-period-selection','app-status','unified-base','unified-coverage','unified-management','unified-reports','native-metric-kinds','unified-extended','unified-analytics','unified-app','updates'];
  html=html.replace('</body>',modules.map(name=>'<script src="tauri-'+name+'.js"></script>').join('\n')+'\n</body>');
  return {html,script};
 }
