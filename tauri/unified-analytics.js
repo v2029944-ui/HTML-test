@@ -24,6 +24,21 @@ function previousRange(current){
  const periods=kind==='month'?(Number(to.slice(0,4))-Number(from.slice(0,4)))*12+Number(to.slice(5,7))-Number(from.slice(5,7))+1:kind==='year'?Number(to.slice(0,4))-Number(from.slice(0,4))+1:Math.floor((Date.parse(to)-Date.parse(from))/(86400000*(kind==='week'?7:1)))+1;
  return rangeFromIso(kind,shift(from,kind,-periods),shift(from,kind,-1),current.source);
 }
+
+function chosenBaseRange(current){
+ const suggested=previousRange(current);
+ if(!suggested)return null;
+ const kind=current.displayType,node=$('analysisBasePeriod');
+ if(node.dataset.periodType!==kind){delete node.dataset.userSelected;UI.setPeriodInput('analysisBasePeriod',kind,suggested.from);}
+ else if(!node.dataset.userSelected)UI.setPeriodInput('analysisBasePeriod',kind,suggested.from);
+ if(!node.dataset.userSelected)return suggested;
+ const from=window.nativePeriodSelection.normalize(kind,node.value);
+ if(!from)throw Error('Выберите корректный базовый период.');
+ const count=kind==='month'?(Number(current.to.slice(0,4))-Number(current.from.slice(0,4)))*12+Number(current.to.slice(5,7))-Number(current.from.slice(5,7))+1:
+ kind==='year'?Number(current.to.slice(0,4))-Number(current.from.slice(0,4))+1:
+ Math.floor((Date.parse(current.to)-Date.parse(current.from))/(86400000*(kind==='week'?7:1)))+1;
+ return rangeFromIso(kind,from,shift(from,kind,count-1),current.source);
+}
 function layout(){const single=value('overviewMode')==='single';$('overviewSingle').hidden=!single;$('overviewRange').hidden=single;if(single){$('rangeStart').value=value('overviewPeriod');$('rangeEnd').value=value('overviewPeriod');}
  const departments=value('chartBreakdown')==='organizations',chosen=departments?[...state.chartMetrics]:chosenMetrics();
  $('chartOrgScopeLabel').hidden=!departments;$('chartMetricsWrap').hidden=!departments;$('chartSeriesLayoutLabel').hidden=!departments||chosen.length<2;$('chartNotes').hidden=!departments;$('chartComparisonHint').hidden=!departments;$('chartReadGuide').hidden=!departments||state.chart==='table';
@@ -136,13 +151,13 @@ function drawOverview(result,organizations,s,before){
   inspect.addEventListener('click',()=>UI.activate('upload'));info.append(inspect);$('overviewAlerts').append(info);
  }
  if(!current.complete||!previous.complete)insights.append(UI.el('p',!current.complete?'Для выводов нужны полные отчёты выбранных подразделений.':'Предыдущий интервал заполнен не полностью; процентные изменения не оцениваются.','muted small'));
- else {insights.append(UI.el('p','Сравнение с предыдущим интервалом: '+rangeLabel(before.from,before.to)+'.','muted small'));for(const metric of ['amount','count']){const line=UI.el('div',null,'overview-line');line.append(UI.el('strong',titles[metric]+': '+overviewDifference(current.total[metric],previous.total[metric],metric)));insights.append(line);}const metric=state.selectedMetrics.has('amount')?'amount':'count';for(const row of (result['top_'+metric]||[]).filter(row=>row[metric]?.delta!==0).slice(0,2)){const m=row[metric],line=UI.el('div',null,'overview-line');line.append(UI.el('strong',row.name+': '+(m.delta>0?'+':'')+fmt(m.delta,metric),m.delta>0?'numeric-rise':'numeric-fall'),UI.el('small','Один из крупнейших вкладов в изменение '+titles[metric].toLowerCase()));insights.append(line);}}
+ else {insights.append(UI.el('p','Сравнение с базовым периодом: '+rangeLabel(before.from,before.to)+'.','muted small'));for(const metric of ['amount','count']){const line=UI.el('div',null,'overview-line');line.append(UI.el('strong',titles[metric]+': '+overviewDifference(current.total[metric],previous.total[metric],metric)));insights.append(line);}const metric=state.selectedMetrics.has('amount')?'amount':'count';for(const row of (result['top_'+metric]||[]).filter(row=>row[metric]?.delta!==0).slice(0,2)){const m=row[metric],line=UI.el('div',null,'overview-line');line.append(UI.el('strong',row.name+': '+(m.delta>0?'+':'')+fmt(m.delta,metric),m.delta>0?'numeric-rise':'numeric-fall'),UI.el('small','Один из крупнейших вкладов в изменение '+titles[metric].toLowerCase()));insights.append(line);}}
  insights.append(UI.el('p','Единицы суммы и количества / объёма необходимо сверять с источником. Дробное количество может означать объём, а не число работ.','muted small'));
  printCapture={revision:s.revision,scope:s,before,summary,organizations,result};
 }
 async function calculate(){
  const mine=++ticket,revision=UI.revision;invalidateScope();$('printSummary').disabled=true;for(const id of ['overviewKpis','overviewInsights','overviewOrganizations','overviewAlerts'])clear(id,'Загрузка…');
- try{if(!Number.isSafeInteger(revision))throw Error('Дождитесь подготовки данных.');layout();const displayType=value('periodType'),source=value('unifiedSource'),range=UI.range(displayType,value('rangeStart'),value('rangeEnd'),source);if(!range||!orgs().length)throw Error('Выберите корректный период и подразделения.');const s={...range,revision,organizations:orgs(),selectedNames:[],selectedKeys:[],allNames:false,nameRows:[]},before=previousRange(s);if(!before)throw Error('Предыдущий интервал выходит за допустимые календарные границы.');scope=s;
+ try{if(!Number.isSafeInteger(revision))throw Error('Дождитесь подготовки данных.');layout();const displayType=value('periodType'),source=value('unifiedSource'),range=UI.range(displayType,value('rangeStart'),value('rangeEnd'),source);if(!range||!orgs().length)throw Error('Выберите корректный период и подразделения.');const s={...range,revision,organizations:orgs(),selectedNames:[],selectedKeys:[],allNames:false,nameRows:[]},before=chosenBaseRange(s);if(!before)throw Error('Базовый период выходит за допустимые календарные границы.');s.baseFrom=before.from;s.baseTo=before.to;s.overviewMode=value('overviewMode');scope=s;
   const [overview,organizations]=await Promise.all([api.nativeAnalysisCompare(revision,s.type,before.from,before.to,s.from,s.to,s.organizations,null,null),api.nativeAnalysisOrganizations(revision,s.type,s.from,s.to,s.organizations,null,null)]);
   if(!valid(mine,revision))return;drawOverview(overview,organizations,s,before);
    if(!overview.summary.after.complete)void suggestWeeklyReports(s);
@@ -221,6 +236,7 @@ function print(){const captured=printCapture;if(!captured||captured.revision!==U
 function init(){if(initialized)return;initialized=true;state.selectedMetrics=state.selectedMetrics||new Set(['amount','count']);state.chartMetrics=state.chartMetrics||new Set(['amount','count']);state.chart='bar';
  for(const id of ['periodType','unifiedSource'])$(id).addEventListener('change',()=>{invalidateScope();void configure(UI.snapshot);});
  for(const id of ['overviewMode','overviewPeriod','rangeStart','rangeEnd'])$(id).addEventListener('change',()=>{seriesPositions=[null];void calculate();});
+ $('analysisBasePeriod').addEventListener('change',()=>{$('analysisBasePeriod').dataset.userSelected='true';seriesPositions=[null];void calculate();});
  for(const id of ['chartBreakdown','chartOrgScope','chartSeriesLayout','hideEmptyPeriods','chartOrientation'])$(id).addEventListener('change',()=>{seriesPositions=[null];void renderCharts();});
  document.querySelectorAll('[data-chart]').forEach(button=>button.addEventListener('click',()=>{state.chart=button.dataset.chart;seriesPositions=[null];void renderCharts();}));
  $('categorySearch').addEventListener('input',()=>{nameTicket++;if(searchTimer)clearTimeout(searchTimer);searchTimer=setTimeout(()=>{searchTimer=null;void names();},160);});

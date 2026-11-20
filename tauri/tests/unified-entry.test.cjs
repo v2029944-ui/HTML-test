@@ -112,3 +112,10 @@ test('Windows CRLF presentation still generates the column-orientation controls'
  const html=prepareHtml(windows);
  assert.match(html,/id="chartOrientation"/);assert.doesNotMatch(html,/data-chart="line"/);
 });
+
+test('Tauri canonical page exposes one shared baseline and visible local period overrides',()=>{
+ const {html}=require('../unified-build.cjs').buildUnified(original);
+ for(const id of ['analysisBasePeriod','comparisonPeriodOverride','comparisonPeriodReset','structurePeriodOverride','structurePeriodReset','changesPeriodOverride','changesPeriodReset'])
+  assert.match(html,new RegExp('id="'+id+'"'));
+ assert.match(html,/Изменения к базовому периоду/);
+});

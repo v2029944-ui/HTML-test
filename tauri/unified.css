@@ -43,3 +43,10 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
 .kpi-action{font:inherit;text-align:left;cursor:pointer;width:100%;color:inherit}
 .kpi-action:hover{border-color:var(--accent);background:var(--hover)}
 .kpi-action:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+
+/* One shared baseline; local period overrides remain visible until explicitly reset. */
+.global-baseline{display:flex;flex-direction:column;gap:5px;min-width:170px}
+.global-baseline input{min-height:40px;padding:8px 11px;border:1px solid var(--field-border);border-radius:var(--radius-control);background:var(--surface);color:var(--text);width:100%}
+.period-override{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:10px 0;padding:7px 0;color:var(--muted);font-size:12px}
+.period-override[hidden]{display:none!important}
+.period-override .button{min-height:32px;padding:6px 9px;font-size:12px}

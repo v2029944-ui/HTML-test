@@ -15,7 +15,7 @@ const settle=()=>new Promise(r=>setImmediate(r));
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 function fixture(overrides={}){
  const nodes=new Map();for(const m of original.matchAll(/<([a-z][\w-]*)\b[^>]*\bid="([^"]+)"[^>]*>/gi)){const n=new Element(m[1]);n.id=m[2];nodes.set(n.id,n);}
- for(const id of ['unifiedSource','hideEmptyPeriods','chartOrientation']){const node=new Element('input');node.id=id;nodes.set(id,node);}
+ for(const id of ['unifiedSource','hideEmptyPeriods','chartOrientation','analysisBasePeriod']){const node=new Element('input');node.id=id;nodes.set(id,node);}
  for(const [id,v]of Object.entries({periodType:'day',unifiedSource:'daily',overviewMode:'single',chartBreakdown:'works',chartOrgScope:'all',chartSeriesLayout:'combined',chartOrientation:'vertical'}))nodes.get(id).value=v;
  const buttons=['line','bar','table'].map(chart=>{const n=new Element('button');n.dataset.chart=chart;return n;}),draws=[],tables=[],published=[],multi=new Map(),calls=[],notices=[];
  let snapshotHook,viewHook,prints=0;
@@ -25,7 +25,7 @@ function fixture(overrides={}){
  const api=new Proxy({...defaults,...overrides},{get(target,key){if(key==='load'||key==='save')throw Error('Forbidden full history');if(!(key in target))throw Error('Unexpected API '+key);return (...args)=>{calls.push({key,args});return target[key](...args);};}});
  const originalHelpers={periodEnd:(start,kind)=>start,displayPeriod:p=>p.start,renderMultiFilter:(id,items,selected,callback)=>multi.set(id,{items,selected,callback})};
  const UI={api,revision:1,snapshot:{revision:1,org_names:['A','B','C','D']},state:{selectedOrganizations:new Set(['A']),selectedMetrics:new Set(['amount','count']),chartMetrics:new Set(['amount','count']),chart:'bar'},$:id=>nodes.get(id),el:(tag,text,cls)=>{const n=new Element(tag,text);n.className=cls;return n;},fmt:n=>Number.isFinite(n)?String(n):'—',notice:(...args)=>notices.push(args),table:(root,metric,caption,headers,rows,options)=>{tables.push({root:root.id,metric,rows,options});root.append(new Element('table',rows.map(r=>r.join('|')).join('\n')));},drawChart:(...args)=>draws.push(args),drawDepartments:(...args)=>draws.push(args),setPeriodInput:(id,kind,date)=>{const node=nodes.get(id);node.dataset.periodType=kind;if(date!==undefined)node.value=date;},range:(kind,from,to,source)=>from&&from<=to?{type:source==='daily'?'day':kind,displayType:kind,source,from,to}:null,publishScope:s=>published.push(s),onSnapshot:fn=>snapshotHook=fn,onView:(view,fn)=>viewHook=fn};
- const window={unifiedUI:UI,unifiedOriginal:originalHelpers,nativePeriodSelection:{fromIsoDate:date=>date},print:()=>prints++};
+ const window={unifiedUI:UI,unifiedOriginal:originalHelpers,nativePeriodSelection:{fromIsoDate:date=>date,normalize:(_kind,date)=>date},print:()=>prints++};
  vm.runInNewContext(script,{window,document:{querySelectorAll:selector=>selector==='[data-chart]'?buttons:[]},Date,Map,Set,setTimeout,clearTimeout});window.unifiedAnalytics.init();
  return {UI,window,nodes,buttons,draws,tables,published,multi,calls,notices,get prints(){return prints;},bootstrap:async()=>{await snapshotHook(UI.snapshot);await settle();},invalidate:()=>snapshotHook(null)};
 }
@@ -107,4 +107,17 @@ test('missing daily reports offer existing weekly imports without inventing zero
  assert.ok(btn);btn.dispatch('click');await settle();
  assert.equal(f.nodes.get('unifiedSource').value,'imported');
  assert.equal(f.nodes.get('periodType').value,'week');
+});
+
+test('shared baseline changes the SQL comparison and is published to extended sections',async()=>{
+ const f=fixture();await f.bootstrap();
+ const comparisons=()=>f.calls.filter(item=>item.key==='nativeAnalysisCompare');
+ assert.equal(f.nodes.get('analysisBasePeriod').value,'2024-01-01');
+ assert.equal(comparisons().at(-1).args[2],'2024-01-01');
+ f.nodes.get('analysisBasePeriod').value='2023-12-30';
+ f.nodes.get('analysisBasePeriod').dispatch('change');await settle();
+ assert.equal(comparisons().at(-1).args[2],'2023-12-30');
+ assert.equal(f.published.at(-1).baseFrom,'2023-12-30');
+ assert.equal(f.published.at(-1).baseTo,'2023-12-30');
+ assert.match(f.nodes.get('overviewInsights').textContent,/базовым периодом/);
 });

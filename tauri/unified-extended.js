@@ -252,10 +252,47 @@ async function patterns(mode,positions=[null]){
  }catch(error){task.error(error);}finally{task.done();}
 }
 function clearExtended(){for(const name of channels.keys())invalidate(name);for(const id of ['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis','contributionResults','contributionCheck','structureResults','usualResults','usualCoverage','regularityResults','regularityCoverage','changesResults','changesWarnings','changesSummary'])clear(id);$('analyticsDetails').hidden=true;$('changeDetails').hidden=true;}
+
+const localPeriods={
+ comparison:['basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd'],
+ structure:['structureBase','structureCurrent'],
+ changes:['changesFrom','changesTo']
+};
+function periodExpected(id){
+ if(!scope)return null;
+ if(['basePeriod','baseRangeStart','structureBase'].includes(id))return scope.baseFrom||previous(scope.from,scope.displayType);
+ if(id==='baseRangeEnd')return scope.baseTo||scope.baseFrom||previous(scope.from,scope.displayType);
+ if(['currentRangeStart','changesFrom'].includes(id))return scope.from;
+ return scope.to;
+}
+function updatePeriodOverrides(){
+ for(const [name,ids] of Object.entries(localPeriods)){
+  const indicator=$(name+'PeriodOverride');if(!indicator)continue;
+  const different=Boolean(scope)&&ids.some(id=>{
+   const control=$(id);
+   if(!control?.dataset.unifiedTouched)return false;
+   const kind=name==='changes'?changesKind:scope.displayType,expected=periodExpected(id);
+   const expectedInput=window.nativePeriodSelection?.fromIsoDate?.(expected,kind)||expected;
+   return control.value!==expectedInput;
+  });
+  indicator.hidden=!different&&!(name==='comparison'&&scope&&$('periodComparisonScope')?.dataset.unifiedTouched&&value('periodComparisonScope')!==(scope.overviewMode==='range'?'range':'single'))&&
+    !(name==='changes'&&scope&&(changesKind!==scope.displayType||value('changesMethod')==='range'));
+ }
+}
+function resetLocalPeriod(name){
+ if(!scope)return;
+ for(const id of localPeriods[name]||[])if($(id)?.dataset)delete $(id).dataset.unifiedTouched;
+ if(name==='comparison'&&$('periodComparisonScope')?.dataset)delete $('periodComparisonScope').dataset.unifiedTouched;
+ if(name==='changes'){changesKind=scope.displayType;$('changesType').value=changesKind;$('changesMethod').value='previous';}
+ resetScope(scope);
+}
 function resetScope(next){if(!next){scope=null;clearExtended();return;}scope=copyScope(next);for(const name of channels.keys())invalidate(name);$('analyticsDetails').hidden=true;$('changeDetails').hidden=true;
  const force=dateKind!==scope.displayType;dateKind=scope.displayType;
- const before=previous(scope.from,scope.displayType);
- for(const id of ['basePeriod','baseRangeStart','baseRangeEnd','structureBase'])setDate(id,scope.displayType,before,force);
+ if(force){for(const ids of Object.values(localPeriods))for(const id of ids)if($(id)?.dataset)delete $(id).dataset.unifiedTouched;if($('periodComparisonScope')?.dataset)delete $('periodComparisonScope').dataset.unifiedTouched;}
+ const before=scope.baseFrom||previous(scope.from,scope.displayType),beforeEnd=scope.baseTo||before;
+ if(!$('periodComparisonScope')?.dataset.unifiedTouched)$('periodComparisonScope').value=scope.overviewMode==='range'?'range':'single';
+ for(const id of ['basePeriod','baseRangeStart','structureBase'])setDate(id,scope.displayType,before,force);
+ setDate('baseRangeEnd',scope.displayType,beforeEnd,force);
  for(const id of ['currentPeriod','currentRangeEnd','comparisonPeriod','comparisonRangeEnd','structureCurrent','usualPeriod'])setDate(id,scope.displayType,scope.to,force);
  for(const id of ['currentRangeStart','comparisonRangeStart'])setDate(id,scope.displayType,scope.from,force);
  if(!changesKind){$('changesType').value=scope.displayType;changesKind=scope.displayType;}
@@ -266,11 +303,15 @@ function resetScope(next){if(!next){scope=null;clearExtended();return;}scope=cop
  checkboxList('changesOrganizations',orgNames.map(o=>[o,o]),changeOrganizations,()=>changes());
  const oldBase=value('comparisonBaseOrg');$('comparisonBaseOrg').replaceChildren(...scope.organizations.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));if(scope.organizations.includes(oldBase))$('comparisonBaseOrg').value=oldBase;
  if(!customComparisonMetrics)comparisonMetrics=new Set(metrics());checkboxList('comparisonMetrics',Object.entries(titles),comparisonMetrics,()=>{customComparisonMetrics=true;comparison();});
- if(activeView==='changes')changes();if(activeView==='dashboard'&&$('advancedAnalytics').open){comparison();if($('structurePanel').open)structure();if($('usualPanel').open)patterns('usual');if($('regularityPanel').open)patterns('regularity');}
+ updatePeriodOverrides();if(activeView==='changes')changes();if(activeView==='dashboard'&&$('advancedAnalytics').open){comparison();if($('structurePanel').open)structure();if($('usualPanel').open)patterns('usual');if($('regularityPanel').open)patterns('regularity');}
 }
 function bind(ids,event,handler){for(const id of ids)$(id)?.addEventListener(event,handler);}
 function init(){if(initialized)return;initialized=true;
- const dateIds=['changesFrom','changesTo','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','structureBase','structureCurrent','usualPeriod'];for(const id of dateIds)$(id)?.addEventListener('input',()=>{$(id).dataset.unifiedTouched='true';});
+ const dateIds=['changesFrom','changesTo','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','structureBase','structureCurrent','usualPeriod'];for(const id of dateIds){for(const event of ['input','change'])$(id)?.addEventListener(event,()=>{$(id).dataset.unifiedTouched='true';updatePeriodOverrides();});}
+ $('periodComparisonScope')?.addEventListener('change',()=>{$('periodComparisonScope').dataset.unifiedTouched='true';updatePeriodOverrides();});
+ for(const name of Object.keys(localPeriods))$(name+'PeriodReset')?.addEventListener('click',()=>resetLocalPeriod(name));
+ $('changesType')?.addEventListener('change',updatePeriodOverrides);
+ $('changesMethod')?.addEventListener('change',updatePeriodOverrides);
  checkboxList('changesMetrics',[['count','Количество / объём'],['amount','Сумма']],changeMetrics,()=>changes());checkboxList('usualMetrics',Object.entries(titles),usualMetrics,()=>patterns('usual'));
  bind(['changesMethod','changesFrom','changesTo','changesMode','changesDirection','changesSort'],'change',()=>{invalidate('changes');changes();});
  bind(['changesPercent','changesCountMin','changesAmountMin','changesSearch'],'input',()=>schedule('changes',changes));

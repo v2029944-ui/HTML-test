@@ -21,6 +21,7 @@ class Element {
 function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
 function fixture(overrides={}){
  const nodes=new Map();for(const match of original.matchAll(/<([a-z][\w-]*)\b[^>]*\bid="([^"]+)"[^>]*>/gi)){const el=new Element(match[1]);el.id=match[2];nodes.set(el.id,el);}
+ for(const id of ['comparisonPeriodOverride','structurePeriodOverride','changesPeriodOverride','comparisonPeriodReset','structurePeriodReset','changesPeriodReset']){const el=new Element('div');el.id=id;nodes.set(id,el);}
  const defaults={changesType:'day',changesMethod:'previous',changesFrom:'2024-01-01',changesTo:'2024-01-02',changesPercent:'30',changesCountMin:'5',changesAmountMin:'1000',changesMode:'all',changesDirection:'all',changesSort:'name',comparisonMode:'periods',periodComparisonScope:'single',comparisonScope:'single',structureMetric:'amount',structureLimit:'10',structureScope:'selected',usualWindow:'4',usualPercent:'30',regularityGap:'4',regularityStatus:'all'};
  for(const [id,value]of Object.entries(defaults))nodes.get(id).value=value;
  const hooks={scope:[],snapshot:[],views:{}},tables=[],calls=[];
@@ -103,4 +104,20 @@ test('clicking a change KPI filters the SQL rows by the selected category',async
  assert.equal(cards[1].tagName,'BUTTON');assert.match(cards[1].attributes['aria-label'],/Значительно снизилось/);
  cards[1].dispatch('click');await settle();
  assert.equal(f.nodes.get('changesDirection').value,'down');assert.equal(selected.at(-1),'down');
+});
+
+test('shared baseline seeds comparison and structure, local overrides stay flagged until reset',async()=>{
+ const f=fixture();
+ f.publish({baseFrom:'2023-12-28',baseTo:'2023-12-29',overviewMode:'range'});
+ assert.equal(f.nodes.get('basePeriod').value,'2023-12-28');
+ assert.equal(f.nodes.get('baseRangeEnd').value,'2023-12-29');
+ assert.equal(f.nodes.get('structureBase').value,'2023-12-28');
+ assert.equal(f.nodes.get('periodComparisonScope').value,'range');
+ f.nodes.get('structureBase').value='2023-12-25';f.nodes.get('structureBase').dispatch('change');
+ assert.equal(f.nodes.get('structurePeriodOverride').hidden,false);
+ f.publish({baseFrom:'2023-12-26',baseTo:'2023-12-27'});
+ assert.equal(f.nodes.get('structureBase').value,'2023-12-25','local override must survive changed shared scope');
+ f.nodes.get('structurePeriodReset').dispatch('click');
+ assert.equal(f.nodes.get('structureBase').value,'2023-12-26');
+ assert.equal(f.nodes.get('structurePeriodOverride').hidden,true);
 });
