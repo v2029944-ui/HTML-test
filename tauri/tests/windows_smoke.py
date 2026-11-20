@@ -606,7 +606,7 @@ def check_extended(page):
     expect(page.locator('#comparisonTable table')).to_have_count(0)
     expect(page.locator('#comparisonTable .change-pagination')).to_have_count(0)
     expect(page.locator('#comparisonTable button')).to_have_count(0)
-    page.screenshot(path=str(ROOT/'tauri/test-artifacts/windows-sql-empty-comparison.png'))
+    page.locator('#comparison').screenshot(path=str(ROOT/'tauri/test-artifacts/windows-sql-empty-comparison.png'))
     page.locator('#currentPeriod').fill('2024-02')
     wait_for_text(page,'#comparisonCoverage','Второй интервал: Полные данные',90_000)
     page.locator('#analysisBasePeriod').fill('2024-01')
