@@ -249,3 +249,11 @@ fn malformed_fields_do_not_erase_independent_saved_facts() {
     assert_eq!(page.evidence.invalid_fields,5); assert_eq!(page.evidence.omitted_row_entries,2); assert_eq!(page.evidence.missing_day_entries,1); assert_eq!(page.evidence.deferred_day_entries,1); assert_eq!(page.evidence.unclassified_day_entries,0);
     assert_eq!(page.issues[0].skipped,Some(true)); assert_eq!(page.issues[0].date,None); assert_eq!(page.issues[1].skipped,Some(true)); assert_eq!(page.issues[2].relevant,Some(true)); assert_eq!(page.issues[3].relevant,Some(false)); assert_eq!(page.issues[4].skipped,None);
 }
+
+#[test]
+fn explicitly_skipped_unknown_organization_rows_count_without_inventing_attribution() {
+    let (_dir,store,conn)=setup();
+    insert(&conn,"unassigned-skips",r#"{"issues":[{"kind":"skipped","reason":"native omitted row","skipped":true,"organization":null,"source_row":7},{"kind":"skipped","reason":"old unmarked note"},{"kind":"skipped","reason":"shared source note","skipped":true,"scope":"source-period"},{"kind":"empty-name","reason":"included row","skipped":true}]}"#);
+    let page=store.report_quality_page(store.revision().unwrap(),"unassigned-skips",QualityScope::Report,0,50).unwrap();
+    assert_eq!(page.evidence.omitted_row_entries,1);assert_eq!(page.issues[0].organization,None);assert_eq!(page.issues[0].source_row,Some(7));assert_eq!(page.issues[0].skipped,Some(true));
+}

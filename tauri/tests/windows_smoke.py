@@ -440,6 +440,10 @@ def source_evidence_xlsx():
     rows=[['Работа','2020-02-28','2020-02-28','2020-02-29','2020-02-29','Итого за период','Итого за период'],
           ['', 'Количество','Сумма','Количество','Сумма','Количество','Сумма'],
           ['СМУ16',0,0,None,None,0,0],['Итого',0,0,None,None,0,0]]
+    return quality_evidence_xlsx(rows)
+
+
+def quality_evidence_xlsx(rows):
     xml=[]
     for row,values in enumerate(rows,1):
         cells=[]
@@ -505,6 +509,52 @@ def check_source_evidence(page, temporary, output):
     inspection.screenshot(path=str(output/'windows-sql-source-evidence.png'))
     assert api(page,'nativeSettingsBootstrap')['revision']==revision,'Read-only evidence changed storage'
     assert source.read_bytes()==original,'Evidence flow rewrote the source XLSX'
+
+
+
+def omitted_detail_xlsx():
+    return quality_evidence_xlsx([
+        ['Работа','Количество','Сумма'],['СМУ16',3,8],['Included',1,5],
+        ['Rejected','bad',99],['',2,3],['АВТО','bad',7],
+        ['Unknown organization',4,9],['Итого',3,8]])
+
+
+def check_omitted_detail_evidence(page, temporary, output):
+    source=temporary/'omitted-detail.xlsx';original=omitted_detail_xlsx();source.write_bytes(original)
+    snapshot=api(page,'nativeSettingsBootstrap');before=snapshot['reports']
+    options={'sheet':'xl/worksheets/sheet1.xml','kind':'day','start':'2020-03-01','organizations':snapshot['org_names']}
+    preview=api(page,'nativeLegacyImportPreview',str(source),options)
+    assert preview['reportCount']==1 and preview['rowCount']==2,preview
+    flags={'replaceExact':False,'acceptCrossType':False,'acceptQuality':False}
+    assert_rejected(lambda:api(page,'nativeLegacyImportApply',str(source),options,preview['reviewToken'],flags),
+                    'Excluded details bypassed explicit quality acknowledgment','quality')
+    assert api(page,'nativeSettingsBootstrap')['reports']==before
+    receipt=api(page,'nativeLegacyImportApply',str(source),options,preview['reviewToken'],flags|{'acceptQuality':True})
+    assert receipt['reports']==1 and receipt['rows']==2 and source.read_bytes()==original,receipt
+    assert page.evaluate('window.unifiedUI.refresh()')['reports']==before+1
+    revision=receipt['revision']
+    matrix=api(page,'nativeQualityMatrixPage',revision,'day','2020-03-01','2020-03-01',['СМУ16'])
+    cell=matrix['rows'][0]['cells'][0]
+    assert cell['available'] and cell['count']==3 and cell['amount']==8 and cell['warned_reports']==1,cell
+    rows=api(page,'nativeQualityMatrixReports',revision,'day','2020-03-01','СМУ16',None,20)['rows'];assert len(rows)==1,rows
+    notes=api(page,'nativeReportQualityPage',revision,rows[0]['id'],'report',0,50)
+    assert notes['evidence']['omitted_row_entries']==2 and notes['evidence']['explicit_zero'] is None,notes
+    by_row={i['source_row']:i for i in notes['issues'] if i['source_row'] is not None}
+    assert by_row[4]['kind']=='invalid' and by_row[4]['skipped'] is True and by_row[4]['organization']=='СМУ16',notes
+    assert by_row[5]['kind']=='empty-name' and by_row[5]['skipped'] is None,notes
+    assert by_row[6]['kind']=='invalid' and by_row[6]['skipped'] is None,notes
+    assert by_row[7]['kind']=='skipped' and by_row[7]['skipped'] is True and by_row[7]['organization'] is None,notes
+    page.locator('#overviewPeriod').fill('2020-03-01')
+    wait_for_app_state(page,'window.unifiedUI.scope?.from==="2020-03-01"','Imported omitted-detail report is selected')
+    details=page.locator('#overviewAlerts .coverage-details');details.locator(':scope > summary').click()
+    expect(details.locator('td.coverage-warning')).to_have_count(1)
+    details.locator('td.coverage-warning .coverage-cell-action').click()
+    inspection=details.locator('.coverage-inspection');inspection.locator('.coverage-report > details > summary').click()
+    expect(inspection).to_contain_text('Явно исключённые строки отчёта: 2')
+    expect(inspection.get_by_text('Строка помечена как исключённая.',exact=True)).to_have_count(2)
+    expect(inspection).to_contain_text('Признак явного нуля не сохранён')
+    inspection.screenshot(path=str(output/'windows-sql-omitted-detail-evidence.png'))
+    assert api(page,'nativeSettingsBootstrap')['revision']==revision and source.read_bytes()==original
 
 
 def check_analytics(page, temporary, output):
@@ -1088,6 +1138,8 @@ def run():
                 report['checks'].append('Installed restart restores exactly the SQLite backup, retains the replaced data and displays confirmation')
                 check_source_evidence(page,tmp,output)
                 report['checks'].append('Saved source evidence distinguishes zero provenance, source-day gaps, unknown organization and acknowledgment without changing source XLSX or read-only revision')
+                check_omitted_detail_evidence(page,tmp,output)
+                report['checks'].append('Native omitted-detail tags distinguish invalid data, unknown organizations, invalid controls and included unnamed rows; persisted totals remain 3 and 8 with explicit acknowledgment')
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     print(json.dumps(report,ensure_ascii=False),flush=True)
 

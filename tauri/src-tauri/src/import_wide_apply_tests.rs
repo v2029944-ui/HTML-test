@@ -464,6 +464,7 @@ fn wide_zero_proof_and_complete_metadata_fail_closed_before_publication() {
         "DELETE FROM wide_provenance",
         "UPDATE wide_provenance SET coverage_start='2024-03-01'",
         "DELETE FROM converted_issues WHERE scope='source-period'",
+        "UPDATE converted_issues SET skipped=1 WHERE scope='source-period'",
         "UPDATE converted_issues SET source_issue_seq=(SELECT MIN(seq) FROM wide_source_issues WHERE kind='mismatch') WHERE scope='source-period' AND kind='mismatch'",
     ] {
         let root=tempfile::tempdir().unwrap();let source=root.path().join("wide.xlsx");fixture(&source,2,true,true,true);

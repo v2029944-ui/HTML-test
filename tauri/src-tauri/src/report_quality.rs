@@ -359,7 +359,7 @@ impl QualityEvidence {
                 }
             } else { self.unclassified_day_entries += 1; }
         }
-        if issue.kind.as_deref() == Some("invalid") && issue.skipped == Some(true)
+        if matches!(issue.kind.as_deref(), Some("invalid" | "skipped")) && issue.skipped == Some(true)
             && matches!(issue.scope.as_deref(), None | Some("report"))
         { self.omitted_row_entries += 1; }
     }

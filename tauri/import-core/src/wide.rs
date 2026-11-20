@@ -96,6 +96,7 @@ impl Serialize for SourceIssue {
         }
         View {
             diagnostic: crate::ReportIssue {
+                skipped: None,
                 sequence: self.sequence,
                 kind: self.kind.clone(),
                 reason: self.reason.clone(),
@@ -1023,7 +1024,7 @@ impl Stage<'_> {
                         [&id],
                         |r| r.get(0),
                     )?;
-                    self.db.execute("INSERT INTO converted_issues SELECT ?1,?2+row_number() OVER(ORDER BY seq),kind,reason,source_row,organization,NULL,count_cell,amount_cell,expected_count,expected_amount,actual_count,actual_amount,'source-period',date,seq FROM wide_source_issues WHERE sheet=?3 AND relevant=1 ORDER BY seq",params![id,offset,name])?;
+                    self.db.execute("INSERT INTO converted_issues SELECT ?1,?2+row_number() OVER(ORDER BY seq),kind,reason,source_row,organization,NULL,count_cell,amount_cell,expected_count,expected_amount,actual_count,actual_amount,'source-period',date,seq,NULL FROM wide_source_issues WHERE sheet=?3 AND relevant=1 ORDER BY seq",params![id,offset,name])?;
                     self.db.execute("UPDATE converted_reports SET has_mismatch=1 WHERE id=?1 AND EXISTS(SELECT 1 FROM wide_source_issues WHERE sheet=?2 AND relevant=1 AND kind='mismatch')",params![id,name])?;
                     summary.issues += relevant;
                 }

@@ -1414,3 +1414,23 @@ fn complete_conflict_and_source_scans_include_minimum_sqlite_rowid() {
         .unwrap_err()
         .contains("another source"));
 }
+
+#[test]
+fn native_omitted_detail_evidence_survives_apply_without_changing_recognized_totals() {
+    let root=tempfile::tempdir().unwrap();let source=root.path().join("evidence.xlsx");
+    let rows=[vec!["Работа","Количество","Сумма"],vec!["СМУ16","3","8"],vec!["Included","1","5"],vec!["Rejected","bad","99"],vec!["","2","3"],vec!["АВТО","bad","7"],vec!["Unknown organization","4","9"],vec!["Итого","3","8"]];
+    let mut xml=String::from("<worksheet><sheetData>");
+    for (row,values) in rows.iter().enumerate(){xml.push_str(&format!("<row r=\"{}\">",row+1));for (col,value) in values.iter().enumerate(){if !value.is_empty(){xml.push_str(&format!("<c r=\"{}{}\" t=\"inlineStr\"><is><t>{value}</t></is></c>",(b'A'+col as u8) as char,row+1));}}xml.push_str("</row>");}xml.push_str("</sheetData></worksheet>");
+    let mut archive=ZipWriter::new(fs::File::create(&source).unwrap());archive.start_file("xl/worksheets/sheet1.xml",SimpleFileOptions::default()).unwrap();archive.write_all(xml.as_bytes()).unwrap();archive.finish().unwrap();
+    let original_bytes=fs::read(&source).unwrap();let area=StageArea::open(root.path().join("stage")).unwrap();let cancel=AtomicBool::new(false);
+    let mut stage=area.ingest(&source,Limits::default(),&cancel,|_|{}).unwrap();stage.convert_legacy(&LegacyOptions{period_dates:None,sheet:"xl/worksheets/sheet1.xml".into(),kind:"day".into(),start:"2020-03-01".into(),organizations:["СМУ16".into(),"АВТО".into(),"ТРАК".into(),"ЦЕНТР".into()],mappings:None},&cancel,|_|{}).unwrap();
+    let prepared=stage.prepare(&cancel,|_|{}).unwrap();let report=prepared.next_report(0).unwrap().unwrap();
+    let store=Storage::new(root.path().join("live")).unwrap();let revision=store.revision().unwrap();let preview=store.preview_import(&prepared).unwrap();
+    assert!(store.apply_import(&prepared,&preview,ImportConfirmation::default(),&ImportJob::new(),|_|{}).is_err());assert_eq!(store.revision().unwrap(),revision);
+    let receipt=store.apply_import(&prepared,&preview,ImportConfirmation{accept_quality:true,..Default::default()},&ImportJob::new(),|_|{}).unwrap();assert_eq!(receipt.rows,2);
+    let quality=serde_json::to_value(store.report_quality_page(receipt.revision,&report.id,QualityScope::Report,0,50).unwrap()).unwrap();assert_eq!(quality["evidence"]["omitted_row_entries"],2);assert_eq!(quality["evidence"]["explicit_zero"],Value::Null);
+    let issues=quality["issues"].as_array().unwrap();let unknown=issues.iter().find(|i|i["kind"]=="skipped").unwrap();assert_eq!(unknown["skipped"],true);assert!(unknown["organization"].is_null());
+    let invalid_control=issues.iter().find(|i|i["source_row"]==6).unwrap();assert!(invalid_control["skipped"].is_null());let included=issues.iter().find(|i|i["kind"]=="empty-name").unwrap();assert!(included["skipped"].is_null());
+    store.analysis_index_report(&report.id,receipt.revision).unwrap();let matrix=store.quality_matrix_page(receipt.revision,"day","2020-03-01","2020-03-01",&["СМУ16".into()]).unwrap();let cell=&matrix.rows[0].cells[0];assert!(cell.available);assert_eq!(cell.count,Some(3.));assert_eq!(cell.amount,Some(8.));assert_eq!(cell.warned_reports,1);
+    assert_eq!(fs::read(&source).unwrap(),original_bytes);assert_eq!(store.revision().unwrap(),receipt.revision);
+}

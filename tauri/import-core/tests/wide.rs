@@ -239,3 +239,22 @@ fn coverage_suffix_retains_word_boundary_context() {
     );
     assert!(s.source_issues("Data", 0, 100).unwrap().is_empty());
 }
+
+#[test]
+fn wide_omitted_detail_is_tagged_but_shared_source_controls_are_not() {
+    let t=tempfile::tempdir().unwrap();let path=t.path().join("omitted.xlsx");
+    let mut input=rows();input[3][1]="bad";input.insert(4,vec!["Included","1","10","0","0","1","10"]);
+    book(&path,&input,MERGES,"xl/worksheets/sheet1.xml");
+    let area=StageArea::open(t.path().join("stage")).unwrap();let cancel=Arc::new(AtomicBool::new(false));
+    let mut stage=area.ingest(&path,Limits::default(),&cancel,|_|{}).unwrap();
+    stage.convert_wide(&WideOptions::default(),cancel.clone(),|_|{}).unwrap();
+    let prepared=stage.prepare(cancel.as_ref(),|_|{}).unwrap();let report=prepared.next_report(0).unwrap().unwrap();
+    let doc:serde_json::Value=serde_json::from_reader(prepared.open_document(&report).unwrap()).unwrap();
+    assert_eq!(doc["count"],1.);assert_eq!(doc["amount"],10.);assert_eq!(doc["rows"].as_array().unwrap().len(),1);
+    let issues=doc["issues"].as_array().unwrap();let omitted=issues.iter().find(|i|i["kind"]=="invalid"&&i["source_row"]==4&&i["scope"].is_null()).unwrap();
+    assert_eq!(omitted["skipped"],true);assert_eq!(omitted["organization"],"СМУ16");
+    let source_issues=doc["sourceIssues"].as_array().unwrap();assert!(!source_issues.is_empty());
+    assert!(source_issues.iter().all(|i|i.get("skipped").is_none()));
+    let source_copies:Vec<_>=issues.iter().filter(|i|i["scope"]=="source-period").collect();assert!(!source_copies.is_empty());
+    assert!(source_copies.iter().all(|i|i.get("skipped").is_none()));
+}

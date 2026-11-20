@@ -211,8 +211,9 @@ Only a typed `missing-day` issue with `source-period` scope, a valid date,
 and `relevant: true` increments `missing_day_entries`. False relevance and
 unknown date/scope/relevance have separate counters. Counters count saved
 entries, not distinct dates. Missing organization attribution is preserved.
-An `invalid` issue with explicit `skipped: true` and report or legacy scope
+An `invalid` or `skipped` issue with explicit `skipped: true` and report or legacy scope
 increments `omitted_row_entries`; a generic warning or mismatch does not.
+An omitted row with unknown organization remains unattributed.
 Malformed classification fields do not erase independent valid facts, and
 nullable legacy fields remain unknown. Shared-source counts can concern other
 reports or sheets and must not be assigned to the selected matrix cell.
