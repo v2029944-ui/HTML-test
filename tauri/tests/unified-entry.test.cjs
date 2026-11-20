@@ -6,7 +6,7 @@ test('one canonical application retains the whole original interface and never s
  const html=prepareHtml(original);
  for(const id of ['dashboard','changes','upload','groups','storage','chartSeriesLayout','changesSort','changesDirection','regularityStatus','groupAuditPanel','groupCatalog','appearanceSize'])assert.match(html,new RegExp('id="'+id+'"'));
  assert.ok(!html.includes('window.appReady=main();'),'old full-history main must not run');
- assert.match(html,/tauri-unified-app.js/);assert.ok(!html.includes('tauri-native-reader.js'));assert.ok(!html.includes('Классический интерфейс'));
+ assert.match(html,/tauri-unified-app.js/);assert.match(html,/tauri-unified-horizontal-bars.js/);assert.ok(!html.includes('tauri-native-reader.js'));assert.ok(!html.includes('Классический интерфейс'));
  assert.ok(html.indexOf('tauri-bridge.js')<html.indexOf('tauri-unified-original.js'));
 });
 test('the source renderer is available without invoking old wire, storage or full report loading',()=>{
@@ -31,6 +31,7 @@ test('canonical DOM and all styles survive except duplicate source/year calendar
  const groupToolbar=html.slice(html.indexOf('id="createGroup"'),html.indexOf('id="groupCoverage"'));
  assert.match(groupToolbar,/id="importGroups"/);assert.match(groupToolbar,/id="catalogFile"/);
  assert.match(html,/id="hideEmptyPeriods"/);assert.match(html,/id="unifiedSource"/);
+ assert.match(html,/id="chartOrientation"/);assert.doesNotMatch(html,/data-chart="line"/);
  for(const id of ['additionalMetrics','metricKindSelect','metricKindCalculate','metricKindChooseXlsx','metricKindChoose','metricKindApply','metricKindPreview','metricKindStatus'])assert.match(html,new RegExp('id="'+id+'"'));
  assert.doesNotMatch(html,/<script>([\s\S]*?)<\/script>/);
 });
