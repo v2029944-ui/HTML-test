@@ -93,3 +93,18 @@ test('charts default to columns and switch orientation without changing data gro
  f.nodes.get('chartOrientation').value='horizontal';f.nodes.get('chartOrientation').dispatch('change');await settle();
  assert.equal(f.draws.at(-1)[4].chart,'bar');assert.equal(f.draws.at(-1)[4].orientation,'horizontal');
 });
+
+test('missing daily reports offer existing weekly imports without inventing zeros',async()=>{
+ const f=fixture({unifiedPeriodOptions:async(_revision,kind,grouping)=>{
+  if(kind==='day'&&grouping==='week')return {rows:[],min:null,max:null,total_rows:0,next:null};
+  if(kind==='week')return {rows:[{start:'2024-01-01',end:'2024-01-07'}],min:'2024-01-01',max:'2024-01-01',total_rows:1,next:null};
+  throw Error('Unexpected period type');
+ }});
+ f.nodes.get('periodType').value='week';await f.bootstrap();await settle();
+ assert.match(f.nodes.get('overviewAlerts').textContent,/Дневных отчётов пока нет/);
+ assert.match(f.nodes.get('overviewAlerts').textContent,/Открыть недельные отчёты/);
+ const btn=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='BUTTON');
+ assert.ok(btn);btn.dispatch('click');await settle();
+ assert.equal(f.nodes.get('unifiedSource').value,'imported');
+ assert.equal(f.nodes.get('periodType').value,'week');
+});
