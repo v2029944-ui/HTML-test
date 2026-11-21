@@ -12,6 +12,42 @@ using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Text;
 public static class AnalizIcon {
+ // Read the persisted Unicode shell link itself. WScript.Shell can return an empty
+ // newly-created object for an existing shortcut with a non-ANSI filename.
+ [ComImport,Guid("00021401-0000-0000-C000-000000000046")] class ShellLink {}
+ [ComImport,Guid("000214F9-0000-0000-C000-000000000046"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+ interface IShellLinkW {
+   [PreserveSig] int GetPath([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder path,int chars,IntPtr fileData,uint flags);
+   void GetIDList(out IntPtr list); void SetIDList(IntPtr list);
+   void GetDescription(IntPtr text,int chars); void SetDescription(IntPtr text);
+   void GetWorkingDirectory(IntPtr text,int chars); void SetWorkingDirectory(IntPtr text);
+   void GetArguments(IntPtr text,int chars); void SetArguments(IntPtr text);
+   void GetHotkey(out short key); void SetHotkey(short key);
+   void GetShowCmd(out int cmd); void SetShowCmd(int cmd);
+   [PreserveSig] int GetIconLocation([Out,MarshalAs(UnmanagedType.LPWStr)] StringBuilder path,int chars,out int index);
+ }
+ public sealed class LinkInfo {
+   public string Target,RawTarget,Icon;
+   public int IconIndex;
+ }
+ public static LinkInfo ReadLink(string file){
+   object obj=new ShellLink();
+   try{
+     ((System.Runtime.InteropServices.ComTypes.IPersistFile)obj).Load(file,0);
+     var link=(IShellLinkW)obj;
+     var path=new StringBuilder(32768);
+     Marshal.ThrowExceptionForHR(link.GetPath(path,path.Capacity,IntPtr.Zero,4));
+     var result=new LinkInfo();result.RawTarget=path.ToString();
+     path.Length=0;Marshal.ThrowExceptionForHR(link.GetPath(path,path.Capacity,IntPtr.Zero,0));
+     result.Target=path.Length==0?Environment.ExpandEnvironmentVariables(result.RawTarget):path.ToString();
+     path.Length=0;int index;
+     Marshal.ThrowExceptionForHR(link.GetIconLocation(path,path.Capacity,out index));
+     result.Icon=path.ToString();result.IconIndex=index;
+     return result;
+   }finally{Marshal.FinalReleaseComObject(obj);}
+ }
+ [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h,StringBuilder s,int n);
+ public static string WindowClass(IntPtr h){var text=new StringBuilder(256);GetClassName(h,text,text.Capacity);return text.ToString();}
  [DllImport("shell32.dll", EntryPoint="ExtractIconExW", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
  static extern uint ExtractIconEx(string file,int idx,out IntPtr big,IntPtr small,uint count);
  [DllImport("user32")] static extern bool DestroyIcon(IntPtr icon);
@@ -84,7 +120,6 @@ $testRoaming=Join-Path $work 'Roaming'
 $testLocal=Join-Path $work 'Local'
 New-Item -ItemType Directory $testRoaming,$testLocal | Out-Null
 $programs=[Environment]::GetFolderPath('Programs')
-$shell=New-Object -ComObject WScript.Shell
 $result=[ordered]@{sha=$env:REFERENCE_HEAD_SHA;clean=@{};upgrade=@{}}
 function Save-Result { $result | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 (Join-Path $out 'reference-windows-icons.json') }
 function Run-Setup($setup,[switch]$Update) {
@@ -122,8 +157,18 @@ function Main-Window($path){
             $process=Start-Process $path -PassThru
         }finally{$env:APPDATA=$roaming;$env:LOCALAPPDATA=$local}
     }
-    for($i=0;$i -lt 100;$i++){Start-Sleep -Milliseconds 200;$process.Refresh();if($process.MainWindowHandle -ne 0){return $process.MainWindowHandle}}
-    throw 'Installed application has no main window'
+    for($i=0;$i -lt 240;$i++){
+        Start-Sleep -Milliseconds 250
+        $process.Refresh()
+        if($process.HasExited){throw "Installed app exited before its main window: $($process.ExitCode)"}
+        $hwnd=$process.MainWindowHandle
+        if($hwnd -eq [IntPtr]::Zero -or [AnalizIcon]::WindowClass($hwnd) -ne 'Tauri Window'){continue}
+        # A top-level HWND exists before cold WebView2 has initialized the page.
+        $window=[System.Windows.Automation.AutomationElement]::FromHandle($hwnd)
+        $document=New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::ControlTypeProperty),([System.Windows.Automation.ControlType]::Document)
+        if($window.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$document)){return $hwnd}
+    }
+    throw 'Installed application did not expose a WebView2 document in its Tauri window'
 }
 function Check-Bitmap($bitmap,$id){
     try{
@@ -136,22 +181,41 @@ function Check-StartMenu($name,$exe,$record){
     $info=@{path=$shortcut}
     $record.startMenu=$info
     if(!(Test-Path -LiteralPath $shortcut)){throw "Start menu shortcut missing: $shortcut"}
-    $link=$shell.CreateShortcut($shortcut)
-    $info.target=$link.TargetPath
-    $info.icon=$link.IconLocation
+    $link=[AnalizIcon]::ReadLink($shortcut)
+    $info.target=$link.Target
+    $info.rawTarget=$link.RawTarget
+    $info.icon=$link.Icon
+    $info.iconIndex=$link.IconIndex
     $folder=(New-Object -ComObject Shell.Application).NameSpace($programs)
     $info.appId=$folder.ParseName((Split-Path $shortcut -Leaf)).ExtendedProperty('System.AppUserModel.ID')
     $icon=Join-Path (Split-Path $exe) 'analysis-bars-blue.ico'
     if($info.target -ne $exe -or $info.appId -ne 'local.analiz.rabot.tauri'){throw 'Start menu link target or AppUserModelID differs'}
-    if(($info.icon -replace ',\s*0$','').Trim('"') -ne $icon){throw "Start menu calls a different icon: $($info.icon)"}
+    if($info.icon -ne $icon -or $info.iconIndex -ne 0){throw "Start menu calls a different icon: $($info.icon),$($info.iconIndex)"}
     Check-Bitmap ([AnalizIcon]::FromFile($icon)) ($name+'-installed-ico')
     Check-Bitmap ([AnalizIcon]::FromShortcut($shortcut)) ($name+'-start-menu')
 }
-function Check-Shell($name,$exe,$record){
-    # Preserve the actual taskbar screenshot even when shortcut metadata is wrong.
-    try{Check-StartMenu $name $exe $record}catch{$record.startMenuError=$_.Exception.Message}
-    Capture-Taskbar $name $record
-    if($record.startMenuError){throw $record.startMenuError}
+function Check-WindowAndShell($name,$exe,$record){
+    # Exercise each independent surface, even when a preceding assertion fails.
+    try{
+        $hwnd=Main-Window $exe
+        $record.window=@{hwnd=$hwnd.ToInt64();class=[AnalizIcon]::WindowClass($hwnd);document='WebView2'}
+        Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,0)) ($name+'-window')
+        Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,1)) ($name+'-taskbar-hwnd')
+        $record.hwnd='verified small and large'
+    }catch{$record.hwndError=$_.Exception.Message}
+    try{Check-StartMenu $name $exe $record}catch{
+        $record.startMenuError=$_.Exception.Message
+        $shortcut=Join-Path $programs 'Анализ работ.lnk'
+        if(Test-Path -LiteralPath $shortcut){
+            $bytes=[IO.File]::ReadAllBytes($shortcut)
+            $record.startMenuLinkLength=$bytes.Length
+            if($bytes.Length -ge 76){$record.startMenuLinkFlags=[BitConverter]::ToUInt32($bytes,20)}
+            $record.startMenuLinkSha256=(Get-FileHash -LiteralPath $shortcut -Algorithm SHA256).Hash
+        }
+    }
+    try{Capture-Taskbar $name $record}catch{$record.taskbarError=$_.Exception.Message}
+    $failures=@($record.hwndError,$record.startMenuError,$record.taskbarError) | Where-Object {$_}
+    if($failures){throw ($failures -join ' / ')}
 }
 function Taskbar-Button{
     $hwnd=[AnalizIcon]::FindWindow('Shell_TrayWnd',$null)
@@ -188,7 +252,7 @@ function Capture-Taskbar($name,$record){
 function Find-Pin($path){
     if(Test-Path -LiteralPath $pinDir){
         foreach($link in Get-ChildItem -LiteralPath $pinDir -Filter '*.lnk' -File){
-            if($shell.CreateShortcut($link.FullName).TargetPath -eq $path){return $link.FullName}
+            if(([AnalizIcon]::ReadLink($link.FullName)).Target -eq $path){return $link.FullName}
         }
     }
 }
@@ -233,11 +297,7 @@ try{
         Check-Bitmap ([AnalizIcon]::FromFile($Candidate)) 'installer';$result.clean.installer='verified'
         $exe=Run-Setup $Candidate
         Check-Bitmap ([AnalizIcon]::FromFile($exe)) 'clean-exe';$result.clean.exe='verified'
-        $hwnd=Main-Window $exe
-        Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,0)) 'clean-window'
-        Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,1)) 'clean-taskbar-hwnd'
-        $result.clean.hwnd='verified small and large'
-        Check-Shell 'clean' $exe $result.clean
+        Check-WindowAndShell 'clean' $exe $result.clean
     }catch{$result.clean.error=$_.Exception.Message}
     Save-Result
     if($exe){Stop-Owned $exe}
@@ -257,16 +317,13 @@ try{
     Check-Bitmap ([AnalizIcon]::FromFile($exe)) 'upgrade-exe';$result.upgrade.exe='verified in place over stable 1.10.0'
     if($pin){
         if((Find-Pin $exe) -ne $pin){throw 'The existing pinned shortcut was lost during upgrade'}
-        $result.upgrade.pinned=@{target=$shell.CreateShortcut($pin).TargetPath;location=$shell.CreateShortcut($pin).IconLocation}
+        $link=[AnalizIcon]::ReadLink($pin)
+        $result.upgrade.pinned=@{target=$link.Target;location=$link.Icon;index=$link.IconIndex}
         Check-Bitmap ([AnalizIcon]::FromShortcut($pin)) 'existing-pin'
         $result.upgrade.pinned.resolvedIcon='verified with SHGetFileInfo'
         Capture-Taskbar 'existing-pin' $result.upgrade.pinned
     }
-    $hwnd=Main-Window $exe
-    Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,0)) 'upgrade-window'
-    Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,1)) 'upgrade-taskbar-hwnd'
-    $result.upgrade.hwnd='verified small and large'
-    Check-Shell 'upgrade' $exe $result.upgrade
+    Check-WindowAndShell 'upgrade' $exe $result.upgrade
     if($result.clean.error){throw $result.clean.error}
 }catch{$result.error=$_.Exception.Message;throw}
 finally{

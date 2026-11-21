@@ -364,3 +364,18 @@ test('adjacent pairs follow the exact common unit and interval even when old loc
  f.publish({from:'2024-01-01',to:'2024-03-31'});await settle();
  assert.deepEqual([requests.at(-1).query.method,requests.at(-1).query.from,requests.at(-1).query.to],['range','2024-01-01','2024-03-31']);
 });
+
+test('history receives focus before SQL and closing restores the same logical source row after a redraw',async()=>{
+ const wait=deferred(),fx=fixture({unifiedChangesPage:async()=>page('Work'),nativeWorkTimeline:()=>wait.promise});
+ fx.publish();fx.view('changes');await settle();
+ const source=fx.tables.find(t=>t.root==='changesResults').rows[0][0],heading=fx.nodes.get('changeDetailTitle');
+ let focused=source;heading.focus=()=>{focused=heading;};
+ const sibling=new Element('button'),replacement=new Element('button'),host=fx.nodes.get('changesResults');
+ sibling.dataset.historyEntry=source.dataset.historyEntry;replacement.dataset.historyEntry=source.dataset.historyEntry;
+ const before=[sibling,source],after=[sibling,replacement];host.querySelectorAll=()=>source.isConnected?before:after;
+ source.isConnected=true;source.closest=()=>host;source.focus=()=>{focused=source;};replacement.focus=()=>{focused=replacement;};
+ source.dispatch('click');assert.equal(focused,heading,'Escape must target the drilldown while its SQL is pending');
+ source.isConnected=false;fx.nodes.get('closeChangeDetails').dispatch('click');
+ assert.equal(fx.nodes.get('changeDetails').hidden,true);assert.equal(focused,replacement,'same occurrence when two metric rows have the same work');
+ wait.resolve({points:[],granularity:'day'});await settle();assert.equal(focused,replacement);
+});

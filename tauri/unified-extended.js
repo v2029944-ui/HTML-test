@@ -76,7 +76,7 @@ function workScopeText(s){return s.allNames===true?'Область расчёт�
 function caption(range){const end=visibleEnd(range);return dateLabel(range.from)+(end!==range.from?' — '+dateLabel(end):'');}
 function periodLabel(start,kind){return dateLabel(start)+(kind==='week'?' — '+dateLabel(periodEnd(start,'week')):'');}
 function workLabel(name){return String(name).trim().replace(/,\s*$/,'');}
-function itemButton(entry,s,organization=null,target='analytics'){const button=UI.el('button',workLabel(entry.name)+(entry.kind==='group'?' (группа)':''),'service-link text-button');button.type='button';button.addEventListener('click',()=>history(entry,s,organization,target,button));return button;}
+function itemButton(entry,s,organization=null,target='analytics'){const button=UI.el('button',workLabel(entry.name)+(entry.kind==='group'?' (группа)':''),'service-link text-button');button.type='button';button.dataset.historyEntry=JSON.stringify([entry.key,organization,s.from,s.to]);button.addEventListener('click',()=>history(entry,s,organization,target,button));return button;}
 function plotTimeline(result,entry,s,root,chosenMetrics,seriesType){
  const points=result.points||[],kind=result.granularity==='period'?s.displayType:result.granularity;
  const periods=points.map(p=>{const start=p.start.length===7?p.start+'-01':p.start;return {type:kind,start,end:periodEnd(start,kind)};});
@@ -84,12 +84,24 @@ function plotTimeline(result,entry,s,root,chosenMetrics,seriesType){
  for(const metric of chosenMetrics){const section=UI.el('section',null,'metric-chart'),plot=UI.el('div',null,'metric-plot');section.append(UI.el('h3',titles[metric]),plot);root.append(section);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'bar',orientation:orientation(),categories:[entry.key],data,label:()=>entry.name,seriesType});}
 }
 const historyTriggers=new Map();
+function historyLinks(host,entry){return host?[...host.querySelectorAll('[data-history-entry]')].filter(button=>button.dataset.historyEntry===entry):[];}
+function closeHistory(prefix){
+ invalidate(prefix+'History');$(prefix==='change'?'changeDetails':'analyticsDetails').hidden=true;
+ const origin=historyTriggers.get(prefix);historyTriggers.delete(prefix);if(!origin)return;
+ const {button,host,entry,index}=origin;
+ const trigger=button.isConnected?button:historyLinks(host,entry)[index];
+ trigger?.focus();
+}
 async function history(entry,s,organization,target,trigger){
  if(!entry.key||entry.other)return;
  const prefix=target==='change'?'change':'analytics',panel=$(prefix==='change'?'changeDetails':'analyticsDetails'),title=$(prefix==='change'?'changeDetailTitle':'analyticsDetailTitle'),content=$(prefix==='change'?'changeDetailContent':'analyticsDetailContent');
- if(!panel||!content)return;historyTriggers.set(prefix,trigger);panel.hidden=false;title.textContent=entry.name+(organization?' · '+organization:'');
+ if(!panel||!content)return;
+ const host=trigger.closest?.('#changesResults,#comparisonTable,#contributionResults,#structureResults,#usualResults,#regularityResults'),identity=trigger.dataset.historyEntry;
+ historyTriggers.set(prefix,{button:trigger,host,entry:identity,index:historyLinks(host,identity).indexOf(trigger)});
+ panel.hidden=false;title.textContent=entry.name+(organization?' · '+organization:'');
+ title.focus({preventScroll:true});panel.scrollIntoView?.({block:'nearest'});
  const task=loading(prefix+'History',[content.id]);
- try{const result=await api.nativeWorkTimeline(s.revision,s.type,s.from,s.to,s.organizations,organization,entry.key,null,s.source==='daily'?s.displayType:null,s.selectedNames||[]);if(!task.valid())return;content.replaceChildren();content.append(UI.el('p','Динамика за '+caption(s)+'. Пропуски не считаются нулём. Данные представлены по периодам.','muted small'));plotTimeline(result,entry,s,content,target==='change'?[...changeMetrics]:metrics());title.focus?.({preventScroll:true});panel.scrollIntoView?.({block:'nearest'});}
+ try{const result=await api.nativeWorkTimeline(s.revision,s.type,s.from,s.to,s.organizations,organization,entry.key,null,s.source==='daily'?s.displayType:null,s.selectedNames||[]);if(!task.valid())return;content.replaceChildren();content.append(UI.el('p','Динамика за '+caption(s)+'. Пропуски не считаются нулём. Данные представлены по периодам.','muted small'));plotTimeline(result,entry,s,content,target==='change'?[...changeMetrics]:metrics());}
  catch(error){task.error(error);}finally{task.done();}
 }
 
@@ -532,7 +544,7 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
  bind(['comparisonMode','periodComparisonScope','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonScope','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','comparisonBaseOrg'],'change',()=>{invalidate('comparison');invalidate('contribution');comparison();});
  bind(['structureBase','structureCurrent','structureMetric','structureLimit','structureScope'],'change',structure);bind(['usualPeriod','usualWindow'],'change',()=>patterns('usual'));bind(['usualPercent'],'input',()=>schedule('usual',()=>patterns('usual')));bind(['regularityGap','regularityStatus'],'change',()=>patterns('regularity'));bind(['regularitySearch'],'input',()=>schedule('regularity',()=>patterns('regularity')));
  for(const [id,run] of [['advancedAnalytics',comparison],['contributions',contributions],['structurePanel',structure],['usualPanel',()=>patterns('usual')],['regularityPanel',()=>patterns('regularity')]])$(id).addEventListener('toggle',()=>{if($(id).open&&scope)run();});
- $('closeAnalyticsDetails').addEventListener('click',()=>{invalidate('analyticsHistory');$('analyticsDetails').hidden=true;historyTriggers.get('analytics')?.focus();});$('closeChangeDetails').addEventListener('click',()=>{invalidate('changeHistory');$('changeDetails').hidden=true;historyTriggers.get('change')?.focus();});
+ $('closeAnalyticsDetails').addEventListener('click',()=>closeHistory('analytics'));$('closeChangeDetails').addEventListener('click',()=>closeHistory('change'));
  $('overviewShowComparison').addEventListener('click',()=>{$('advancedAnalytics').open=true;$('comparisonMode').value='periods';comparison();$('comparison').scrollIntoView?.({block:'start'});});
  UI.onScope(resetScope);UI.onSnapshot(snapshot=>{if(!snapshot){scope=null;clearExtended();}});
  UI.onView('changes',()=>{activeView='changes';if(scope)changes();});UI.onView('dashboard',()=>{activeView='dashboard';if(scope?.revision===UI.revision&&$('advancedAnalytics').open)comparison();});for(const view of ['upload','groups','storage'])UI.onView(view,()=>{activeView=view;});

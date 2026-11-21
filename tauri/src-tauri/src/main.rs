@@ -1625,7 +1625,20 @@ fn main() {
             window.create = false;
         }
     }
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(windows)]
+    let builder = builder.on_page_load(|webview, page| {
+        // Apply ICON_BIG to the window that actually finished loading, including cold WebView2 starts.
+        if matches!(page.event(), tauri::webview::PageLoadEvent::Finished) {
+            let icon = webview.window().hwnd()
+                .map_err(|error| std::io::Error::other(error.to_string()))
+                .and_then(|hwnd| windows_taskbar::set_large_icon(hwnd.0));
+            if let Err(error) = icon {
+                eprintln!("Unable to set the Windows taskbar icon: {error}");
+            }
+        }
+    });
+    builder
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 if let Some(runtime) = window.try_state::<storage::shared_runtime::Runtime>() {
@@ -1674,15 +1687,6 @@ fn main() {
                             "--remote-debugging-address=127.0.0.1 --remote-debugging-port={port}"
                         ))
                         .build()?;
-                }
-            }
-            #[cfg(windows)]
-            for window in app.webview_windows().values() {
-                let icon = window.hwnd()
-                    .map_err(|error| std::io::Error::other(error.to_string()))
-                    .and_then(|hwnd| windows_taskbar::set_large_icon(hwnd.0));
-                if let Err(error) = icon {
-                    eprintln!("Unable to set the Windows taskbar icon: {error}");
                 }
             }
             Ok(())
