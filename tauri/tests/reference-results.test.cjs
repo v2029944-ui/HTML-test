@@ -155,3 +155,47 @@ test('zero-base comparison prints confirmed zero without a negative sign and lea
  await f.s1.querySelectorAll('button').find(n=>n.textContent==='Печать / PDF').click();
  assert.deepEqual(rows[0].slice(1),['0,00','100,00','+100,00','—']);assert.equal(rows[1][1],'0,000');assert.equal(rows[2][1],'—');
 });
+
+test('new search immediately blocks print and CSV until rows match the search box',async()=>{
+ const names=['Ремонт','Покраска'],requested=[],printed=[];
+ const f=fixture({referenceChanges:async q=>{
+  requested.push(q.search);
+  const rows=names.filter(name=>name.includes(q.search)).map(name=>({name,org:'A',before:1,after:2,delta:1,percent:100}));
+  return {rows,total:rows.length,searched:rows.length,significant:rows.length,comparable:['A'],counts:{up:2,down:0,new:0,gone:0}};
+ }});
+ f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);
+ await f.window.referenceResults.setScreen('s2');
+ const print=f.s2.querySelectorAll('button').find(b=>b.textContent==='Печать / PDF');
+ const csv=f.s2.querySelector('[data-export-changes]'),input=f.s2.querySelector('input');
+ f.window.print=()=>printed.push(f.document.getElementById('referencePrintDocument')
+  .querySelectorAll('.print-changes tbody tr').map(row=>row.children[0].textContent));
+ input.value='Ремонт';await input.fire('input');
+ await print.click();await csv.click();
+ assert.deepEqual(printed,[]);assert.deepEqual(f.exports,[]);assert.deepEqual(requested,['']);
+ assert.equal(f.s2.getAttribute('aria-busy'),'true');assert.equal(print.inert,true);
+ await new Promise(resolve=>setTimeout(resolve,180));
+ await print.click();await csv.click();
+ assert.deepEqual(printed,[['Ремонт']]);assert.equal(f.exports[0][0].search,'Ремонт');
+ assert.equal(f.s2.getAttribute('aria-busy'),'false');
+});
+
+test('editing the search invalidates pending print pages, save chooser and earlier search replies',async()=>{
+ const f=fixture(),sql=deferred(),chooser=deferred(),olderSearch=deferred(),newerSearch=deferred();
+ const page=name=>({rows:[{name,org:'A',before:1,after:2,delta:1,percent:100}],total:1,searched:1,
+  significant:1,comparable:['A'],counts:{up:1,down:0,new:0,gone:0}});
+ f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);await f.window.referenceResults.setScreen('s2');
+ const print=f.s2.querySelectorAll('button').find(b=>b.textContent==='Печать / PDF');
+ const csv=f.s2.querySelector('[data-export-changes]'),input=f.s2.querySelector('input'),requests=[];
+ let prints=0;f.window.print=()=>prints++;f.api.chooseCsvPath=()=>chooser.promise;
+ f.api.referenceChanges=q=>{requests.push(q.search);return q.search==='A'?olderSearch.promise:q.search==='B'?newerSearch.promise:sql.promise;};
+ const printing=print.click(),exporting=csv.click();await flush();
+ input.value='A';await input.fire('input');
+ sql.resolve(page('До поиска'));chooser.resolve('/tmp/before-search.csv');await Promise.all([printing,exporting]);
+ assert.equal(prints,0);assert.deepEqual(f.exports,[]);
+ await new Promise(resolve=>setTimeout(resolve,180));assert.deepEqual(requests,['','A']);
+ input.value='B';await input.fire('input');olderSearch.resolve(page('Устаревшая строка'));await flush();
+ assert.equal(f.s2.getAttribute('aria-busy'),'true');assert.doesNotMatch(f.s2.querySelector('.changes-table').textContent,/Устаревшая/);
+ await new Promise(resolve=>setTimeout(resolve,180));newerSearch.resolve(page('Строка B'));await flush();
+ assert.match(f.s2.querySelector('.changes-table').textContent,/Строка B/);
+ assert.equal(f.s2.getAttribute('aria-busy'),'false');
+});

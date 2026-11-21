@@ -11,7 +11,7 @@ function init(){
  let year=null,calendarData=null,monthPoints=[],dayPoints=new Map(),selectedMonth=null;
  let sourcePath=null,sheets=[],review=null,options=null,importBusy=false,sourceTicket=0,parameterTicket=0;
  const button=(text,fn)=>{const b=el('button',text,'button secondary');b.type='button';b.addEventListener('click',fn);return b;};
- let wideSheetRows=[],sourceInFolder=false;
+ let wideSheetRows=[],sourceFolderContext=null;
  let uploadMode='import';
  const uploadPanels={import:$('excelFile').closest?.('.panel'),calendar:$('reportPeriods'),quality:$('qualityHeading').closest?.('.panel')};
  const listPanel=el('section',undefined,'panel');listPanel.id='unifiedSavedReports';
@@ -340,25 +340,55 @@ function init(){
   const wideMap=el('textarea');wideMap.id='unifiedWideMapping';wideMap.rows=3;wideMap.maxLength=8192;wideMap.placeholder='Ручные столбцы по листам: Имя листа; строка заголовка; работа; первый день; итог количества; итог суммы';wideMap.addEventListener('input',changed);wideManual.replaceChildren(el('summary','Указать столбцы дневного листа вручную'),wideMap);root.append(wideManual);
   updateWideSheetSummary();return wideMap;
  }
+ function applyFolderRule(rule,found,wideMap){
+  if(rule.format==='daily-wide'||rule.format==='auto'&&found.some(sheet=>sheet.dailyWide)){
+   $('importFormat').value='daily-wide';
+   $('dailyYear').value=String(rule.year||'');yearDetails.open=!!rule.year;
+   const available=new Set(found.map(sheet=>sheet.name));
+   const mappings=Object.entries(rule.mappings||{});
+   const missing=[...(rule.sheets||[]),...mappings.map(([name])=>name)].some(name=>!available.has(name));
+   if(rule.sheets?.length||missing){
+    $('unifiedWideSheetMode').value='selected';
+    for(const row of wideSheetRows)row.box.checked=!missing&&rule.sheets.includes(row.name);
+    updateWideSheetSummary();
+   }
+   wideMap.value=mappings.filter(([name])=>available.has(name)).map(([name,m])=>
+    [name,m.headerRow+1,columnName(m.workCol+1),columnName(m.firstDayCol+1),
+     m.totalCountCol===undefined?'':columnName(m.totalCountCol+1),
+     m.totalAmountCol===undefined?'':columnName(m.totalAmountCol+1)].join('; ')).join('\n');
+   formatChanged();
+   if(missing)status('unifiedImportStatus','Лист из сохранённого правила отсутствует. Отметьте листы для проверки и при необходимости уточните столбцы.');
+   return;
+  }
+  $('importFormat').value='legacy';$('importType').value=rule.type||'week';
+  $('importWeek').value=rule.start||'';$('importMonth').value=(rule.start||'').slice(0,7);
+  const selected=rule.sheet?found.find(sheet=>sheet.name===rule.sheet):found.length===1?found[0]:null;
+  const select=$('sheetSelect');
+  if(!selected){
+   const prompt=el('option','Выберите лист…');prompt.value='';prompt.disabled=true;select.prepend(prompt);
+  }
+  select.value=selected?.component||'';formatChanged();
+  if(!selected)status('unifiedImportStatus',rule.sheet?'Лист из сохранённого правила отсутствует. Выберите лист для проверки.':'В книге несколько листов. Выберите лист для проверки.');
+ }
  async function chooseSource(event,requestedPath=null){
   event?.preventDefault();event?.stopImmediatePropagation?.();if(importBusy)return;
   let ticket=sourceTicket,retargeting=false;importBusy=true;importLock();
   try{const path=requestedPath||await api.chooseWideXlsx();if(ticket!==sourceTicket)return;if(!path){status('unifiedImportStatus','Выбор файла отменён.');return;}
-   ticket=++sourceTicket;retargeting=true;sourceInFolder=false;resetReview();const previousPath=sourcePath;
+   ticket=++sourceTicket;retargeting=true;sourceFolderContext=null;resetReview();const previousPath=sourcePath;
    if(previousPath&&previousPath!==path){$('importWeek').value='';$('importMonth').value='';$('dailyYear').value='';$('importMappingMode').value='auto';$('importColumnMappings').replaceChildren();$('importManualWrap').hidden=true;$('replaceExisting').checked=false;$('importPeriodDates').replaceChildren();}
    sourcePath=null;sheets=[];
-   const listing=api.list?await api.list():null;if(ticket!==sourceTicket)return;
-   const name=path.split(/[\\/]/).pop(),normalize=p=>p.replace(/\\/g,'/').replace(/\/$/,''),belongs=listing?.folder&&normalize(path)===normalize(listing.folder)+'/'+name,rule=belongs?listing.rules?.[name]:null;
-   sourceInFolder=!!(belongs&&listing.files?.some(file=>file.name===name&&file.nativeSignature));
+   const context=await api.nativeImportFolderContext(path);if(ticket!==sourceTicket)return;
+   const rule=context?.rule;
    const found=await api.nativeImportSheets(path,rule?.format==='auto'?rule:null);if(ticket!==sourceTicket)return;if(!Array.isArray(found)||!found.length||found.length>64||found.some(sheet=>typeof sheet.name!=='string'||!sheet.name||typeof sheet.component!=='string'||!sheet.component)||new Set(found.map(sheet=>sheet.name)).size!==found.length)throw Error('В XLSX не найдены доступные листы.');
-   sourcePath=path;sheets=found;$('sheetSelect').replaceChildren();for(const sheet of found){const o=el('option',sheet.name);o.value=sheet.component;$('sheetSelect').append(o);}
+   sourcePath=path;sourceFolderContext=context;sheets=found;$('sheetSelect').replaceChildren();for(const sheet of found){const o=el('option',sheet.name);o.value=sheet.component;$('sheetSelect').append(o);}
+   $('sheetSelect').value=found[0].component;
    status('excelFileStatus',path.split(/[\\/]/).pop());status('unifiedImportStatus','Файл выбран. Проверьте лист и даты, затем нажмите «Проверить Excel».');
    const wideMap=renderWideSheetChoices(found);
    $('importPeriodDates').replaceChildren(el('p','Даты наборов будут показаны после проверки Excel.','muted small'));
    if(rule?.format==='auto'&&found.some(sheet=>typeof sheet.dailyWide!=='boolean'))throw Error('Нативное распознавание формата правила недоступно. Проверьте файл заново.');
-   if(rule){if(rule.format==='daily-wide'||rule.format==='auto'&&found.some(sheet=>sheet.dailyWide)){$('importFormat').value='daily-wide';$('dailyYear').value=String(rule.year||'');yearDetails.open=!!rule.year;if(rule.sheets?.length){if(rule.sheets.some(name=>!found.some(sheet=>sheet.name===name)))throw Error('Лист из сохранённого правила отсутствует в Excel.');$('unifiedWideSheetMode').value='selected';for(const row of wideSheetRows)row.box.checked=rule.sheets.includes(row.name);updateWideSheetSummary();}wideMap.value=Object.entries(rule.mappings||{}).map(([name,m])=>[name,m.headerRow+1,columnName(m.workCol+1),columnName(m.firstDayCol+1),m.totalCountCol===undefined?'':columnName(m.totalCountCol+1),m.totalAmountCol===undefined?'':columnName(m.totalAmountCol+1)].join('; ')).join('\n');formatChanged();}else if(rule){$('importFormat').value='legacy';$('importType').value=rule.type||'week';$('importWeek').value=rule.start||'';$('importMonth').value=(rule.start||'').slice(0,7);const selected=rule.sheet?found.find(sheet=>sheet.name===rule.sheet):found.length===1?found[0]:null;if(!selected)throw Error(rule.sheet?'Выбранный лист Excel не найден.':'Несколько листов Excel требуют ручного выбора.');$('sheetSelect').value=selected.component;formatChanged();}}
+   if(rule)applyFolderRule(rule,found,wideMap);
 
-  }catch(error){if(retargeting){sourcePath=null;sheets=[];$('sheetSelect').replaceChildren();status('excelFileStatus','Выберите файл');}status('unifiedImportStatus','Не удалось выбрать Excel: '+String(error.message||error));}
+  }catch(error){if(retargeting){sourcePath=null;sourceFolderContext=null;sheets=[];$('sheetSelect').replaceChildren();status('excelFileStatus','Выберите файл');}status('unifiedImportStatus','Не удалось выбрать Excel: '+String(error.message||error));}
   finally{if(ticket===sourceTicket){importBusy=false;importLock();}}
  }
  $('excelFile').addEventListener('click',chooseSource);
@@ -378,6 +408,7 @@ function init(){
    return {year,sheets:chosen,mappings:map,organizations:orgs.slice(),sequential_periods};
   }
   const kind=$('importType').value,start=kind==='month'?$('importMonth').value+'-01':$('importWeek').value;if(!validDate(start))throw Error('Укажите первую дату отчётного периода.');
+  if(!sheets.some(sheet=>sheet.component===$('sheetSelect').value))throw Error('Выберите лист для проверки.');
   const mapped=mappings(),result={kind,start,sheet:$('sheetSelect').value,organizations:orgs.slice(),mappings:mapped};
   const dates=[...$('importPeriodDates').querySelectorAll('input[data-ordinal]')];if(dates.some(input=>input.value!==input.dataset.original)){result.periodDates=dates.map(input=>{if(!validDate(input.value))throw Error('Некорректная дата набора.');return input.value;});}
   return result;
@@ -395,7 +426,7 @@ function init(){
    for(let i=0;i<result.reportCount;i++){const date=new Date(base+'T12:00:00Z');if(kind==='month')date.setUTCMonth(date.getUTCMonth()+i);else date.setUTCDate(date.getUTCDate()+i*(kind==='week'?7:1));const initial=options.periodDates?.[i]||date.toISOString().slice(0,10),label=el('label','Набор '+(i+1)),input=el('input');input.type='date';input.value=initial;input.dataset.ordinal=String(i);input.dataset.original=options.periodDates?date.toISOString().slice(0,10):initial;input.addEventListener('change',changed);label.append(input);$('importPeriodDates').append(label);}
   }
   const sequential=Object.keys(options.sequential_periods||{}).length>0;
-  $('saveDailyFolderRule').hidden=$('importFormat').value!=='daily-wide'||!api.nativeSetRuleChecked||!sourceInFolder||sequential;
+  $('saveDailyFolderRule').hidden=$('importFormat').value!=='daily-wide'||!api.nativeSetRuleChecked||!sourceFolderContext||sequential;
   if(sequential)root.append(el('p','Последовательные дневные колонки загружаются вручную после проверки. Настройка автоимпорта для них не сохраняется.','muted small'));
   if(result.catalogEntries>0)root.append(el('p','Услуг в справочнике Excel: '+result.catalogEntries+'. Новые названия будут добавлены вместе с отчётами.'));
 
@@ -419,6 +450,10 @@ function init(){
    let backupDestination=null;if(c.replacements>0){backupDestination=await api.chooseSqliteBackupPath('analiz-before-import-'+new Date().toISOString().slice(0,10)+'.sqlite3');if(!backupDestination){status('unifiedImportStatus','Сохранение отменено: для замены требуется резервная копия SQLite.');return;}}
    if(!current())throw Error('Данные, файл или параметры изменились. Проверьте Excel заново.');
    const flags={replaceExact:replace,acceptCrossType:overlap,acceptQuality:quality,backupDestination};const result=await (checked.wide?api.nativeWideImportApply(checked.source,checked.options,checked.review.reviewToken,flags):api.nativeLegacyImportApply(checked.source,checked.options,checked.review.reviewToken,flags));
+    // This commit changed reports only. Keep the verified book and its file
+    // signature available if the user previews it again to save a folder rule.
+    if(sourceFolderContext?.revision===checked.revision&&Number.isSafeInteger(result.revision))
+     sourceFolderContext={...sourceFolderContext,revision:result.revision};
     resetReview();$('importPreview').replaceChildren();
     const saved='Сохранено отчётов: '+result.reports+' · Строк работ: '+result.rows+' · Ревизия: '+result.revision+'.';
     try{await UI.refresh();status('unifiedImportStatus',saved);}
@@ -429,10 +464,12 @@ function init(){
  });
  $('saveDailyFolderRule').addEventListener('click',async()=>{
   if(importBusy||!review||!options||!sourcePath)return;importBusy=true;importLock();
-  try{if(Object.keys(options.sequential_periods||{}).length)throw Error('Последовательные дневные колонки требуют ручной проверки перед импортом.');const listing=await api.list(),normalize=p=>p.replace(/\\/g,'/').replace(/\/$/,'');const name=sourcePath.split(/[\\/]/).pop(),file=listing.files?.find(f=>f.name===name);if(!listing.folder||normalize(sourcePath)!==normalize(listing.folder)+'/'+name||!file?.nativeSignature)throw Error('Выбранный файл должен находиться в подключённой папке Excel.');
+  try{if(Object.keys(options.sequential_periods||{}).length)throw Error('Последовательные дневные колонки требуют ручной проверки перед импортом.');
+   if(!sourceFolderContext)throw Error('Выбранный файл должен находиться в подключённой папке Excel.');
+   const {name,revision,folder,nativeSignature}=sourceFolderContext;
    const rule={type:'day',format:'daily-wide',start:'',sheet:'',...(options.year?{year:options.year}:{}),...(options.sheets?.length?{sheets:options.sheets}:{} )};
    if(Object.keys(options.mappings||{}).length){rule.mappings=Object.create(null);for(const [name,m]of Object.entries(options.mappings)){rule.mappings[name]={workCol:m.work_col-1,headerRow:m.header_row-1,firstDayCol:m.first_day_col-1,...(m.total_count_col!==null?{totalCountCol:m.total_count_col-1}:{}),...(m.total_amount_col!==null?{totalAmountCol:m.total_amount_col-1}:{})};}}
-   await api.nativeSetRuleChecked(name,rule,listing.revision,listing.folder,file.nativeSignature);
+   await api.nativeSetRuleChecked(name,rule,revision,folder,nativeSignature);
     try{await UI.refresh();status('unifiedImportStatus','Правило файла сохранено. Автоимпорт включается отдельно на текущий сеанс.');}
     catch(error){status('unifiedImportStatus','Правило файла сохранено в SQLite, но не удалось обновить отображение: '+String(error.message||error)+'. Нажмите «Обновить данные».');}
   }catch(error){status('unifiedImportStatus','Правило не сохранено: '+String(error.message||error));}finally{importBusy=false;importLock();}

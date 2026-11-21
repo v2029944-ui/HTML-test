@@ -1500,6 +1500,18 @@ async fn native_set_rule_checked(
 }
 
 #[tauri::command]
+async fn native_import_folder_context(
+    app: tauri::AppHandle,
+    source: String,
+    workspace_token: Option<String>,
+) -> Result<Option<serde_json::Value>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::native_shared_runtime::execute(&app, workspace_token.as_deref(),
+            storage::shared_runtime::Access::Read, |store| store.import_folder_context(std::path::Path::new(&source)))
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn list_excel(
     app: tauri::AppHandle,
     workspace_token: Option<String>,
@@ -1830,6 +1842,7 @@ fn main() {
             native_wide_import_apply,
             native_preview_quality_page,
             native_preview_quality_csv,
+            native_import_folder_context,
             native_import_sheets,
             native_legacy_import_sheets,
             native_legacy_import_preview,

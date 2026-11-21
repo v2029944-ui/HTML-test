@@ -25,7 +25,7 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
 .chart-mode-line{display:flex;align-items:end;gap:14px;flex-wrap:wrap;margin:12px 0}
 .chart-mode-line>label{min-width:170px}
 .chart-mode-line>label select{display:block;min-height:38px;width:100%;margin-top:5px;padding:7px 9px;border:1px solid var(--field-border);border-radius:var(--radius-control);color:var(--text);background:var(--surface)}
-.horizontal-bar-scroll{max-height:540px;max-width:100%;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-control);margin:10px 0}
+.horizontal-bar-scroll{max-width:100%;overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius-control);margin:10px 0}
 .chart-wrap .horizontal-bar-scroll svg{display:block;width:100%;height:auto;min-height:0;max-height:none;overflow:visible}
 
 /* Missing-data quality is persistent and keyboard-accessible, not dismissible. */

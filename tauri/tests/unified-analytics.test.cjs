@@ -405,3 +405,42 @@ test('a completed chart survives three overlapping mode switches and only the ne
  gates[1].resolve();gates[0].reject(Error('old read failed'));await settle();assert.equal(table.children[0],newest);assert.equal(table.inert,false);
  f.buttons[0].dispatch('click');await settle();gates.at(-1).reject(Error('database unavailable'));await settle();assert.match(plot.textContent,/database unavailable/);assert.equal(plot.inert,false);
 });
+
+test('chart contents and caption keep the completed period throughout a delayed filter change',async()=>{
+ const overview=deferred(),timeline=deferred();
+ const total={count:2,amount:4,average:2},summary={complete:true,periods:1,total};
+ const result={summary:{before:summary,after:summary}};
+ const points={granularity:'period',points:[]};
+ let updating=false,refreshDate=null;
+ const f=fixture({nativeAnalysisCompare:()=>updating?overview.promise:Promise.resolve(result),
+  nativeWorkTimeline:()=>updating?timeline.promise:Promise.resolve(points),nativeAnalysisTimeline:async()=>points});
+ f.window.referenceDetail={active:'chartPanel',refreshChartCaption(){refreshDate=f.window.unifiedAnalytics.displayedChartScope?.from;}};
+ const filters={revision:1,type:'day',displayType:'day',source:'daily',overviewMode:'single',
+  from:'2024-01-01',to:'2024-01-01',baseFrom:'2023-12-31',baseTo:'2023-12-31',organizations:['A'],metric:'amount',allNames:true,nameRows:[]};
+ const plot=f.nodes.get('chartsContainer');
+ f.nodes.get('advancedAnalytics').open=true;
+ await f.window.unifiedAnalytics.applyReferenceScope(filters);
+ const old=plot.children[0];
+ assert.equal(refreshDate,filters.from);
+ updating=true;
+ const next=f.window.unifiedAnalytics.applyReferenceScope({...filters,from:'2024-02-01',to:'2024-02-01'});
+ assert.equal(f.published.at(-1).from,'2024-02-01');
+ assert.equal(plot.inert,true);
+ assert.equal(f.window.unifiedAnalytics.displayedChartScope.from,filters.from);
+ overview.resolve(result);await settle();
+ assert.equal(plot.children[0],old);assert.equal(plot.inert,true);assert.equal(refreshDate,filters.from);
+ timeline.resolve(points);await next;
+ assert.equal(refreshDate,'2024-02-01');assert.notEqual(plot.children[0],old);assert.equal(plot.inert,false);
+});
+
+test('a workspace invalidation clears retained chart dates, controls and results even with SQL in flight',async()=>{
+ const pending=deferred();let late=false;
+ const result={granularity:'period',points:[]};
+ const f=fixture({nativeWorkTimeline:()=>late?pending.promise:Promise.resolve(result),nativeAnalysisTimeline:async()=>result});
+ await f.bootstrap();const plot=f.nodes.get('chartsContainer');
+ f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ assert.ok(f.window.unifiedAnalytics.displayedChartScope);
+ late=true;f.buttons[0].dispatch('click');assert.equal(plot.inert,true);
+ await f.invalidate();pending.resolve(result);await settle();
+ assert.equal(f.window.unifiedAnalytics.displayedChartScope,null);assert.equal(plot.children.length,0);assert.equal(plot.inert,false);
+});

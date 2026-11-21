@@ -51,12 +51,15 @@
       line.append(document.createElement('span'), document.createElement('span'), edit);
       (panel.querySelector(':scope > summary, :scope > .sectionbar, :scope > h2') || panel.firstElementChild).after(line);
     }
-    const scope = window.unifiedUI.scope;
+    const selected = window.unifiedUI.scope;
+    const scope = key === 'chartPanel' ? window.unifiedAnalytics?.displayedChartScope || selected : selected;
+    const pendingPeriod = scope && selected && (scope.from !== selected.from || scope.to !== selected.to ||
+      scope.displayType !== selected.displayType || scope.source !== selected.source);
     const showDate = value => value.split('-').reverse().join('.');
     const interval = (lo, hi) => lo === hi ? showDate(lo) : showDate(lo) + ' — ' + showDate(hi);
     const end = raw => scope.source === 'daily' ? raw : window.unifiedOriginal.periodEnd(raw, scope.displayType);
     const [period, base] = line.children;
-    period.textContent = scope ? 'Общий период ' + interval(scope.from, end(scope.to)) : 'Нет выбранного периода';
+    period.textContent = scope ? (pendingPeriod ? 'Показан период ' : 'Общий период ') + interval(scope.from, end(scope.to)) : 'Нет выбранного периода';
     base.hidden = !(scope?.baseFrom && scope.baseTo && ['structurePanel','comparison','regularityPanel','overviewPanel'].includes(key));
     const before = key === 'comparison' && $('comparisonMode').value === 'periods' ? comparisonBase(scope) : null;
     if (key === 'comparison' && !before) base.hidden = true;
@@ -247,5 +250,7 @@
     $('structurePanel').hidden = true;
   }
 
-  window.referenceDetail = Object.freeze({init, show, hide, currentComparison, get active() { return active; }});
+  window.referenceDetail = Object.freeze({init, show, hide, currentComparison,
+    refreshChartCaption() { if (active === 'chartPanel') scopeLine(active); },
+    get active() { return active; }});
 })();

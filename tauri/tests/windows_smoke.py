@@ -865,6 +865,9 @@ def check_analytics(page, temporary, output):
     wait_for_app_state(page,'document.querySelector("#chartsContainer svg")!==null','SQLite single-period department bar chart')
     page.locator('#chartOrientation').select_option('horizontal')
     wait_for_app_state(page,'document.querySelector("#chartsContainer .horizontal-bar-scroll svg")!==null','SQLite single-period horizontal bar chart')
+    geometry=page.locator('#chartsContainer .horizontal-bar-scroll').first.evaluate(
+        'node => ({maximum:getComputedStyle(node).maxHeight, overflow:node.scrollHeight-node.clientHeight})')
+    assert geometry['maximum']=='none' and geometry['overflow']<=1,geometry
     page.locator('#chartOrientation').select_option('vertical')
     wait_for_app_state(page,'document.querySelector("#chartsContainer .horizontal-bar-scroll")===null','SQLite restored vertical bar chart')
     navigate(page,'dashboard')

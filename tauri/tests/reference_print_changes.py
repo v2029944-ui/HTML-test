@@ -30,6 +30,25 @@ def check_print_all_changes(page, temporary, output, pid, api, make_workbook, op
     expect(on_screen).to_have_count(12)
     expect(on_screen.first).to_contain_text(names[0])
     expect(on_screen.last).to_contain_text(names[11])
+    search = page.locator('#s2 input[placeholder]')
+    # Capture action availability in the input event, before the debounced SQL read.
+    search.evaluate("""input => input.addEventListener('input', () => {
+      const screen = document.getElementById('s2');
+      const print = Array.from(screen.querySelectorAll('button')).find(b => b.textContent.includes('Печать'));
+      const csv = screen.querySelector('[data-export-changes]');
+      window.searchActionState = [
+        screen.getAttribute('aria-busy'),
+        Boolean(print.disabled || print.closest('[inert]')),
+        Boolean(csv.disabled || csv.closest('[inert]'))
+      ];
+    }, {once:true})""")
+    search.fill(names[-1])
+    assert page.evaluate('window.searchActionState') == ['true', True, True]
+    expect(on_screen).to_have_count(1)
+    expect(on_screen.first).to_contain_text(names[-1])
+    search.fill('')
+    expect(on_screen).to_have_count(12)
+    expect(on_screen.first).to_contain_text(names[0])
     page.evaluate("""() => {
       window.printedChangeRows = [];
       addEventListener('beforeprint', () => {

@@ -353,7 +353,7 @@ class BackupOpenControlsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as scratch:
             backup = Path(scratch) / 'isolated.sqlite3'
             backup.write_bytes(b'test file selection fixture')
-            result = self.dialog.open_backup_for_preview(
+            result = self.dialog.open_file_for_preview(
                 101, 100, 'Проверить резервную копию SQLite', backup, None)
         self.assertEqual(result['action'], 'open-backup')
         self.assertEqual([call.args[1] for call in self.dialog.message.call_args_list],
@@ -361,8 +361,8 @@ class BackupOpenControlsTests(unittest.TestCase):
 
     def test_save_dialog_cannot_be_accepted_by_preview_helper(self):
         self.dialog.message = Mock()
-        with self.assertRaisesRegex(AssertionError, 'Only restore-preview Open'):
-            self.dialog.open_backup_for_preview(101, 100, 'Сохранить резервную копию SQLite',
+        with self.assertRaisesRegex(AssertionError, 'Only a read-only preview Open'):
+            self.dialog.open_file_for_preview(101, 100, 'Сохранить резервную копию SQLite',
                                                 Path('unused.sqlite3'), None)
         self.dialog.message.assert_not_called()
 

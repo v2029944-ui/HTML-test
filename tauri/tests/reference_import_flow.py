@@ -6,6 +6,7 @@ import time
 import zipfile
 from pathlib import Path
 from playwright.sync_api import expect
+from reference_file_dialogs import OwnedFileDialogs
 
 
 def two_sheet_workbook(single):
@@ -49,6 +50,24 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     rule = {'format': 'auto', 'type': 'week', 'start': '2031-01-06', 'sheet': 'Second'}
     api(page, 'nativeSetRuleChecked', file['name'], rule, listing['revision'], listing['folder'], file['nativeSignature'])
     page.evaluate('window.unifiedUI.refresh()')
+    # The Windows file dialog can return a DOS path instead of the folder's verbatim path.
+    # Start with this entry point before the folder row has populated any saved choices.
+    dialogs = OwnedFileDialogs(confirmations)
+    page.locator('#excelFile').click()
+    title = 'Выберите XLSX для нативного импорта'
+    hwnd, owner = dialogs.find(title)
+    dialogs.open_file_for_preview(hwnd, owner, title, book, output / 'import-flow-xlsx-picker.png')
+    wait_for_text(page, '#excelFileStatus', book.name)
+    expect(page.locator('#sheetSelect')).to_have_value('xl/worksheets/sheet2.xml')
+    expect(page.locator('#importType')).to_have_value('week')
+    expect(page.locator('#importWeek')).to_have_value(rule['start'])
+    page.locator('#inspectFile').click()
+    wait_for_text(page, '#unifiedImportStatus', 'Проверка завершена', 90_000)
+    picker_counts = page.locator('#importPreview .kpi strong').all_text_contents()[:2]
+    expect(page.locator('#importPreview')).to_contain_text('2031-01-06 — 2031-02-16')
+    expect(page.locator('#sheetSelect')).to_be_enabled()
+    page.locator('#importType').select_option('day')
+    expect(page.locator('#importPreview')).to_be_empty()
     page.locator('#sourceFolderRefresh').click()
     expect(page.locator('#sourceFolderRefresh')).to_be_enabled()
     wait_for_text(page, '#sourceFolderCount', '101')
@@ -77,6 +96,7 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     assert auto['reportCount'] == 6 and auto['rowCount'] == 12
     assert auto['periodRange'] == {'kind': 'week', 'from': '2031-01-06', 'to': '2031-02-16'}
     expect(page.locator('#importPreview')).to_contain_text('2031-01-06 — 2031-02-16')
+    assert picker_counts == [str(auto['reportCount']), str(auto['rowCount'])], picker_counts
     assert page.locator('#importPreview .kpi strong').first.inner_text() == str(auto['reportCount'])
     assert page.locator('#importPreview .kpi strong').nth(1).inner_text() == str(auto['rowCount'])
     expect(page.locator('#saveDailyFolderRule')).not_to_be_visible()
@@ -103,6 +123,7 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     assert summary['reports'] == 6 and abs(summary['amount']-5460) < .000001, summary
     page.screenshot(path=str(output / 'import-flow-second-sheet-week.png'))
     (output / 'import-flow.json').write_text(json.dumps({'folderRows': 101, 'selectedSheet': 'Second',
+        'nativePickerPreview': {'sheet': 'Second', 'reportCount': int(picker_counts[0]), 'rowCount': int(picker_counts[1])},
         'automaticPreview': {k: auto[k] for k in ('reportCount', 'rowCount', 'periodRange')},
         'savedWeeklySummary': summary, 'manualPreviewAndSaveSeconds': time.monotonic()-started,
         'scope': page.evaluate('window.referenceFilters.scope')}, ensure_ascii=False, indent=2), encoding='utf-8')

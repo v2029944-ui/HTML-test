@@ -5,13 +5,28 @@
 const UI=window.unifiedUI,O=window.unifiedOriginal,api=UI.api,$=UI.$;
 const titles=window.analysisSummary.titles;
 let initialized=false,scope=null,ticket=0,nameTicket=0,chartTicket=0,selectionReady=false,allNames=false,totalNames=0;
-let overviewRevision=null,chartRevision=null,displayedChart=null;
+let overviewRevision=null,displayedChart=null;
+const chartResults=['chartsContainer','dataTable','chartOrgTotals'];
 let selectedRows=new Map(),namePage=null,nameIndex=0,seriesIndex=0,printCapture=null,lastRevision=null,searchTimer=null;
 const state=UI.state;
 function clear(id,text='',reset=true){const node=$(id);if(!node)return;if(reset)window.sqlRowScroll?.reset(node);node.replaceChildren();if(text)node.append(UI.el('p',text,'muted small'));}
 function value(id){return $(id)?.value||'';}
  function orientation(){return value('chartOrientation')==='horizontal'?'horizontal':'vertical';}
-function invalidateScope(){scope=null;printCapture=null;chartTicket++;UI.publishScope(null);}
+function chartBusy(busy){
+ for(const id of chartResults){
+  const node=$(id);
+  node.inert=busy;node.setAttribute('aria-busy',String(busy));
+  const pager=node.nextElementSibling;
+  if(pager?.matches('.sql-pager'))pager.inert=busy;
+ }
+}
+function clearChart(){
+ displayedChart=null;
+ for(const id of chartResults)clear(id);
+ clear('chartHelp');
+ chartBusy(false);
+}
+function invalidateScope(){scope=null;printCapture=null;chartTicket++;clearChart();UI.publishScope(null);}
 function valid(mine,revision){return ticket===mine&&UI.revision===revision;}
 function fmt(n,m='count'){return UI.fmt(n,m);}
 function errorText(e){return window.analizUserError?window.analizUserError(e):(e?.message||String(e));}
@@ -46,7 +61,7 @@ function layout(){const single=value('overviewMode')==='single';$('overviewSingl
  $('chartDescription').textContent=departments?'Показатели подразделений за общий период. Настройки этого графика — ниже.':'Отмеченные работы и группы из общих фильтров.';
  $('chartComparisonHint').textContent='Подразделения выбираются вверху страницы. Показатели этого графика задаются независимо от показателей обзора и работ.';
  $('chartReadGuide').textContent=chosen.length>1&&value('chartSeriesLayout')==='combined'?'Цвет обозначает подразделение. В совместной диаграмме значения показаны в % от максимума каждого показателя, а не как процент изменения.':'У каждого показателя своя шкала в исходных единицах. Цвет обозначает подразделение.';
- const displayed=chartRevision===UI.revision&&displayedChart||state.chart;
+ const displayed=displayedChart&&displayedChart.scope.revision===UI.revision?displayedChart.mode:state.chart;
  $('chartsContainer').hidden=displayed==='table';$('dataTable').hidden=displayed!=='table';
  document.querySelectorAll('[data-chart]').forEach(button=>button.classList.toggle('active',button.dataset.chart===state.chart));
 }
@@ -151,6 +166,10 @@ function drawOverview(result,organizations,s,before){
 async function calculate(shared=null){
  const mine=++ticket,revision=UI.revision,results=['overviewKpis','overviewInsights','overviewOrganizations','overviewAlerts'];
  printCapture=null;chartTicket++;$('printSummary').disabled=true;
+ if(displayedChart){
+  if(displayedChart.scope.revision!==revision)clearChart();
+  else chartBusy(true);
+ }
  for(const id of results){if(overviewRevision!==revision)clear(id,'Загрузка…');$(id).inert=true;$(id).setAttribute('aria-busy','true');}
  try{if(!Number.isSafeInteger(revision))throw Error('Дождитесь подготовки данных.');layout();const displayType=value('periodType'),source=value('unifiedSource'),range=shared?{displayType,source,type:shared.type,from:shared.from,to:shared.to}:UI.range(displayType,value('rangeStart'),value('rangeEnd'),source);if(!range||!orgs().length)throw Error('Выберите корректный период и подразделения.');const s={...range,revision,organizations:orgs(),selectedNames:[],selectedKeys:[],allNames:false,nameRows:[]},before=shared?{...range,from:shared.baseFrom,to:shared.baseTo}:chosenBaseRange(s);if(!before)throw Error('Базовый период выходит за допустимые календарные границы.');s.baseFrom=before.from;s.baseTo=before.to;s.overviewMode=value('overviewMode');scope=s;
   // Reference selections already include the work filters and exact period bounds.
@@ -161,7 +180,7 @@ async function calculate(shared=null){
   if(!selectionReady){const ranked=await top(true);if(!valid(mine,revision))return;if(!ranked){const page=await api.unifiedNameOptionsAtPage(revision,'',0,8);if(!valid(mine,revision))return;selectedRows=new Map(page.rows.map(r=>[r.key,r]));}selectionReady=true;}
   if(!shared)publish();
   selectionCount();void names(nameIndex);if($('advancedAnalytics').open)await renderCharts();
- }catch(error){if(valid(mine,revision)){overviewRevision=null;chartRevision=null;invalidateScope();for(const id of ['overviewKpis','overviewInsights','overviewOrganizations'])clear(id);clear('overviewAlerts','Не удалось загрузить обзор. '+errorText(error));for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id);}}
+ }catch(error){if(valid(mine,revision)){overviewRevision=null;invalidateScope();for(const id of ['overviewKpis','overviewInsights','overviewOrganizations'])clear(id);clear('overviewAlerts','Не удалось загрузить обзор. '+errorText(error));}}
  finally{if(valid(mine,revision))for(const id of results){$(id).inert=false;$(id).setAttribute('aria-busy','false');}}
 }
 function descriptors(points,granularity,s){const kind=granularity==='period'?s.displayType:granularity;return points.map(p=>{const start=p.start.length===7?p.start+'-01':p.start;const end=O.periodEnd(start,kind);return {type:kind,start,actualStart:s.source==='daily'&&s.from>start?s.from:start,end:s.source==='daily'&&s.to<end?s.to:end};});}
@@ -189,9 +208,13 @@ async function renderCharts(index=seriesIndex,paging=false){
  // The reference detail charts daily observations even when the shell selects a whole week or month.
  if(window.referenceDetail?.active==='chartPanel'&&s.source==='daily')s.displayType='day';
  const isCurrent=()=>chartTicket===mine&&UI.revision===revision;
- const results=['chartsContainer','dataTable','chartOrgTotals'];
- for(const id of results){const node=$(id);if(chartRevision!==revision)clear(id,'Загрузка…',!paging);node.inert=true;node.setAttribute('aria-busy','true');}
- const commitView=()=>{chartRevision=revision;displayedChart=state.chart;layout();};
+ const requestedScope=scope;
+ if(displayedChart?.scope.revision!==revision)for(const id of chartResults)clear(id,'Загрузка…',!paging);
+ chartBusy(true);
+ const commitView=()=>{
+  displayedChart={scope:requestedScope,mode:state.chart};layout();
+  window.referenceDetail?.refreshChartCaption?.();
+ };
  try{if(!allNames&&!selectedRows.size)throw Error('Выберите хотя бы одну работу или группу.');
   if(value('chartBreakdown')==='organizations'){await departmentCharts(s,isCurrent);if(isCurrent())commitView();return;}
   const pageSize=state.chart==='table'?50:8;let rows,next=null,localOffset=0;
@@ -215,7 +238,7 @@ async function renderCharts(index=seriesIndex,paging=false){
   commitView();seriesIndex=index;const root=state.chart==='table'?$('dataTable'):$('chartsContainer');pager(root,index,i=>{seriesIndex=i;return renderCharts(i,true);},{size:pageSize,total:allNames?totalNames:selectedRows.size,count:rows.length,label:'Работы на графике',current:isCurrent});
   $('chartHelp').textContent='Выбрано подразделений: '+s.organizations.length+' из '+UI.snapshot.org_names.length+'. Данные сгруппированы '+({day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам',period:'по выбранным периодам'}[totals.granularity]||'по периодам')+'. Пропуски не считаются нулём.';
  }catch(error){if(isCurrent()){for(const id of ['chartsContainer','dataTable'])clear(id,'Не удалось построить аналитику. '+errorText(error));clear('chartOrgTotals');clear('chartHelp');commitView();}}
- finally{if(isCurrent())for(const id of results){const node=$(id);node.inert=false;node.setAttribute('aria-busy','false');}}
+ finally{if(isCurrent())chartBusy(false);}
 }
 async function departmentCharts(base,isCurrent){
  const all=value('chartOrgScope')==='all',s={...base,selectedNames:all?[]:base.selectedNames},chosen=[...state.chartMetrics];
@@ -247,14 +270,14 @@ async function departmentCharts(base,isCurrent){
  $('chartHelp').textContent='Подразделений: '+s.organizations.length+'. Учитываются '+(all?'все выполненные работы.':'отмеченные работы и группы.')+' Прочерк — неполные данные; средняя сумма рассчитана из общей суммы и количества. Данные сгруппированы '+({day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам',period:'по выбранным периодам'}[trends.granularity]||'по периодам')+'.';
 }
 async function configure(snapshot){
- if(!snapshot){overviewRevision=null;chartRevision=null;displayedChart=null;ticket++;nameTicket++;invalidateScope();clear('overviewAlerts','Подготовка данных…');for(const id of ['overviewKpis','overviewInsights','overviewOrganizations','chartsContainer','dataTable','chartOrgTotals','categories'])clear(id);$('printSummary').disabled=true;return;}
+ if(!snapshot){overviewRevision=null;ticket++;nameTicket++;invalidateScope();clear('overviewAlerts','Подготовка данных…');for(const id of ['overviewKpis','overviewInsights','overviewOrganizations','categories'])clear(id);$('printSummary').disabled=true;return;}
  const mine=++ticket,revision=snapshot.revision;invalidateScope();
  if(lastRevision!==null&&lastRevision!==revision){selectionReady=false;allNames=false;selectedRows.clear();}lastRevision=revision;
  filters();const kind=value('periodType')||'week',source=value('unifiedSource')||'daily';
  if(kind==='year'&&source!=='daily'){$('unifiedSource').value='daily';UI.notice('Для календарного года используются дневные отчёты.');}
  try{const actualSource=value('unifiedSource'),reportType=actualSource==='daily'?'day':kind,options=await api.unifiedPeriodOptions(revision,reportType,actualSource==='daily'?kind:null,null,1);if(!valid(mine,revision))return;
   for(const id of ['overviewPeriod','rangeStart','rangeEnd']){const old=$(id).dataset.periodType,reset=old!==kind||!$(id).value;UI.setPeriodInput(id,kind,reset?(options.max||new Date().toISOString().slice(0,10)):undefined);}
-  if(!options.total_rows){scope=null;for(const id of ['overviewKpis','overviewInsights','overviewOrganizations','chartsContainer','dataTable','chartOrgTotals'])clear(id);clear('overviewAlerts','Для выбранного источника нет отчётов. Загрузите данные или выберите другой источник.');$('printSummary').disabled=true;void names();if(actualSource==='daily'&&kind==='week')void suggestWeeklyWhenDailyEmpty(revision,mine);return;}
+  if(!options.total_rows){scope=null;for(const id of ['overviewKpis','overviewInsights','overviewOrganizations'])clear(id);clear('overviewAlerts','Для выбранного источника нет отчётов. Загрузите данные или выберите другой источник.');$('printSummary').disabled=true;void names();if(actualSource==='daily'&&kind==='week')void suggestWeeklyWhenDailyEmpty(revision,mine);return;}
   nameIndex=0;seriesIndex=0;await calculate();
  }catch(error){if(valid(mine,revision)){scope=null;clear('overviewAlerts','Не удалось открыть периоды. '+errorText(error));}}
 }
@@ -298,5 +321,5 @@ function applyReferenceScope(shared){
  allNames=shared.allNames;selectionReady=true;seriesIndex=0;nameIndex=0;
  filters();selectionCount();return calculate(shared);
 }
-window.unifiedAnalytics=Object.freeze({init,applyReferenceScope});
+window.unifiedAnalytics=Object.freeze({init,applyReferenceScope,get displayedChartScope(){return displayedChart?.scope||null;}});
 })();

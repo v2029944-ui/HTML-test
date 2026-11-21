@@ -100,9 +100,10 @@ function renderChangeLeader(leader,metric){$('#s2 .leaders').style.gridTemplateC
 function pageControls(total,captured,count){
  const root=$('#s2 .table-viewport'),footer=$('#s2 .pager-footer');
  root.dataset.sqlScrollHost='reference-changes';
- window.sqlRowScroll.attach(root,{index:captured.page,size:12,total,count,footer,label:'Страницы анализа изменений',go:i=>{page=i;return refreshChanges(true);}});
+ window.sqlRowScroll.attach(root,{index:captured.page,size:12,total,count,footer,label:'Страницы анализа изменений',go:i=>{if(changeRequest!==captured)return false;page=i;return refreshChanges();}});
 }
-async function refreshChanges(scrolling=false){
+async function refreshChanges(debounceSearch=false){
+ clearTimeout(searchTimer);
  const s=scope,ticket=++changesTicket,mine=generation;changeData=null;changeRequest=null;setBusy('#s2',true);
  if(!usable(s)||shownChangesRevision!==s.revision){
   window.sqlRowScroll?.reset($('#s2 .table-viewport'));changesLoading('Загрузка изменений…');
@@ -110,6 +111,13 @@ async function refreshChanges(scrolling=false){
  const current=()=>scope===s&&mine===generation&&ticket===changesTicket;
  if(!usable(s)){window.sqlRowScroll?.reset($('#s2 .table-viewport'));changesLoading('Выберите периоды и подразделения.');setBusy('#s2',false);return;}
  const captured=request(s);
+ if(debounceSearch){
+  searchTimer=setTimeout(()=>loadChanges(s,captured,current),150);
+  return;
+ }
+ return loadChanges(s,captured,current);
+}
+async function loadChanges(s,captured,current){
  try{const result=await api.referenceChanges(captured);if(!current())return;
   if(!Array.isArray(result?.rows)||result.rows.length>12||!Number.isSafeInteger(result.total)||result.total<0||!Number.isSafeInteger(result.searched)||!Number.isSafeInteger(result.significant)||result.significant<0||result.searched<result.significant||result.searched<result.total||!Array.isArray(result.comparable)||!result.counts)throw Error('Некорректная страница SQL-изменений.');
   captions(s,['#s2']);shownChangesRevision=s.revision;changeData=result;changeRequest=captured;renderCounts(result.counts);renderChangeLeader(result.leader,s.metric);notice('#s2',s,result.comparable,summaryData?.result.summary);
@@ -199,7 +207,7 @@ function init(){if(initialized)return;initialized=true;
  const summaryExport=$('#s1 .data-card button');summaryExport?.addEventListener('click',exportSummary);if(summaryExport)summaryExport.disabled=true;
  const open=$('#s1 .insight-card button');open?.addEventListener('click',()=>window.referenceDesktop.navigate('s2'));
  for(const [i,key]of ['up','down','new','gone'].entries())all('#s2 .kpi')[i]?.addEventListener('click',()=>{kind=kind===key?'significant':key;page=0;return refreshChanges();});
- $('#s2 input[placeholder]')?.addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>{page=0;void refreshChanges();},150);});$('#s2 [data-sort]')?.addEventListener('change',()=>{page=0;return refreshChanges();});
+ $('#s2 input[placeholder]')?.addEventListener('input',()=>{page=0;refreshChanges(true);});$('#s2 [data-sort]')?.addEventListener('change',()=>{page=0;return refreshChanges();});
  $('#s2 .filter-threshold')?.addEventListener('click',e=>sensitivity(e.target));$('#s2 [data-export-changes]')?.addEventListener('click',e=>exportChanges(e.target));
  for(const n of all('#s2 button'))if(n.textContent==='Как читать результаты?')n.addEventListener('click',()=>{const root=resultDialog('Как читать результаты?',n);root.append(el('p','Сравниваются одинаковые подразделения с пригодными отчётами за оба выбранных интервала. Одна позиция — работа в одном подразделении. Пропуски не считаются нулём. Замечание импорта само по себе не исключает отчёт; проверьте его источник.'),el('p','Карточки категорий фильтруют таблицу. Поиск и сортировка действуют на таблицу; карточки и крупнейшее изменение относятся ко всей сопоставимой выборке. Процент при нулевой базе не рассчитывается.'));});
  changeLabels(null);sensitivityCaption();captions(null);summaryCards(null,{summary:{}},0,0);renderCounts({up:0,down:0,new:0,gone:0});changesLoading('Выберите периоды и подразделения.');

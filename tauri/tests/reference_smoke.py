@@ -430,6 +430,14 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                 expect(chart.locator('[data-chart="bar"]')).to_have_attribute('aria-pressed', 'true')
                 page.locator('#chartOrientation').select_option('horizontal')
                 record('08-horizontal-chart', chart)
+                # The work chart has a scroll wrapper inside the plot. Check it
+                # directly, since the outer container can fit while this clips.
+                for wrapper in chart.locator('.horizontal-bar-scroll:visible').all():
+                    size = wrapper.evaluate('''node => ({
+                        maxHeight:getComputedStyle(node).maxHeight,
+                        overflow:node.scrollHeight-node.clientHeight
+                    })''')
+                    assert size['maxHeight'] == 'none' and size['overflow'] <= 1, size
                 chart_hover(chart)
                 page.locator('#chartOrientation').select_option('vertical')
                 chart.locator('[data-chart="table"]').click()
