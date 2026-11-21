@@ -202,27 +202,32 @@ jobs:
             npx tauri build --config tests/ci-webview2.json --features ci-webview2
             if ($LASTEXITCODE -ne 0) { throw 'WebView2 test build failed' }
           } finally { Pop-Location }
-      - name: Test installed app through real WebView2
-        env:
-          PYTHONIOENCODING: utf-8
-          REFERENCE_HEAD_SHA: ${{ github.sha }}
-        shell: pwsh
-        run: |
-          python -m pip install playwright==1.62.0
-          if ($LASTEXITCODE -ne 0) { throw 'Playwright install failed' }
-          python tauri/tests/windows_smoke.py
-          if ($LASTEXITCODE -ne 0) { throw 'Installed GUI test failed' }
-      - name: Test two installed clients through a real temporary SMB share
+      - name: Prepare installed GUI test dependencies
+        id: gui_smoke_dependencies
         if: ${{ !cancelled() && steps.gui_smoke_build.outcome == 'success' }}
         env:
           PYTHONIOENCODING: utf-8
         shell: pwsh
         run: |
-          python -m unittest discover -s tauri/tests -p test_reference_shared_smoke.py -v
-          $sharedTestExit = $LASTEXITCODE
+          python -m pip install playwright==1.62.0
+          if ($LASTEXITCODE -ne 0) { throw 'Playwright install failed' }
+      - name: Test installed GUI helpers
+        if: ${{ !cancelled() && steps.gui_smoke_dependencies.outcome == 'success' }}
+        env:
+          PYTHONIOENCODING: utf-8
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tauri/tests -p 'test_reference_*.py' -v
+          if ($LASTEXITCODE -ne 0) { throw 'Native GUI helper tests failed' }
+      - name: Test two installed clients through a real temporary SMB share
+        id: shared_gui_smoke
+        if: ${{ !cancelled() && steps.gui_smoke_build.outcome == 'success' && steps.gui_smoke_dependencies.outcome == 'success' }}
+        env:
+          PYTHONIOENCODING: utf-8
+        shell: pwsh
+        run: |
           python tauri/tests/windows_shared_smoke.py
           if ($LASTEXITCODE -ne 0) { throw 'Installed independent SMB clients failed' }
-          if ($sharedTestExit -ne 0) { throw 'Shared client identification tests failed' }
       - name: Retain installed shared-workspace diagnostics
         if: ${{ always() && steps.gui_smoke_build.outcome == 'success' }}
         uses: actions/upload-artifact@v4
@@ -235,6 +240,15 @@ jobs:
             tauri/test-artifacts/native-file-dialogs-inventory-shared-smb-*.json
           if-no-files-found: warn
           retention-days: 14
+      - name: Test installed app through real WebView2
+        if: ${{ !cancelled() && steps.gui_smoke_build.outcome == 'success' && steps.gui_smoke_dependencies.outcome == 'success' }}
+        env:
+          PYTHONIOENCODING: utf-8
+          REFERENCE_HEAD_SHA: ${{ github.sha }}
+        shell: pwsh
+        run: |
+          python tauri/tests/windows_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw 'Installed GUI test failed' }
       - name: Retain signed artifacts
         uses: actions/upload-artifact@v4
         with:

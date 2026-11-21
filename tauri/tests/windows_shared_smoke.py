@@ -26,6 +26,31 @@ from windows_smoke import (ROOT, NativeConfirmations, api, navigate, ready,
                            wait_for_webview_page, wide_xlsx, windows_test_workspace)
 
 
+INSTALLER_AUTOSTART_CLEANUP = r"""
+[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)
+$ErrorActionPreference='Stop'
+# Enumerate successfully even when this executable has not auto-started.
+# A missing named process is not a process-enumeration error.
+$owned=@(Get-Process -ErrorAction Stop | Where-Object {
+  $_.ProcessName -eq 'analiz-rabot-tauri' -and $_.Path -eq $env:ANALIZ_SMOKE_BINARY
+})
+[Console]::WriteLine(('SMB_INSTALLER_AUTOSTART_INSTANCES={0}' -f $owned.Count))
+foreach($process in $owned) {
+  taskkill /PID $process.Id /T /F | Out-Null
+  if($LASTEXITCODE -ne 0){throw ('Owned installer process did not stop: PID {0}, exit {1}' -f $process.Id,$LASTEXITCODE)}
+}
+exit 0
+"""
+
+
+def stop_installer_autostart(executable):
+    result = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', INSTALLER_AUTOSTART_CLEANUP],
+                            env=dict(os.environ, ANALIZ_SMOKE_BINARY=str(executable)),
+                            check=True, capture_output=True, encoding='utf-8', errors='replace', timeout=30)
+    if result.stdout.strip():
+        print(result.stdout.strip(), flush=True)
+
+
 def windows_path(value):
     value = str(value)
     if value.startswith('\\\\?\\UNC\\'):
@@ -70,6 +95,7 @@ def smb_workspace(root):
     New-SmbShare -Name $env:ANALIZ_SMOKE_SHARE_NAME -Path $env:ANALIZ_SMOKE_SHARE_PATH -FullAccess $account -ErrorAction Stop | Out-Null
     $share=Get-SmbShare -Name $env:ANALIZ_SMOKE_SHARE_NAME -ErrorAction Stop
     if($share.Path -ine $env:ANALIZ_SMOKE_SHARE_PATH){throw 'Unexpected SMB backing path'}
+    exit 0
     """
     remove = r"""
     $ErrorActionPreference='Stop'
@@ -77,6 +103,7 @@ def smb_workspace(root):
     if($shares.Count -eq 0){exit 0}
     if($shares.Count -ne 1 -or $shares[0].Path -ine $env:ANALIZ_SMOKE_SHARE_PATH){throw 'Refusing to remove a different SMB share'}
     Remove-SmbShare -Name $env:ANALIZ_SMOKE_SHARE_NAME -Force -ErrorAction Stop
+    exit 0
     """
     failure = None
     try:
@@ -176,6 +203,7 @@ class InstalledClient:
         $process=Get-Process -Id $env:ANALIZ_SMOKE_PID -ErrorAction Stop
         if($process.Path -ine $env:ANALIZ_SMOKE_BINARY){throw 'Independent client binary mismatch'}
         if(-not $process.CloseMainWindow()){throw 'Independent client refused normal close'}
+        exit 0
         """
         subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', script],
                        env=dict(self.env, ANALIZ_SMOKE_PID=str(self.process.pid),
@@ -324,15 +352,7 @@ def run():
             executables = list(destination.rglob('analiz-rabot-tauri.exe'))
             assert len(executables) == 1
             # NSIS can autostart only this freshly installed test binary.
-            script = r"""
-            $ErrorActionPreference='Stop'
-            Get-Process analiz-rabot-tauri -ErrorAction SilentlyContinue |
-              Where-Object {$_.Path -eq $env:ANALIZ_SMOKE_BINARY} |
-              ForEach-Object {taskkill /PID $_.Id /T /F | Out-Null}
-            """
-            subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', script],
-                           env=dict(os.environ, ANALIZ_SMOKE_BINARY=str(executables[0])),
-                           check=True, capture_output=True, timeout=30)
+            stop_installer_autostart(executables[0])
             with smb_workspace(root) as folder, sync_playwright() as playwright, ExitStack() as clients:
                 workbook = folder / 'synthetic-shared-year.xlsx'
                 workbook.write_bytes(wide_xlsx(2024))

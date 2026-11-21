@@ -128,27 +128,50 @@ jobs:
       - name: Test SQLite recovery rehearsal on copies
         if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         run: python -m unittest discover -s tests -p test_sqlite_restore_copy.py -v
-      - name: Run installed Windows application with real WebView2
-        if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
+      - name: Prepare installed GUI test dependencies
+        id: gui_smoke_dependencies
+        if: ${{ !cancelled() && steps.gui_smoke_build.outcome == 'success' }}
         env:
           PYTHONIOENCODING: utf-8
-          ANALIZ_SMOKE_UNSIGNED_CI: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/main') && 'true' || 'false' }}
         run: |
           python -m pip install playwright==1.62.0
           if ($LASTEXITCODE -ne 0) { throw 'Playwright installation failed' }
+      - name: Test installed GUI helpers
+        if: ${{ !cancelled() && steps.gui_smoke_dependencies.outcome == 'success' }}
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
           python -m unittest discover -s tauri/tests -p 'test_reference_*.py' -v
-          $dialogTestExit = $LASTEXITCODE
-          $env:REFERENCE_HEAD_SHA = "${{ github.event.pull_request.head.sha || github.sha }}"
-          python tauri/tests/windows_smoke.py
-          if ($LASTEXITCODE -ne 0) { throw 'WebView2 smoke test failed' }
-          if ($dialogTestExit -ne 0) { throw 'Native dialog identification tests failed' }
+          if ($LASTEXITCODE -ne 0) { throw 'Native GUI helper tests failed' }
       - name: Test two installed clients through a real temporary SMB share
-        if: ${{ !cancelled() && steps.gui_smoke_build.outcome == 'success' }}
+        id: shared_gui_smoke
+        if: ${{ !cancelled() && steps.gui_smoke_build.outcome == 'success' && steps.gui_smoke_dependencies.outcome == 'success' }}
         env:
           PYTHONIOENCODING: utf-8
         run: |
           python tauri/tests/windows_shared_smoke.py
           if ($LASTEXITCODE -ne 0) { throw 'Installed independent SMB clients failed' }
+      - name: Upload early shared SMB failure diagnostics
+        if: ${{ !cancelled() && steps.shared_gui_smoke.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tauri-Windows-shared-SMB-failure
+          path: |
+            tauri/test-artifacts/shared-smb-proof.json
+            tauri/test-artifacts/shared-smb-error.txt
+            tauri/test-artifacts/shared-smb-*.png
+            tauri/test-artifacts/native-file-dialogs-inventory-shared-smb-*.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Run installed Windows application with real WebView2
+        if: ${{ !cancelled() && steps.gui_smoke_build.outcome == 'success' && steps.gui_smoke_dependencies.outcome == 'success' }}
+        env:
+          PYTHONIOENCODING: utf-8
+          ANALIZ_SMOKE_UNSIGNED_CI: ${{ (github.event_name == 'pull_request' || github.ref == 'refs/heads/main') && 'true' || 'false' }}
+        run: |
+          $env:REFERENCE_HEAD_SHA = "${{ github.event.pull_request.head.sha || github.sha }}"
+          python tauri/tests/windows_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw 'WebView2 smoke test failed' }
       - name: Upload preview EXE and Windows verification
         if: always() && github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         uses: actions/upload-artifact@v4
