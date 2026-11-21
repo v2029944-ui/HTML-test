@@ -46,6 +46,39 @@ public static class AnalizIcon {
      return result;
    }finally{Marshal.FinalReleaseComObject(obj);}
  }
+ [StructLayout(LayoutKind.Sequential)] struct PropertyKey {public Guid Format; public uint Id;}
+ [StructLayout(LayoutKind.Explicit,Size=24)] struct StringVariant {
+   [FieldOffset(0)] public ushort Type;
+   [FieldOffset(8)] public IntPtr Value;
+ }
+ [ComImport,Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"),InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+ interface IPropertyStore {
+   void GetCount(out uint count); void GetAt(uint index,out PropertyKey key);
+   void GetValue(ref PropertyKey key,out StringVariant value);
+ }
+ [DllImport("shell32.dll")] static extern int SHGetPropertyStoreForWindow(IntPtr hwnd,ref Guid iid,out IPropertyStore store);
+ [DllImport("ole32.dll")] static extern int PropVariantClear(ref StringVariant value);
+ [DllImport("shlwapi.dll",CharSet=CharSet.Unicode,ExactSpelling=true)]
+ static extern int SHLoadIndirectString(string source,StringBuilder output,uint length,IntPtr reserved);
+ public static string[] GroupMetadata(IntPtr hwnd){
+   Guid iid=typeof(IPropertyStore).GUID;
+   IPropertyStore store;Marshal.ThrowExceptionForHR(SHGetPropertyStoreForWindow(hwnd,ref iid,out store));
+   try{
+     var result=new string[5];
+     for(uint i=0;i<4;i++){
+       // PKEY_AppUserModel_RelaunchCommand, RelaunchIconResource, RelaunchDisplayNameResource, ID
+       PropertyKey key=new PropertyKey { Format=new Guid("9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"), Id=2+i };
+       StringVariant value;store.GetValue(ref key,out value);
+       try{
+         if(value.Type!=31)throw new Exception("Expected VT_LPWSTR for window property "+key.Id+", got "+value.Type);
+         result[i]=Marshal.PtrToStringUni(value.Value);
+       }finally{PropVariantClear(ref value);}
+     }
+     var name=new StringBuilder(512);
+     Marshal.ThrowExceptionForHR(SHLoadIndirectString(result[2],name,(uint)name.Capacity,IntPtr.Zero));
+     result[4]=name.ToString();return result;
+   }finally{Marshal.FinalReleaseComObject(store);}
+ }
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h,StringBuilder s,int n);
  public static string WindowClass(IntPtr h){var text=new StringBuilder(256);GetClassName(h,text,text.Capacity);return text.ToString();}
  [DllImport("shell32.dll", EntryPoint="ExtractIconExW", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
@@ -63,6 +96,17 @@ public static class AnalizIcon {
    if(SHGetFileInfo(path,0,out info,(uint)Marshal.SizeOf(typeof(ShellFileInfo)),0x100)==IntPtr.Zero||info.Icon==IntPtr.Zero)
      throw new Exception("Shell did not resolve the pinned shortcut icon");
    try{return Copy(info.Icon);}finally{DestroyIcon(info.Icon);}
+ }
+ [DllImport("comctl32.dll")] static extern IntPtr ImageList_GetIcon(IntPtr list,int index,uint flags);
+ public static Bitmap FromShortcutBase(string path){
+   ShellFileInfo info;
+   // Ask the same shell image list for its base image without drawing the shortcut arrow.
+   IntPtr list=SHGetFileInfo(path,0,out info,(uint)Marshal.SizeOf(typeof(ShellFileInfo)),0x4000|0x100|0x40);
+   if(info.Icon!=IntPtr.Zero)DestroyIcon(info.Icon);
+   if(list==IntPtr.Zero)throw new Exception("No system image list for "+path);
+   IntPtr icon=ImageList_GetIcon(list,info.Index & 0x00ffffff,0);
+   if(icon==IntPtr.Zero)throw new Exception("No shell image at index "+info.Index);
+   try{return Copy(icon);}finally{DestroyIcon(icon);}
  }
  [DllImport("user32")] static extern IntPtr SendMessageTimeout(IntPtr h,uint m,IntPtr w,IntPtr l,uint flags,uint ms,out IntPtr result);
  [DllImport("user32",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string cls,string title);
@@ -99,6 +143,12 @@ public static class AnalizIcon {
    return Pixel(b,x,y,s,.5,.18,false)&&Pixel(b,x,y,s,.255,.7,true)&&Pixel(b,x,y,s,.5,.57,true)&&
           Pixel(b,x,y,s,.74,.38,true)&&Pixel(b,x,y,s,.37,.70,false)&&Pixel(b,x,y,s,.255,.43,false);
  }
+ public static bool ShortcutMark(Bitmap b){
+   // Sample the tops of all three bars, above the lower-left shortcut overlay.
+   int s=b.Width;
+   return Pixel(b,0,0,s,.5,.18,false)&&Pixel(b,0,0,s,.255,.58,true)&&Pixel(b,0,0,s,.5,.57,true)&&
+          Pixel(b,0,0,s,.74,.38,true)&&Pixel(b,0,0,s,.37,.58,false)&&Pixel(b,0,0,s,.255,.43,false);
+ }
  public static bool TaskbarMark(Bitmap b){
    for(int s=15;s<=Math.Min(80,Math.Min(b.Width,b.Height));s++)
      for(int y=0;y<=b.Height-s;y++)for(int x=0;x<=b.Width-s;x++)
@@ -113,12 +163,15 @@ $pinDir=Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Microsoft\I
 $out=(New-Item -ItemType Directory -Path $OutputDirectory -Force).FullName
 $root=(New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP ('analiz-icons-'+[guid]::NewGuid().ToString('N')))).FullName
 $install=Join-Path $root 'app'
-$work=Join-Path $root 'profile'
-New-Item -ItemType Directory $work | Out-Null
-# Both versions are production binaries. Redirect their user data into this desktop's test profile.
-$testRoaming=Join-Path $work 'Roaming'
-$testLocal=Join-Path $work 'Local'
-New-Item -ItemType Directory $testRoaming,$testLocal | Out-Null
+# Start the production binary in the disposable runner's actual Explorer profile.
+# Never touch an existing database or application profile.
+foreach($place in @(
+    (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Анализ работ'),
+    (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'local.analiz.rabot.tauri'),
+    (Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'local.analiz.rabot.tauri')
+)){
+    if(Test-Path -LiteralPath $place){throw "An existing application profile prevents an isolated shell test: $place"}
+}
 $programs=[Environment]::GetFolderPath('Programs')
 $result=[ordered]@{sha=$env:REFERENCE_HEAD_SHA;clean=@{};upgrade=@{}}
 function Save-Result { $result | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 (Join-Path $out 'reference-windows-icons.json') }
@@ -145,18 +198,20 @@ function Uninstall-Owned {
     }
     if(Test-Path -LiteralPath $install){Remove-Item -LiteralPath $install -Recurse -Force}
 }
-function Main-Window($path){
+function Main-Window($path,[switch]$StartMenu){
     $process=Get-Process -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $path} | Select-Object -First 1
-    if(!$process){
-        # Installer and Explorer must use the same shell folders; isolate only the launched app.
-        $roaming=$env:APPDATA
-        $local=$env:LOCALAPPDATA
-        try{
-            $env:APPDATA=$testRoaming
-            $env:LOCALAPPDATA=$testLocal
-            $process=Start-Process $path -PassThru
-        }finally{$env:APPDATA=$roaming;$env:LOCALAPPDATA=$local}
-    }
+    if($StartMenu){
+        $lnk=Join-Path $programs 'Анализ работ.lnk'
+        if(([AnalizIcon]::ReadLink($lnk)).Target -ne $path){throw 'Cannot launch an unrelated start menu shortcut'}
+        if($process){Stop-Owned $path}
+        Start-Process -FilePath $lnk
+        $process=$null
+        for($i=0;$i -lt 80 -and !$process;$i++){
+            Start-Sleep -Milliseconds 250
+            $process=Get-Process -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $path} | Select-Object -First 1
+        }
+        if(!$process){throw 'Start menu did not launch the installed executable'}
+    }elseif(!$process){$process=Start-Process $path -PassThru}
     for($i=0;$i -lt 240;$i++){
         Start-Sleep -Milliseconds 250
         $process.Refresh()
@@ -176,6 +231,14 @@ function Check-Bitmap($bitmap,$id){
         if(![AnalizIcon]::Mark($bitmap,0,0,$bitmap.Width)){throw "Expected three white bars on blue: $id"}
     }finally{$bitmap.Dispose()}
 }
+function Check-ShortcutIcon($shortcut,$id){
+    $overlay=[AnalizIcon]::FromShortcut($shortcut)
+    try{
+        $overlay.Save((Join-Path $out ("reference-icon-"+$id+".png")))
+        if(![AnalizIcon]::ShortcutMark($overlay)){throw "Shell shortcut displays different artwork: $id"}
+    }finally{$overlay.Dispose()}
+    Check-Bitmap ([AnalizIcon]::FromShortcutBase($shortcut)) ($id+'-base')
+}
 function Check-StartMenu($name,$exe,$record){
     $shortcut=Join-Path $programs 'Анализ работ.lnk'
     $info=@{path=$shortcut}
@@ -192,16 +255,25 @@ function Check-StartMenu($name,$exe,$record){
     if($info.target -ne $exe -or $info.appId -ne 'local.analiz.rabot.tauri'){throw 'Start menu link target or AppUserModelID differs'}
     if($info.icon -ne $icon -or $info.iconIndex -ne 0){throw "Start menu calls a different icon: $($info.icon),$($info.iconIndex)"}
     Check-Bitmap ([AnalizIcon]::FromFile($icon)) ($name+'-installed-ico')
-    Check-Bitmap ([AnalizIcon]::FromShortcut($shortcut)) ($name+'-start-menu')
+    Check-ShortcutIcon $shortcut ($name+'-start-menu')
 }
 function Check-WindowAndShell($name,$exe,$record){
     # Exercise each independent surface, even when a preceding assertion fails.
     try{
-        $hwnd=Main-Window $exe
+        $fromMenu=($name -eq 'upgrade')
+        $hwnd=Main-Window $exe -StartMenu:$fromMenu
+        $record.launch=if($fromMenu){'installed Start menu shortcut'}else{'installed executable'}
         $record.window=@{hwnd=$hwnd.ToInt64();class=[AnalizIcon]::WindowClass($hwnd);document='WebView2'}
         Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,0)) ($name+'-window')
         Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,1)) ($name+'-taskbar-hwnd')
         $record.hwnd='verified small and large'
+        $group=[AnalizIcon]::GroupMetadata($hwnd)
+        $record.group=@{command=$group[0];icon=$group[1];display=$group[2];appId=$group[3];name=$group[4]}
+        $ico=Join-Path (Split-Path $exe) 'analysis-bars-blue.ico'
+        if($group[0] -ne ('"'+$exe+'"') -or $group[1] -ne ($ico+',0') -or $group[2] -ne ('@'+$exe+',-101') -or
+           $group[3] -ne 'local.analiz.rabot.tauri' -or $group[4] -ne 'Анализ работ'){
+            throw 'Window relaunch metadata differs from the installed product'
+        }
     }catch{$record.hwndError=$_.Exception.Message}
     try{Check-StartMenu $name $exe $record}catch{
         $record.startMenuError=$_.Exception.Message
@@ -230,7 +302,8 @@ function Taskbar-Button{
     }
 }
 function Capture-Taskbar($name,$record){
-    for($i=0;$i -lt 20;$i++){
+    $paint=[Diagnostics.Stopwatch]::StartNew()
+    while($paint.Elapsed.TotalSeconds -lt 30){
         Start-Sleep -Milliseconds 300
         $b=Taskbar-Button
         if(!$b){continue}
@@ -319,7 +392,7 @@ try{
         if((Find-Pin $exe) -ne $pin){throw 'The existing pinned shortcut was lost during upgrade'}
         $link=[AnalizIcon]::ReadLink($pin)
         $result.upgrade.pinned=@{target=$link.Target;location=$link.Icon;index=$link.IconIndex}
-        Check-Bitmap ([AnalizIcon]::FromShortcut($pin)) 'existing-pin'
+        Check-ShortcutIcon $pin 'existing-pin'
         $result.upgrade.pinned.resolvedIcon='verified with SHGetFileInfo'
         Capture-Taskbar 'existing-pin' $result.upgrade.pinned
     }

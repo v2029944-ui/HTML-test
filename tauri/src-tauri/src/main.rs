@@ -1617,9 +1617,19 @@ fn main() {
     if let Err(error) = windows_taskbar::set_process_identity(&context.config().identifier) {
         eprintln!("Unable to set Windows application identity: {error}");
     }
+    // Build the window hidden and set its shell properties before Explorer groups it.
+    #[cfg(windows)]
+    let startup_windows: Vec<_> = context.config_mut().app.windows.iter_mut()
+        .filter(|window| window.create)
+        .map(|window| {
+            let config = window.clone();
+            window.create = false;
+            config
+        })
+        .collect();
     #[cfg(feature = "ci-webview2")]
     let smoke = smoke_configuration().expect("Invalid CI-only smoke configuration");
-    #[cfg(feature = "ci-webview2")]
+    #[cfg(all(feature = "ci-webview2", not(windows)))]
     if smoke.is_some() {
         for window in &mut context.config_mut().app.windows {
             window.create = false;
@@ -1632,7 +1642,7 @@ fn main() {
         if matches!(page.event(), tauri::webview::PageLoadEvent::Finished) {
             let icon = webview.window().hwnd()
                 .map_err(|error| std::io::Error::other(error.to_string()))
-                .and_then(|hwnd| windows_taskbar::set_large_icon(hwnd.0));
+                .and_then(|hwnd| windows_taskbar::set_large_icon(hwnd).map_err(std::io::Error::other));
             if let Err(error) = icon {
                 eprintln!("Unable to set the Windows taskbar icon: {error}");
             }
@@ -1640,6 +1650,14 @@ fn main() {
     });
     builder
         .on_window_event(|window, event| {
+            #[cfg(windows)]
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                if let Ok(hwnd) = window.hwnd() {
+                    if let Err(error) = windows_taskbar::clear_relaunch(hwnd) {
+                        eprintln!("Unable to clear Windows relaunch metadata: {error}");
+                    }
+                }
+            }
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 if let Some(runtime) = window.try_state::<storage::shared_runtime::Runtime>() {
                     runtime.close_window(window.label());
@@ -1678,15 +1696,50 @@ fn main() {
             app.manage(lease);
             app.manage(runtime);
             app.manage(storage::RestoreLaunchInfo(restored));
-            #[cfg(feature = "ci-webview2")]
-            if let Some((_, port)) = &smoke {
-                for config in app.config().app.windows.clone() {
-                    tauri::WebviewWindowBuilder::from_config(app, &config)?
-                        .data_directory(root.join(format!("webview-profile-{port}")))
-                        .additional_browser_args(&format!(
-                            "--remote-debugging-address=127.0.0.1 --remote-debugging-port={port}"
-                        ))
-                        .build()?;
+            #[cfg(any(windows, feature = "ci-webview2"))]
+            {
+                #[cfg(not(windows))]
+                let startup_windows = if smoke.is_some() {
+                    app.config().app.windows.clone()
+                } else {
+                    Vec::new()
+                };
+                for config in &startup_windows {
+                    let builder = tauri::WebviewWindowBuilder::from_config(app, config)?;
+                    #[cfg(windows)]
+                    let builder = builder.visible(false);
+                    #[cfg(feature = "ci-webview2")]
+                    let builder = if let Some((_, port)) = &smoke {
+                        builder.data_directory(root.join(format!("webview-profile-{port}")))
+                            .additional_browser_args(&format!(
+                                "--remote-debugging-address=127.0.0.1 --remote-debugging-port={port}"
+                            ))
+                    } else {
+                        builder
+                    };
+                    let _window = builder.build()?;
+                    #[cfg(windows)]
+                    {
+                        match _window.hwnd() {
+                            Ok(hwnd) => {
+                                if let Err(error) = windows_taskbar::set_large_icon(hwnd) {
+                                    eprintln!("Unable to set the Windows taskbar icon: {error}");
+                                }
+                                if let Err(error) = windows_taskbar::configure_relaunch(hwnd, &app.config().identifier) {
+                                    eprintln!("Unable to set Windows relaunch metadata: {error}");
+                                }
+                            }
+                            Err(error) => eprintln!("Unable to obtain the Windows window handle: {error}"),
+                        }
+                        if config.visible {
+                            _window.show()?;
+                            if config.focus {
+                                if let Err(error) = _window.set_focus() {
+                                    eprintln!("Unable to focus the startup window: {error}");
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Ok(())
