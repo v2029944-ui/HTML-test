@@ -97,13 +97,17 @@ function paint(lo,hi){
  one('[data-measure]').value=metric;one('#referenceSource').value=source;one('#referenceSource option[value=imported]').disabled=kind==='year';
  one('[data-pick=orgs]').textContent=orgs.size===1?[...orgs][0]:allOrgs&&orgs.size?'Все ('+orgs.size+')':'Выбрано '+orgs.size+' из '+orgNames.length;
  one('[data-pick=works]').textContent=allNames?'Все ('+nameCount+')':'Выбрано '+nameRows.size+' из '+nameCount;
- one('.filter-summary').textContent=caption+' · база '+interval(lo,hi)+(allOrgs?'':' · подразделений '+orgs.size+' из '+orgNames.length);
+ one('.filter-summary').textContent=caption+', база '+interval(lo,hi)+(allOrgs?'':', подразделений '+orgs.size+' из '+orgNames.length);
  const note=one('.period-length-note');note.hidden=size(lo,hi)===size(from,to);note.textContent=note.hidden?'':'Интервалы разной длительности. Сравниваются итоги за каждый интервал.';
  many('.quick-actions button').forEach((b,i)=>{const p=quick(i);b.disabled=!p;b.setAttribute('aria-pressed',String(Boolean(p&&source==='daily'&&p.kind===kind&&p.from===from&&p.to===to)));if(p)b.title=interval(p.from,p.to);else b.removeAttribute('title');});
 }
+let appliedDetailScope;
 function syncDetails(){
- if(!scope||scope.revision!==UI.revision)return window.unifiedAnalytics.applyReferenceScope(null);
- return window.unifiedAnalytics.applyReferenceScope(scope);
+ const current=scope?.revision===UI.revision?scope:null;
+ // Revisiting a tool keeps its local choices until a shared filter actually changes.
+ if(current===appliedDetailScope)return;
+ appliedDetailScope=current;
+ return window.unifiedAnalytics.applyReferenceScope(current);
 }
 function publish(){
  const [baseFrom,baseTo]=baseRange();
@@ -116,7 +120,7 @@ function publish(){
   displayFrom:from,displayTo:to,displayBaseFrom:baseFrom,displayBaseTo:baseTo,organizations:[...orgs],metric,
   allNames,nameRows:[...nameRows.values()],selectedNames:allNames?[]:[...nameRows.values()].map(row=>row.name),selectedKeys:allNames?[]:[...nameRows.keys()]};
  const result=window.referenceResults.refresh(scope);
- if(['chartPanel','structurePanel','comparison','usualPanel','regularityPanel'].includes(window.referenceDetail?.active))void syncDetails();
+ if(['chartPanel','structurePanel','comparison','usualPanel','regularityPanel','overviewPanel','changes'].includes(window.referenceDetail?.active))void syncDetails();
  return result;
 }
 function setMetric(value){if(value!=='amount'&&value!=='count')return;metric=value;return publish();}
@@ -153,9 +157,9 @@ function chooseOrgs(anchor){
 }
 function chooseWorks(anchor){
  const {box,query,actions,list,count,pages}=listShell('Работы в подробной аналитике',anchor,'Выбор применяется к подробной аналитике. В сводке учитываются все работы.');
- query.placeholder='Найти работу';
+ query.placeholder='Найти работу';list.dataset.sqlScrollHost='reference-work-options';
  const initial=revision,selected=new Map(nameRows);
- let everything=allNames,rows=[],positions=[null],next=null,ticket=0,matchingTotal=0;
+ let everything=allNames,rows=[],index=0,ticket=0,matchingTotal=0;
  const limit=50;
  const update=()=>{count.textContent=everything?'Выбраны все работы ('+nameCount+')':'Выбрано '+selected.size+' из '+nameCount;};
  const all=button('Выбрать все',()=>{
@@ -167,9 +171,9 @@ function chooseWorks(anchor){
  actions.append(all,clear,count);
  const apply=button('Применить',()=>{if(initial!==revision){UI.notice('Данные изменились. Откройте выбор повторно.',true);close(box);return;}allNames=everything;nameRows=new Map(selected);close(box);publish();});apply.className='filter-apply';box.append(apply);
  function draw(){
-  list.replaceChildren();pages.replaceChildren();update();
-  const search=Boolean(query.value.trim());all.textContent=search?(matchingTotal>limit?'Выбрать на странице':'Выбрать найденные'):'Выбрать все';
-  clear.textContent=search&&!everything?'Снять выбор на странице':'Снять выбор';all.disabled=!rows.length;
+  list.replaceChildren();update();
+  const search=Boolean(query.value.trim());all.textContent=search?(matchingTotal>limit?'Выбрать показанные':'Выбрать найденные'):'Выбрать все';
+  clear.textContent=search&&!everything?'Снять выбор с показанных':'Снять выбор';all.disabled=!rows.length;
   for(const row of rows){
    const input=checkbox(list,row.name+(row.kind==='group'?' (группа)':''),everything||selected.has(row.key),field=>{
     if(everything){
@@ -182,19 +186,20 @@ function chooseWorks(anchor){
    if(everything&&(search||nameCount>limit))input.disabled=true;
   }
   if(!rows.length)list.append(make('p',search?'Совпадений нет.':'Список пуст.'));
-  if(!next&&positions.length===1)return;
-  const prev=button('← Предыдущая',()=>load(positions.slice(0,-1))),forward=button('Следующая →',()=>load([...positions,next]));
-  prev.disabled=positions.length===1;forward.disabled=!next;pages.append(prev,make('span','Страница '+positions.length),forward);
+  window.sqlRowScroll.attach(list,{index,size:limit,count:rows.length,total:matchingTotal,footer:pages,label:'Страницы списка работ',go:i=>{
+   if(!box.isConnected||initial!==revision)return false;
+   return load(i);
+  }});
  }
- async function load(path){
-  const mine=++ticket;list.replaceChildren(make('p','Загрузка…'));pages.replaceChildren();all.disabled=clear.disabled=true;
+ async function load(requested){
+  const mine=++ticket;all.disabled=clear.disabled=true;
   try{
-   const page=initial===null?{rows:[],next:null,total_rows:0}:await UI.api.unifiedNameOptions(initial,query.value.trim(),path.at(-1),limit);
+   const page=initial===null?{rows:[],total_rows:0}:await UI.api.unifiedNameOptionsAtPage(initial,query.value.trim(),requested,limit);
    if(mine!==ticket||!box.isConnected||initial!==revision)return;
-   rows=page.rows;next=page.next;matchingTotal=page.total_rows;positions=path;clear.disabled=false;draw();
-  }catch(error){if(mine===ticket&&box.isConnected)list.replaceChildren(make('p','Не удалось открыть список. '+(window.analizUserError?.(error)||error.message)));}
+   rows=page.rows;matchingTotal=page.total_rows;index=requested;clear.disabled=false;draw();
+  }catch(error){if(mine===ticket&&box.isConnected){window.sqlRowScroll.reset(list);list.replaceChildren(make('p','Не удалось открыть список. '+(window.analizUserError?.(error)||error.message)));}}
  }
- query.oninput=()=>load([null]);void load([null]);query.focus();
+ query.oninput=()=>{window.sqlRowScroll.reset(list);list.replaceChildren(make('p','Загрузка…'));return load(0);};void load(0);query.focus();
 }
 async function readBounds(snap){
  const mine=++lastTicket;
@@ -263,7 +268,7 @@ function init(){
  const org=one('[data-pick=orgs]'),work=one('[data-pick=works]');
  org.onclick=()=>chooseOrgs(org);work.onclick=()=>chooseWorks(work);
  many('.quick-actions button').forEach((b,i)=>b.onclick=()=>applyQuick(i));one('.filter-reset').onclick=reset;
- const tools=document.getElementById('toolsPage');if(tools)syncFields=C.enhance(tools);
+ const native=document.getElementById('refNative');if(native)syncFields=C.enhance(native);
  UI.onSnapshot(configure);paint(...baseRange());
  if(UI.snapshot)void configure(UI.snapshot);
 }

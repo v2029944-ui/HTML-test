@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+tempfile = "3"
 fs2 = "0.4"
 analiz-import-core = { path = "../import-core" }
 serde = { version = "1", features = ["derive"] }
@@ -20,4 +21,3 @@ sha2 = "0.10"
 
 [dev-dependencies]
 zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
-tempfile = "3"

@@ -1,12 +1,14 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const {spawnSync}=require('node:child_process');
+const {releaseNotesFile}=require('./publish.cjs');
 const ARTIFACT='Analiz-rabot-Tauri-Windows-x64-setup.exe';
 function manifest(version,tag,signature){
   if(!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version))throw Error('Некорректная версия выпуска.');
   if(!/^[0-9A-Za-z._-]+$/.test(tag)||tag==='tauri-updates')throw Error('Укажите отдельный тег версии Tauri.');
   if(!signature.trim())throw Error('Отсутствует подпись установщика.');
-  return {version,notes:'Обновление «Анализ работ»',pub_date:new Date().toISOString(),platforms:{
+  const notes=fs.readFileSync(releaseNotesFile(version),'utf8').trim();
+  return {version,notes,pub_date:new Date().toISOString(),platforms:{
     'windows-x86_64':{signature:signature.trim(),url:'https://github.com/v2029944-ui/HTML-test/releases/download/'+tag+'/'+ARTIFACT}
   }};
 }

@@ -48,6 +48,7 @@
     catch{message('Уведомление скрыто до перезапуска. Сохранить отсрочку не удалось: локальные предпочтения недоступны.',true);}
   });
   function blocked(){
+    if(window.sharedWorkspace?.busy||window.sharedWorkspace?.state?.pending)return 'Дождитесь завершения синхронизации общей базы и повторите обновление.';
     if(state.desktopSyncing||state.excelImports||state.folderImport||operations?.reads)return 'Завершите импорт или ручную проверку Excel и повторите обновление.';
     if(operations?.saves)return 'Дождитесь завершения сохранения данных и повторите обновление.';
     return '';

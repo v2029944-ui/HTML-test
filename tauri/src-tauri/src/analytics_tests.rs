@@ -1909,3 +1909,37 @@ fn analysis_filter_writers_share_only_their_database_queue() {
     let id=receive.recv_timeout(std::time::Duration::from_secs(15)).unwrap().unwrap();
     worker.join().unwrap();first.analysis_filter_delete(&id).unwrap();
 }
+
+#[test]
+fn imported_week_does_not_fill_a_missing_daily_report_or_duplicate_daily_totals() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    let mut reports = Vec::new();
+    for day in 1..=13 {
+        let date = format!("2024-01-{day:02}");
+        reports.push(json!({"id":date,"type":"day","start":date,"end":date,"organizations":["A"],
+            "rows":[{"organization":"A","work":"W","count":1,"amount":10}]}));
+    }
+    reports.push(json!({"id":"weekly","type":"week","start":"2024-01-08","end":"2024-01-14",
+        "organizations":["A"],"rows":[{"organization":"A","work":"W","count":9,"amount":95}]}));
+    data["reports"] = json!(reports);
+    let rev = prepare(&store, &data);
+    let daily = scope(&store, rev, "day", &["A"], None);
+    let weekly = scope(&store, rev, "week", &["A"], None);
+    let range = |from: &str, to: &str| RangeQuery { from: from.into(), to: to.into() };
+    let first = range("2024-01-01", "2024-01-07");
+    let second = range("2024-01-08", "2024-01-14");
+
+    let full = store.analysis_range_summary(rev, &daily, &first).unwrap();
+    assert!(full.complete);
+    assert_eq!((full.available_reports, full.total.amount), (7, Some(70.)));
+    let partial = store.analysis_range_summary(rev, &daily, &second).unwrap();
+    assert!(!partial.complete);
+    assert_eq!((partial.available_reports, partial.missing), (6, 1));
+    assert_eq!((partial.total.amount, partial.available_total.amount), (None, Some(60.)));
+    let week_start = range("2024-01-08", "2024-01-08");
+    let imported = store.analysis_range_summary(rev, &weekly, &week_start).unwrap();
+    assert!(imported.complete);
+    assert_eq!((imported.available_reports, imported.total.amount), (1, Some(95.)));
+}

@@ -27,8 +27,6 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
 .chart-mode-line>label select{display:block;min-height:38px;width:100%;margin-top:5px;padding:7px 9px;border:1px solid var(--field-border);border-radius:var(--radius-control);color:var(--text);background:var(--surface)}
 .horizontal-bar-scroll{max-height:540px;max-width:100%;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-control);margin:10px 0}
 .chart-wrap .horizontal-bar-scroll svg{display:block;width:100%;height:auto;min-height:0;max-height:none;overflow:visible}
-.horizontal-bar-pager{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0}
-.horizontal-bar-pager button{min-height:34px}
 
 /* Missing-data quality is persistent and keyboard-accessible, not dismissible. */
 .coverage-details{margin:9px 0}.coverage-details summary{font-weight:700;cursor:pointer}

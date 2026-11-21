@@ -1,5 +1,4 @@
-use crate::storage::{QualityMatrixPage, QualityMatrixReportsPage, Storage};
-use tauri::Manager;
+use crate::storage::{QualityMatrixPage, QualityMatrixReportsPage};
 
 #[tauri::command]
 pub async fn native_quality_matrix_page(
@@ -9,14 +8,22 @@ pub async fn native_quality_matrix_page(
     from: String,
     to: String,
     organizations: Vec<String>,
+    workspace_token: Option<String>,
 ) -> Result<QualityMatrixPage, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        app.state::<Storage>().quality_matrix_page(
-            revision,
-            &report_type,
-            &from,
-            &to,
-            &organizations,
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |routed_storage| {
+                routed_storage.quality_matrix_page(
+                    revision,
+                    &report_type,
+                    &from,
+                    &to,
+                    &organizations,
+                )
+            },
         )
     })
     .await
@@ -32,15 +39,23 @@ pub async fn native_quality_matrix_reports(
     organization: Option<String>,
     after: Option<String>,
     limit: usize,
+    workspace_token: Option<String>,
 ) -> Result<QualityMatrixReportsPage, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        app.state::<Storage>().quality_matrix_reports(
-            revision,
-            &report_type,
-            &start,
-            organization.as_deref(),
-            after.as_deref(),
-            limit,
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |routed_storage| {
+                routed_storage.quality_matrix_reports(
+                    revision,
+                    &report_type,
+                    &start,
+                    organization.as_deref(),
+                    after.as_deref(),
+                    limit,
+                )
+            },
         )
     })
     .await

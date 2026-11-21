@@ -1,6 +1,12 @@
-# Анализ работ — Tauri 1.7.0 (предварительная версия) и автономный HTML
+# Анализ работ — Tauri для Windows
 
-## Предварительный выпуск 1.7.0
+## Выпуск 1.9.5 для Windows x64
+
+[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.9.5/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.9.5/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.9.5](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.9.5)
+
+Обновление до 1.9.5 доступно через «Настройки → Проверить обновления». [Ход разработки и оставшиеся задачи](docs/ROADMAP.md).
+
+## История выпуска 1.7.0
 
 [**Скачать установщик 1.7.0 (Windows x64)**](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.7.0/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.7.0/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [GitHub Release](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.7.0) · [проверенный Windows/WebView2 CI](https://github.com/v2029944-ui/HTML-test/actions/runs/44534276975).
 
@@ -18,13 +24,13 @@
 
 **Различайте установленную версию и код `main`.** Выпущенный EXE 1.5.1 собран из фиксированного коммита `a7c4522a`. В `main` позже добавлены редактор правил Excel, нативный Rust-импорт обычных XLSX и лимит 15 млн ячеек. **Их нет в установщике 1.5.1.** Эти функции включены в предварительную 1.7.0 вместе с завершённым SQL-этапом PR #71; стабильная 1.5.1 не менялась.
 
-Приложение локально анализирует Excel-отчёты о работах: количество/объём, суммы, подразделения, группы, периоды, сравнения и отклонения. Основная платформа — Windows на Tauri 2 + SQLite; автономный `index.html` остаётся доступен.
+Приложение локально анализирует Excel-отчёты о работах: количество/объём, суммы, подразделения, группы, периоды, сравнения и отклонения. Дальнейшая разработка сосредоточена на Windows-приложении с Tauri 2 и SQLite. Поддержка автономной браузерной версии завершена.
 ## Варианты запуска
 
 | Вариант | Данные | Назначение |
 | --- | --- | --- |
 | **[Tauri 2 для Windows x64](tauri/README.md)** | SQLite `reports.sqlite3` в «Документы/Анализ работ» | Настольная версия, локальная база, папка Excel, SQL-режим |
-| **[Автономный HTML](index.html)** | IndexedDB браузера; ограниченный запасной localStorage | Открыть `index.html` без установки; база не синхронизируется с Tauri |
+| [Архивная браузерная версия](index.html) | IndexedDB браузера; ограниченный запасной localStorage | Открыть `index.html` без установки; база не синхронизируется с Tauri |
 
 ## Что доступно в опубликованной 1.5.1
 

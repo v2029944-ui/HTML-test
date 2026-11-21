@@ -1,6 +1,6 @@
 use crate::{storage::*, with_selected_work_names};
 use serde::Deserialize;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,12 +59,26 @@ pub async fn native_changes_page(
     app: AppHandle,
     request: AdvancedRequest,
     after: Option<ChangeCursor>,
+    workspace_token: Option<String>,
 ) -> Result<AdvancedChangesPage, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let store = app.state::<Storage>();
-        request.with_scope(&store, |s, g| {
-            store.advanced_changes_page(request.revision, s, &request.query, g, after.as_ref())
-        })
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |routed_storage| {
+                let store = routed_storage;
+                request.with_scope(&store, |s, g| {
+                    store.advanced_changes_page(
+                        request.revision,
+                        s,
+                        &request.query,
+                        g,
+                        after.as_ref(),
+                    )
+                })
+            },
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -74,22 +88,30 @@ pub async fn native_changes_csv(
     app: AppHandle,
     request: AdvancedRequest,
     destination: String,
+    workspace_token: Option<String>,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let path = std::path::Path::new(&destination);
-        if destination.len() > 32767
-            || !path.is_absolute()
-            || !path
-                .extension()
-                .and_then(|s| s.to_str())
-                .is_some_and(|s| s.eq_ignore_ascii_case("csv"))
-        {
-            return Err("Choose an absolute CSV file path".into());
-        }
-        let store = app.state::<Storage>();
-        request.with_scope(&store, |s, g| {
-            store.advanced_changes_csv(request.revision, s, &request.query, g, path)
-        })
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |routed_storage| {
+                let path = std::path::Path::new(&destination);
+                if destination.len() > 32767
+                    || !path.is_absolute()
+                    || !path
+                        .extension()
+                        .and_then(|s| s.to_str())
+                        .is_some_and(|s| s.eq_ignore_ascii_case("csv"))
+                {
+                    return Err("Choose an absolute CSV file path".into());
+                }
+                let store = routed_storage;
+                request.with_scope(&store, |s, g| {
+                    store.advanced_changes_csv(request.revision, s, &request.query, g, path)
+                })
+            },
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -101,20 +123,28 @@ pub async fn native_pattern_page(
     mode: String,
     window_size: i32,
     after: Option<String>,
+    workspace_token: Option<String>,
 ) -> Result<PatternPage, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let store = app.state::<Storage>();
-        request.with_scope(&store, |s, g| {
-            store.advanced_patterns(
-                request.revision,
-                s,
-                &request.query,
-                g,
-                &mode,
-                window_size,
-                after.as_deref(),
-            )
-        })
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |routed_storage| {
+                let store = routed_storage;
+                request.with_scope(&store, |s, g| {
+                    store.advanced_patterns(
+                        request.revision,
+                        s,
+                        &request.query,
+                        g,
+                        &mode,
+                        window_size,
+                        after.as_deref(),
+                    )
+                })
+            },
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -128,22 +158,47 @@ pub async fn native_composition_page(
     metric: String,
     after: Option<ContributionCursor>,
     structure_limit: Option<usize>,
+    page_index: Option<usize>,
+    workspace_token: Option<String>,
 ) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let store = app.state::<Storage>();
-        request.with_scope(&store, |s, g| {
-            store.advanced_composition_limit(
-                request.revision,
-                s,
-                &request.query,
-                g,
-                &before,
-                &mode,
-                &metric,
-                after.as_ref(),
-                structure_limit.unwrap_or(12),
-            )
-        })
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |routed_storage| {
+                if page_index.is_some() && after.is_some() {
+                    return Err("Do not combine a cursor and a page index".into());
+                }
+                let store = routed_storage;
+                request.with_scope(&store, |s, g| {
+                    if let Some(index) = page_index {
+                        return store.advanced_composition_at_page(
+                            request.revision,
+                            s,
+                            &request.query,
+                            g,
+                            &before,
+                            &mode,
+                            &metric,
+                            structure_limit.unwrap_or(12),
+                            index,
+                        );
+                    }
+                    store.advanced_composition_limit(
+                        request.revision,
+                        s,
+                        &request.query,
+                        g,
+                        &before,
+                        &mode,
+                        &metric,
+                        after.as_ref(),
+                        structure_limit.unwrap_or(12),
+                    )
+                })
+            },
+        )
     })
     .await
     .map_err(|e| e.to_string())?

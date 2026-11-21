@@ -1,6 +1,7 @@
 """Run the packaged Tauri app through its real WebView2 and SQLite on an isolated Windows CI runner."""
 import json,os,subprocess,sys,tempfile,time,urllib.request,shutil,hashlib,sqlite3,io,re,zipfile
 from pathlib import Path
+from datetime import date
 from contextlib import contextmanager, closing
 from playwright.sync_api import expect, sync_playwright, Error as PlaywrightError, TimeoutError as PlaywrightTimeoutError
 ROOT=Path(__file__).resolve().parents[2]
@@ -9,8 +10,11 @@ from test_daily_wide import wide_xlsx
 from test_import_controls import daily_workbook_bytes
 sys.path.insert(0,str(ROOT/'tauri'/'examples'))
 from make_metric_xlsx import create_example
+from reference_control_layout import check_control_layout
 from reference_smoke import check_reference
-from reference_data_smoke import check_reference_data
+from reference_catalog import check_reference_catalog
+from reference_window_size import set_client_width
+from reference_data_smoke import check_reference_data, choose_calendar_date
 from reference_gallery import write_reference_gallery
 from reference_print_probe import probe_reference_print
 from reference_file_dialogs import OwnedFileDialogs, check_reference_file_dialogs, check_reference_data_file_dialogs
@@ -285,14 +289,21 @@ def wait_for_app_state(page, expression, description, timeout_ms=30_000):
         page.wait_for_timeout(min(100,remaining*1000))
 
 def navigate(page, section):
-    """Open a canonical tab, using the same menu as an installed-app user."""
-    tab=page.locator(f'.tabs .tab[data-view="{section}"]')
+    """Open a desktop section by the same visible buttons as the installed user."""
+    key = 'overviewPanel' if section == 'dashboard' else section
+    tab = page.locator(f'.tool-tabs [data-section="{key}"]')
     if not tab.is_visible():
-        page.locator('#managementToggle').click()
-    tab.click()
-    assert page.locator(f'#{section}.view.active').is_visible()
-    assert tab.get_attribute('aria-current')=='page'
-    assert not page.evaluate('document.querySelector("#managementNav").open')
+        if key in ('upload', 'groups', 'storage'):
+            page.locator('#refImport' if key == 'upload' else '#refSettings').click()
+        else:
+            if not page.locator('#refAnalytics').is_visible():
+                page.locator('#sharedHeader .main-nav button').first.click()
+            page.locator('#refAnalytics').click()
+    if tab.get_attribute('aria-pressed') != 'true':
+        tab.click()
+    expect(tab).to_have_attribute('aria-pressed', 'true')
+    expect(page.locator('#refNative')).to_have_attribute('data-panel', key)
+    expect(page.locator('#' + key)).to_be_visible()
 
 
 def api(page, method, *args):
@@ -301,8 +312,14 @@ def api(page, method, *args):
 
 
 def invoke(page, command, args=None):
+    # Raw fixture commands still need the identity enforced by Rust. Preserve an
+    # explicit stale/invalid token so rejection tests cannot silently refresh it.
+    payload=dict(args or {})
+    if not command.startswith('shared_workspace_') and 'workspaceToken' not in payload:
+        status=page.evaluate("window.__TAURI__.core.invoke('shared_workspace_status')")
+        payload['workspaceToken']=status['workspace_token']
     return page.evaluate('({command,args}) => window.__TAURI__.core.invoke(command,args)',
-                         {'command':command,'args':args or {}})
+                         {'command':command,'args':payload})
 
 
 def assert_rejected(action, description, *messages):
@@ -321,7 +338,7 @@ def wait_for_text(page, selector, text, timeout_ms=30_000):
         f'{selector} contains {text}',timeout_ms)
 
 
-def ready(page, count):
+def ready(page, count, *, shared=False):
     wait_for_app_state(page,'Boolean(window.appReady)', 'Unified SQLite startup',90_000)
     assert page.evaluate('window.appReady') is True
     assert page.evaluate('''() => {
@@ -331,19 +348,13 @@ def ready(page, count):
         && !('load' in window.desktopAPI) && !('save' in window.desktopAPI)
         && Object.isFrozen(window.unifiedOriginal.state.reports)
         && window.unifiedOriginal.state.reports.length===0
-        && !document.querySelector('#legacyWorkspaceLink,#openNativeWorkspace,#sqlStartupPreference');
+        && !document.querySelector('#legacyWorkspaceLink,#openNativeWorkspace,#sqlStartupPreference,#refData,#refWorkspaceDialog');
     }''')
     expect(page.locator('#s1')).to_be_visible()
     assert page.locator('#dashboard').evaluate("el=>el.classList.contains('active')")
     assert api(page,'nativeSettingsBootstrap')['reports']==count
-    wait_for_text(page,'#unifiedIndexStatus',f'Отчётов: {count} · Локальная база SQLite',90_000)
-
-
-def open_full_workspace(page):
-    page.locator('#refData').click()
-    page.locator('#sheet').get_by_role('button',name='Исходный макет',exact=True).click()
-    expect(page.locator('#refWorkspaceDialog')).to_be_visible()
-    expect(page.locator('#dashboard.view.active')).to_be_visible()
+    mode='Общая' if shared else 'Локальная'
+    wait_for_text(page,'#unifiedIndexStatus',f'{mode} база SQLite. Отчётов: {count}',90_000)
 
 
 def check_runtime(page):
@@ -362,12 +373,11 @@ def check_runtime(page):
     page.locator('#appearancePreset').select_option('minimal')
     page.locator('#appearanceSize').select_option('standard')
     navigate(page,'dashboard')
-    menu=page.locator('#managementToggle')
-    menu.focus();menu.press('Enter')
-    assert page.locator('#managementNav').evaluate('el => el.open')
-    menu.press('Escape')
-    assert not page.locator('#managementNav').evaluate('el => el.open')
-    assert menu.evaluate('el => document.activeElement===el')
+    back=page.locator('#backBtn')
+    back.focus();back.press('Escape')
+    expect(page.locator('#toolsPage')).not_to_be_visible()
+    expect(page.locator('#refAnalytics')).to_be_focused()
+    navigate(page,'dashboard')
     select=page.locator('#periodType')
     select.focus();select.press('Enter');select.press('Escape')
     assert select.evaluate('el => document.activeElement===el')
@@ -391,13 +401,33 @@ def set_folder(page, folder, filenames):
     return listing
 
 
+def set_calendar_field(page, field_id, value):
+    field = page.locator('#' + field_id)
+    trigger = page.locator('#' + field_id + 'Calendar')
+    expect(field).to_be_hidden()
+    if '-W' in value:
+        year, week = value.split('-W')
+        stamp = date.fromisocalendar(int(year), int(week), 1).isoformat()
+    elif len(value) == 4:
+        stamp = value + '-01-01'
+    elif len(value) == 7:
+        stamp = value + '-01'
+    else:
+        stamp = value
+    choose_calendar_date(page, trigger, stamp)
+    expect(field).to_have_value(value)
+
+
 def import_year(page, workbook, confirmations):
+    expect(page.locator('#unifiedImportAcknowledgements')).not_to_be_visible()
+    expect(page.locator('#unifiedAcceptOverlap')).not_to_be_visible()
+    expect(page.locator('#unifiedAcceptQuality')).not_to_be_visible()
     page.get_by_role('button',name='Показать файлы папки',exact=True).click()
     page.locator('#sourceManualFile').select_option(label=workbook.name)
     page.get_by_role('button',name='Открыть для проверки',exact=True).click()
     wait_for_text(page,'#excelFileStatus',workbook.name)
     page.locator('#importFormat').select_option('daily-wide')
-    page.locator('#dailyYear').fill('2024')
+    set_calendar_field(page, 'dailyYear', '2024')
     metadata=api(page,'nativeImportSheets',str(workbook))
     assert [sheet['name'] for sheet in metadata]==['Q1','Q2','Q3','Q4'],metadata
     assert page.locator('#sheetSelect option').all_text_contents()==['Q1','Q2','Q3','Q4']
@@ -411,7 +441,19 @@ def import_year(page, workbook, confirmations):
     assert page.locator('#importPreview tbody tr').count()<=50
     assert api(page,'nativeSettingsBootstrap')['reports']==0
     assert not page.locator('#saveDailyFolderRule').is_visible()
-    page.locator('#unifiedAcceptQuality').check()
+    check_control_layout(page)
+    offered=[]
+    for field,reason in [('unifiedAcceptOverlap','Проверьте даты и типы'),
+                         ('unifiedAcceptQuality','замечаний качества')]:
+        acknowledgement=page.locator('#'+field)
+        expect(acknowledgement).not_to_be_checked()
+        if acknowledgement.is_visible():
+            label=acknowledgement.locator('xpath=parent::label')
+            expect(label).to_contain_text(reason)
+            assert re.search(r'\d+',label.inner_text()), 'Consent must explain the actual preview count'
+            offered.append(field)
+            acknowledgement.check()
+    assert page.locator('#unifiedImportAcknowledgements').is_visible()==bool(offered)
     confirmations.cancel_then_accept(page.locator('#saveImport'),
         'Повторно проверить Excel и атомарно сохранить 366 отчётов')
     wait_for_text(page,'#unifiedImportStatus','Сохранено: 366 отчётов',120_000)
@@ -466,13 +508,11 @@ def check_cancelled_management_confirmations(page, confirmations):
         'Сначала будет создана резервная копия SQLite.',drafts=drafts)
     fields.first.fill(original)
     confirmations.cancel_only(page.locator('#clearReports'),
-        'Удалить все импортированные отчёты? Группы останутся. '
-        'Перед удалением будет создана резервная копия SQLite.',drafts=drafts)
-    # This button is offered even without a scheduled restore. We cancel its
-    # real confirmation; no pending restore is fabricated or cancelled via IPC.
-    confirmations.cancel_only(
-        page.get_by_role('button',name='Отменить запланированное восстановление',exact=True),
-        'Отменить запланированное восстановление?',drafts=drafts)
+        'Удалить все импортированные отчёты? Группы останутся.',drafts=drafts)
+    for removed in ('Создать отдельную восстановленную копию',
+                    'Восстановить при следующем запуске',
+                    'Отменить запланированное восстановление'):
+        expect(page.get_by_role('button', name=removed, exact=True)).to_have_count(0)
     navigate(page,'upload')
     loaded=page.locator('#uploadedReports')
     if not loaded.evaluate('node=>node.open'):
@@ -482,7 +522,7 @@ def check_cancelled_management_confirmations(page, confirmations):
     dates=re.search(r'· (\d{4}-\d{2}-\d{2}) — (\d{4}-\d{2}-\d{2})',card.locator('strong').inner_text())
     assert dates, 'Saved report card must expose its real period'
     confirmations.cancel_only(card.get_by_role('button',name='Удалить отчёт',exact=True),
-        'Удалить отчёт '+dates[1]+' — '+dates[2]+' после создания резервной копии SQLite?')
+        'Удалить отчёт '+dates[1]+' — '+dates[2]+'?')
     assert confirmations.revision()==revision
     after=api(page,'nativeSettingsBootstrap')
     assert after==before,('Cancelled management confirmations changed SQLite snapshot',before,after)
@@ -490,18 +530,39 @@ def check_cancelled_management_confirmations(page, confirmations):
 
 def check_report_views(page):
     page.locator('#uploadedReports > summary').click()
-    wait_for_text(page,'#unifiedReportsPage','1–50 из 366')
+    wait_for_text(page,'[data-sql-pager="reports"] [data-page-range]','1–50 из 366')
     rows=page.locator('#reports .calendar-source')
     assert rows.count()==50
     first=rows.first.locator('strong').inner_text()
     assert '2024-12-31' in first
-    page.locator('#unifiedReportsNext').click()
-    wait_for_text(page,'#unifiedReportsPage','51–100 из 366')
-    assert rows.count()==50
-    assert rows.first.locator('strong').inner_text()!=first
-    page.locator('#unifiedReportsPrev').click()
-    wait_for_text(page,'#unifiedReportsPage','1–50 из 366')
-    assert rows.first.locator('strong').inner_text()==first
+    pager=page.locator('[data-sql-pager="reports"]')
+    expect(pager).to_be_visible()
+    expect(page.locator('#unifiedReportsNext')).to_be_hidden()
+    expect(page.locator('#unifiedReportsPrev')).to_be_hidden()
+    names=lambda: rows.locator('strong').all_text_contents()
+    first_names=names()
+    pager.locator('[data-page-action="next"]').click()
+    wait_for_text(page,'[data-sql-pager="reports"] [data-page-range]','51–100 из 366')
+    second_names=names()
+    assert len(second_names)==50 and not set(first_names).intersection(second_names)
+    pager.locator('[data-page-action="next"]').click()
+    wait_for_text(page,'[data-sql-pager="reports"] [data-page-range]','101–150 из 366')
+    third_names=names()
+    assert len(third_names)==50 and not set(first_names+second_names).intersection(third_names)
+    pager.locator('[data-page-action="previous"]').click()
+    wait_for_text(page,'[data-sql-pager="reports"] [data-page-range]','51–100 из 366')
+    assert names()==second_names
+    pager.locator('[data-page-action="previous"]').click()
+    wait_for_text(page,'[data-sql-pager="reports"] [data-page-range]','1–50 из 366')
+    assert names()==first_names and rows.first.locator('strong').inner_text()==first
+    pager.locator('[data-page-action="choose"]').click()
+    pager.locator('[data-page-number="8"]').click()
+    wait_for_text(page,'[data-sql-pager="reports"] [data-page-range]','351–366 из 366')
+    assert rows.count()==16 and '2024-01-01' in rows.last.locator('strong').inner_text()
+    pager.locator('[data-page-action="choose"]').click()
+    pager.locator('[data-page-number="1"]').click()
+    wait_for_text(page,'[data-sql-pager="reports"] [data-page-range]','1–50 из 366')
+    assert names()==first_names
     snapshot=api(page,'nativeSettingsBootstrap')
     daily=api(page,'managementReportSummary',snapshot['revision'],{'report_type':'day'})
     assert daily['reports']==366 and abs(daily['amount']-7320)<.001,daily
@@ -540,7 +601,7 @@ def check_report_views(page):
     expect(detail.get_by_role('heading',name='2024-02-29',exact=True)).to_have_count(0)
     page.keyboard.press('Escape')
     expect(month).to_be_focused()
-    expect(page.locator('#refWorkspaceDialog')).to_be_visible()
+    expect(page.locator('#refNative')).to_have_attribute('data-panel','upload')
     expect(leap).to_have_count(0)
 
 
@@ -578,7 +639,7 @@ def dashboard_month(page):
     page.locator('#periodType').select_option('month')
     wait_for_app_state(page,'document.getElementById("overviewPeriod").type==="month"','Monthly period input')
     page.locator('#overviewMode').select_option('single')
-    page.locator('#overviewPeriod').fill('2024-02')
+    set_calendar_field(page, 'overviewPeriod', '2024-02')
     wait_for_app_state(page,
         'window.unifiedUI.scope?.from==="2024-02-01" && window.unifiedUI.scope?.to==="2024-02-29" '
         '&& document.querySelectorAll("#overviewKpis .kpi").length===4','February SQLite dashboard')
@@ -612,6 +673,20 @@ def quality_evidence_xlsx(rows):
     return output.getvalue()
 
 
+def open_daily_overview(page, stamp):
+    # The shared period is reapplied when a new SQLite revision is published.
+    page.locator('#sharedHeader .main-nav').get_by_role('button',name='Сводка',exact=True).click()
+    filters=page.locator('#reportShell .filter-fold')
+    if not filters.evaluate('node => node.open'):
+        filters.locator(':scope > summary').click()
+    filters.locator('[data-filter="type"]').get_by_role('button',name='День',exact=True).click()
+    filters.locator('[data-filter="mode"]').get_by_role('button',name='Один период',exact=True).click()
+    choose_calendar_date(page,filters.locator('[data-date="start"]'),stamp)
+    wait_for_app_state(page,'window.referenceFilters.scope?.displayFrom==='+json.dumps(stamp),'Shared day selected')
+    navigate(page,'dashboard')
+    wait_for_app_state(page,'window.unifiedUI.scope?.displayType==="day" && window.unifiedUI.scope?.from==='+json.dumps(stamp),'Daily SQLite overview')
+
+
 def check_source_evidence(page, temporary, output):
     source=temporary/'zero-and-missing-day.xlsx';original=source_evidence_xlsx();source.write_bytes(original)
     snapshot=api(page,'nativeSettingsBootstrap');before=snapshot['reports']
@@ -640,10 +715,7 @@ def check_source_evidence(page, temporary, output):
     assert shared['evidence']['deferred_day_entries']==0 and shared['evidence']['omitted_row_entries']==0,shared
     gap=next(issue for issue in shared['issues'] if issue['kind']=='missing-day')
     assert gap['date']=='2020-02-29' and gap['organization'] is None and gap['relevant'] is True and gap['scope']=='source-period',gap
-    navigate(page,'dashboard');page.locator('#periodType').select_option('day')
-    wait_for_app_state(page,'document.getElementById("overviewPeriod").type==="date" && window.unifiedUI.scope?.displayType==="day"','Day input and scope are ready')
-    page.locator('#overviewPeriod').fill('2020-02-28')
-    wait_for_app_state(page,'window.unifiedUI.scope?.from==="2020-02-28"','Synthetic zero report is selected')
+    open_daily_overview(page,'2020-02-28')
     details=page.locator('#overviewAlerts .coverage-details');details.locator(':scope > summary').click()
     expect(details.locator('td.coverage-warning')).to_have_count(1)
     expect(details.locator('td.coverage-warning')).to_contain_text('Нулевые значения')
@@ -695,8 +767,7 @@ def check_omitted_detail_evidence(page, temporary, output):
     assert by_row[5]['kind']=='empty-name' and by_row[5]['skipped'] is None,notes
     assert by_row[6]['kind']=='invalid' and by_row[6]['skipped'] is None,notes
     assert by_row[7]['kind']=='skipped' and by_row[7]['skipped'] is True and by_row[7]['organization'] is None,notes
-    page.locator('#overviewPeriod').fill('2020-03-01')
-    wait_for_app_state(page,'window.unifiedUI.scope?.from==="2020-03-01"','Imported omitted-detail report is selected')
+    open_daily_overview(page,'2020-03-01')
     details=page.locator('#overviewAlerts .coverage-details');details.locator(':scope > summary').click()
     expect(details.locator('td.coverage-warning')).to_have_count(1)
     details.locator('td.coverage-warning .coverage-cell-action').click()
@@ -730,7 +801,7 @@ def check_analytics(page, temporary, output):
     assert point['days']==29 and point['available_reports']==29*len(orgs),absent
     assert point['complete'] and point['missing']==0 and point['total']['amount']==0,absent
 
-    page.locator('#advancedAnalytics > summary').click()
+    navigate(page,'chartPanel')
     page.locator('#chartBreakdown').select_option('organizations')
     assert page.locator('[data-chart="line"]').count()==0
     page.locator('[data-chart="bar"]').click()
@@ -739,6 +810,7 @@ def check_analytics(page, temporary, output):
     wait_for_app_state(page,'document.querySelector("#chartsContainer .horizontal-bar-scroll svg")!==null','SQLite single-period horizontal bar chart')
     page.locator('#chartOrientation').select_option('vertical')
     wait_for_app_state(page,'document.querySelector("#chartsContainer .horizontal-bar-scroll")===null','SQLite restored vertical bar chart')
+    navigate(page,'dashboard')
     organization=page.locator('#orgFilter input')
     assert organization.count()==4
     if not organization.first.is_visible():
@@ -752,7 +824,6 @@ def check_analytics(page, temporary, output):
     wait_for_app_state(page,'window.unifiedUI.scope?.organizations.length===4','Restore all organizations')
     if page.locator('#orgFilter summary').count() and page.locator('#orgFilter summary').is_visible():
         page.locator('#orgFilter summary').click()
-    page.locator('#advancedAnalytics > summary').click()
 
     # Verify the canonical dashboard at both desktop and phone CSS viewports.
     original=page.viewport_size or page.evaluate('({width:innerWidth,height:innerHeight})')
@@ -804,7 +875,7 @@ def check_analytics(page, temporary, output):
 
     page.locator('#periodType').select_option('week')
     wait_for_app_state(page,'document.getElementById("overviewPeriod").type==="week"','Weekly period input')
-    page.locator('#overviewPeriod').fill('2025-W02')
+    set_calendar_field(page, 'overviewPeriod', '2025-W02')
     wait_for_app_state(page,'window.unifiedUI.scope?.from==="2025-01-06"','Missing weekly range is selected')
     alerts=page.locator('#overviewAlerts')
     expect(alerts).to_contain_text('Неполные данные: 28 пропусков')
@@ -823,32 +894,40 @@ def check_analytics(page, temporary, output):
     details.locator('summary').press('Enter')
     expect(alerts).to_contain_text('Неполные данные: 28 пропусков')
     expect(amount).to_have_text('—')
-    alerts.get_by_role('button',name='Проверить данные',exact=True).click()
+    inspect_reports=alerts.get_by_role('button',name='Проверить данные',exact=True)
+    inspect_reports.click()
     expect(page.locator('#upload')).to_have_class('view active')
-    navigate(page,'dashboard')
+    page.locator('#backBtn').click()
+    expect(page.locator('#refNative')).to_have_attribute('data-panel','overviewPanel')
+    expect(inspect_reports).to_be_focused()
     expect(alerts).to_contain_text('Неполные данные: 28 пропусков')
     expect(amount).to_have_text('—')
     page.screenshot(path=str(output/'windows-sql-persistent-coverage.png'))
     # Entirely absent daily ranges must still generate every expected day.
     page.locator('#overviewMode').select_option('range')
-    page.locator('#rangeStart').fill('2025-W02')
-    page.locator('#rangeEnd').fill('2025-W07')
+    set_calendar_field(page, 'rangeStart', '2025-W02')
+    set_calendar_field(page, 'rangeEnd', '2025-W07')
     expect(alerts).to_contain_text('Неполные данные: 168 пропусков')
     details=alerts.locator('.coverage-details')
     details.locator('summary').click()
     expect(details.locator('.coverage-matrix thead th')).to_have_count(32)
     expect(details.locator('td.coverage-missing')).to_have_count(124)
-    expect(details.locator('.coverage-matrix-pager')).to_contain_text('06.01.2025 — 05.02.2025')
-    details.get_by_role('button',name='Позднее →',exact=True).click()
+    expect(details.locator('.coverage-matrix thead th').last).to_contain_text('05.02.2025')
+    expect(details.locator('.coverage-matrix thead th').nth(1)).to_contain_text('06.01.2025')
+    matrix_pager=details.locator('[data-sql-pager="coverage-periods"]')
+    matrix_pager.locator('[data-page-action="next"]').click()
+    expect(matrix_pager).to_have_attribute('data-sql-window','1')
     expect(details.locator('.coverage-matrix thead th')).to_have_count(12)
     expect(details.locator('td.coverage-missing')).to_have_count(44)
-    expect(details.locator('.coverage-matrix-pager')).to_contain_text('06.02.2025 — 16.02.2025')
-    details.get_by_role('button',name='← Ранее',exact=True).click()
+    expect(details.locator('.coverage-matrix thead th').last).to_contain_text('16.02.2025')
+    expect(details.locator('.coverage-matrix thead th').nth(1)).to_contain_text('06.02.2025')
+    matrix_pager.locator('[data-page-action="previous"]').click()
+    expect(matrix_pager).to_have_attribute('data-sql-window','0')
     expect(details.locator('td.coverage-missing')).to_have_count(124)
     page.screenshot(path=str(output/'windows-sql-coverage-pages.png'))
     # The installed WebView2 must drill into actual indexed report provenance.
-    page.locator('#rangeStart').fill('2025-W01')
-    page.locator('#rangeEnd').fill('2025-W02')
+    set_calendar_field(page, 'rangeStart', '2025-W01')
+    set_calendar_field(page, 'rangeEnd', '2025-W02')
     wait_for_app_state(page,'window.unifiedUI.scope?.from==="2024-12-30" && window.unifiedUI.scope?.to==="2025-01-12"','Mixed complete and missing daily quality range')
     details=alerts.locator('.coverage-details')
     details.locator(':scope > summary').click()
@@ -887,54 +966,63 @@ def check_extended(page):
         assert not page.locator('main.container').is_visible()
     finally:
         page.emulate_media(media='screen')
-    page.locator('#advancedAnalytics > summary').click()
-    wait_for_text(page,'#comparisonCoverage','Второй интервал: Полные данные',90_000)
-    page.locator('#analysisBasePeriod').fill('2023-12')
+    set_calendar_field(page, 'analysisBasePeriod', '2023-12')
     wait_for_app_state(page,
         'window.unifiedUI.scope?.baseFrom==="2023-12-01" && window.unifiedUI.scope?.baseTo==="2023-12-31"',
         'Shared baseline calendar bounds')
-    expect(page.locator('#basePeriod')).to_have_value('2023-12')
-    page.locator('#basePeriod').fill('2024-01')
-    expect(page.locator('#comparisonPeriodOverride')).to_be_visible()
-    page.locator('#analysisBasePeriod').fill('2023-11')
+    navigate(page,'comparison')
+    wait_for_text(page,'#comparisonCoverage','Второй интервал: Полные данные',90_000)
+    date=lambda index: page.locator(f'#refComparisonDates [data-compare-date="{index}"]')
+    expect(date(0)).to_have_text('01.12.2023')
+    page.locator('#refComparisonDates [data-edit-base]').click()
+    choose_calendar_date(page,date(0),'2024-01-01')
+    choose_calendar_date(page,date(1),'2024-01-31')
+    navigate(page,'dashboard')
+    set_calendar_field(page, 'analysisBasePeriod', '2023-11')
     wait_for_app_state(page,'window.unifiedUI.scope?.baseFrom==="2023-11-01"','Changed shared baseline')
-    expect(page.locator('#basePeriod')).to_have_value('2024-01')
-    page.locator('#comparisonPeriodReset').click()
-    expect(page.locator('#basePeriod')).to_have_value('2023-11')
-    expect(page.locator('#comparisonPeriodOverride')).to_be_hidden()
+    navigate(page,'comparison')
+    expect(date(0)).to_have_text('01.01.2024')
+    reset=page.locator('#refComparisonDates [data-reset-base]')
+    reset.click()
+    expect(date(0)).to_have_text('01.11.2023')
+    expect(reset).to_be_hidden()
     # Both missing intervals show a reason, with no meaningless pager/CSV.
-    page.locator('#currentPeriod').fill('2023-12')
+    page.locator('#refComparisonDates [data-edit-base]').click()
+    choose_calendar_date(page,date(3),'2023-12-31')
+    choose_calendar_date(page,date(2),'2023-12-01')
     wait_for_text(page,'#comparisonCoverage','базового и анализируемого периодов',90_000)
     expect(page.locator('#comparisonTable')).to_contain_text('Нет доступных значений для сравнения')
     expect(page.locator('#comparisonTable table')).to_have_count(0)
     expect(page.locator('#comparisonTable .change-pagination')).to_have_count(0)
     expect(page.locator('#comparisonTable button')).to_have_count(0)
     page.locator('#comparison').screenshot(path=str(ROOT/'tauri/test-artifacts/windows-sql-empty-comparison.png'))
-    page.locator('#currentPeriod').fill('2024-02')
+    reset.click()
     wait_for_text(page,'#comparisonCoverage','Второй интервал: Полные данные',90_000)
-    page.locator('#analysisBasePeriod').fill('2024-01')
+    navigate(page,'dashboard')
+    set_calendar_field(page, 'analysisBasePeriod', '2024-01')
+    wait_for_app_state(page,'window.unifiedUI.scope?.baseFrom==="2024-01-01"','January shared baseline')
+    navigate(page,'comparison')
     wait_for_text(page,'#comparisonCoverage','Первый интервал: Полные данные',90_000)
     page.locator('#contributions > summary').click()
     wait_for_text(page,'#contributionCheck','совпадает',90_000)
-    page.locator('#workViewMode').select_option('composition')
+    navigate(page,'structurePanel')
     expect(page.locator('#chartPanel')).to_be_hidden()
-    expect(page.locator('#structurePanel')).to_be_visible()
     wait_for_text(page,'#structureResults','Итог:',90_000)
-    page.locator('#workViewMode').focus()
-    page.keyboard.press('Enter')
-    page.keyboard.press('Home')
-    page.keyboard.press('Enter')
+    trend=page.locator('.tool-tabs [data-section="chartPanel"]')
+    trend.focus();trend.press('Enter')
     expect(page.locator('#workViewMode')).to_have_value('trend')
     expect(page.locator('#chartPanel')).to_be_visible()
     expect(page.locator('#structurePanel')).to_be_hidden()
     for control,result in (('usualPanel','usualCoverage'),('regularityPanel','regularityCoverage')):
-        page.locator(f'#{control} > summary').click()
+        navigate(page,control)
         wait_for_text(page,f'#{result}','Полных периодов:',90_000)
     navigate(page,'changes')
     page.locator('#changesType').select_option('month')
-    page.locator('#changesTo').fill('2024-02')
-    wait_for_text(page,'#changesPage','Страница 1',90_000)
-    assert page.locator('#changesSummary .kpi').count()>=4
+    set_calendar_field(page, 'changesTo', '2024-02')
+    expect(page.locator('[data-sql-pager="changesResults"]')).to_have_attribute('data-sql-window','0',timeout=90_000)
+    # The pager can remain mounted while a date change reloads the KPIs.
+    expect(page.locator('#changesSummary .kpi-action')).to_have_count(4,timeout=90_000)
+    expect(page.locator('#changesSummary')).to_have_attribute('aria-busy','false')
     assert page.locator('#changesResults tbody tr').count()<=100
     slider=page.locator('#changesPercent')
     slider.focus();slider.press('End')
@@ -969,7 +1057,7 @@ def check_groups(page, confirmations):
         dialog=page.locator('#groupRenameDialog')
         expect(dialog).to_be_visible()
         assert dialog.evaluate("node=>node.matches(':modal')")
-        expect(page.locator('#refWorkspaceDialog')).to_be_visible()
+        expect(page.locator('#refNative')).to_have_attribute('data-panel','groups')
         name=dialog.locator('#groupRenameName')
         expect(name).to_be_focused()
         expect(name).to_have_value('Группа CI')
@@ -979,7 +1067,7 @@ def check_groups(page, confirmations):
         else:
             name.press('Escape')
         expect(dialog).not_to_be_visible()
-        expect(page.locator('#refWorkspaceDialog')).to_be_visible()
+        expect(page.locator('#refNative')).to_have_attribute('data-panel','groups')
         expect(rename).to_be_focused()
         assert confirmations.revision()==initial_revision
     rename.click()
@@ -993,6 +1081,9 @@ def check_groups(page, confirmations):
     member=group.locator('.group-member').filter(has_text='Альфа')
     member.locator('select').select_option('',timeout=90_000)
     wait_for_text(page,'#flash','Работа перенесена.',90_000)
+    dismiss_notice=page.locator('#flash').get_by_role('button',name='Закрыть уведомление',exact=True)
+    dismiss_notice.click()
+    expect(page.locator('#flash')).to_be_hidden()
     snapshot=api(page,'nativeSettingsBootstrap')
     assert snapshot['memberships']==0 and snapshot['groups']==0,snapshot
     assert group.count()==0
@@ -1002,6 +1093,9 @@ def check_groups(page, confirmations):
     confirmations.cancel_then_accept(group.get_by_role('button',name='Удалить группу',exact=True),
         'Удалить группу «Группа CI»? Исходные работы останутся.')
     wait_for_text(page,'#flash','Группа удалена.',90_000)
+    dismiss_notice.focus()
+    dismiss_notice.press('Enter')
+    expect(page.locator('#flash')).to_be_hidden()
     assert api(page,'nativeSettingsBootstrap')['groups']==0
 
 
@@ -1012,6 +1106,60 @@ def backup_contents(path):
         settings=database.execute('SELECT json FROM kv WHERE name=\'settings\'').fetchone()
         metrics=database.execute('SELECT COUNT(*) FROM metric_report_docs').fetchone()[0]
     return reports,settings,metrics
+
+
+def check_delete_without_backup(page, temporary, confirmations):
+    """Last destructive fixture: real confirmation and SQLite, no Save dialog."""
+    source=temporary/'delete-without-backup.xlsx'
+    source.write_bytes(daily_workbook_bytes())
+    original=source.read_bytes()
+    before=api(page,'nativeSettingsBootstrap')
+    options={'sheet':'xl/worksheets/sheet1.xml','kind':'day','start':'2030-01-01',
+             'organizations':before['org_names']}
+    preview=api(page,'nativeLegacyImportPreview',str(source),options)
+    assert preview['reportCount']==6 and preview['conflicts']['replacements']==0
+    receipt=api(page,'nativeLegacyImportApply',str(source),options,preview['reviewToken'],
+                {'replaceExact':False,'acceptCrossType':False,'acceptQuality':True})
+    page.evaluate('window.unifiedUI.refresh()')
+    revision=receipt['revision']
+    rows=api(page,'managementReportPage',revision,{'from':'2030-01-01','to':'2030-01-06'},None,50)
+    assert len(rows)==6 and rows[0]['start']=='2030-01-06'
+    database=Path(api(page,'info')['dataFile'])
+    files={p.name for p in database.parent.glob('*.sqlite3')}
+    stored=backup_contents(database)
+    navigate(page,'upload')
+    loaded=page.locator('#uploadedReports')
+    if not loaded.evaluate('node=>node.open'):
+        loaded.locator(':scope > summary').click()
+    card=page.locator('#reports .calendar-source').first
+    expect(card.locator('strong')).to_contain_text('2030-01-06',timeout=90_000)
+    confirmations.cancel_then_accept(card.get_by_role('button',name='Удалить отчёт',exact=True),
+        'Удалить отчёт 2030-01-06 — 2030-01-06?')
+    wait_for_app_state(page,
+        "typeof window.unifiedUI.snapshot?.reports==='number' && window.unifiedUI.snapshot.reports==="+
+        str(before['reports']+5),'Confirmed single-report deletion',90_000)
+    remaining=backup_contents(database)
+    assert remaining[0]==[row for row in stored[0] if row[0]!=rows[0]['id']]
+    assert remaining[1:]==stored[1:]
+    assert_rejected(lambda:api(page,'nativeDeleteReport',revision,rows[1]['id']),
+                    'An old single-delete selection was accepted','stale storage revision')
+    navigate(page,'storage')
+    clear_revision=api(page,'nativeSettingsBootstrap')['revision']
+    confirmations.cancel_then_accept(page.locator('#clearReports'),
+                                    'Удалить все импортированные отчёты? Группы останутся.')
+    wait_for_app_state(page,
+        "typeof window.unifiedUI.snapshot?.reports==='number' && window.unifiedUI.snapshot.reports===0",
+        'Confirmed report clearing',90_000)
+    cleared=backup_contents(database)
+    assert cleared[0]==[] and cleared[1:]==stored[1:]
+    assert {p.name for p in database.parent.glob('*.sqlite3')}==files,'Deletion created an unsolicited SQLite backup'
+    assert_rejected(lambda:api(page,'unifiedClearReports',clear_revision),
+                    'An old clear-all selection was accepted','stale storage revision')
+    with closing(sqlite3.connect(database)) as check:
+        assert check.execute('PRAGMA foreign_key_check').fetchall()==[]
+        for table in ['report_source_diagnostic_links','report_source_ownership']:
+            assert check.execute('SELECT COUNT(*) FROM '+table).fetchone()==(0,)
+    assert source.read_bytes()==original
 
 
 def check_backup_and_replace(page, temporary, snapshot):
@@ -1089,9 +1237,9 @@ def check_folder_rule_and_revocation(page, workbook, confirmations):
     auto_probe.unlink()
 
 @contextmanager
-def windows_test_workspace():
+def windows_test_workspace(parent=None):
     """Release only this test's WebView2 workers before deleting their temporary profile."""
-    workspace=Path(tempfile.mkdtemp(prefix='analiz-webview2-'))
+    workspace=Path(tempfile.mkdtemp(prefix='analiz-webview2-',dir=parent))
     def cleanup_workspace():
         cleanup_script=r"""
         $token=$env:ANALIZ_SMOKE_PROFILE_TOKEN
@@ -1273,7 +1421,6 @@ def run():
             with installed_page() as (page,engine,pid):
                 ready(page,0)
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
-                open_full_workspace(page)
                 entry_url=page.url
                 check_runtime(page)
                 report['webview2']=engine.get('Browser')
@@ -1307,10 +1454,9 @@ def run():
                 ready(page,366)
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 check_reference_data_file_dialogs(page,confirmations,output)
-                report['checks'].append('Populated summary CSV and verified restore-copy Save dialogs preserve data on cancellation')
+                report['checks'].append('Populated summary CSV cancellation and read-only backup verification preserve data; retained restore IPC copies without overwrite and schedules/cancels only the synthetic backup')
             with independent('Read-only management confirmations'), installed_page() as (page,_,pid):
                 ready(page,366)
-                open_full_workspace(page)
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 check_cancelled_management_confirmations(page,confirmations)
                 report['checks'].append('Native management confirmation Cancel, available Close, and Escape preserve reports and drafts')
@@ -1326,7 +1472,6 @@ def run():
                     raise AssertionError('Installed print preview: '+probe['status'])
             with installed_page() as (page,_,pid):
                 ready(page,366)
-                open_full_workspace(page)
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 check_analytics(page,tmp,output)
                 report['checks'].append('Daily-source annual and February totals, exact work and organization filters, missing-week analytics, 200% zoom and responsive widths, and protected UTF-8 CSV')
@@ -1334,6 +1479,8 @@ def run():
                 report['checks'].append('Canonical changes, usual level, regularity, structure and contribution views use the current SQLite selection; print uses the dedicated layout')
                 check_groups(page,confirmations)
                 report['checks'].append('Group creation, member assignment and removal, and native Cancel/OK for explicit deletion')
+                check_reference_catalog(page,confirmations,output)
+                report['checks'].append('Catalog search and create/reset validation precede the compact bounded list at desktop and narrow widths; the owned test entry is removed')
                 check_metrics(page,tmp)
                 report['checks'].append('Installed native metric imports and ratio-of-sums queries refuse repeated JSON and XLSX sources')
                 original=check_backup_and_replace(page,tmp,snapshot)
@@ -1356,9 +1503,15 @@ def run():
                 check_reference(page,output,True)
                 report['checks'].append('Populated reference views, closing controls and focus after native replacement and restart')
 
+            with independent('Reference shell in a narrow installed window'), installed_page() as (page,_,pid):
+                ready(page,366)
+                app = NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
+                report['narrowWindow'] = set_client_width(page, app, 720)
+                check_reference(page,output,True,screenshot_scope='720px')
+                report['checks'].append('Populated views, nested closing controls and focus in a 720 px native window')
+
             with installed_page() as (page,_,pid):
                 ready(page,366)
-                open_full_workspace(page)
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 assert api(page,'list')['folder']
                 check_folder_rule_and_revocation(page,workbook,confirmations)
@@ -1376,9 +1529,8 @@ def run():
                 assert api(page,'list')['rules'][workbook.name]['year']==2024
                 report['checks'].append('Pending restore leaves the changed live SQLite and its Excel rules in place until restart')
 
-            with installed_page() as (page,_,_):
+            with installed_page() as (page,_,pid):
                 ready(page,366)
-                open_full_workspace(page)
                 restored=tmp/'after-restore.sqlite3'
                 api(page,'nativeBackupSqlite',str(restored))
                 assert backup_contents(restored)==original,'Recovery did not restore the backed-up reports, settings and metric data'
@@ -1396,6 +1548,9 @@ def run():
                 report['checks'].append('Saved source evidence distinguishes zero provenance, source-day gaps, unknown organization and acknowledgment without changing source XLSX or read-only revision')
                 check_omitted_detail_evidence(page,tmp,output)
                 report['checks'].append('Native omitted-detail tags distinguish invalid data, unknown organizations, invalid controls and included unnamed rows; persisted totals remain 3 and 8 with explicit acknowledgment')
+                confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
+                check_delete_without_backup(page,tmp,confirmations)
+                report['checks'].append('Single report and clear-all deletion keep Cancel/Close/Escape, reject stale revisions and preserve settings, metrics and XLSX without a backup chooser')
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     if independent_failures:
         raise ExceptionGroup('Installed WebView2 walkthroughs failed',independent_failures)

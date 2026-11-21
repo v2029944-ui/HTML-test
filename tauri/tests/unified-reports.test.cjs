@@ -18,9 +18,9 @@ function mount(overrides={}){
  const root=new E();for(const id of ids){const e=new E(id.includes('File')?'input':'div');e.id=id;const p=new E();root.append(p);p.append(e);}
  const filterRoot=new E(),qualityLabel=new E();filterRoot.append(qualityLabel);qualityLabel.append(nodes.qualityType);
  Object.assign(nodes.importFormat,{value:'legacy'});nodes.importType.value='day';nodes.importWeek.value='2024-01-01';nodes.importMappingMode.value='auto';nodes.qualitySource.value='saved';for(const id of ['qualityPeriod','qualityOrg','qualityType'])nodes[id].value='all';
- const api={managementReportPage:async()=>[],managementReportSummary:async()=>({reports:0,rows:0,amount:0,latest:'2024-01-01'}),managementReportOrgPage:async()=>[],unifiedCalendar:async(revision,year)=>({revision,year,days:[]}),nativeDailyRollup:async()=>({points:[],next_cursor:null}),unifiedQualityPage:async()=>({issues:[],next_offset:null,total:0,counts:{}}),chooseWideXlsx:async()=>null,nativeImportSheets:async()=>[{name:'Дни',component:'xl/worksheets/sheet1.xml'}],nativeLegacyImportSheets:async()=>['xl/worksheets/sheet1.xml'],nativeLegacyImportPreview:async()=>({reviewToken:'a'.repeat(64),reportCount:1,rowCount:2,conflicts:{},quality:{},sampleReports:[]}),nativeLegacyImportApply:async()=>({reports:1,rows:2,revision:2}),chooseSqliteBackupPath:async()=>null,...overrides};
+ const api={managementReportWindow:async()=>({rows:[],total_rows:0}),managementReportSummary:async()=>({reports:0,rows:0,amount:0,latest:'2024-01-01'}),managementReportOrgWindow:async()=>({rows:[],total_rows:0}),unifiedCalendar:async(revision,year)=>({revision,year,days:[]}),nativeDailyRollup:async()=>({points:[],next_cursor:null}),unifiedQualityPage:async()=>({issues:[],next_offset:null,total:0,counts:{}}),chooseWideXlsx:async()=>null,nativeImportSheets:async()=>[{name:'Дни',component:'xl/worksheets/sheet1.xml'}],nativeLegacyImportSheets:async()=>['xl/worksheets/sheet1.xml'],nativeLegacyImportPreview:async()=>({reviewToken:'a'.repeat(64),reportCount:1,rowCount:2,conflicts:{},quality:{},sampleReports:[]}),nativeLegacyImportApply:async()=>({reports:1,rows:2,revision:2}),chooseSqliteBackupPath:async()=>null,...overrides};
  let snapshotHook,viewHook;const UI={api,$:id=>nodes[id],el:(tag,text,cls)=>{const e=new E(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;},tableHelp:(section,_table,headers,help)=>{section.headerHints=headers.filter((_,i)=>help[i]);},revision:1,snapshot:{org_names:['A','B','C','D']},fmt:v=>v??'—',onSnapshot:fn=>snapshotHook=fn,onView:(_,fn)=>viewHook=fn,refresh:async()=>{UI.revision++;snapshotHook(UI.snapshot);}};
- const window={unifiedUI:UI,confirm:()=>true};const document={createElement:t=>new E(t),head:new E('head')};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../unified-reports.js'),'utf8'),{window,document,console});window.unifiedReports.init();return {nodes,UI,window,refresh:()=>window.unifiedReports.refresh(),snapshot:(value=UI.snapshot)=>snapshotHook(value),view:()=>viewHook()};
+ const window={sqlRowScroll:require('./scroll-window-fixture.cjs'),unifiedUI:UI,confirm:()=>true};const document={createElement:t=>new E(t),head:new E('head')};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../unified-reports.js'),'utf8'),{window,document,console});window.unifiedReports.init();return {nodes,UI,window,refresh:()=>window.unifiedReports.refresh(),snapshot:(value=UI.snapshot)=>snapshotHook(value),view:()=>viewHook()};
 }
 const text=e=>[e.textContent||'',...e.children.map(x=>typeof x==='object'?text(x):'')].join(' ');
 const flush=()=>new Promise(r=>setImmediate(r));
@@ -66,8 +66,55 @@ test('canonical XLSX chooser cancellation never previews or saves',async()=>{let
 test('reviewed replacement needs acknowledgement and a chosen backup before apply',async()=>{
  let applies=0;const ui=mount({chooseWideXlsx:async()=>'/tmp/book.xlsx',nativeLegacyImportPreview:async()=>({reviewToken:'a'.repeat(64),reportCount:2,rowCount:3,conflicts:{replacements:1},quality:{issues:1},sampleReports:[]}),nativeLegacyImportApply:async()=>{applies++;}});await ui.nodes.excelFile.click();ui.nodes.sheetSelect.value='xl/worksheets/sheet1.xml';await ui.nodes.inspectFile.click();assert.equal(ui.nodes.saveImport.disabled,false);await ui.nodes.saveImport.click();assert.equal(applies,0);assert.match(ui.nodes.unifiedImportStatus.textContent,/Подтвердите/);ui.nodes.replaceExisting.checked=true;ui.nodes.unifiedAcceptQuality.checked=true;await ui.nodes.saveImport.click();assert.equal(applies,0);assert.match(ui.nodes.unifiedImportStatus.textContent,/резервная копия/);
 });
+test('import acknowledgements are hidden until current SQL preview identifies a matching reason',async()=>{
+ let result={reviewToken:'a'.repeat(64),reportCount:1,rowCount:2,conflicts:{},quality:{},sampleReports:[]};
+ const ui=mount({chooseWideXlsx:async()=>'/tmp/review.xlsx',nativeLegacyImportPreview:async()=>result});
+ const overlap=ui.nodes.unifiedAcceptOverlap,quality=ui.nodes.unifiedAcceptQuality,box=ui.nodes.unifiedImportAcknowledgements;
+ assert.equal(box.hidden,true);assert.equal(overlap.parentElement.hidden,true);assert.equal(quality.parentElement.hidden,true);
+ await ui.nodes.excelFile.click();await ui.nodes.inspectFile.click();assert.equal(box.hidden,true);
+ result={...result,conflicts:{cross_type_overlaps:3}};await ui.nodes.inspectFile.click();
+ assert.equal(box.hidden,false);assert.equal(overlap.parentElement.hidden,false);assert.equal(quality.parentElement.hidden,true);
+ assert.match(text(overlap.parentElement),/3/);assert.match(text(overlap.parentElement),/период|дат/);assert.equal(overlap.checked,false);
+ for(const [key,count] of [['issues',2],['mismatch_reports',4],['relevant_source_issues',5]]){
+  result={...result,conflicts:{},quality:{[key]:count}};await ui.nodes.inspectFile.click();
+  assert.equal(overlap.parentElement.hidden,true);assert.equal(quality.parentElement.hidden,false);
+  assert.match(text(quality.parentElement),new RegExp(String(count)));assert.equal(quality.checked,false);
+ }
+ result={...result,quality:{source_issues:7,deferred_source_issues:7}};await ui.nodes.inspectFile.click();assert.equal(box.hidden,true);
+});
+test('conditional agreements reset on new review, changed parameters and another source, with no writes on denial',async()=>{
+ let source='/tmp/A.xlsx',applies=0;
+ const ui=mount({chooseWideXlsx:async()=>source,nativeLegacyImportPreview:async()=>({reviewToken:'a'.repeat(64),reportCount:1,rowCount:2,conflicts:{cross_type_overlaps:1},quality:{issues:2},sampleReports:[]}),nativeLegacyImportApply:async()=>{applies++;}});
+ await ui.nodes.excelFile.click();await ui.nodes.inspectFile.click();
+ await ui.nodes.saveImport.click();assert.equal(applies,0);assert.match(ui.nodes.unifiedImportStatus.textContent,/Подтвердите/);
+ ui.nodes.unifiedAcceptOverlap.checked=true;ui.nodes.unifiedAcceptQuality.checked=true;
+ ui.window.confirm=async()=>false;await ui.nodes.saveImport.click();assert.equal(applies,0);assert.equal(ui.UI.revision,1);
+ assert.match(ui.nodes.unifiedImportStatus.textContent,/отменено/);
+ await ui.nodes.inspectFile.click();assert.equal(ui.nodes.unifiedAcceptOverlap.checked,false);assert.equal(ui.nodes.unifiedAcceptQuality.checked,false);
+ ui.nodes.importWeek.value='2024-02-01';await ui.nodes.importWeek.fire('change');assert.equal(ui.nodes.unifiedImportAcknowledgements.hidden,true);
+ await ui.nodes.inspectFile.click();ui.nodes.unifiedAcceptOverlap.checked=true;ui.nodes.unifiedAcceptQuality.checked=true;
+ source='/tmp/B.xlsx';await ui.nodes.excelFile.click();assert.equal(ui.nodes.unifiedImportAcknowledgements.hidden,true);
+ assert.equal(ui.nodes.unifiedAcceptOverlap.checked,false);assert.equal(ui.nodes.unifiedAcceptQuality.checked,false);assert.equal(applies,0);
+});
+test('quality date fields, individual saved periods and all-period reset match the native query',async()=>{
+ const calls=[],report={id:'saved',report_type:'week',start:'2024-02-26',end:'2024-03-03'};
+ const ui=mount({managementReportWindow:async()=>({rows:[report],total_rows:1}),unifiedQualityPage:async(_revision,query)=>{calls.push(query);return {issues:[],next_offset:null,total:0,counts:{}};}});
+ await ui.refresh();
+ const {qualityPeriod:period,qualityFrom:from,qualityTo:to}=ui.nodes;
+ await ui.nodes.reports.querySelectorAll('button').find(b=>b.textContent==='Контроль качества').click();await flush();
+ assert.equal(ui.nodes.qualitySummary.textContent,'Найдено: 0. Отсутствие замечаний само по себе не подтверждает полноту.');
+ assert.deepEqual([from.value,to.value,calls.at(-1).from,calls.at(-1).to],Array(4).fill('2024-02-26'));
+ from.value='2024-02-01';await from.fire('change');await flush();
+ assert.equal(calls.at(-1).from,'2024-02-01');assert.equal(period.children[0].textContent,'Диапазон по датам');
+ period.value='week:2024-02-26';await period.fire('change');await flush();
+ assert.deepEqual([from.value,to.value,calls.at(-1).from,calls.at(-1).report_type],['','','2024-02-26','week']);
+ to.value='2024-02-29';await to.fire('change');await flush();
+ assert.deepEqual([period.value,calls.at(-1).from,calls.at(-1).to],['all',null,'2024-02-29']);
+ await period.fire('change');await flush();
+ assert.deepEqual([from.value,to.value,calls.at(-1).from,calls.at(-1).to],['','',null,null]);
+});
 test('quality filters and offset go to native global query, old responses clear on failure',async()=>{
- const calls=[];const ui=mount({unifiedQualityPage:async(...args)=>{calls.push(args);return {issues:[],next_offset:50,total:80,counts:{missing:80}};}});await ui.refresh();ui.nodes.qualitySearch.value='needle';await ui.nodes.qualitySearch.fire('input');await flush();assert.equal(calls.at(-1)[1].search,'needle');await ui.nodes.qualityNext.click();await flush();assert.equal(calls.at(-1)[2],50);assert.match(ui.nodes.qualitySummary.textContent,/80/);
+ const calls=[];const ui=mount({unifiedQualityPage:async(...args)=>{calls.push(args);return {issues:[],next_offset:50,total:80,counts:{missing:80}};}});await ui.refresh();ui.nodes.qualitySearch.value='needle';await ui.nodes.qualitySearch.fire('input');await flush();assert.equal(calls.at(-1)[1].search,'needle');await ui.nodes.qualityTable.scrollWindow.go(1);await flush();assert.equal(calls.at(-1)[2],50);assert.match(ui.nodes.qualitySummary.textContent,/80/);
 });
 
 test('snapshot invalidation accepts null and clears stale reports and quality',async()=>{const ui=mount();await ui.refresh();assert.equal(ui.nodes.reportCalendar.children.length,12);ui.snapshot(null);assert.equal(ui.nodes.reportCalendar.children.length,0);assert.equal(ui.nodes.reports.children.length,0);assert.equal(ui.nodes.qualityTable.children.length,0);assert.equal(ui.nodes.saveImport.disabled,true);});
@@ -89,8 +136,18 @@ test('deferred preview locks dynamic fields and rejects parameter events before 
  ui.nodes.unifiedWideMapping.value='Data; 2; A; B;;';await ui.nodes.unifiedWideMapping.fire('input');resolve({reviewToken:'a'.repeat(64),reportCount:1,rowCount:1,conflicts:{},quality:{},sampleReports:[]});await pending;assert.equal(ui.nodes.saveImport.disabled,true);assert.match(ui.nodes.unifiedImportStatus.textContent,/изменились/);assert.equal(ui.nodes.addImportMapping.disabled,false);
 });
 
-test('report pager is joined and announces current page and total without an empty extra page',async()=>{
- const report=i=>({id:'r'+i,start:'2024-01-01',end:'2024-01-01',report_type:'day',rows:1,amount:2,warnings:0,organizations:1});const ui=mount({managementReportPage:async(rev,filter,after)=>after?[report(50)]:Array.from({length:50},(_,i)=>report(i)),managementReportSummary:async()=>({reports:51,rows:51,amount:102,latest:'2024-01-01'})});await ui.refresh();assert.equal(ui.nodes.unifiedReportsPager.className,'unified-pager');assert.match(ui.nodes.unifiedReportsPage.textContent,/Страница 1 из 2.*1–50 из 51/);assert.equal(ui.nodes.unifiedReportsPrev.disabled,true);assert.equal(ui.nodes.unifiedReportsNext.disabled,false);await ui.nodes.unifiedReportsNext.click();await flush();assert.match(ui.nodes.unifiedReportsPage.textContent,/Страница 2 из 2.*51–51 из 51/);assert.equal(ui.nodes.unifiedReportsNext.disabled,true);await ui.nodes.unifiedReportsPrev.click();await flush();assert.match(ui.nodes.unifiedReportsPage.textContent,/Страница 1 из 2/);
+test('reports and their organizations request an arbitrary page directly and keep the active revision',async()=>{
+ const calls=[],orgReads=[],report=i=>({id:'r'+i,start:'2024-01-01',end:'2024-01-01',report_type:'day',rows:1,amount:2,warnings:0,organizations:103});
+ const ui=mount({managementReportWindow:async(rev,filter,index,limit)=>{
+  calls.push([rev,filter,index,limit]);return {rows:Array.from({length:Math.min(limit,151-index*limit)},(_,i)=>report(index*limit+i)),total_rows:151};
+ },managementReportSummary:async()=>({reports:151,rows:151,amount:302,latest:'2024-01-01'}),
+ managementReportOrgWindow:async(rev,id,index,limit)=>{orgReads.push([rev,id,index,limit]);return {rows:Array.from({length:Math.min(limit,103-index*limit)},(_,i)=>[index*limit+i,'Орг '+(index*limit+i)]),total_rows:103};}});
+ await ui.refresh();
+ const root=ui.nodes.reports;
+ await root.scrollWindow.go(3);assert.equal(root.children.length,1);assert.equal(root.scrollWindow.total,151);assert.equal(root.scrollWindow.index,3);
+ const details=root.children[0].querySelectorAll('*').find(n=>n.tag==='details');details.open=true;await details.fire('toggle');await flush();
+ const list=details.children[1];await list.scrollWindow.go(2);assert.equal(list.children.length,3);assert.deepEqual(orgReads,[[1,'r150',0,50],[1,'r150',2,50]]);
+ await root.scrollWindow.go(0);assert.deepEqual(calls.map(c=>c[2]),[0,3,0]);assert.ok(calls.every(c=>c[3]===50));
 });
 
 test('connected-file picker preserves Windows verbatim separators and Unix paths',async()=>{
@@ -123,19 +180,19 @@ test('confirmed import is invalidated by changed revision or background snapshot
 });
 async function deletableReport(){
  const calls={prompts:0,pickers:0,deletes:0},answer=deferred(),notices=[];
- const ui=mount({managementReportPage:async()=>[{id:'r',start:'2024-01-01',end:'2024-01-01',report_type:'day',rows:1,amount:2,warnings:0,organizations:1}],managementReportSummary:async()=>({reports:1,rows:1,amount:2,latest:'2024-01-01'}),chooseSqliteBackupPath:async()=>{calls.pickers++;return '/tmp/backup.sqlite3';},nativeDeleteReport:async()=>{calls.deletes++;}});ui.UI.notice=(message)=>notices.push(message);ui.window.confirm=()=>{calls.prompts++;return answer.promise;};await ui.refresh();const action=ui.nodes.reports.querySelectorAll('button').find(b=>b.textContent==='Удалить отчёт');return {ui,calls,answer,notices,action};
+ const ui=mount({managementReportWindow:async()=>({rows:[{id:'r',start:'2024-01-01',end:'2024-01-01',report_type:'day',rows:1,amount:2,warnings:0,organizations:1}],total_rows:1}),managementReportSummary:async()=>({reports:1,rows:1,amount:2,latest:'2024-01-01'}),chooseSqliteBackupPath:async()=>{calls.pickers++;return '/tmp/backup.sqlite3';},nativeDeleteReport:async()=>{calls.deletes++;}});ui.UI.notice=(message)=>notices.push(message);ui.window.confirm=()=>{calls.prompts++;return answer.promise;};await ui.refresh();const action=ui.nodes.reports.querySelectorAll('button').find(b=>b.textContent==='Удалить отчёт');return {ui,calls,answer,notices,action};
 }
 test('native delete confirmation awaits deny/accept and prevents duplicate prompts',async()=>{
- for(const accepted of [false,true]){const {calls,answer,action}=await deletableReport();const pending=action.click();await flush();await action.click();assert.equal(calls.prompts,1);assert.equal(calls.pickers,0);assert.equal(calls.deletes,0);answer.resolve(accepted);await pending;assert.equal(calls.pickers,accepted?1:0);assert.equal(calls.deletes,accepted?1:0);}
+ for(const accepted of [false,true]){const {calls,answer,action}=await deletableReport();const pending=action.click();await flush();await action.click();assert.equal(calls.prompts,1);assert.equal(calls.pickers,0);assert.equal(calls.deletes,0);answer.resolve(accepted);await pending;assert.equal(calls.pickers,0);assert.equal(calls.deletes,accepted?1:0);}
 });
-test('native delete confirmation rejects safely and rechecks revision before backup selection',async()=>{
+test('native delete confirmation rejects safely and rechecks revision before deletion',async()=>{
  for(const stale of [false,true]){const {ui,calls,answer,notices,action}=await deletableReport();const pending=action.click();await flush();if(stale){ui.UI.revision=2;answer.resolve(true);}else answer.reject(Error('dialog unavailable'));await pending;assert.equal(calls.pickers,0);assert.equal(calls.deletes,0);assert.equal(action.disabled,false);assert.match(notices.at(-1),stale?/изменились/:/dialog unavailable/);}
 });
 test('confirmed import rejects parameter edits and revision changes during backup selection',async()=>{
  {const {ui,calls,answer}=await reviewedReplacement();const pending=ui.nodes.saveImport.click();await flush();ui.nodes.unifiedWideMapping.value='Data; 2; A; B';await ui.nodes.unifiedWideMapping.fire('input');answer.resolve(true);await pending;assert.equal(calls.pickers,0);assert.equal(calls.applies,0);}
  {const {ui,calls,answer}=await reviewedReplacement(),backup=deferred();ui.UI.api.chooseSqliteBackupPath=()=>{calls.pickers++;return backup.promise;};const pending=ui.nodes.saveImport.click();answer.resolve(true);await flush();assert.equal(calls.pickers,1);assert.equal(calls.applies,0);ui.UI.revision=2;backup.resolve('/tmp/backup.sqlite3');await pending;assert.equal(calls.applies,0);}
 });
-test('delete rechecks revision after its asynchronous backup chooser',async()=>{const {ui,calls,answer,action}=await deletableReport(),backup=deferred();ui.UI.api.chooseSqliteBackupPath=()=>{calls.pickers++;return backup.promise;};const pending=action.click();answer.resolve(true);await flush();assert.equal(calls.pickers,1);assert.equal(calls.deletes,0);ui.UI.revision=2;backup.resolve('/tmp/backup.sqlite3');await pending;assert.equal(calls.deletes,0);});
+test('confirmed report delete uses only its revision and id even when no backup picker is available',async()=>{const {ui,calls,answer,action}=await deletableReport();delete ui.UI.api.chooseSqliteBackupPath;const args=[];ui.UI.api.nativeDeleteReport=async(...values)=>args.push(values);const pending=action.click();answer.resolve(true);await pending;assert.equal(calls.pickers,0);assert.deepEqual(JSON.parse(JSON.stringify(args)),[[1,'r']]);});
 test('successful XLSX commit remains successful when view refresh fails',async()=>{
  let applies=0;
  const ui=mount({chooseWideXlsx:async()=>'/tmp/book.xlsx',nativeLegacyImportApply:async()=>{applies++;return {reports:1,rows:2,revision:2};}});
@@ -202,7 +259,7 @@ test('saved and staged quality export the full native query, invalidate stale de
  await ui.nodes.excelFile.click();ui.nodes.importWeek.value='2024-01-01';await ui.nodes.inspectFile.click();
  ui.nodes.qualitySource.value='pending';await ui.nodes.qualitySource.fire('change');await flush();
  ui.nodes.qualitySearch.value='Координата';await ui.nodes.qualitySearch.fire('input');await flush();
- await ui.nodes.qualityNext.click();await flush();
+ await ui.nodes.qualityTable.scrollWindow.go(1);await flush();
  assert.equal(reads.at(-1)[1],50);
  assert.deepEqual(Array.from(ui.nodes.qualityTable.children[0].headerHints),['Строка Excel','Ячейка Excel']);
  await ui.nodes.qualityExportCsv.click();
@@ -223,7 +280,7 @@ test('a failed native picker keeps the reviewed workbook and source together',as
 
 test('quality calendar uses only observed staged period starts, including dates beyond preview samples',async()=>{
  const ui=mount({
-  managementReportPage:async()=>[{id:'saved',report_type:'week',start:'2023-08-07',end:'2023-08-13'}],
+  managementReportWindow:async()=>({rows:[{id:'saved',report_type:'week',start:'2023-08-07',end:'2023-08-13'}],total_rows:1}),
   chooseWideXlsx:async()=>'/tmp/periods.xlsx',
   nativeLegacyImportPreview:async()=>({reviewToken:'a'.repeat(64),reportCount:83,rowCount:84,conflicts:{},quality:{},sampleReports:[],qualityPeriodMonths:{'day:2024-02':(1<<28)|1,'day:2024-03':2},qualityPeriodsPartial:false}),
   nativePreviewQualityPage:async()=>({issues:[],total:0,counts:{},next_offset:null})
@@ -241,5 +298,5 @@ test('partial older staged metadata lists only confirmed dates and explains manu
  const ui=mount({chooseWideXlsx:async()=>'/tmp/review.xlsx',nativeLegacyImportPreview:async()=>({reviewToken:'a'.repeat(64),reportCount:15,rowCount:46,conflicts:{},quality:{},sampleReports:[{kind:'day',start:'2024-02-03',rows:1}]}),nativePreviewQualityPage:async()=>({issues:[],total:0,counts:{},next_offset:null})});
  await ui.nodes.excelFile.click();ui.nodes.importWeek.value='2024-02-01';await ui.nodes.inspectFile.click();
  ui.nodes.qualitySource.value='pending';await ui.nodes.qualitySource.fire('change');await flush();
- assert.deepEqual(ui.nodes.qualityPeriod.children.map(o=>o.value),['all','day:2024-02-03']);assert.match(ui.nodes.qualityPeriodHint.textContent,/Период с/);
+ assert.deepEqual(ui.nodes.qualityPeriod.children.map(o=>o.value),['all','day:2024-02-03']);assert.match(ui.nodes.qualityPeriodHint.textContent,/в полях «С» и «По»/);
 });

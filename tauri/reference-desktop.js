@@ -1,14 +1,16 @@
-/* The detail panel and the full workspace share one set of native SQL controls. */
+/* Navigation between the report screens and desktop SQL tools. */
 (function () {
   'use strict';
   const byId = id => document.getElementById(id);
   const sections = {
     chartPanel: 'Динамика', structurePanel: 'Состав работ', comparison: 'Сравнение',
     usualPanel: 'Отклонения', regularityPanel: 'Частота',
+    overviewPanel: 'Итоги и рейтинги', changes: 'Соседние периоды',
     upload: 'Отчёты', groups: 'Группы работ', storage: 'Настройки'
   };
   const management = ['upload', 'groups', 'storage'];
-  let active = 's1', panel = '', panelOpener = null, dialogOpener = null, workspaceOpener = null;
+  let active = 's1', panel = '', panelOpener = null, dialogOpener = null;
+  let returnPanel = null;
   function button(text, action) {
     const result = document.createElement('button');
     result.type = 'button';
@@ -38,6 +40,14 @@
 
   function closePanel(restoreFocus = true) {
     if (!panel) return;
+    if (restoreFocus && returnPanel) {
+      const previous = returnPanel;
+      returnPanel = null;
+      openPanel(previous.key);
+      if (previous.opener.isConnected) previous.opener.focus({preventScroll:true});
+      return;
+    }
+    returnPanel = null;
     window.referenceDetail.hide();
     panel = '';
     byId('toolsPage').hidden = true;
@@ -51,7 +61,8 @@
     const tools = byId('toolsPage'), nav = tools.querySelector('.tool-tabs');
     if (byId('sheet').open) byId('sheet').close();
     if (opener) {
-      panelOpener = opener;
+      returnPanel = panel && tools.contains(opener) ? {key: panel, opener} : null;
+      if (!returnPanel) panelOpener = opener;
       byId('reportShell').querySelector('.filter-fold').open = false;
     }
     panel = key;
@@ -61,11 +72,12 @@
     const allowed = Object.keys(sections).filter(item => management.includes(item) === manage);
     nav.replaceChildren(...allowed.map(item => {
       const tab = button(sections[item], () => openPanel(item));
+      tab.dataset.section = item;
       tab.setAttribute('aria-pressed', String(item === key));
       return tab;
     }));
     byId('toolsTitle').textContent = manage ? 'Управление' : 'Подробная аналитика';
-    window.unifiedUI.activate(manage ? key : 'dashboard');
+    window.unifiedUI.activate(manage || key === 'changes' ? key : 'dashboard');
     window.referenceDetail.show(key);
     if (!manage) window.referenceFilters.syncDetails();
     disclosures();
@@ -89,49 +101,24 @@
     window.scrollTo(0, 0);
   }
 
-  function openWorkspace(anchor) {
-    workspaceOpener = anchor;
-    const native = byId('refNative'), workspace = byId('refWorkspaceDialog');
-    closePanel(false);
-    delete native.dataset.panel;
-    workspace.append(native);
-    native.querySelector('main.container').prepend(byId('flash'));
-    window.unifiedUI.activate('dashboard');
-    workspace.showModal();
-    byId('refWorkspaceClose').focus();
-  }
-
-  function menu(anchor) {
-    const body = dialog('Управление', anchor);
-    const list = document.createElement('div');
-    list.className = 'navigation';
-    for (const key of management) list.append(button(sections[key], () => openPanel(key, anchor)));
-    list.append(button('Исходный макет', openWorkspace));
-    body.append(list);
-    list.firstElementChild.focus();
-  }
-
   function init() {
-    const root = byId('refRoot'), tools = byId('toolsPage'), workspace = byId('refWorkspaceDialog');
+    const root = byId('refRoot'), tools = byId('toolsPage');
     const sheet = byId('sheet'), header = byId('sharedHeader');
     // Visibility, native modality and focus are owned by HTMLDialogElement.
     sheet.addEventListener('close', () => {
-      if (!sheet.open && !panel && dialogOpener?.isConnected) dialogOpener.focus({preventScroll:true});
-    });
-    byId('refWorkspaceClose').addEventListener('click', () => workspace.close());
-    workspace.addEventListener('close', () => {
-      tools.append(byId('refNative'));
-      header.after(byId('flash'));
-      workspaceOpener?.focus({preventScroll:true});
+      if (!sheet.open && dialogOpener?.isConnected && dialogOpener.getClientRects().length) dialogOpener.focus({preventScroll:true});
     });
     header.querySelectorAll('.main-nav button').forEach((tab, i) =>
       tab.addEventListener('click', () => navigate(i ? 's2' : 's1')));
-    byId('refData').addEventListener('click', event => menu(event.currentTarget));
     byId('refImport').addEventListener('click', event => openPanel('upload', event.currentTarget));
     byId('refSettings').addEventListener('click', event => panel === 'storage' ? closePanel() : openPanel('storage', event.currentTarget));
     byId('refAnalytics').addEventListener('click', event =>
       panel && !management.includes(panel) ? closePanel() : openPanel('chartPanel', event.currentTarget));
     byId('backBtn').addEventListener('click', () => closePanel());
+    root.addEventListener('keydown', event => {
+      // Let the browser dismiss only the active select picker.
+      if (event.key === 'Escape' && CSS.supports('selector(select:open)') && event.target.closest('select:open')) event.stopPropagation();
+    }, true);
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog:modal')) return;
       const disclosure = event.target.closest?.('details[open]');
@@ -145,7 +132,11 @@
       }
     });
 
-    header.after(byId('flash'));
+    byId('storage').prepend(byId('appVersion'));
+    const notices=document.createElement('div');
+    notices.className='desktop-notices';
+    notices.append(byId('flash'),byId('appActivity'));
+    header.after(notices);
     const currentStatus = byId('unifiedIndexStatus'), status = header.querySelector('.source-state');
     function statusChanged() {
       status.textContent = currentStatus.firstElementChild.textContent;

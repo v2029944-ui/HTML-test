@@ -116,15 +116,23 @@ async function refresh(){
    const selected=[...state.selectedOrganizations].filter(name=>next.org_names.includes(name));
    state.selectedOrganizations=new Set(selected.length?selected:next.org_names);
    revision=rev;snapshot=next;
-   label.textContent='Отчётов: '+next.reports+' · Локальная база SQLite';
+   label.textContent=(window.sharedWorkspace?.state?.mode==='shared'?'Общая база SQLite':'Локальная база SQLite')+'. Отчётов: '+next.reports;
    cancel.hidden=true;retry.hidden=false;
    await notify(next);
    return next;
   }catch(error){
-   revision=null;snapshot=null;scope=null;await notify(null);label.textContent='Данные недоступны. '+(error.message||String(error));cancel.hidden=true;retry.hidden=false;throw error;
+   revision=null;snapshot=null;scope=null;await notify(null);label.textContent=(window.sharedWorkspace?.state?.mode==='shared'?'Общая база недоступна. ':'Данные недоступны. ')+(error.message||String(error));cancel.hidden=true;retry.hidden=false;throw error;
   }finally{refreshing=null;}
  })();
  return refreshing;
+}
+// A new checkout can have the same SQLite revision as the previous workspace.
+async function refreshWorkspace(){
+ if(refreshing){
+  ++generation;revision=null;snapshot=null;scope=null;
+  await refreshing.catch(()=>{ /* The superseded read can reject its obsolete token. */ });
+ }
+ return refresh();
 }
 function init(){
  O.initTheme();O.initChartTooltip();
@@ -135,7 +143,7 @@ function init(){
  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&$('managementNav').open){$('managementNav').open=false;$('managementToggle').focus();}});
  activate('dashboard');
 }
-const U={api,state,$,el,notice:O.notice,fmt:O.fmt,table,tableHelp,drawChart:O.drawChart,drawDepartments:O.drawDepartments,setPeriodInput,range:(...args)=>window.nativePeriodSelection.range(...args),request,refresh,activate,init,
+const U={api,state,$,el,notice:O.notice,fmt:O.fmt,table,tableHelp,drawChart:O.drawChart,drawDepartments:O.drawDepartments,setPeriodInput,range:(...args)=>window.nativePeriodSelection.range(...args),request,refresh,refreshWorkspace,activate,init,
  get revision(){return revision;},get snapshot(){return snapshot;},get scope(){return scope;},get generation(){return generation;},
  onSnapshot(fn){snapshots.add(fn);return()=>snapshots.delete(fn);},onView(name,fn){if(!views.has(name))views.set(name,new Set());views.get(name).add(fn);},
  onScope(fn){scopes.add(fn);},publishScope(value){scope=value;for(const fn of scopes)fn(value);},isCurrent(value){return revision!==null&&value===revision;}};

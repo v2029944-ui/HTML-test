@@ -1,8 +1,8 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path');
 const {buildUnified}=require('./unified-build.cjs');
-const scripts=['bridge','native-errors','native-period-selection','app-status','unified-base','unified-coverage','unified-management','unified-reports','native-metric-kinds','unified-horizontal-bars','unified-extended','unified-analytics','reference-calendar','reference-detail','reference-results','reference-filters','reference-desktop','unified-app','updates'];
-const styles=['unified','app-status','reference-shell','reference-detail'];
+const scripts=['shared-workspace','bridge','native-errors','native-period-selection','app-status','unified-base','sql-row-scroll','unified-coverage','unified-management','unified-reports','native-metric-kinds','unified-horizontal-bars','unified-extended','unified-analytics','reference-calendar','reference-detail','reference-results','reference-filters','reference-desktop','unified-app','updates'];
+const styles=['sql-row-scroll','unified','app-status','reference-shell','reference-detail'];
 function prepareHtml(source){return buildUnified(source).html;}
 function prepare(options={}){
  const base=options.base||path.resolve(__dirname,'..'),output=options.output||path.join(__dirname,'web');

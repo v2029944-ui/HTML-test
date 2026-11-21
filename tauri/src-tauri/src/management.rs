@@ -1173,9 +1173,18 @@ impl Storage {
             return Err("Stale storage revision; refresh the selection.".into());
         }
 
-        // The backup precedes indexing and retains the original report.
-        // The final transaction rechecks the revision and rejects linked sources.
+        // Explicit backup callers retain the original report before indexing.
+        self.management_delete_report(expected, id, job)
+    }
+    pub fn management_delete_report(
+        &self,
+        expected: i64,
+        id: &str,
+        job: &ManagementJob,
+    ) -> Result<ManagementReceipt, String> {
+        label(id)?;
         job.check()?;
+        check_revision(&self.management_connect()?, expected)?;
         self.index_report(id, expected)?;
         job.check()?;
         self.management_index_report(id, expected, &ManagementJob::new())?;
@@ -1208,6 +1217,7 @@ impl Storage {
     ) -> Result<ManagementReceipt, String> {
         let c = self.management_connect()?;
         job.run(&c,||{let tx=c.unchecked_transaction().map_err(err)?;check_revision(&tx,expected)?;check_metadata_bounds(&tx)?;
+        check_delete_integrity(&tx)?;
         tx.execute_batch("CREATE TEMP TABLE management_delete_ids(id TEXT PRIMARY KEY) WITHOUT ROWID;").map_err(err)?;
         if let Some(ids)=ids {for id in ids {tx.execute("INSERT OR IGNORE INTO temp.management_delete_ids VALUES(?1)",[id]).map_err(err)?;}
             let missing:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM temp.management_delete_ids d LEFT JOIN reports r ON r.id=d.id WHERE r.id IS NULL)",[],|r|r.get(0)).map_err(err)?;if missing{return Err("Report delete contains an unknown identifier".into())}}
@@ -1232,6 +1242,14 @@ impl Storage {
         job.check()?;let revision=read_model::revision(&tx)?;job.finish(tx)?;Ok(ManagementReceipt{revision,deleted:deleted as i64,cleanup_error:None})})
     }
 }
+fn check_delete_integrity(conn: &Connection) -> Result<(), String> {
+    let result: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0)).map_err(err)?;
+    if result != "ok" {
+        return Err("SQLite integrity check failed before report deletion".into());
+    }
+    Ok(())
+}
+
 #[path = "management_reports.rs"]
 mod reports;
 #[path = "unified_settings_io.rs"]

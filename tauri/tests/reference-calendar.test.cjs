@@ -37,5 +37,14 @@ test('programmatic calendar period changes update the visible weekly range befor
   assert.equal(source.trigger.textContent, '09.11.2026 — 15.11.2026');
   window.unifiedUI.setPeriodInput(source.id, 'week', '2026-11-16');
   assert.equal(source.trigger.getAttribute('aria-label'), 'Базовый период · 16.11.2026 — 22.11.2026');
+  source.dataset.rangeBoundary = 'start';
+  window.referenceCalendar.syncField(source);
+  assert.equal(source.trigger.textContent, '16.11.2026');
+  source.dataset.rangeBoundary = 'end';
+  window.referenceCalendar.syncField(source);
+  assert.equal(source.trigger.textContent, '22.11.2026');
+  window.unifiedUI.setPeriodInput(source.id, 'month', '2024-02-01');
+  assert.equal(source.trigger.textContent, '29.02.2024');
+  assert.equal(source.value, '2024-02', 'calendar month remains the SQL input');
   assert.equal(source.dataset.unifiedTouched, undefined);
 });

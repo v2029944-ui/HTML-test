@@ -30,6 +30,12 @@ pub use report_quality::{QualityScope, ReportQualityPage};
 mod unified_reports;
 pub use unified_reports::{UnifiedQualityFilter, UnifiedQualityPage, UnifiedCalendar};
 
+#[path = "shared_runtime.rs"]
+pub mod shared_runtime;
+
+#[path = "shared_folder.rs"]
+pub mod shared_folder;
+
 #[path = "backup.rs"]
 mod backup;
 #[path = "recovery.rs"]
@@ -56,6 +62,25 @@ const MAX_EXCEL_BYTES: u64 = 30 * 1024 * 1024;
 const MAX_PAYLOAD_BYTES: usize = 200 * 1024 * 1024;
 // Keep synchronized with REPORT_TYPES in the root index.html.
 const REPORT_TYPES: [&str; 3] = ["week", "month", "day"];
+
+#[derive(Debug, Serialize)]
+pub struct SqlPage<T> {
+    pub rows: Vec<T>,
+    pub total_rows: i64,
+}
+
+pub(crate) fn direct_page_offset(index: usize, size: usize, total: i64) -> Result<i64, String> {
+    if size == 0 || total < 0 {
+        return Err("Invalid page size or row count".into());
+    }
+    let offset = index.checked_mul(size)
+        .and_then(|value| i64::try_from(value).ok())
+        .ok_or("Page offset exceeds SQLite bounds")?;
+    if offset > 0 && offset >= total {
+        return Err("Page lies outside the result".into());
+    }
+    Ok(offset)
+}
 
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -172,7 +197,7 @@ impl Drop for FolderImportOperation<'_> {
 }
 
 pub struct Storage {
-    folder_import: Mutex<Option<FolderImportSession>>,
+    folder_import: Arc<Mutex<Option<FolderImportSession>>>,
     folder_import_serial: AtomicU64,
     root: PathBuf,
     gate: Mutex<()>,
@@ -489,7 +514,7 @@ impl Storage {
             root,
             gate: Mutex::new(()),
             analysis_filter_gate,
-            folder_import: Mutex::new(None),
+            folder_import: Arc::new(Mutex::new(None)),
             folder_import_serial: AtomicU64::new(0),
         })
     }

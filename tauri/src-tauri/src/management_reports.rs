@@ -181,6 +181,7 @@ fn valid_filter(f: &ManagementReportFilter) -> Result<(), String> {
     }
     Ok(())
 }
+const REPORT_TABLES: &str = "FROM reports r JOIN management_report_meta m ON m.report_id=r.id JOIN report_row_index i ON i.report_id=r.id";
 const FILTER:&str="(?1 IS NULL OR r.report_type=?1) AND (?2 IS NULL OR EXISTS(SELECT 1 FROM management_report_orgs o WHERE o.report_id=r.id AND o.org=?2)) AND (?3 IS NULL OR r.period_start>=?3) AND (?4 IS NULL OR r.period_start<=?4)";
 fn ready(c: &Connection, rev: i64, f: &ManagementReportFilter) -> Result<(), String> {
     check_revision(c, rev)?;
@@ -285,7 +286,35 @@ impl Storage {
         let mut c = self.management_connect()?;
         let tx = c.transaction().map_err(err)?;
         ready(&tx, rev, f)?;
-        let sql=format!("SELECT r.id,r.report_type,r.period_start,r.period_end,r.source_name,i.row_count,m.amount,m.saved_amount,m.warnings,(SELECT COUNT(*) FROM management_report_orgs o WHERE o.report_id=r.id),m.shared_source_artifact FROM reports r JOIN management_report_meta m ON m.report_id=r.id JOIN report_row_index i ON i.report_id=r.id WHERE {FILTER} AND (?5 IS NULL OR r.period_start<?5 OR (r.period_start=?5 AND r.id>?6)) ORDER BY r.period_start DESC,r.id LIMIT ?7");
+        Self::report_rows(&tx, f, after, size, 0)
+    }
+
+    pub fn management_report_window(
+        &self,
+        rev: i64,
+        f: &ManagementReportFilter,
+        page_index: usize,
+        size: usize,
+    ) -> Result<SqlPage<ManagementReport>, String> {
+        batch(size)?;
+        let mut c = self.management_connect()?;
+        let tx = c.transaction().map_err(err)?;
+        ready(&tx, rev, f)?;
+        let count = format!("SELECT COUNT(*) {REPORT_TABLES} WHERE {FILTER}");
+        let total_rows = tx.query_row(&count, params![f.report_type, f.organization, f.from, f.to], |r| r.get(0)).map_err(err)?;
+        let offset = direct_page_offset(page_index, size, total_rows)?;
+        let rows = Self::report_rows(&tx, f, None, size, offset)?;
+        Ok(SqlPage { rows, total_rows })
+    }
+
+    fn report_rows(
+        tx: &Transaction<'_>,
+        f: &ManagementReportFilter,
+        after: Option<&ManagementReportCursor>,
+        size: usize,
+        offset: i64,
+    ) -> Result<Vec<ManagementReport>, String> {
+        let sql=format!("SELECT r.id,r.report_type,r.period_start,r.period_end,r.source_name,i.row_count,m.amount,m.saved_amount,m.warnings,(SELECT COUNT(*) FROM management_report_orgs o WHERE o.report_id=r.id),m.shared_source_artifact {REPORT_TABLES} WHERE {FILTER} AND (?5 IS NULL OR r.period_start<?5 OR (r.period_start=?5 AND r.id>?6)) ORDER BY r.period_start DESC,r.id LIMIT ?7 OFFSET ?8");
         let mut stmt = tx.prepare(&sql).map_err(err)?;
         let out = stmt
             .query_map(
@@ -296,7 +325,8 @@ impl Storage {
                     f.to,
                     after.map(|a| a.start.as_str()),
                     after.map(|a| a.id.as_str()),
-                    size as i64
+                    size as i64,
+                    offset
                 ],
                 |r| {
                     Ok(ManagementReport {
@@ -373,6 +403,30 @@ impl Storage {
         let mut c = self.management_connect()?;
         let tx = c.transaction().map_err(err)?;
         check_revision(&tx, rev)?;
+        Self::check_report_org_index(&tx, id)?;
+        Self::report_org_rows(&tx, id, after, size, 0)
+    }
+
+    pub fn management_report_org_window(
+        &self,
+        rev: i64,
+        id: &str,
+        page_index: usize,
+        size: usize,
+    ) -> Result<SqlPage<(i64, String)>, String> {
+        batch(size)?;
+        label(id)?;
+        let mut c = self.management_connect()?;
+        let tx = c.transaction().map_err(err)?;
+        check_revision(&tx, rev)?;
+        Self::check_report_org_index(&tx, id)?;
+        let total_rows = tx.query_row("SELECT COUNT(*) FROM management_report_orgs WHERE report_id=?1", [id], |r| r.get(0)).map_err(err)?;
+        let offset = direct_page_offset(page_index, size, total_rows)?;
+        let rows = Self::report_org_rows(&tx, id, None, size, offset)?;
+        Ok(SqlPage { rows, total_rows })
+    }
+
+    fn check_report_org_index(tx: &Transaction<'_>, id: &str) -> Result<(), String> {
         let exists: bool = tx
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM management_report_meta WHERE report_id=?1)",
@@ -383,9 +437,13 @@ impl Storage {
         if !exists {
             return Err("Report organization index absent".into());
         }
-        let mut stmt=tx.prepare("SELECT ordinal,org FROM management_report_orgs WHERE report_id=?1 AND (?2 IS NULL OR ordinal>?2) ORDER BY ordinal LIMIT ?3").map_err(err)?;
+        Ok(())
+    }
+
+    fn report_org_rows(tx: &Transaction<'_>, id: &str, after: Option<i64>, size: usize, offset: i64) -> Result<Vec<(i64, String)>, String> {
+        let mut stmt=tx.prepare("SELECT ordinal,org FROM management_report_orgs WHERE report_id=?1 AND (?2 IS NULL OR ordinal>?2) ORDER BY ordinal LIMIT ?3 OFFSET ?4").map_err(err)?;
         let out = stmt
-            .query_map(params![id, after, size as i64], |r| {
+            .query_map(params![id, after, size as i64, offset], |r| {
                 Ok((r.get(0)?, r.get(1)?))
             })
             .map_err(err)?

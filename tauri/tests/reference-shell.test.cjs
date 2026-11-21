@@ -10,11 +10,11 @@ const original = fs.readFileSync(path.resolve(__dirname, '../../index.html'), 'u
 const {html, script} = buildUnified(original);
 
 test('installed reference screens and detail tools share the same native forms', () => {
-  for (const id of ['s1','s2','reportShell','refNative','refWorkspaceDialog','toolsPage','sheet','upload','groups','storage']) {
+  for (const id of ['s1','s2','reportShell','refNative','toolsPage','sheet','upload','groups','storage']) {
     assert.equal(html.split('id="' + id + '"').length - 1, 1, id);
   }
   assert.match(html, /id="refNative"><header class="topbar">/);
-  assert.doesNotMatch(html, /<iframe\b|ref-day-2026|Демоданные|3 772 233,26|mountEngine\(/);
+  assert.doesNotMatch(html, /id="refData"|id="refWorkspaceDialog"|Исходный макет|<iframe\b|ref-day-2026|Демоданные|3 772 233,26|mountEngine\(/);
   const boot = html.indexOf('src="tauri-unified-app.js"');
   for (const name of ['reference-calendar','reference-detail','reference-results','reference-filters','reference-desktop']) {
     const offset = html.indexOf('src="tauri-' + name + '.js"');

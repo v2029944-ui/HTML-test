@@ -139,7 +139,7 @@ control.addEventListener('change',async()=>{
    return;
   }
   if(version!==toggleVersion||!control.checked)return;
-  transition=transition.catch(()=>{}).then(()=>api.nativeFolderImportSession(true));
+  transition=transition.catch(()=>{}).then(()=>version===toggleVersion&&control.checked?api.nativeFolderImportSession(true):null);
   const lease=await transition;
   if(version!==toggleVersion)return;
   if(typeof lease!=='string'||!lease)throw Error('Invalid native lease');
@@ -158,5 +158,19 @@ control.addEventListener('change',async()=>{
  }
 });
 window.addEventListener?.('pagehide',()=>{if(control.checked||session)void stop().catch(()=>{});},{once:true});
-window.nativeFolderAutoImport=Object.freeze({updateSnapshot,isEnabled:()=>session!==null});
+async function stopForWorkspaceChange(){
+ if(!control.checked&&!session)return;
+ control.checked=false;
+ await stop();
+ if(running)await running;
+ latest=null;fingerprint=null;handled.clear();
+ status('Автоматический импорт выключен.');
+}
+function forgetWorkspaceSession(){
+ const optedIn=control.checked||session!==null;
+ ++toggleVersion;control.checked=false;session=null;
+ latest=null;fingerprint=null;handled.clear();
+ if(optedIn)status('Общая база обновилась. Автоматический импорт выключен.');
+}
+window.nativeFolderAutoImport=Object.freeze({updateSnapshot,stopForWorkspaceChange,forgetWorkspaceSession,isEnabled:()=>session!==null});
 })();

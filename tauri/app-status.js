@@ -12,9 +12,40 @@
     }
     return element;
   }
+  function dismissButton(label,action){
+    const button=document.createElement('button');
+    button.type='button';button.className='status-dismiss';button.title=label;
+    button.setAttribute('aria-label',label);button.onclick=action;
+    return button;
+  }
+  function returnFocus(opener){
+    const target=opener?.isConnected && opener!==document.body && !opener.disabled && opener.getClientRects().length
+      ?opener:document.querySelector('#toolsPage button[aria-pressed="true"],#sharedHeader [aria-current="page"]');
+    target?.focus({preventScroll:true});
+  }
+  const flash=$('flash');
+  if(flash){
+    const message=document.createElement('span');
+    let opener=null;
+    const dismiss=dismissButton('Закрыть уведомление',()=>{
+      const restoreFocus=document.activeElement===dismiss;
+      flash.hidden=true;
+      message.textContent='';
+      if(restoreFocus)returnFocus(opener);
+      opener=null;
+    });
+    flash.append(message,dismiss);
+    window.showDesktopNotice=(text,error)=>{
+      if(document.activeElement!==dismiss)opener=document.activeElement;
+      message.textContent=text;
+      flash.classList.toggle('error',Boolean(error));
+      flash.hidden=false;
+    };
+  }
   const version=mount('appVersion','span','app-version');
   const activity=mount('appActivity','div','app-activity');
   let activityText=$('appActivityText');
+  let activityDismissed=false,activityOpener=null,wasBusy=false;
   if(activity){
     activity.setAttribute('role','status');activity.setAttribute('aria-live','polite');
     activity.setAttribute('aria-atomic','true');
@@ -24,12 +55,22 @@
       activityText=document.createElement('span');activityText.id='appActivityText';
       activity.append(spinner,activityText);
     }
+    const dismiss=dismissButton('Закрыть уведомление о ходе операции',()=>{
+      activityDismissed=true;
+      const restoreFocus=document.activeElement===dismiss;
+      activity.hidden=true;
+      if(restoreFocus)returnFocus(activityOpener);
+    });
+    activity.append(dismiss);
   }
   const main=$('sqlMain')||document.querySelector?.('main');
   function renderActivity(detail){
     const reads=Number(detail?.reads)||0,saves=Number(detail?.saves)||0;
     const busy=reads>0||saves>0;
-    if(activity)activity.hidden=!busy;
+    if(busy && !wasBusy)activityOpener=document.activeElement;
+    if(!busy){activityDismissed=false;activityOpener=null;}
+    wasBusy=busy;
+    if(activity)activity.hidden=!busy||activityDismissed;
     if(main)main.setAttribute('aria-busy',String(busy));
     if(activityText)activityText.textContent=saves>0
       ?'Сохранение данных…':reads>0?'Загрузка отчётов и расчёт показателей…':'';

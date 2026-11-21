@@ -2,3 +2,46 @@
 #appActivity[hidden]{display:none}.app-activity-spinner{width:18px;height:18px;flex:0 0 18px;border:2px solid var(--selected-border);border-top-color:var(--accent);border-radius:50%;animation:sql-loading .8s linear infinite}
 @keyframes sql-loading{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.app-activity-spinner{animation:none;border-style:dotted}}
+
+.desktop-notices {
+  position:fixed;
+  inset-block-start:clamp(.5rem,9vh,4.25rem);
+  inset-inline-end:clamp(.5rem,2vw,1.5rem);
+  z-index:45;
+  display:grid;
+  gap:.35rem;
+  width:max-content;
+  max-width:min(32rem,calc(100vw - 1rem));
+  pointer-events:none;
+}
+.desktop-notices > #flash,
+.desktop-notices > #appActivity {
+  box-sizing:border-box;
+  min-width:0;
+  max-width:100%;
+  margin:0;
+  padding:.5rem .75rem;
+  border-radius:var(--radius-control);
+}
+.desktop-notices .status-dismiss {pointer-events:auto}
+#flash:not([hidden]) {
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:.75rem;
+}
+#flash > span {min-width:0;overflow-wrap:anywhere}
+:is(#flash,#appActivity) .status-dismiss {
+  display:grid;
+  place-items:center;
+  flex:none;
+  margin-inline-start:auto;
+  width:2rem;
+  min-height:2rem;
+  padding:0;
+  color:inherit;
+  background:transparent;
+  border:1px solid currentColor;
+  border-radius:var(--radius-control);
+}
+:is(#flash,#appActivity) .status-dismiss::before {content:'×';font-size:1.2rem;line-height:1}

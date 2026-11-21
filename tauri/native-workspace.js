@@ -16,7 +16,7 @@ let reportsBusy=false,groupsBusy=false,refreshBusy=false;
 let queuedRefresh=null,refreshScheduled=false;
 let analysisBusy=false,analysisReady=false,analysisCancelled=false,orgNames=[];
 let workBusy=false,workScope=null,workAfter=null,workBack=[],workNext=null;
-let exportBusy=false,backupBusy=false,restoreBusy=false,restoreSelection=null;
+let exportBusy=false,backupBusy=false,restoreBusy=false;
 const workSize=50;
 let workTrendSelection=null,workTrendRequest=0,workTrendBusy=false;
 function invalidateWorkTrend(message='Выберите работу или группу из таблицы выше.'){
@@ -136,9 +136,6 @@ $('groupNext').disabled=groupsBusy||refreshBusy||!groupNext;
 $('workspaceRefresh').disabled=reportsBusy||groupsBusy||refreshBusy||analysisBusy||workBusy||exportBusy||backupBusy||restoreBusy;
 $('backupSqlite').disabled=backupBusy||exportBusy||analysisBusy||workBusy||refreshBusy||restoreBusy;
 $('restoreChoose').disabled=restoreBusy||backupBusy||analysisBusy||exportBusy||refreshBusy;
-$('restoreCopy').disabled=restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy;
-$('restoreSchedule').disabled=restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy;
-$('restoreCancel').disabled=restoreBusy||backupBusy||analysisBusy||exportBusy||refreshBusy;
 $('analysisPrepare').disabled=analysisBusy||refreshBusy||exportBusy||revision===null;
 $('analysisCancel').disabled=!analysisBusy;
 $('analysisRun').disabled=analysisBusy||refreshBusy||workBusy||exportBusy||!analysisReady;
@@ -324,7 +321,7 @@ const restoreError=err=>{
 };
 async function inspectBackup(){
  if(restoreBusy||backupBusy||analysisBusy||exportBusy||refreshBusy)return;
- restoreSelection=null;restoreBusy=true;controlState();
+ restoreBusy=true;controlState();
  $('restoreSelected').textContent='Резервная копия не выбрана.';
  try{
   const source=await api.chooseRestoreBackupPath();
@@ -336,62 +333,13 @@ async function inspectBackup(){
      !/^[a-f0-9]{64}$/i.test(preview.verification)||
      !Number.isSafeInteger(preview.reportCount)||preview.reportCount<0)
     throw Error('Не удалось подтвердить целостность резервной копии.');
-  restoreSelection={source,verification:preview.verification};
   $('restoreSelected').textContent='Проверенный файл: '+source.split(/[\\/]/).pop();
   status('restoreStatus','Копия проверена. Отчётов: '+preview.reportCount+
-    '. Можно создать отдельный восстановленный файл. Рабочая база не изменена.');
- }catch(err){restoreSelection=null;status('restoreStatus',restoreError(err),true);}
- finally{restoreBusy=false;controlState();}
-}
-async function writeRestoreCopy(){
- if(restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy)return;
- if(!window.confirm('Создать отдельную восстановленную копию? Рабочая база SQLite не изменится.'))return;
- const selected=restoreSelection;
- restoreBusy=true;controlState();
- try{
-  const destination=await api.chooseRestoreDestination('analiz-restored-check.sqlite3');
-  if(!destination){status('restoreStatus','Создание восстановленной копии отменено.');return;}
-  if(typeof destination!=='string')throw Error('Укажите новый файл с расширением .sqlite3.');
-  status('restoreStatus','Создаём проверенную отдельную копию без замены рабочей базы…');
-  const result=await api.nativeRestoreCopy(selected.source,selected.verification,destination);
-  if(result?.verification!==selected.verification)throw Error('Результат проверки копии не совпал.');
-  status('restoreStatus','Восстановленная копия создана и проверена. Отчётов: '+
-    result.reportCount+'. Рабочая база не изменена. Не подменяйте её вручную при открытой программе.');
+    '. Рабочая база не изменена.');
  }catch(err){status('restoreStatus',restoreError(err),true);}
  finally{restoreBusy=false;controlState();}
 }
-async function scheduleRestoreAtStartup(){
- if(restoreBusy||!restoreSelection||backupBusy||analysisBusy||exportBusy||refreshBusy)return;
- if(!window.confirm('При следующем запуске будет заменена текущая рабочая база SQLite на выбранную резервную копию. Программа заранее сохранит защитные копии текущей базы. Продолжить?'))return;
- restoreBusy=true;controlState();
- try{
-  const selected=restoreSelection;
-  status('restoreStatus','Подготавливаем отдельную проверенную копию для следующего запуска…');
-  const request=await api.nativeRestoreSchedule(selected.source,selected.verification);
-  if(!request?.restartRequired)throw Error('Не удалось запланировать восстановление.');
-  restoreSelection=null;
-  status('restoreStatus','Восстановление запланировано: '+request.reportCount+
-    ' отчётов. Полностью закройте приложение и откройте снова. До перезапуска рабочая база не изменена.');
- }catch(err){status('restoreStatus',restoreError(err),true);}
- finally{restoreBusy=false;controlState();}
-}
-async function cancelScheduledRestore(){
- if(restoreBusy||backupBusy||analysisBusy||exportBusy||refreshBusy)return;
- if(!window.confirm('Отменить запланированное восстановление? Рабочая база не изменится.'))return;
- restoreBusy=true;controlState();
- try{
-  const removed=await api.nativeRestoreCancel();
-  restoreSelection=null;
-  status('restoreStatus',removed?
-    'Отложенное восстановление отменено. Рабочая база сохранена.':
-    'Запланированных восстановлений нет. Рабочая база не изменена.');
- }catch(err){status('restoreStatus',restoreError(err),true);}
- finally{restoreBusy=false;controlState();}
-}
-$('restoreCancel').addEventListener('click',cancelScheduledRestore);
-$('restoreSchedule').addEventListener('click',scheduleRestoreAtStartup);
 $('restoreChoose').addEventListener('click',inspectBackup);
-$('restoreCopy').addEventListener('click',writeRestoreCopy);
 $('workspaceRefresh').addEventListener('click',()=>{void refresh();});
 $('backupSqlite').addEventListener('click',backupSqlite);
 $('reportClearSelection').addEventListener('click',async()=>{

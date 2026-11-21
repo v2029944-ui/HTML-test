@@ -4,7 +4,8 @@
   if(!tauri?.core?.invoke || !tauri?.dialog?.open) {
     throw Error('Tauri API не инициализирован. Откройте приложение через Tauri, а не как файл HTML.');
   }
-  const invoke=(command,args)=>tauri.core.invoke(command,args||{});
+  const invoke=(command,args)=>window.sharedWorkspace
+    ?window.sharedWorkspace.invoke(command,args||{}):tauri.core.invoke(command,args||{});
   const operations=window.tauriOperations={saves:0,reads:0,updating:false};
   function reportOperation(command){
     // Activity observers must never interrupt IPC or hide its original error.
@@ -98,13 +99,15 @@
   if(typeof originalConfirm==='function')window.confirm=function(...args){
     const opener=visibleOpener(document?.activeElement)||(activation?.isConnected?activation:null);
     const expectedInteraction=interaction;
+    const token=window.sharedWorkspace?.state?.workspace_token;
     const answer=originalConfirm.apply(this,args);
-    const finish=accepted=>{if(accepted===false)restoreOpener(opener,expectedInteraction);return accepted;};
+    const finish=accepted=>{if(accepted===false)restoreOpener(opener,expectedInteraction);return accepted&&token!==window.sharedWorkspace?.state?.workspace_token?false:accepted;};
     return answer&&typeof answer.then==='function'?answer.then(finish):finish(answer);
   };
   async function nativePicker(kind,options){
     if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
     if(pickerOpen)throw Error('Закройте открытый диалог выбора файла.');
+    const token=window.sharedWorkspace?.state?.workspace_token;
     const active=document?.activeElement;
     const opener=(activation?.isConnected?activation:visibleOpener(active));
     const expectedInteraction=interaction;
@@ -113,7 +116,8 @@
     opener?.setAttribute('aria-busy','true');opener?.setAttribute('aria-disabled','true');
     let cancelled=true;
     try{
-      const result=await tauri.dialog[kind](options);
+      const result=kind==='sharedFolder' ? await tauri.core.invoke('shared_workspace_choose_folder') : await tauri.dialog[kind](options);
+      if(token!==window.sharedWorkspace?.state?.workspace_token)throw Error('Активная база изменилась. Повторите выбор.');
       cancelled=result===null||result===undefined||result===false||result==='';
       return result;
     }finally{
@@ -136,12 +140,16 @@
     nativePreviewQualityCsv:(query,destination)=>tracked('native_preview_quality_csv',{query,destination},'saves'),
     unifiedPeriodOptions:(revision,reportType,grouping=null,after=null,limit=100)=>tracked('unified_period_options',{revision,reportType,grouping,after,limit},'reads'),
     unifiedNameOptions:(revision,search='',after=null,limit=50)=>tracked('unified_name_options',{revision,search,after,limit},'reads'),
+    unifiedNameOptionsAtPage:(revision,search='',pageIndex=0,limit=50)=>tracked('unified_name_options',{revision,search,after:null,limit,pageIndex},'reads'),
     unifiedChangesPage:(request,options,after=null)=>tracked('unified_changes_page',{request,options,after},'reads'),
+    unifiedChangesPageAtPage:(request,options,pageIndex=0)=>tracked('unified_changes_page',{request,options,after:null,pageIndex},'reads'),
     unifiedChangesCsv:(request,options,destination)=>tracked('unified_changes_csv',{request,options,destination},'saves'),
     referenceTrendCsv:(request,options,destination)=>tracked('reference_trend_csv',{request,options,destination},'saves'),
     referenceDetailCsv:(payload,destination)=>tracked('reference_detail_csv',{payload,destination},'saves'),
     unifiedPatternPage:(request,mode,windowSize,options,after=null)=>tracked('unified_pattern_page',{request,mode,windowSize,options,after},'reads'),
+    unifiedPatternPageAtPage:(request,mode,windowSize,options,pageIndex=0)=>tracked('unified_pattern_page',{request,mode,windowSize,options,after:null,pageIndex},'reads'),
     unifiedComparisonPage:(request,before,organization=null,after=null,limit=50)=>tracked('unified_comparison_page',{request,before,organization,after,limit},'reads'),
+    unifiedComparisonWindow:(request,before,organization=null,pageIndex=0,limit=50)=>tracked('unified_comparison_window',{request,before,organization,pageIndex,limit},'reads'),
     unifiedGroupAuditPage:(request,mode,search='',offset=0,limit=50)=>tracked('unified_group_audit_page',{request,mode,search,offset,limit},'reads'),
     unifiedManagementPage:(revision,kind,query='',group=null,offset=0,limit=50)=>tracked('unified_management_page',{revision,kind,query,group,offset,limit},'reads'),
     unifiedGroupSave:(revision,handle,id,name,works)=>tracked('unified_group_save',{revision,handle,id,name,works},'saves'),
@@ -152,13 +160,16 @@
     unifiedCatalogPreview:(revision,source)=>tracked('unified_catalog_preview',{revision,source},'reads'),
     unifiedCatalogApply:(revision,source,hash,confirmed)=>tracked('unified_catalog_apply',{revision,source,hash,confirmed},'saves'),
     unifiedRenameOrganizations:(revision,names,destination)=>tracked('unified_rename_organizations',{revision,names,destination},'saves'),
-    unifiedClearReports:(revision,destination)=>tracked('unified_clear_reports',{revision,destination},'saves'),
+    unifiedClearReports:revision=>tracked('unified_clear_reports',{revision},'saves'),
     managementReportPage:(revision,filter,after=null,limit=50)=>tracked('unified_report_page',{revision,filter,after,limit},'reads'),
+    managementReportWindow:(revision,filter,pageIndex=0,limit=50)=>tracked('unified_report_window',{revision,filter,pageIndex,limit},'reads'),
     managementReportSummary:(revision,filter)=>tracked('unified_report_summary',{revision,filter},'reads'),
     managementReportOrgPage:(revision,id,after=null,limit=50)=>tracked('unified_report_org_page',{revision,id,after,limit},'reads'),
+    managementReportOrgWindow:(revision,id,pageIndex=0,limit=50)=>tracked('unified_report_org_window',{revision,id,pageIndex,limit},'reads'),
     unifiedQualityPage:(revision,filter,offset=0,limit=50)=>tracked('unified_quality_page',{revision,filter,offset,limit},'reads'),
     nativeQualityMatrixPage:(revision,reportType,from,to,organizations)=>tracked('native_quality_matrix_page',{revision,reportType,from,to,organizations},'reads'),
     nativeQualityMatrixReports:(revision,reportType,start,organization=null,after=null,limit=20)=>tracked('native_quality_matrix_reports',{revision,reportType,start,organization,after,limit},'reads'),
+    nativeQualityMatrixReportsAtPage:(revision,reportType,start,organization=null,pageIndex=0,limit=20)=>tracked('native_quality_matrix_reports_at_page',{revision,reportType,start,organization,pageIndex,limit},'reads'),
     unifiedCalendar:(revision,year)=>tracked('unified_calendar',{revision,year},'reads'),
     chooseXlsx:async()=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
@@ -185,8 +196,8 @@
       'native_catalog_page',{revision,afterHandle,limit},'reads'),
     nativeReportQualityPage:(revision,id,scope,offset=0,limit=50)=>tracked(
       'native_report_quality_page',{revision,id,scope,offset,limit},'reads'),
-    nativeDeleteReport:(revision,id,backupDestination)=>tracked(
-      'native_delete_report',{revision,id,backupDestination},'saves'),
+    nativeDeleteReport:(revision,id)=>tracked(
+      'native_delete_report',{revision,id},'saves'),
     nativeSettingsEdit:(revision,action)=>tracked(
       'native_settings_edit',{revision,action},'saves'),
     nativeAnalysisIndexPage:(revision,reportType,after=null,limit=20)=>tracked(
@@ -206,6 +217,7 @@
     nativeChangesPage:(request,after)=>tracked('native_changes_page',{request,after},'reads'),
     nativeChangesCsv:(request,destination)=>tracked('native_changes_csv',{request,destination},'saves'),
     nativeCompositionPage:(request,before,mode,metric,after,structureLimit=null)=>tracked('native_composition_page',{request,before,mode,metric,after,structureLimit},'reads'),
+    nativeCompositionPageAtPage:(request,before,mode,metric,pageIndex=0,structureLimit=null)=>tracked('native_composition_page',{request,before,mode,metric,after:null,structureLimit,pageIndex},'reads'),
     nativePatternPage:(request,mode,windowSize,after)=>tracked('native_pattern_page',{request,mode,windowSize,after},'reads'),
     nativeAnalysisCompare:(revision,reportType,beforeFrom,beforeTo,from,to,organizations,selectedName=null,selectedNames=null)=>tracked(
       'native_analysis_compare',{revision,reportType,beforeFrom,beforeTo,from,to,organizations,selectedName,selectedNames},'reads'),
@@ -285,6 +297,7 @@
       'native_report_page',{revision,filter,after,limit},'reads'),
     save:data=>tracked('save_data',{data},'saves'),
     info:()=>invoke('get_info'),
+    chooseSharedFolder:()=>nativePicker('sharedFolder'),
     chooseFolder:async()=>{
       const folder=await nativePicker('open',{directory:true,multiple:false,title:'Папка с Excel-отчётами'});
       return folder?tracked('set_folder',{folder},'saves'):null;

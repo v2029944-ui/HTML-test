@@ -324,6 +324,24 @@ fn management_real_js_goldens_full_counts_search_navigation_and_unknown_nodes() 
         (total.reports, total.rows, total.amount, total.periods),
         (2, 2, 60., 2)
     );
+    let second_page = s.management_report_window(rev, &f, 1, 1).unwrap();
+    assert_eq!(second_page.total_rows, 2);
+    assert_eq!(second_page.rows[0].id, "keep");
+    let filtered = ManagementReportFilter { to: Some("2026-11-01".into()), ..f.clone() };
+    let only = s.management_report_window(rev, &filtered, 0, 1).unwrap();
+    assert_eq!(only.total_rows, 1);
+    assert_eq!(only.rows[0].id, "keep");
+    assert!(s.management_report_window(rev, &filtered, 1, 1).is_err());
+    assert!(s.management_report_window(rev + 1, &f, 0, 1).is_err());
+    assert!(s.management_report_window(rev, &f, usize::MAX, 2).is_err());
+    let empty = ManagementReportFilter { organization: Some("unknown".into()), ..f.clone() };
+    let empty_page = s.management_report_window(rev, &empty, 0, 1).unwrap();
+    assert_eq!(empty_page.total_rows, 0);
+    assert!(empty_page.rows.is_empty());
+    let org_page = s.management_report_org_window(rev, "keep", 1, 1).unwrap();
+    assert_eq!(org_page.total_rows, 2);
+    assert_eq!(org_page.rows, vec![(1, "B".into())]);
+    assert!(s.management_report_org_window(rev, "keep", 2, 1).is_err());
     let first = s.management_report_page(rev, &f, None, 1).unwrap();
     assert_eq!(first[0].id, "later");
     assert_eq!(first[0].saved_amount, Some(30.));
@@ -936,6 +954,64 @@ fn management_single_report_delete_requires_fresh_verified_backup() {
         .query_row("SELECT id FROM reports", [], |r| r.get(0))
         .unwrap();
     assert_eq!(backed_up, "keep");
+}
+
+#[test]
+fn management_single_delete_without_backup_indexes_then_preserves_other_data() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().join("live")).unwrap();
+    let mut data = management_data();
+    let mut other = data["reports"][0].clone();
+    other["id"] = json!("other");
+    data["reports"].as_array_mut().unwrap().push(other.clone());
+    store.save(data.clone()).unwrap();
+    let revision = store.revision().unwrap();
+    let cancelled = ManagementJob::new();
+    cancelled.cancel();
+    assert!(store.management_delete_report(revision, "keep", &cancelled).is_err());
+    assert!(store.management_delete_report(revision - 1, "keep", &ManagementJob::new()).is_err());
+    assert_eq!(store.load().unwrap(), data);
+    let receipt = store.management_delete_report(revision, "keep", &ManagementJob::new()).unwrap();
+    assert_eq!(receipt.deleted, 1);
+    assert!(receipt.revision > revision);
+    let after = store.load().unwrap();
+    assert_eq!(after["reports"], json!([other]));
+    assert_eq!(after["settings"], data["settings"]);
+    assert_eq!(store.connect().unwrap().query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0)).unwrap(), "ok");
+}
+
+#[test]
+fn deletion_without_backup_rejects_integrity_failure_before_single_or_clear() {
+    for single in [true, false] {
+        let dir = tempdir().unwrap();
+        let store = Storage::new(dir.path().into()).unwrap();
+        let data = management_data();
+        let revision = management_setup(&store, &data);
+        store.connect().unwrap().execute_batch("PRAGMA ignore_check_constraints=ON; INSERT INTO storage_revision(singleton,revision) VALUES(2,0);").unwrap();
+        let result = if single {
+            store.management_delete_report(revision, "keep", &ManagementJob::new())
+        } else {
+            store.unified_clear_reports(revision, &ManagementJob::new())
+        };
+        assert!(result.unwrap_err().contains("integrity check failed"));
+        assert_eq!(store.load().unwrap(), data);
+        assert_eq!(store.revision().unwrap(), revision);
+    }
+}
+
+#[test]
+fn single_delete_without_backup_rolls_back_on_sql_failure() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let data = management_data();
+    store.save(data.clone()).unwrap();
+    let revision = store.revision().unwrap();
+    store.connect().unwrap().execute_batch("CREATE TRIGGER reject_single_delete BEFORE DELETE ON reports BEGIN SELECT RAISE(ABORT,'injected single delete failure'); END;").unwrap();
+    let error = store.management_delete_report(revision, "keep", &ManagementJob::new()).unwrap_err();
+    assert!(error.contains("injected single delete failure"), "{error}");
+    assert_eq!(store.load().unwrap(), data);
+    assert_eq!(store.revision().unwrap(), revision);
+    assert_eq!(store.connect().unwrap().query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0)).unwrap(), "ok");
 }
 
 #[test]

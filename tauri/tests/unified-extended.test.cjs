@@ -25,7 +25,10 @@ function fixture(overrides={}){
  const defaults={changesType:'day',changesMethod:'previous',changesFrom:'2024-01-01',changesTo:'2024-01-02',changesPercent:'30',changesCountMin:'5',changesAmountMin:'1000',changesMode:'all',changesDirection:'all',changesSort:'name',comparisonMode:'periods',periodComparisonScope:'single',comparisonScope:'single',structureMetric:'amount',structureLimit:'10',structureScope:'selected',usualWindow:'4',usualPercent:'30',regularityGap:'4',regularityStatus:'all'};
  for(const [id,value]of Object.entries(defaults))nodes.get(id).value=value;
  const hooks={scope:[],snapshot:[],views:{}},tables=[],calls=[];
- const api=new Proxy({...overrides},{get(target,key){if(key in target)return target[key];if(key==='load'||key==='save')throw Error('Forbidden full history API');return (...args)=>{calls.push({key,args});return Promise.reject(Error('Unexpected API '+key));};}});
+ const methods={...overrides};
+ for(const [direct,legacy,convert]of [['unifiedChangesPageAtPage','unifiedChangesPage',a=>[a[0],a[1],null]],['unifiedPatternPageAtPage','unifiedPatternPage',a=>[...a.slice(0,4),null]],['nativeCompositionPageAtPage','nativeCompositionPage',a=>[...a.slice(0,4),null,a[5]]],['unifiedNameOptionsAtPage','unifiedNameOptions',a=>[a[0],a[1],null,a[3]]]])if(!methods[direct]&&methods[legacy])methods[direct]=(...args)=>methods[legacy](...convert(args));
+ if(!methods.unifiedComparisonWindow&&methods.unifiedComparisonPage)methods.unifiedComparisonWindow=async(...args)=>{const rows=await methods.unifiedComparisonPage(...args.slice(0,3),null,args[4]);return {rows,total_rows:rows.length};};
+ const api=new Proxy(methods,{get(target,key){if(key in target)return target[key];if(key==='load'||key==='save')throw Error('Forbidden full history API');return (...args)=>{calls.push({key,args});return Promise.reject(Error('Unexpected API '+key));};}});
  const UI={api,revision:1,snapshot:{org_names:['A','B','C','D']},state:{selectedMetrics:new Set(['count','amount'])},$:id=>nodes.get(id),el:(tag,text,cls)=>{const node=new Element(tag,text);node.className=cls;return node;},fmt:n=>Number.isFinite(n)?String(n):'—',table:(root,metric,caption,headers,rows,options)=>{tables.push({root:root.id,metric,caption,headers,rows,options});root.append(new Element('table',rows.map(row=>row.map(c=>c?.textContent??String(c??'—')).join('|')).join('\n')));},setPeriodInput:(id,kind,date)=>{nodes.get(id).value=date;},range:(kind,from,to,source)=>/^\d{4}-\d{2}-\d{2}$/.test(from)&&from<=to?{type:source==='daily'?'day':kind,displayType:kind,source,from,to}:null,request:(scope,overrides={})=>({revision:scope.revision,source:scope.source,displayType:scope.displayType,organizations:scope.organizations,selectedNames:scope.selectedNames,query:{method:'previous',from:scope.from,to:scope.to,percent:30,min_count:5,min_amount:1000,...overrides}}),onScope:cb=>hooks.scope.push(cb),onSnapshot:cb=>hooks.snapshot.push(cb),onView:(name,cb)=>(hooks.views[name]??=[]).push(cb),drawChart(){},notice(){}};
  const window={unifiedUI:UI};vm.runInNewContext(script,{window,setTimeout,clearTimeout,console,Date,Map,Set});window.unifiedExtended.init();
  const scope={revision:1,source:'daily',displayType:'day',type:'day',from:'2024-01-01',to:'2024-01-02',organizations:['A'],selectedNames:['Work'],selectedKeys:['work:Work'],nameRows:[{name:'Work',key:'work:Work',kind:'work'}],allNames:false};
@@ -36,6 +39,15 @@ function page(name='Work'){
  return {rows:[{key:'work:'+name,name,kind:'work',org:'A',baseStart:'2024-01-01',currentStart:'2024-01-02',status:'new',count:measure,amount:measure}],next:null,total_rows:1,summary:{rows:1,grown:0,fallen:0,new:1,gone:0,top_count:null,top_amount:null,totals:{missing_pairs:0,invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_pairs:0}},missing_examples:[]};
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
+test('extended SQL pagination seeks directly, removes duplicate ranges and rejects stale callbacks',async()=>{
+ const requests=[];let fail=false;const fx=fixture({unifiedChangesPageAtPage:async(...args)=>{requests.push(args);if(fail)throw Error('scroll SQL failed');return {...page(),next:args[2]?null:'changes-cursor',total_rows:120};}});
+ const attached=[],reset=[];fx.window.sqlRowScroll={attach:(root,options)=>{attached.push({root,options});return root;},reset:root=>reset.push(root),retire:(...nodes)=>nodes.forEach(node=>{if(node)node.hidden=true;})};
+ fx.publish();fx.view('changes');await settle();let entry=attached.findLast(x=>x.root.id==='changesResults');assert.ok(entry);assert.equal(entry.options.size,50);assert.equal(entry.options.direct,true);assert.equal(entry.options.total,120);
+ assert.equal(fx.nodes.get('changesPrev').hidden,true);assert.equal(fx.nodes.get('changesNext').hidden,true);assert.equal(fx.nodes.get('changesPage').textContent,'');
+ const resets=reset.filter(root=>root.id==='changesResults').length;await entry.options.go(4);assert.equal(requests.length,1);await entry.options.go(2);assert.equal(requests[1][2],2);entry=attached.at(-1);await entry.options.go(1);assert.equal(requests[2][2],1);entry=attached.at(-1);assert.equal(entry.options.index,1);
+ await entry.options.go(0);assert.equal(requests[3][2],0);assert.equal(reset.filter(root=>root.id==='changesResults').length,resets,'successful paging must preserve shared pending edge');assert.doesNotMatch(fx.nodes.get('changesPage').textContent,/Страница/);entry=attached.at(-1);fail=true;await entry.options.go(1);assert.match(entry.root.textContent,/scroll SQL failed/);assert.ok(reset.includes(entry.root));
+ const count=requests.length;await entry.options.go(0);assert.equal(requests.length,count);fx.publish(null);assert.ok(reset.includes(entry.root));
+});
 test('original controls initialize once and changes discard a late SQL response',async()=>{
  const first=deferred(),second=deferred();let reads=0;const fx=fixture({unifiedChangesPage:()=>++reads===1?first.promise:second.promise});fx.window.unifiedExtended.init();fx.publish();fx.view('changes');
  fx.nodes.get('changesMode').value='strong';fx.nodes.get('changesMode').dispatch('change');assert.equal(reads,2);
@@ -162,7 +174,7 @@ test('hidden advanced controls advertise an active KPI direction filter',async()
  const category=f.nodes.get('changesSummary').children[1];
  category.dispatch('click');await settle();
  assert.equal(f.nodes.get('changesDirection').value,'down');
- assert.match(f.nodes.get('changesActiveFilter').textContent,/снижение/);
+ assert.match(f.nodes.get('changesActiveFilter').textContent,/^фильтр: снижение/);
  f.nodes.get('changesDirection').value='all';f.nodes.get('changesDirection').dispatch('change');await settle();
  assert.doesNotMatch(f.nodes.get('changesActiveFilter').textContent,/снижение/);
 });

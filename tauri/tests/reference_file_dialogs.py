@@ -1,8 +1,9 @@
 """Cancel only verified, owned Windows common file dialogs in the installed app.
 
-The empty-database walkthrough only cancels. The after-data walkthrough creates
-one isolated temporary backup and opens it for read-only verification; it never
-accepts a Save destination or restores/imports data. No dialog/IPC API is replaced.
+The empty-database walkthrough only cancels. The after-data walkthrough opens an
+isolated backup for read-only verification, then tests copy/schedule/cancel via
+real IPC on that backup. It never accepts a Save destination or replaces the live
+database. No dialog/IPC API is replaced.
 """
 import ctypes
 from ctypes import wintypes
@@ -15,7 +16,7 @@ import tempfile
 import time
 from itertools import zip_longest
 
-from playwright.sync_api import expect
+from playwright.sync_api import Error as PlaywrightError, expect
 
 TIMEOUT = 90_000
 
@@ -308,21 +309,35 @@ class OwnedFileDialogs:
         return text.value
 
     def inspect(self, hwnd, title, screenshot=None, require_cancel=True):
-        result = subprocess.run(
-            ['powershell', '-NoProfile', '-NonInteractive', '-Command', self.inspect_script],
-            env=dict(os.environ, ANALIZ_SMOKE_DIALOG_PID=str(self.native.pid),
-                     ANALIZ_SMOKE_DIALOG_HWND=str(hwnd), ANALIZ_SMOKE_FILE_TITLE=title,
-                     ANALIZ_SMOKE_FILE_SCREENSHOT=str(screenshot) if screenshot else ''),
-            capture_output=True, encoding='utf-8', errors='replace', timeout=20)
-        if result.returncode:
-            raise AssertionError('Owned file-dialog UIA verification failed: ' + result.stderr.strip())
+        owner = self.user32.GetWindow(hwnd, 4)
+        for attempt in range(1, 4):
+            self.verify_window(hwnd, owner, title)
+            assert self.native.window_class(hwnd) == '#32770'
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-NonInteractive', '-Command', self.inspect_script],
+                env=dict(os.environ, ANALIZ_SMOKE_DIALOG_PID=str(self.native.pid),
+                         ANALIZ_SMOKE_DIALOG_HWND=str(hwnd), ANALIZ_SMOKE_FILE_TITLE=title,
+                         ANALIZ_SMOKE_FILE_SCREENSHOT=str(screenshot) if screenshot else ''),
+                capture_output=True, encoding='utf-8', errors='replace', timeout=20)
+            self.verify_window(hwnd, owner, title)
+            if not result.returncode:
+                break
+            error = result.stderr.strip()
+            # A common file dialog can rebuild its UIA descendant tree while
+            # FindAll reads it. Retry only that provider error, on the same
+            # still-visible owned window. Never infer controls or send input.
+            if attempt == 3 or 'ElementNotAvailableException' not in error:
+                raise AssertionError('Owned file-dialog UIA verification failed: ' + error)
+            time.sleep(.1)
         facts = json.loads(result.stdout)
+        assert facts['pid'] == self.native.pid and facts['title'] == title, facts
+        facts['uiaReadAttempts'] = attempt
         facts['nativeChildren'] = self.native_inventory(hwnd)
         facts['dialogHwnd'] = int(hwnd)
         if screenshot:
             record = Path(screenshot).with_name('native-file-dialogs-inventory-' + Path(screenshot).stem + '.json')
             record.write_text(json.dumps(facts, ensure_ascii=False, indent=2), encoding='utf-8')
-        assert facts['pid'] == self.native.pid and facts['title'] == title, facts
+        self.verify_window(hwnd, owner, title)
         cancel = self.cancel_control(hwnd, facts) if require_cancel else None
         return facts, cancel
 
@@ -424,11 +439,13 @@ class ReferenceFileDialogWalkthrough:
           .some(n => n.getClientRects().length)""", timeout=TIMEOUT)
 
     def section(self, name):
-        self.page.locator('#refData').click()
-        sheet = self.page.locator('#sheet')
-        expect(sheet).to_be_visible()
-        sheet.get_by_role('button', name=name, exact=True).click()
-        expect(self.page.locator('#toolsPage')).to_be_visible(timeout=TIMEOUT)
+        key = {'Отчёты': 'upload', 'Группы работ': 'groups', 'Настройки': 'storage'}[name]
+        tab = self.page.locator(f'.tool-tabs [data-section="{key}"]')
+        if not tab.is_visible():
+            self.page.locator('#refImport' if key == 'upload' else '#refSettings').click()
+        if tab.get_attribute('aria-pressed') != 'true':
+            tab.click()
+        expect(self.page.locator('#' + key)).to_be_visible(timeout=TIMEOUT)
         self.settled()
 
     def drafts(self):
@@ -485,9 +502,9 @@ def check_reference_file_dialogs(page, nativeConfirmations, output):
     exercise, section, settled = walk.exercise, walk.section, walk.settled
     initial_folder = page.evaluate('window.desktopAPI.list()')['folder']
     assert page.evaluate('window.unifiedUI.snapshot.reports') == 0
-    assert not page.locator('#refWorkspaceDialog').is_visible()
+    expect(page.locator('dialog:modal')).to_have_count(0)
     walk.evidence['notReachableOnEmptyDatabase'] = [
-        'Summary CSV and separate restored-copy Save are exercised after importing test data']
+        'Summary CSV is exercised after importing test data']
 
     page.locator('#refImport').click()
     expect(page.locator('#upload')).to_be_visible(timeout=TIMEOUT)
@@ -554,9 +571,9 @@ def check_reference_file_dialogs(page, nativeConfirmations, output):
 
 
 def check_reference_data_file_dialogs(page, nativeConfirmations, output):
-    """Two Save methods reachable only with actual data and a verified backup.
+    """Summary Save cancellation, read-only backup UI and retained restore IPC.
 
-    Call immediately after check_reference_data(), before open_full_workspace()
+    Call immediately after check_reference_data(), before opening other sections
     and the subsequent data-mutating scenarios in windows_smoke.py.
     """
     walk = ReferenceFileDialogWalkthrough(page, nativeConfirmations, output,
@@ -564,7 +581,7 @@ def check_reference_data_file_dialogs(page, nativeConfirmations, output):
     revision = walk.revision
     reports = page.evaluate('window.unifiedUI.snapshot.reports')
     assert reports > 0, 'Populated summary is required for the actual CSV Save route'
-    assert not page.locator('#refWorkspaceDialog').is_visible()
+    expect(page.locator('dialog:modal')).to_have_count(0)
     page.locator('#sharedHeader .main-nav').get_by_role(
         'button', name='Сводка', exact=True).click()
     walk.settled()
@@ -581,6 +598,10 @@ def check_reference_data_file_dialogs(page, nativeConfirmations, output):
         original = hashlib.sha256(backup.read_bytes()).hexdigest()
         assert nativeConfirmations.revision() == revision
         walk.section('Настройки')
+        for removed in ('Создать отдельную восстановленную копию',
+                        'Восстановить при следующем запуске',
+                        'Отменить запланированное восстановление'):
+            expect(page.get_by_role('button', name=removed, exact=True)).to_have_count(0)
         chooser = page.locator('#importBackup').locator('xpath=ancestor::label[1]')
         expect(chooser).to_be_visible()
         chooser.click()
@@ -598,19 +619,44 @@ def check_reference_data_file_dialogs(page, nativeConfirmations, output):
             **opened, reportCount=reports, sourceSha256=original,
             screenshot='native-file-verified-backup-open.png',
             caption=title + ' — настоящий Open изолированной копии для проверки без восстановления')
-        copy = page.get_by_role('button', name='Создать отдельную восстановленную копию', exact=True)
-        nativeConfirmations.cancel_only(copy, 'Создать отдельную проверенную копию SQLite?',
-                                       drafts=walk.drafts)
-        nativeConfirmations.cancel_only(
-            page.get_by_role('button', name='Восстановить при следующем запуске', exact=True),
-            'При следующем запуске рабочая база будет заменена выбранной копией. '
-            'Программа сохранит защитную копию текущей базы. Продолжить?', drafts=walk.drafts)
-        walk.exercise('sqlite-restored-copy', copy, 'Создать отдельную восстановленную копию',
-                      confirmation='Создать отдельную проверенную копию SQLite?')
+        for removed in ('Создать отдельную восстановленную копию',
+                        'Восстановить при следующем запуске',
+                        'Отменить запланированное восстановление'):
+            expect(page.get_by_role('button', name=removed, exact=True)).to_have_count(0)
+
+        # Restoring is no longer a user action in Settings. Preserve coverage of
+        # the supported native APIs using only this runner's synthetic backup.
+        reviewed = page.evaluate('source => window.desktopAPI.nativeRestorePreview(source)', str(backup))
+        assert reviewed['reportCount'] == reports
+        destination = Path(temporary) / 'recovered-test.sqlite3'
+        arguments = [str(backup), reviewed['verification'], str(destination)]
+        copied = page.evaluate('args => window.desktopAPI.nativeRestoreCopy(...args)', arguments)
+        assert destination.is_file() and copied['reportCount'] == reports
+        assert copied['verification'] == reviewed['verification']
+        verified_copy = page.evaluate('source => window.desktopAPI.nativeRestorePreview(source)', str(destination))
+        assert verified_copy['verification'] == reviewed['verification']
+        destination_hash = hashlib.sha256(destination.read_bytes()).hexdigest()
+        try:
+            page.evaluate('args => window.desktopAPI.nativeRestoreCopy(...args)', arguments)
+        except PlaywrightError as error:
+            assert 'уже существует' in str(error), str(error)
+        else:
+            raise AssertionError('Restore IPC overwrote an existing destination')
+        assert hashlib.sha256(destination.read_bytes()).hexdigest() == destination_hash
+        scheduled = page.evaluate('args => window.desktopAPI.nativeRestoreSchedule(...args)', arguments[:2])
+        try:
+            assert scheduled['restartRequired'] is True and scheduled['reportCount'] == reports
+        finally:
+            assert page.evaluate('() => window.desktopAPI.nativeRestoreCancel()') is True
+        assert page.evaluate('() => window.desktopAPI.nativeRestoreCancel()') is False
         assert hashlib.sha256(backup.read_bytes()).hexdigest() == original
-        assert sorted(p.name for p in Path(temporary).glob('*.sqlite3')) == [backup.name], (
-            'Cancelling Save unexpectedly created a restored SQLite destination')
+        assert sorted(p.name for p in Path(temporary).glob('*.sqlite3')) == sorted([backup.name, destination.name])
         assert nativeConfirmations.revision() == revision
+        walk.evidence['restoreIpc'] = dict(reportCount=reports, verification=reviewed['verification'],
+            independentCopy=True, refusedOverwrite=True, scheduledThenCancelled=True,
+            repeatedCancel=False, liveRevisionUnchanged=True)
+        (walk.output / (walk.record_name + '.json')).write_text(
+            json.dumps(walk.evidence, ensure_ascii=False, indent=2), encoding='utf-8')
         # Clear the private verified-preview draft before removing its temporary
         # source. Reload uses the real app bootstrap and retains the SQLite data.
         page.reload(wait_until='domcontentloaded')
@@ -619,7 +665,7 @@ def check_reference_data_file_dialogs(page, nativeConfirmations, output):
             arg=reports, timeout=TIMEOUT)
         walk.settled()
         assert nativeConfirmations.revision() == revision
-        expect(page.locator('#refWorkspaceDialog')).not_to_be_visible(timeout=TIMEOUT)
+        expect(page.locator('dialog:modal')).to_have_count(0)
         page.locator('#sharedHeader .main-nav').get_by_role(
             'button', name='Сводка', exact=True).click()
         page.screenshot(path=str(walk.output / 'native-file-dialogs-data-returned.png'))

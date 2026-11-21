@@ -7,7 +7,7 @@ function init(){
  const UI=window.unifiedUI,{api,$,el}=UI;
  const LIMIT=50,kinds={day:'День',week:'Неделя',month:'Месяц'},types={invalid:'Некорректное значение',skipped:'Пропуск строки',mismatch:'Расхождение',warning:'Предупреждение',missing:'Пропущен период',duplicate:'Повторный период',overlap:'Пересечение','empty-name':'Пустое название',import:'Импорт'};
  let generation=0,reportTicket=0,calendarTicket=0,qualityTicket=0,detailTicket=0;
- let reportAfter=null,reportBack=[],reportNext=null,qualityOffset=0,qualityNext=null;
+ let reportIndex=0,qualityOffset=0;
  let year=null,calendarData=null,monthPoints=[],dayPoints=new Map(),selectedMonth=null;
  let sourcePath=null,sheets=[],review=null,options=null,importBusy=false,sourceTicket=0,parameterTicket=0;
  let wideSheetRows=[];
@@ -24,16 +24,22 @@ function init(){
   else root.append(wrap);
  }
  function reportFilter(extra={}){return {report_type:null,organization:null,from:null,to:null,...extra};}
- const reportPager=el('div',undefined,'unified-pager'),reportPageStatus=el('span','Страница 1'),reportPrev=button('← Предыдущие',()=>{if(!reportBack.length)return;reportAfter=reportBack.pop();void loadReports();}),reportMore=button('Следующие →',()=>{if(!reportNext)return;reportBack.push(reportAfter);reportAfter=reportNext;void loadReports();});
- reportPager.id='unifiedReportsPager';reportPrev.id='unifiedReportsPrev';reportMore.id='unifiedReportsNext';reportPageStatus.id='unifiedReportsPage';reportPageStatus.setAttribute('role','status');reportPageStatus.setAttribute('aria-live','polite');reportPager.setAttribute('aria-label','Страницы загруженных отчётов');reportPager.append(reportPrev,reportPageStatus,reportMore);$('reports').after(reportPager);
- async function reportOrgs(id,root,rev,after=null){
-  try{const rows=await api.managementReportOrgPage(rev,id,after,LIMIT);if(UI.revision!==rev||!root.isConnected)return;
-   for(const row of rows)root.append(el('span',row[1]+' '));
-   if(rows.length===LIMIT){const more=button('Ещё подразделения',()=>{more.remove();void reportOrgs(id,root,rev,rows.at(-1)[0]);});root.append(more);}
-  }catch(error){if(UI.revision===rev)root.textContent='Не удалось прочитать подразделения: '+String(error.message||error);}
+ const reportPager=el('div',undefined,'unified-pager'),reportPageStatus=el('span','');
+ reportPager.id='unifiedReportsPager';reportPageStatus.id='unifiedReportsPage';reportPageStatus.setAttribute('role','status');
+ reportPager.append(reportPageStatus);$('reports').after(reportPager);
+ window.sqlRowScroll.retire($('qualityPrev'),$('qualityNext'));
+ async function reportOrgs(id,root,rev,index=0){
+  const current=()=>UI.revision===rev&&root.isConnected;
+  try{
+   const {rows,total_rows:total}=await api.managementReportOrgWindow(rev,id,index,LIMIT);
+   if(!current())return;
+   root.replaceChildren(...rows.map(row=>el('span',row[1]+' ')));
+   root.dataset.sqlScrollHost='report-organizations';
+   window.sqlRowScroll.attach(root,{index,size:LIMIT,count:rows.length,total,label:'Подразделения отчёта',go:i=>current()&&reportOrgs(id,root,rev,i)});
+  }catch(error){if(current()){window.sqlRowScroll.reset(root);root.textContent='Не удалось прочитать подразделения: '+String(error.message||error);}}
  }
  function qualityAction(report){return button('Контроль качества',()=>{
-  $('qualitySource').value='saved';syncQualityPeriods();$('qualityPeriod').value='all';$('qualityFrom').value=$('qualityTo').value='';qualityRange={from:report.start,to:report.start};
+  $('qualitySource').value='saved';syncQualityPeriods();$('qualityPeriod').value='all';setQualityDates(report.start,report.start);
   $('qualitySearch').value='';$('qualityReportSource').value=report.source_name||'';qualityOffset=0;void loadQuality();$('qualityHeading').scrollIntoView?.({block:'start',behavior:'smooth'});
  });}
  function reportCard(r,rev){
@@ -42,11 +48,9 @@ function init(){
   const orgs=el('details'),list=el('p');orgs.append(el('summary','Подразделения ('+r.organizations+')'),list);let loaded=false;orgs.addEventListener('toggle',()=>{if(orgs.open&&!loaded){loaded=true;void reportOrgs(r.id,list,rev);}});card.append(orgs,qualityAction(r));
   if(api.nativeDeleteReport){let deleting=false;const action=button('Удалить отчёт',async()=>{
    if(deleting||UI.revision!==rev)return;deleting=true;action.disabled=true;
-   try{if(await window.confirm('Удалить отчёт '+r.start+' — '+r.end+' после создания резервной копии SQLite?')!==true)return;
+   try{if(await window.confirm('Удалить отчёт '+r.start+' — '+r.end+'?')!==true)return;
     if(UI.revision!==rev)throw Error('Данные изменились. Обновите список отчётов.');
-    const destination=await api.chooseSqliteBackupPath('analiz-before-delete-'+new Date().toISOString().slice(0,10)+'.sqlite3');if(!destination){UI.notice?.('Удаление отменено: резервная копия не выбрана.');return;}
-    if(UI.revision!==rev)throw Error('Данные изменились. Обновите список отчётов.');
-    await api.nativeDeleteReport(rev,r.id,destination);
+    await api.nativeDeleteReport(rev,r.id);
      try{await UI.refresh();}catch(error){UI.notice?.('Отчёт удалён из SQLite, но не удалось обновить отображение: '+String(error.message||error)+'. Обновите данные.',true);}
    }catch(error){UI.notice?.('Не удалось удалить отчёт: '+String(error.message||error),true);}finally{deleting=false;action.disabled=false;}
   });card.append(action);}
@@ -54,17 +58,23 @@ function init(){
   if(r.shared_source_artifact)card.append(el('p','Сохранены общие замечания исходного файла; ссылка на отчёт хранения показана в таблице качества.','muted small'));
   return card;
  }
- async function loadReports(){
-  const rev=UI.revision,ticket=++reportTicket;reportNext=null;$('reports').replaceChildren();reportPrev.disabled=reportMore.disabled=true;reportPageStatus.textContent='Страница '+(reportBack.length+1)+' · загрузка…';
+ async function loadReports(index=reportIndex){
+  const rev=UI.revision,ticket=++reportTicket,root=$('reports');
   if(!Number.isSafeInteger(rev)){reportPageStatus.textContent='Данные обновляются';return;}
-  try{const [rows,summary]=await Promise.all([api.managementReportPage(rev,reportFilter(),reportAfter,LIMIT),api.managementReportSummary(rev,reportFilter())]);
-   if(!live(rev,ticket,reportTicket))return;if(!Array.isArray(rows)||rows.length>LIMIT)throw Error('Некорректная страница отчётов');
+  try{
+   const filter=reportFilter();
+   const [{rows,total_rows:total},summary]=await Promise.all([api.managementReportWindow(rev,filter,index,LIMIT),api.managementReportSummary(rev,filter)]);
+   if(!live(rev,ticket,reportTicket))return;
+   if(!Array.isArray(rows)||rows.length>LIMIT)throw Error('Некорректная страница отчётов');
    $('reportCount').textContent=summary.reports+' периодов · '+summary.rows+' строк · '+UI.fmt(summary.amount,'amount');
-   for(const r of rows){$('reports').append(reportCard(r,rev));if(kinds[r.report_type]&&validDate(r.start))savedQualityPeriods.add(r.report_type+':'+r.start);}if($('qualitySource').value!=='pending')syncQualityPeriods();if(!rows.length)$('reports').append(el('p','Отчёты не найдены.'));
-   const offset=reportBack.length*LIMIT,total=summary.reports,totalPages=Math.max(1,Math.ceil(total/LIMIT));reportPageStatus.textContent='Страница '+(reportBack.length+1)+' из '+totalPages+' · '+(total?(offset+1)+'–'+(offset+rows.length)+' из '+total:'Отчётов: 0');
-   reportNext=rows.length===LIMIT&&offset+rows.length<total?{start:rows.at(-1).start,id:rows.at(-1).id}:null;reportPrev.disabled=!reportBack.length;reportMore.disabled=!reportNext;
+   root.replaceChildren();
+   for(const r of rows){root.append(reportCard(r,rev));if(kinds[r.report_type]&&validDate(r.start))savedQualityPeriods.add(r.report_type+':'+r.start);}
+   if($('qualitySource').value!=='pending')syncQualityPeriods();
+   if(!rows.length)root.append(el('p','Отчёты не найдены.'));
+   reportIndex=index;reportPageStatus.textContent='';
+   window.sqlRowScroll.attach(root,{index,size:LIMIT,count:rows.length,total,footer:reportPager,label:'Страницы загруженных отчётов',go:i=>live(rev,ticket,reportTicket)&&loadReports(i)});
    if(year===null)year=Number((summary.latest||new Date().toISOString()).slice(0,4));
-  }catch(error){if(live(rev,ticket,reportTicket)){reportPageStatus.textContent='Страница недоступна';status('reportCount','Не удалось прочитать отчёты: '+String(error.message||error));$('reports').replaceChildren();}}
+  }catch(error){if(live(rev,ticket,reportTicket)){window.sqlRowScroll.reset(root);reportPageStatus.textContent='Список недоступен';status('reportCount','Не удалось прочитать отчёты: '+String(error.message||error));root.replaceChildren();}}
  }
  // Keep the year trigger mounted while the request changes status, so both
  // confirmation and Escape return focus to the very button that opened it.
@@ -109,12 +119,16 @@ function init(){
    }
   }catch(error){if(live(rev,ticket,calendarTicket)){calendarStatus(year+' год · Не удалось прочитать календарь: '+String(error.message||error));$('reportCalendar').replaceChildren();clearDetails();}}
  }
- async function sourceList(root,filter,rev,after=null){
-  const token=detailTicket;
-  try{const rows=await api.managementReportPage(rev,reportFilter(filter),after,LIMIT);if(!live(rev,token,detailTicket)||!root.isConnected)return;
-   for(const r of rows)root.append(reportCard(r,rev));if(!rows.length&&after===null)root.append(el('p','Источники не найдены. Отсутствие отчёта не означает нулевые показатели.'));
-   if(rows.length===LIMIT){const more=button('Показать ещё источники',()=>{more.remove();void sourceList(root,filter,rev,{start:rows.at(-1).start,id:rows.at(-1).id});});root.append(more);}
-  }catch(error){if(live(rev,token,detailTicket))root.append(el('p','Не удалось прочитать источники: '+String(error.message||error)));}
+ async function sourceList(root,filter,rev,index=0){
+  const token=detailTicket,current=()=>live(rev,token,detailTicket)&&root.isConnected;
+  try{
+   const {rows,total_rows:total}=await api.managementReportWindow(rev,reportFilter(filter),index,LIMIT);
+   if(!current())return;
+   root.replaceChildren(...rows.map(r=>reportCard(r,rev)));
+   if(!rows.length)root.append(el('p','Источники не найдены. Отсутствие отчёта не означает нулевые показатели.'));
+   root.dataset.sqlScrollHost='report-sources';
+   window.sqlRowScroll.attach(root,{index,size:LIMIT,count:rows.length,total,label:'Источники выбранного периода',go:i=>current()&&sourceList(root,filter,rev,i)});
+  }catch(error){if(current()){window.sqlRowScroll.reset(root);root.replaceChildren(el('p','Не удалось прочитать источники: '+String(error.message||error)));}}
  }
  async function openMonth(n,trigger){
   clearDetails();selectedMonth=n;const rev=UI.revision,[from,to]=monthBounds(n),root=$('calendarDetails'),p=monthPoints.find(p=>p.start===from);
@@ -137,8 +151,9 @@ function init(){
  }
  $('calendarPrev').addEventListener('click',()=>{if(year>1){year--;void loadCalendar();}});$('calendarNext').addEventListener('click',()=>{if(year<9998){year++;void loadCalendar();}});
  // Canonical quality filters include native global search and source filename.
- let qualityRange=null,previewRead=Promise.resolve();
+ let previewRead=Promise.resolve();
  const savedQualityPeriods=new Set();
+ const qualityActions=el('div',undefined,'actions');$('qualitySummary').after(qualityActions);
  function pendingPeriods(){
   const periods=new Set();
   if(review?.qualityPeriodMonths){
@@ -150,19 +165,34 @@ function init(){
   }else for(const r of review?.sampleReports||[])if(kinds[r.kind]&&validDate(r.start))periods.add(r.kind+':'+r.start);
   return periods;
  }
+ function syncQualityCalendar(){
+  const field=$('qualityPeriod'),all=field.children[0];
+  if(all?.value==='all')all.textContent=$('qualityFrom')?.value||$('qualityTo')?.value?'Диапазон по датам':'Все периоды';
+  window.referenceCalendar?.syncField(field);
+ }
+ function setQualityDates(from='',to=''){
+  for(const [id,date] of [['qualityFrom',from],['qualityTo',to]]){
+   const field=$(id);field.value=date;window.referenceCalendar?.syncField(field);
+  }
+  syncQualityCalendar();
+ }
  function syncQualityPeriods(){
   const field=$('qualityPeriod'),previous=field.value,pending=$('qualitySource').value==='pending';
   const options=pending?pendingPeriods():savedQualityPeriods;
   const all=el('option','Все периоды');all.value='all';field.replaceChildren(all);
   for(const key of [...options].sort()){const [kind,date]=key.split(':'),o=el('option',kinds[kind]+' · '+date);o.value=key;field.append(o);}
-  field.value=options.has(previous)?previous:'all';
-  $('qualityPeriodHint').textContent=pending&&review&&(review.qualityPeriodsPartial===true||(!review.qualityPeriodMonths&&review.reportCount>(review.sampleReports?.length||0)))?'Календарь показывает часть подтверждённых периодов Excel. Другие даты задайте в полях «Период с» и «Период до».':'';
+  field.value=options.has(previous)?previous:'all';syncQualityCalendar();
+  $('qualityPeriodHint').textContent=pending&&review&&(review.qualityPeriodsPartial===true||(!review.qualityPeriodMonths&&review.reportCount>(review.sampleReports?.length||0)))?'Календарь показывает часть подтверждённых периодов Excel. Другие даты задайте в полях «С» и «По».':'';
  }
  const periodHint=el('small',undefined,'muted');periodHint.id='qualityPeriodHint';$('qualityPeriod').after(periodHint);
  for(const [id,label] of [['qualitySearch','Поиск замечаний'],['qualityReportSource','Файл источника']]){const field=el('label',label),input=el('input');input.id=id;input.type='search';input.maxLength=1024;field.append(input);$('qualityType').parentElement.parentElement.append(field);}
  $('qualityType').replaceChildren();for(const [value,label] of [['all','Все проблемы'],...Object.entries(types)]){const o=el('option',label);o.value=value;$('qualityType').append(o);}
- for(const [id,title]of [['qualityFrom','Период с'],['qualityTo','Период до']]){const field=el('label',title),input=el('input');input.id=id;input.type='date';field.append(input);$('qualityType').parentElement.parentElement.append(field);input.addEventListener('change',()=>{qualityRange=null;$('qualityPeriod').value='all';qualityOffset=0;void loadQuality();});}
- function qualityFilter(){const period=$('qualityPeriod').value;let range=qualityRange;if(!range&&($('qualityFrom').value||$('qualityTo').value))range={from:$('qualityFrom').value||null,to:$('qualityTo').value||null};if(period!=='all'){const [type,date]=period.split(':');range={from:date,to:date,report_type:type};}return {from:range?.from||null,to:range?.to||null,report_type:range?.report_type||null,organization:$('qualityOrg').value==='all'?null:$('qualityOrg').value,kind:$('qualityType').value==='all'?null:$('qualityType').value,search:$('qualitySearch').value.trim()||null,source:$('qualityReportSource').value.trim()||null};}
+ for(const [id,title]of [['qualityFrom','С'],['qualityTo','По']]){const field=el('label',title),input=el('input');input.id=id;input.type='date';field.append(input);$('qualityType').parentElement.parentElement.append(field);input.addEventListener('change',()=>{$('qualityPeriod').value='all';syncQualityCalendar();qualityOffset=0;void loadQuality();});}
+ function qualityFilter(){
+  const period=$('qualityPeriod').value,exact=period==='all'?null:period.split(':');
+  return {from:exact?exact[1]:$('qualityFrom').value||null,to:exact?exact[1]:$('qualityTo').value||null,report_type:exact?exact[0]:null,
+   organization:$('qualityOrg').value==='all'?null:$('qualityOrg').value,kind:$('qualityType').value==='all'?null:$('qualityType').value,search:$('qualitySearch').value.trim()||null,source:$('qualityReportSource').value.trim()||null};
+ }
  const repairHints={
   'empty-name':'Заполните название работы в указанной ячейке Excel и повторно проверьте файл.',
   invalid:'Проверьте количество и сумму в указанных ячейках Excel, включая формулы, пустые значения и десятичный разделитель.',
@@ -198,9 +228,9 @@ function init(){
  }
  async function loadQuality(){
   const rev=UI.revision,ticket=++qualityTicket,pending=$('qualitySource').value==='pending',checked=review;
-  qualityNext=null;$('qualityTable').replaceChildren();$('qualityPrev').disabled=$('qualityNext').disabled=true;
+  qualityActions.replaceChildren();$('qualityTable').replaceChildren();
   status('qualityPage','');status('qualitySummary','Загрузка замечаний…');
-  if(pending&&!checked){status('qualitySummary','Сначала проверьте Excel.');return;}
+  if(pending&&!checked){window.sqlRowScroll?.reset($('qualityTable'));status('qualitySummary','Сначала проверьте Excel.');return;}
   if(!Number.isSafeInteger(rev))return;
   const filter=qualityFilter(),query=pending?{source:sourcePath,selection:{format:$('importFormat').value==='daily-wide'?'daily-wide':'legacy',options},reviewToken:checked.reviewToken,filter}:null;
   const current=()=>live(rev,ticket,qualityTicket)&&(!pending||review===checked);
@@ -216,9 +246,10 @@ function init(){
    const result=await response;
    if(!current())return;
    if(!Array.isArray(result.issues)||result.issues.length>LIMIT)throw Error('Некорректная страница качества');
-   renderQualityIssues(result.issues);qualityNext=result.next_offset;
-   status('qualitySummary',(pending?'Предпросмотр · ':'')+'Найдено: '+result.total+'. '+Object.entries(result.counts).map(([k,n])=>(types[k]||(k==='other'?'Другие замечания':k))+': '+n).join(' · ')+'. Отсутствие замечаний само по себе не подтверждает полноту.');
-   status('qualityPage','Страница '+(qualityOffset/LIMIT+1));$('qualityPrev').disabled=qualityOffset===0;$('qualityNext').disabled=qualityNext===null;
+   renderQualityIssues(result.issues);
+   const categories=Object.entries(result.counts).map(([key,n])=>(types[key]||(key==='other'?'Другие замечания':key))+': '+n).join(' · ');
+   const found=(pending?'Предпросмотр · ':'')+'Найдено: '+result.total;
+   status('qualitySummary',[found,categories,'Отсутствие замечаний само по себе не подтверждает полноту'].filter(Boolean).join('. ')+'.');
    if(result.total){
     const save=button('Скачать CSV',async()=>{
      if(!current()||save.disabled)return;save.disabled=true;
@@ -231,20 +262,32 @@ function init(){
      }catch(error){UI.notice?.('Не удалось сохранить CSV: '+String(error.message||error),true);}
      finally{save.disabled=false;if(save.isConnected&&current())save.focus();}
     });
-    save.id='qualityExportCsv';$('qualityTable').append(save);
+    save.id='qualityExportCsv';qualityActions.append(save);
    }
-  }catch(error){if(current()){status('qualitySummary','Не удалось прочитать замечания: '+String(error.message||error));$('qualityTable').replaceChildren();}}
+   const pageLabel=$('qualityPage');pageLabel.textContent='';
+   window.sqlRowScroll.attach($('qualityTable'),{index:Math.floor(offset/LIMIT),size:LIMIT,count:result.issues.length,total:result.total,footer:pageLabel.parentElement,label:'Страницы замечаний к Excel',go:i=>{
+    if(!current())return false;
+    qualityOffset=i*LIMIT;return loadQuality();
+   }});
+  }catch(error){if(current()){window.sqlRowScroll?.reset($('qualityTable'));status('qualitySummary','Не удалось прочитать замечания: '+String(error.message||error));$('qualityTable').replaceChildren();}}
  }
- for(const id of ['qualitySource','qualityPeriod','qualityOrg','qualityType','qualityReportSource','qualitySearch'])$(id).addEventListener(id==='qualitySearch'||id==='qualityReportSource'?'input':'change',()=>{qualityOffset=0;if(id==='qualitySource'){qualityRange=null;syncQualityPeriods();}if(id==='qualityPeriod')qualityRange=null;void loadQuality();});
- $('qualityPrev').addEventListener('click',()=>{if(qualityOffset){qualityOffset=Math.max(0,qualityOffset-LIMIT);void loadQuality();}});$('qualityNext').addEventListener('click',()=>{if(qualityNext!==null){qualityOffset=qualityNext;void loadQuality();}});
+ for(const id of ['qualitySource','qualityPeriod','qualityOrg','qualityType','qualityReportSource','qualitySearch'])$(id).addEventListener(id==='qualitySearch'||id==='qualityReportSource'?'input':'change',()=>{qualityOffset=0;if(id==='qualitySource')syncQualityPeriods();if(id==='qualityPeriod')setQualityDates();void loadQuality();});
  // The canonical file input is intercepted before the browser opens a File:
  // Rust needs the real path and owns parsing, review tokens and atomic writes.
- const acknowledgements=el('div',undefined,'import-date-grid');
- for(const [id,text] of [['unifiedAcceptOverlap','Подтверждаю пересечения типов отчётов'],['unifiedAcceptQuality','Подтверждаю найденные замечания качества']]){const label=el('label',undefined,'checkline'),input=el('input');input.type='checkbox';input.id=id;label.append(input,el('span',text));acknowledgements.append(label);}
- $('replaceExisting').parentElement.after(acknowledgements);
+ const acknowledgements=el('div',undefined,'import-date-grid');acknowledgements.id='unifiedImportAcknowledgements';acknowledgements.hidden=true;
+ for(const id of ['unifiedAcceptOverlap','unifiedAcceptQuality']){const label=el('label',undefined,'checkline'),input=el('input');label.hidden=true;input.type='checkbox';input.id=id;label.append(input,el('span'));acknowledgements.append(label);}
+ $('importPreview').before(acknowledgements);
+ function syncAcknowledgements(result){
+  const c=result?.conflicts||{},q=result?.quality||{},overlap=$('unifiedAcceptOverlap'),quality=$('unifiedAcceptQuality');
+  const reasons=[['замечаний в отчётах',q.issues],['отчётов с расхождениями',q.mismatch_reports],['значимых замечаний источника',q.relevant_source_issues]].filter(([,count])=>count>0);
+  overlap.checked=quality.checked=false;overlap.parentElement.hidden=!(c.cross_type_overlaps>0);quality.parentElement.hidden=!reasons.length;
+  overlap.parentElement.children[1].textContent='Подтверждаю пересечения типов отчётов: '+show(c.cross_type_overlaps)+'. Периоды пересекаются с отчётами другого типа. Проверьте даты и типы перед сохранением.';
+  quality.parentElement.children[1].textContent='Подтверждаю найденные замечания качества: '+reasons.map(([name,count])=>name+' — '+show(count)).join('; ')+'. Просмотрите замечания в предварительном просмотре перед сохранением.';
+  acknowledgements.hidden=overlap.parentElement.hidden&&quality.parentElement.hidden;
+ }
  const importStatus=el('p',undefined,'muted small');importStatus.id='unifiedImportStatus';importStatus.setAttribute('aria-live','polite');$('importPreview').before(importStatus);
  function importLock(){for(const id of ['excelFile','importFormat','importType','importWeek','importMonth','sheetSelect','dailyYear','importMappingMode','replaceExisting','unifiedAcceptOverlap','unifiedAcceptQuality'])$(id).disabled=importBusy||(id==='sheetSelect'&&!sourcePath);$('inspectFile').disabled=importBusy||!sourcePath;$('saveImport').disabled=importBusy||!review;$('addImportMapping').disabled=importBusy;$('saveDailyFolderRule').disabled=importBusy||!review;for(const root of [$('importColumnMappings'),$('importPeriodDates'),$('dailySheetChoices')])for(const control of root.querySelectorAll('input,select,textarea,button'))control.disabled=importBusy;}
- function resetReview(message){review=null;options=null;if($('qualitySource').value==='pending'){qualityOffset=0;syncQualityPeriods();void loadQuality();}$('saveDailyFolderRule').hidden=true;$('saveImport').disabled=true;for(const id of ['unifiedAcceptOverlap','unifiedAcceptQuality'])$(id).checked=false;if(message)status('unifiedImportStatus',message);}
+ function resetReview(message){review=null;options=null;if($('qualitySource').value==='pending'){qualityOffset=0;syncQualityPeriods();void loadQuality();}$('saveDailyFolderRule').hidden=true;$('saveImport').disabled=true;syncAcknowledgements();if(message)status('unifiedImportStatus',message);}
  function changed(){++parameterTicket;if(!importBusy)resetReview('Настройки изменены. Проверьте Excel заново.');}
  function formatChanged(){const wide=$('importFormat').value==='daily-wide';$('dailyWideOptions').hidden=!wide;$('importType').disabled=wide||importBusy;$('weekStartLabel').hidden=wide||$('importType').value==='month';$('monthStartLabel').hidden=wide||$('importType').value!=='month';$('importDateCaption').textContent=$('importType').value==='day'?'Дата первого дня':'Начало первой недели';changed();}
  function mappingRow(value={}){
@@ -320,6 +363,7 @@ function init(){
   return result;
  }
  function renderReview(result){
+  syncAcknowledgements(result);
   const c=result.conflicts||{},q=result.quality||{},root=$('importPreview');root.replaceChildren();const summary=el('div',undefined,'kpi-grid');
   for(const [title,value] of [['Отчётов',result.reportCount],['Строк работ',result.rowCount],['Новых отчётов',c.new_reports],['Замен',c.replacements],['Пересечений',c.cross_type_overlaps],['Ошибок',q.issues],['Замечаний источника',q.relevant_source_issues]]){const box=el('div',undefined,'kpi');box.append(el('strong',show(value)),el('span',title));summary.append(box);}root.append(summary);
   const rows=el('div');page(rows,'Найденные периоды — ограниченная выборка',['Период','До','Тип','Строк','Замечаний'],(result.sampleReports||[]).map(r=>[r.start,r.end,kinds[r.kind]||r.kind,r.rows,r.issues]));root.append(rows);
@@ -392,7 +436,7 @@ function init(){
  }
  window.nativeWorkspaceRefresh=async()=>{await UI.refresh();return true;};
  UI.onSnapshot(snapshot=>{
-  ++generation;++reportTicket;++calendarTicket;++qualityTicket;++detailTicket;savedQualityPeriods.clear();syncQualityPeriods();if(!snapshot){reportPageStatus.textContent='Данные обновляются';resetReview('Обновление данных. Проверьте Excel заново.');$('reports').replaceChildren();$('reportCalendar').replaceChildren();$('calendarDetails').replaceChildren();$('qualityTable').replaceChildren();reportPrev.disabled=reportMore.disabled=$('qualityPrev').disabled=$('qualityNext').disabled=true;return;}reportAfter=null;reportBack=[];qualityOffset=0;qualityRange=null;resetReview('Данные обновлены. Перед импортом выполните новую проверку.');
+  ++generation;++reportTicket;++calendarTicket;++qualityTicket;++detailTicket;savedQualityPeriods.clear();syncQualityPeriods();if(!snapshot){window.sqlRowScroll?.reset($('reports'));window.sqlRowScroll?.reset($('qualityTable'));qualityActions.replaceChildren();reportPageStatus.textContent='Данные обновляются';resetReview('Обновление данных. Проверьте Excel заново.');$('reports').replaceChildren();$('reportCalendar').replaceChildren();$('calendarDetails').replaceChildren();$('qualityTable').replaceChildren();$('qualityPrev').disabled=$('qualityNext').disabled=true;return;}reportIndex=0;qualityOffset=0;resetReview('Данные обновлены. Перед импортом выполните новую проверку.');
   const selected=$('qualityOrg').value;$('qualityOrg').replaceChildren();for(const [value,label]of [['all','Все подразделения'],...(snapshot.org_names||[]).map(v=>[v,v])]){const o=el('option',label);o.value=value;$('qualityOrg').append(o);}$('qualityOrg').value=(snapshot.org_names||[]).includes(selected)?selected:'all';
   void refreshUpload();
  });

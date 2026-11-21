@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const script=fs.readFileSync(path.join(__dirname,'../unified-horizontal-bars.js'),'utf8');
 class Element{
- constructor(name){this.tagName=name.toUpperCase();this.children=[];this.attributes={};this.listeners={};this.style={minWidth:'',setProperty(){}};this.clientWidth=800;this._text='';}
+ constructor(name){this.tagName=name.toUpperCase();this.children=[];this.attributes={};this.dataset={};this.listeners={};this.style={minWidth:'',setProperty(){}};this.clientWidth=800;this._text='';}
  set textContent(v){this._text=String(v);this.children=[];}
  get textContent(){return this._text+this.children.map(c=>typeof c==='string'?c:c.textContent||'').join('');}
  setAttribute(k,v){this.attributes[k]=String(v);}
@@ -12,7 +12,7 @@ class Element{
 }
 function all(node){return [node,...node.children.flatMap(c=>c instanceof Element?all(c):[])];}
 function fixture(){
- const window={unifiedOriginal:{fmt:v=>String(v),displayPeriod:p=>p.start}};
+ const window={sqlRowScroll:require('./scroll-window-fixture.cjs'),unifiedOriginal:{fmt:v=>String(v),displayPeriod:p=>p.start}};
  const document={createElementNS:(_ns,name)=>new Element(name),createElement:name=>new Element(name),createTextNode:text=>{const node=new Element('#text');node.textContent=text;return node;}};
  vm.runInNewContext(script,{window,document});
  return {window,document,root:new Element('div')};
@@ -34,9 +34,13 @@ test('horizontal chart paginates long periods and keeps the renderer bounded',()
  const options={label:name=>name},draw=()=>{root.replaceChildren();window.unifiedHorizontalBars(periods,['A','B'],data,'count',root,options,name=>name,draw);};
  draw();
  assert.equal(all(root).filter(node=>node.tagName==='RECT').length,24);
- const buttons=all(root).filter(node=>node.tagName==='BUTTON');
- assert.equal(buttons.length,2);buttons[1].listeners.click();
+ const host=all(root).find(n=>n.dataset.sqlScrollHost==='chart-periods');
+ assert.equal(host.scrollWindow.total,periods.length);
+ assert.equal(host.scrollWindow.size,12);
+ host.scrollWindow.go(1);
  assert.equal(options.periodPage,1);
+ assert.ok(all(root).includes(host),'redraw keeps the pager host');
  assert.equal(all(root).filter(node=>node.tagName==='RECT').length,24);
- all(root).filter(node=>node.tagName==='BUTTON')[0].listeners.click();assert.equal(options.periodPage,0);
+ host.scrollWindow.go(0);
+ assert.equal(options.periodPage,0);
 });

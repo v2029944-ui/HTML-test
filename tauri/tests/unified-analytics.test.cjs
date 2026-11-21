@@ -27,7 +27,8 @@ function fixture(overrides={}){
  const totals={count:2,amount:20,average:10},summary={complete:true,periods:1,organizations:1,missing:0,values:1,total:totals,available_reports:1,available_total:totals,invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};
  const points=[{start:'2024-01-01',periods:1,missing:0,total:totals},{start:'2024-01-02',periods:1,missing:0,total:totals}];
  const defaults={nativeQualityMatrixPage:async(...args)=>matrixPage(...args),unifiedPeriodOptions:async()=>({rows:[{start:'2024-01-01',end:'2024-01-01'}],min:'2024-01-01',max:'2024-01-02',total_rows:2,next:null}),unifiedNameOptions:async()=>({rows:[{key:'work:W',name:'W',kind:'work'}],next:null,total_rows:1}),nativeAnalysisCompare:async()=>({summary:{before:summary,after:summary},top_count:[],top_amount:[]}),nativeAnalysisOrganizations:async()=>[{org:'A',complete:true,missing:0,total:totals}],nativeAnalysisRanking:async()=>({complete:true,rows:[{key:'work:W',name:'W',kind:'work'}]}),nativeAnalysisTimeline:async()=>({granularity:'period',points}),nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points})};
- const api=new Proxy({...defaults,...overrides},{get(target,key){if(key==='load'||key==='save')throw Error('Forbidden full history');if(!(key in target))throw Error('Unexpected API '+key);return (...args)=>{calls.push({key,args});return target[key](...args);};}});
+ const methods={...defaults,...overrides};methods.unifiedNameOptionsAtPage??=(revision,term,index,limit)=>methods.unifiedNameOptions(revision,term,null,limit);
+ const api=new Proxy(methods,{get(target,key){if(key==='load'||key==='save')throw Error('Forbidden full history');if(!(key in target))throw Error('Unexpected API '+key);return (...args)=>{calls.push({key,args});return target[key](...args);};}});
  const originalHelpers={periodEnd:(start,kind)=>{const d=new Date(start+'T00:00:00Z');if(kind==='week')d.setUTCDate(d.getUTCDate()+6);else if(kind==='month'){d.setUTCMonth(d.getUTCMonth()+1);d.setUTCDate(0);}return d.toISOString().slice(0,10);},displayPeriod:p=>p.start,renderMultiFilter:(id,items,selected,callback)=>multi.set(id,{items,selected,callback})};
  const UI={api,revision:1,snapshot:{revision:1,org_names:['A','B','C','D']},state:{selectedOrganizations:new Set(['A']),selectedMetrics:new Set(['amount','count']),chartMetrics:new Set(['amount','count']),chart:'bar'},$:id=>nodes.get(id),el:(tag,text,cls)=>{const n=new Element(tag,text);n.className=cls;return n;},fmt:n=>Number.isFinite(n)?String(n):'—',notice:(...args)=>notices.push(args),table:(root,metric,caption,headers,rows,options)=>{tables.push({root:root.id,metric,rows,options});root.append(new Element('table',rows.map(r=>r.join('|')).join('\n')));},drawChart:(...args)=>draws.push(args),drawDepartments:(...args)=>draws.push(args),setPeriodInput:(id,kind,date)=>{const node=nodes.get(id);node.dataset.periodType=kind;if(date!==undefined)node.value=date;},range:(kind,from,to,source)=>from&&from<=to?{type:source==='daily'?'day':kind,displayType:kind,source,from,to}:null,publishScope:s=>published.push(s),onSnapshot:fn=>snapshotHook=fn,onView:(view,fn)=>viewHook=fn};
  const window={unifiedUI:UI,unifiedOriginal:originalHelpers,nativePeriodSelection:{fromIsoDate:date=>date,normalize:(_kind,date)=>date},print:()=>prints++};
@@ -37,7 +38,7 @@ function fixture(overrides={}){
 }
 test('dashboard uses bounded aggregates, publishes exact selected names, and prints the captured SQL summary',async()=>{
  const f=fixture();await f.bootstrap();assert.match(f.nodes.get('overviewKpis').textContent,/20/);assert.equal(f.published.at(-1).allNames,false);assert.deepEqual(Array.from(f.published.at(-1).selectedNames),['W']);assert.equal(f.UI.state.reports,undefined);
- assert.equal(f.calls.find(c=>c.key==='unifiedPeriodOptions').args[4],1);assert.ok(f.calls.filter(c=>c.key==='unifiedNameOptions').every(c=>c.args[3]<=50));
+ assert.equal(f.calls.find(c=>c.key==='unifiedPeriodOptions').args[4],1);assert.ok(f.calls.filter(c=>c.key==='unifiedNameOptionsAtPage').every(c=>c.args[3]<=50));
  f.nodes.get('printSummary').dispatch('click');assert.equal(f.prints,1);assert.match(f.nodes.get('printReport').textContent,/Сводка выполненных работ/);
  f.nodes.get('clearAll').dispatch('click');assert.equal(f.published.at(-1).allNames,false);assert.equal(f.published.at(-1).selectedNames.length,0);
  f.nodes.get('selectAll').dispatch('click');assert.equal(f.published.at(-1).allNames,true);assert.equal(f.published.at(-1).selectedNames.length,0);await settle();
@@ -52,6 +53,27 @@ test('late SQL charts are discarded after scope invalidation and errors clear th
  const bad=fixture({nativeAnalysisCompare:async()=>{throw Error('database failed');}});await bad.bootstrap();assert.equal(bad.nodes.get('overviewKpis').textContent,'');assert.match(bad.nodes.get('overviewAlerts').textContent,/database failed/);assert.equal(bad.nodes.get('printSummary').disabled,true);
 });
 function descendants(node){return [node,...node.children.flatMap(child=>typeof child==='object'?descendants(child):[])];}
+test('SQL name pagination seeks directly and resets on search/error',async()=>{
+ let fail=false;const f=fixture({unifiedNameOptionsAtPage:async(_r,term,index,limit)=>{if(fail)throw Error('name read failed');return {rows:Array.from({length:50},(_,i)=>({key:'work:'+i,name:term||'Work '+i,kind:'work'})),total_rows:120,next:null};}});
+ const attached=[],reset=[];f.window.sqlRowScroll={attach:(root,options)=>{attached.push({root,options});return root;},reset:root=>reset.push(root)};
+ await f.bootstrap();let entry=attached.findLast(x=>x.root===f.nodes.get('categories'));assert.ok(entry);assert.equal(entry.options.size,50);assert.equal(entry.options.direct,true);assert.equal(entry.options.total,120);
+ assert.ok(descendants(entry.root).filter(n=>n.tagName==='BUTTON').every(n=>n.hidden));
+ const before=f.calls.length,resets=reset.length;await entry.options.go(3);assert.equal(f.calls.length,before);await entry.options.go(2);assert.equal(f.calls.at(-1).args[2],2);entry=attached.findLast(x=>x.root===entry.root);
+ await entry.options.go(1);entry=attached.findLast(x=>x.root===entry.root);assert.equal(entry.options.index,1);assert.equal(f.calls.at(-1).args[2],1);
+ await entry.options.go(0);assert.equal(f.calls.at(-1).args[2],0);assert.equal(reset.length,resets,'paging preserves pending position/stride');assert.doesNotMatch(entry.root.textContent,/Страница/);
+ fail=true;entry=attached.findLast(x=>x.root===entry.root);await entry.options.go(1);assert.match(entry.root.textContent,/name read failed/);assert.ok(reset.includes(entry.root));
+ const stale=entry.options.go;f.nodes.get('categorySearch').value='New';f.nodes.get('categorySearch').dispatch('input');const reads=f.calls.length;await stale(1);assert.equal(f.calls.length,reads);
+ await new Promise(resolve=>setTimeout(resolve,180));
+});
+test('bounded selected chart rows can seek by offset without fetching intermediate SQL windows',async()=>{
+ const entries=Array.from({length:24},(_,i)=>({key:'work:W'+i,name:'W'+i,kind:'work'}));
+ const f=fixture({unifiedNameOptions:async()=>({rows:entries,total_rows:24,next:null})}),attached=[];
+ f.window.sqlRowScroll={attach:(root,options)=>{attached.push({root,options});return root;},reset(){}};
+ await f.bootstrap();await f.window.unifiedAnalytics.applyReferenceScope({...f.published.at(-1),metric:'amount',overviewMode:'single',allNames:false,nameRows:entries});
+ f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ const entry=attached.findLast(x=>x.root.id==='chartsContainer');assert.ok(entry);assert.equal(entry.options.direct,true);assert.equal(entry.options.size,8);assert.equal(entry.options.total,24);
+ const before=f.calls.length;await entry.options.go(2);assert.deepEqual(f.calls.slice(before).filter(c=>c.key==='nativeWorkTimeline').map(c=>c.args[6]),entries.slice(16).map(r=>r.key));assert.equal(attached.at(-1).options.index,2);
+});
 test('incomplete coverage remains visible and opens a missing-org/day matrix',async()=>{
  const complete={complete:true,periods:1,missing:0,total:{count:2,amount:20,average:10},available_reports:1,available_total:{count:2,amount:20,average:10},invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};
  const partial={...complete,complete:false,missing:1,total:{count:null,amount:null,average:null},import_warning_reports:1};
@@ -162,11 +184,11 @@ test('daily missing-report matrix pages a long period without a whole-history qu
  const details=descendants(f.nodes.get('overviewAlerts')).find(n=>n.tagName==='DETAILS');
  assert.ok(details);details.open=true;details.dispatch('toggle');await settle();
  assert.equal(queries.length,1);assert.deepEqual(queries[0],['2024-01-01','2024-01-31']);
- assert.match(details.textContent,/Страница 1 из 2/);
+ assert.match(details.textContent,/01\.01\.2024 — 31\.01\.2024/);
  const next=descendants(details).find(n=>n.tagName==='BUTTON'&&n.textContent==='Позднее →');
  assert.ok(next);next.dispatch('click');await settle();
  assert.equal(queries.length,2);assert.deepEqual(queries[1],['2024-02-01','2024-02-15']);
- assert.match(details.textContent,/Страница 2 из 2/);
+ assert.match(details.textContent,/01\.02\.2024 — 15\.02\.2024/);
  assert.match(details.textContent,/Нет/);
 });
 

@@ -22,12 +22,32 @@ function page(from,to,organizations,patch=()=>({})){
 }
 function fixture(overrides={}){
  const calls=[],root=new Element(),scope={revision:1,type:'day',displayType:'day',source:'daily',from:'2024-02-01',to:'2024-02-01',organizations:['A']};let active=true;
- const api=new Proxy({nativeQualityMatrixPage:async(_rev,_kind,from,to,orgs)=>page(from,to,orgs),...overrides},{get(target,key){if(!(key in target))throw Error('Unexpected API '+key);return(...args)=>{calls.push({key,args});return target[key](...args);};}});
+ const methods={nativeQualityMatrixPage:async(_rev,_kind,from,to,orgs)=>page(from,to,orgs),...overrides};
+ // Older one-window fixtures use this adapter; direct-seek regressions supply the new API explicitly.
+ if(!methods.nativeQualityMatrixReportsAtPage&&methods.nativeQualityMatrixReports)methods.nativeQualityMatrixReportsAtPage=async(rev,kind,start,org,index,limit)=>{const result=await methods.nativeQualityMatrixReports(rev,kind,start,org,index?'bound-cursor':null,limit);return {...result,total_rows:result.next?21:index?21:result.rows.length};};
+ if(methods.nativeReportQualityPage){const read=methods.nativeReportQualityPage;methods.nativeReportQualityPage=async(...args)=>{const result=await read(...args);return {total_rows:result.next_offset?51:args[3]+result.issues.length,...result};};}
+ const api=new Proxy(methods,{get(target,key){if(!(key in target))throw Error('Unexpected API '+key);return(...args)=>{calls.push({key,args});return target[key](...args);};}});
  const UI={api,el:(tag,text,cls)=>{const n=new Element(tag,text);n.className=cls||'';return n;},fmt:n=>n===null?'—':String(n)};
  const window={unifiedUI:UI};vm.runInNewContext(fs.existsSync(filename)?fs.readFileSync(filename,'utf8'):'',{window,Date,Map,Set});
  assert.equal(typeof window.unifiedCoverage?.render,'function');
- return{root,calls,scope,render:()=>window.unifiedCoverage.render(root,scope,()=>active),invalidate:()=>active=false};
+ return{window,root,calls,scope,render:()=>window.unifiedCoverage.render(root,scope,()=>active),invalidate:()=>active=false};
 }
+test('coverage period scrolling seeks directly with one bounded request and retains its host',async()=>{
+ const f=fixture(),attached=[];f.window.sqlRowScroll={attach:(root,options)=>{attached.push({root,options});return root;},reset(){}};
+ f.scope.from='2024-01-01';f.scope.to='2024-12-31';await f.render();let entry=attached.find(x=>x.root.attributes['data-sql-scroll-host']==='coverage-periods');assert.ok(entry);assert.equal(entry.options.axis,'x');assert.equal(entry.options.direct,true);assert.equal(entry.options.total,366);assert.equal(entry.options.size,31);
+ assert.equal(find(f.root,'BUTTON','Позднее →'),undefined);await entry.options.go(11);assert.equal(f.calls.length,2);assert.deepEqual(Array.from(f.calls.at(-1).args.slice(2,4)),['2024-12-07','2024-12-31']);const next=attached.at(-1);assert.equal(next.root,entry.root);assert.equal(next.options.index,11);await entry.options.go(1);assert.equal(f.calls.length,2);await next.options.go(0);assert.equal(f.calls.length,3);
+});
+test('coverage report and diagnostic pagination seeks directly and retains saved summaries',async()=>{
+ const f=fixture({nativeQualityMatrixReportsAtPage:async(_r,_k,start,_org,index)=>({revision:1,rows:[{id:'r1',start,end:start,valid:true}],next:null,total_rows:101}),nativeReportQualityPage:async(_r,_id,scope,offset)=>({issues:[{reason:scope+' '+offset}],total_rows:151,next_offset:offset<150?offset+50:null,evidence:evidence({missing_day_entries:53}),source_anchor:'anchor'})});
+ const attached=[];f.window.sqlRowScroll={attach:(root,options)=>{attached.push({root,options});return root;},reset(){}};await f.render();all(f.root).find(n=>n.className==='coverage-cell-action').dispatch('click');await settle();
+ let reports=attached.findLast(x=>x.root.attributes['data-sql-scroll-host']==='coverage-reports');assert.ok(reports);assert.equal(reports.options.size,20);assert.equal(reports.options.direct,true);await reports.options.go(4);assert.equal(f.calls.at(-1).args[4],4);reports=attached.at(-1);await reports.options.go(1);assert.equal(f.calls.at(-1).args[4],1);assert.equal(attached.at(-1).root,reports.root);
+ const details=all(f.root).find(n=>n.tagName==='DETAILS');details.open=true;details.dispatch('toggle');await settle();let notes=attached.findLast(x=>x.root.attributes['data-sql-scroll-host']==='coverage-notes');assert.ok(notes);assert.equal(notes.options.size,50);assert.equal(notes.options.direct,true);const beforeSeek=f.calls.length;await notes.options.go(2);assert.equal(f.calls.length,beforeSeek+1);assert.equal(f.calls.at(-1).args[3],100);notes=attached.at(-1);await notes.options.go(1);assert.equal(f.calls.at(-1).args[3],50);assert.match(f.root.textContent,/Записи о пропусках дней источника: 53/);find(f.root,'BUTTON','Замечания источника').dispatch('click');await settle();assert.equal(f.calls.at(-1).args[2],'source');assert.equal(attached.at(-1).options.index,0);const before=f.calls.length;await notes.options.go(0);assert.equal(f.calls.length,before);
+});
+test('a replacement coverage render invalidates the previous range and its pending scrolling data',async()=>{
+ const pending=deferred();let reads=0;const f=fixture({nativeQualityMatrixPage:async(_r,_kind,from,to,orgs)=>++reads===1?pending.promise:page(from,to,orgs)});
+ const old=f.render();f.scope.from='2024-03-01';f.scope.to='2024-03-01';await f.render();pending.resolve(page('2024-02-01','2024-02-01',['A']));await old;
+ assert.match(f.root.textContent,/01\.03\.2024/);assert.doesNotMatch(f.root.textContent,/01\.02\.2024/);
+});
 test('quality labels distinguish missing, invalid, conflicts, warnings, zeros and cancellation',async()=>{
  const patches=[{available:false,matching_reports:0,count:null,amount:null,has_activity:false},{available:false,invalid_reports:1,count:null,amount:null},{available:false,duplicate_reports:2,count:null,amount:null},{available:false,overlap_reports:1,count:null,amount:null},{warned_reports:1},{count:0,amount:0,numeric_zero:true,has_activity:false},{count:0,amount:0,numeric_zero:true,has_activity:true}];
  const f=fixture({nativeQualityMatrixPage:async(_r,_k,from,to,orgs)=>page(from,to,orgs,(_o,start)=>patches[Number(start.slice(-2))-1])});
@@ -52,7 +72,7 @@ test('source evidence and saved cells are read only after selecting a report',as
   nativeReportQualityPage:async(_rev,_id,scope,offset)=>({issues:[{reason:scope==='report'?'Проверить сумму':'Проверить источник',sheet:'Q1',organization:'B',date:null,cells:offset?['C18']:['B18']}],next_offset:scope==='report'&&offset===0?50:null,source_anchor:'shared',warning_fallback:false,invalid_entries:0})
  });await f.render();assert.equal(f.calls.length,1);
  all(f.root).find(n=>n.className==='coverage-cell-action').dispatch('click');await settle();
- assert.equal(f.calls.at(-1).key,'nativeQualityMatrixReports');assert.equal(f.calls.at(-1).args.at(-1),20);assert.match(f.root.textContent,/<img src=x>\.xlsx/);
+ assert.equal(f.calls.at(-1).key,'nativeQualityMatrixReportsAtPage');assert.equal(f.calls.at(-1).args.at(-1),20);assert.match(f.root.textContent,/<img src=x>\.xlsx/);
  const summary=find(f.root,'SUMMARY','Замечания отчёта');summary.dispatch('click');summary.open=true;
  const details=all(f.root).find(n=>n.tagName==='DETAILS');details.open=true;details.dispatch('toggle');await settle();
  assert.equal(f.calls.at(-1).key,'nativeReportQualityPage');assert.deepEqual(Array.from(f.calls.at(-1).args),[1,'r1','report',0,50]);
@@ -80,7 +100,7 @@ test('report evidence pages retain the cell and late notes cannot replace anothe
   nativeQualityMatrixReports:async(_r,_k,start,_o,after)=>({revision:1,rows:[{id:after?'second':start,source_name:after?'second.xlsx':start+'.xlsx',start,end:start,valid:true}],next:after?null:'bound-cursor'}),
   nativeReportQualityPage:()=>notes.promise
  });f.scope.to='2024-02-02';await f.render();let actions=all(f.root).filter(n=>n.className==='coverage-cell-action');actions[0].dispatch('click');await settle();
- find(f.root,'BUTTON','Следующие отчёты →').dispatch('click');await settle();assert.deepEqual(Array.from(f.calls.at(-1).args),[1,'day','2024-02-01','A','bound-cursor',20]);assert.match(f.root.textContent,/second.xlsx/);
+ find(f.root,'BUTTON','Следующие отчёты →').dispatch('click');await settle();assert.deepEqual(Array.from(f.calls.at(-1).args),[1,'day','2024-02-01','A',1,20]);assert.match(f.root.textContent,/second.xlsx/);
  find(f.root,'BUTTON','← Предыдущие отчёты').dispatch('click');await settle();const details=all(f.root).find(n=>n.tagName==='DETAILS');details.open=true;details.dispatch('toggle');await settle();assert.equal(f.calls.at(-1).key,'nativeReportQualityPage');
  const oldNotes=details.children[1];actions[1].dispatch('click');await settle();notes.resolve({issues:[{reason:'STALE-NOTES'}],next_offset:null,evidence:evidence({sheet_name:'STALE-SHEET'})});await settle();assert.doesNotMatch(oldNotes.textContent,/STALE-NOTES|STALE-SHEET/);assert.match(f.root.textContent,/2024-02-02.xlsx/);
 });

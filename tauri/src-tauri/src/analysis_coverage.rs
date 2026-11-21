@@ -50,6 +50,7 @@ pub struct QualityMatrixReport {
 }
 #[derive(Debug, Serialize)]
 pub struct QualityMatrixReportsPage {
+    pub total_rows: i64,
     pub revision: i64,
     pub rows: Vec<QualityMatrixReport>,
     pub next: Option<String>,
@@ -277,6 +278,20 @@ impl Storage {
         after: Option<&str>,
         limit: usize,
     ) -> Result<QualityMatrixReportsPage, String> {
+        self.quality_reports_window(revision, report_type, start, organization, after, 0, limit)
+    }
+
+    pub fn quality_matrix_reports_at_page(
+        &self, revision: i64, report_type: &str, start: &str, organization: Option<&str>,
+        page_index: usize, limit: usize,
+    ) -> Result<QualityMatrixReportsPage, String> {
+        self.quality_reports_window(revision, report_type, start, organization, None, page_index, limit)
+    }
+
+    fn quality_reports_window(
+        &self, revision: i64, report_type: &str, start: &str, organization: Option<&str>,
+        after: Option<&str>, page_index: usize, limit: usize,
+    ) -> Result<QualityMatrixReportsPage, String> {
         if !(1..=20).contains(&limit) {
             return Err("Coverage report page limit must be 1..=20".into());
         }
@@ -317,9 +332,16 @@ impl Storage {
         } else {
             " AND r.period_start=?6 AND a.valid=0 AND NOT EXISTS(SELECT 1 FROM analysis_orgs o WHERE o.report_id=r.id)"
         };
+        let candidates = format!("{CANDIDATES_SQL}{predicate}");
+        let total_rows = tx.query_row(
+            &format!("SELECT COUNT(*) FROM ({candidates})"),
+            params![report_type, lower, upper, organization, Option::<&str>::None, start],
+            |row| row.get(0),
+        ).map_err(err)?;
+        let offset = direct_page_offset(page_index, limit, total_rows)?;
         let mut statement = tx
             .prepare(&format!(
-                "{CANDIDATES_SQL}{predicate} ORDER BY r.id LIMIT ?7"
+                "{candidates} ORDER BY r.id LIMIT ?7 OFFSET ?8"
             ))
             .map_err(err)?;
         let mut result = statement
@@ -330,7 +352,8 @@ impl Storage {
                 organization,
                 after_id,
                 start,
-                limit as i64 + 1
+                limit as i64 + 1,
+                offset
             ])
             .map_err(err)?;
         let mut rows = Vec::with_capacity(limit + 1);
@@ -351,6 +374,7 @@ impl Storage {
             None
         };
         Ok(QualityMatrixReportsPage {
+            total_rows,
             revision,
             rows,
             next,

@@ -131,6 +131,32 @@ def _check_trend_exports(page, scratch, scope, evidence):
     evidence['csv']['referenceTrendCsv'] = checks
 
 
+def choose_calendar_date(page, trigger, value):
+    trigger.click()
+    dialog = page.locator('dialog.period-calendar[open]')
+    expect(dialog).to_be_visible(timeout=TIMEOUT)
+    grid = dialog.locator('.cal-grid')
+    while grid.get_attribute('data-mode') != 'years':
+        dialog.locator('.cal-toolbar > button').nth(1).click()
+    year = int(value[:4])
+    for _ in range(30):
+        years = [int(v[:4]) for v in grid.locator('button[data-stamp]').evaluate_all(
+            'nodes => nodes.map(node => node.dataset.stamp)')]
+        if year in years:
+            break
+        dialog.get_by_role('button', name='Назад по календарю' if year < min(years)
+                           else 'Вперёд по календарю', exact=True).click()
+    else:
+        raise AssertionError('Calendar could not reach fixture year ' + value)
+    grid.locator(f'button[data-stamp="{value[:4]}-01-01"]').click()
+    if grid.get_attribute('data-mode') == 'months':
+        grid.locator(f'button[data-stamp="{value[:7]}-01"]').click()
+    if grid.get_attribute('data-mode') == 'days':
+        grid.locator(f'button[data-stamp="{value}"]').click()
+    dialog.get_by_role('button', name='Подтвердить', exact=True).click()
+    expect(page.locator('dialog.period-calendar[open]')).to_have_count(0)
+
+
 def check_reference_data(page, output):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
@@ -172,40 +198,16 @@ def check_reference_data(page, output):
         if not root.evaluate('(node) => node.open'):
             root.locator(':scope > summary').click()
 
-    def choose_date(trigger, value):
-        trigger.click()
-        dialog = page.locator('dialog.period-calendar[open]')
-        expect(dialog).to_be_visible(timeout=TIMEOUT)
-        grid = dialog.locator('.cal-grid')
-        while grid.get_attribute('data-mode') != 'years':
-            dialog.locator('.cal-toolbar > button').nth(1).click()
-        year = int(value[:4])
-        for _ in range(30):
-            years = [int(v[:4]) for v in grid.locator('button[data-stamp]').evaluate_all(
-                'nodes => nodes.map(node => node.dataset.stamp)')]
-            if year in years:
-                break
-            dialog.get_by_role('button', name='Назад по календарю' if year < min(years)
-                               else 'Вперёд по календарю', exact=True).click()
-        else:
-            raise AssertionError('Calendar could not reach fixture year ' + value)
-        grid.locator(f'button[data-stamp="{value[:4]}-01-01"]').click()
-        if grid.get_attribute('data-mode') == 'months':
-            grid.locator(f'button[data-stamp="{value[:7]}-01"]').click()
-        if grid.get_attribute('data-mode') == 'days':
-            grid.locator(f'button[data-stamp="{value}"]').click()
-        dialog.get_by_role('button', name='Подтвердить', exact=True).click()
-        expect(page.locator('dialog.period-calendar[open]')).to_have_count(0)
-        settled()
-
     def select_period(unit, start, end=None, baseline='prev'):
         fold()
         page.locator('#reportShell [data-filter="type"]').get_by_role('button', name=unit, exact=True).click()
         page.locator('#reportShell [data-filter="mode"]').get_by_role(
             'button', name='Диапазон' if end else 'Один период', exact=True).click()
-        choose_date(page.locator('#reportShell [data-date="start"]'), start)
+        choose_calendar_date(page, page.locator('#reportShell [data-date="start"]'), start)
+        settled()
         if end:
-            choose_date(page.locator('#reportShell [data-date="end"]'), end)
+            choose_calendar_date(page, page.locator('#reportShell [data-date="end"]'), end)
+            settled()
         page.locator('#sum-base').select_option(baseline)
         settled()
         current = scope()
@@ -366,7 +368,7 @@ def check_reference_data(page, output):
             assert [_number(v) for v in values[2:5]] == [155, 145, -10], values
             assert math.isclose(_number(values[5]), -6.5, abs_tol=.01), values
         expect(page.locator('#s2 .pager-footer')).to_contain_text('Позиции 1–4 из 4')
-        expect(page.locator('#s2 [aria-label="Следующая страница"]')).to_have_count(0)
+        expect(page.locator('#s2 [data-page-action="next"]')).to_have_attribute('aria-disabled', 'true')
         search = page.locator('#s2 input[placeholder]')
         search.fill('no such fixture work')
         expect(page.locator('#s2 .table-empty')).to_contain_text('Совпадений нет', timeout=TIMEOUT)
@@ -442,12 +444,33 @@ def check_reference_data(page, output):
         trigger = page.locator('#s1 .metric-sample').first
         sheet = open_quality(trigger)
         expect(sheet).to_be_visible()
-        expect(sheet.locator('.coverage-matrix-pager')).to_contain_text('Страница 1 из 12', timeout=TIMEOUT)
+        periods = sheet.locator('[data-sql-pager="coverage-periods"]')
+        expect(periods).to_have_attribute('data-sql-window', '0', timeout=TIMEOUT)
         expect(sheet.locator('td.coverage-ok')).to_have_count(124)
-        sheet.get_by_role('button', name='Позднее →', exact=True).click()
-        expect(sheet.locator('.coverage-matrix-pager')).to_contain_text('Страница 2 из 12', timeout=TIMEOUT)
-        sheet.get_by_role('button', name='← Ранее', exact=True).click()
-        expect(sheet.locator('.coverage-matrix-pager')).to_contain_text('Страница 1 из 12', timeout=TIMEOUT)
+        # Jump directly to December, whose final window contains 25 days.
+        periods.locator('[data-page-action="choose"]').click()
+        periods.locator('[data-page-number="12"]').click()
+        expect(periods).to_have_attribute('data-sql-window', '11', timeout=TIMEOUT)
+        expect(sheet.locator('.coverage-matrix thead')).to_contain_text('31.12.2024')
+        expect(sheet.locator('td.coverage-ok')).to_have_count(100)
+        # Cross one SQL boundary backwards, then activate the first cell. Its
+        # automatic scroll into view must keep the selected November window.
+        periods.locator('[data-page-action="previous"]').click()
+        expect(periods).to_have_attribute('data-sql-window', '10', timeout=TIMEOUT)
+        expect(sheet.locator('td.coverage-ok')).to_have_count(124)
+        november_cell = sheet.locator('.coverage-cell-action').first
+        november_cell.click()
+        inspection = sheet.locator('.coverage-inspection')
+        expect(inspection.locator('.coverage-report')).to_have_count(1, timeout=TIMEOUT)
+        expect(inspection.get_by_role('heading').first).to_contain_text('06.11.2024')
+        expect(periods).to_have_attribute('data-sql-window', '10')
+        inspection.get_by_role('button', name='Закрыть подробности', exact=True).click()
+        expect(november_cell).to_be_focused()
+        periods.locator('[data-page-action="choose"]').click()
+        periods.locator('[data-page-number="1"]').click()
+        expect(periods).to_have_attribute('data-sql-window', '0', timeout=TIMEOUT)
+        expect(sheet.locator('.coverage-matrix thead')).to_contain_text('01.01.2024')
+        expect(sheet.locator('td.coverage-ok')).to_have_count(124)
         cell = sheet.locator('.coverage-cell-action').first
         cell.click()
         inspection = sheet.locator('.coverage-inspection')
@@ -465,9 +488,9 @@ def check_reference_data(page, output):
             expect(inspection).to_contain_text('Признак нуля отчёта с общими замечаниями', timeout=TIMEOUT)
             inspection.get_by_role('button', name='Замечания выбранного отчёта', exact=True).click()
             expect(inspection).to_contain_text('Признак явного нуля: нет.', timeout=TIMEOUT)
-        next_notes = inspection.get_by_role('button', name='Следующие замечания →', exact=True)
-        expect(next_notes).to_be_disabled()
-        evidence['diagnostic_paging'] = 'No second page in the genuine zero-issue fixture; next is disabled.'
+        expect(inspection.get_by_role('button', name='Следующие замечания →', exact=True)).to_have_count(0)
+        expect(inspection.locator('[data-sql-pager="coverage-notes"] [data-page-action="next"]')).to_have_attribute('aria-disabled', 'true')
+        evidence['diagnostic_paging'] = 'No further diagnostic rows in the zero-issue fixture.'
         record('05-current-quality-evidence', '#sheet')
         detail.locator(':scope > summary').focus()
         page.keyboard.press('Escape')

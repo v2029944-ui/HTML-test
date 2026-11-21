@@ -2381,6 +2381,20 @@ impl Storage {
         }
         Ok(ComparisonDashboard{summary,divisions,top_amount,top_count})
     }
+    pub fn analysis_comparison_window(&self,expected:i64,s:&AnalysisScope,q:&ComparisonQuery,org:Option<&str>,page_index:usize,size:usize)->Result<SqlPage<ComparisonValue>,String> {
+        let limit=cap(size)?;
+        let mut connection=self.connect()?;
+        let tx=connection.transaction().map_err(err)?;
+        workspace(&tx,expected,s)?;
+        let (before,after)=comparison(&tx,s,q,org)?;
+        let total_rows=count_sql(&tx,"SELECT count(*) FROM temp.an_comparison")?;
+        let offset=crate::storage::direct_page_offset(page_index,size,total_rows)?;
+        let mut statement=tx.prepare("SELECT key,name,kind,bc,ba,cc,ca FROM temp.an_comparison ORDER BY key LIMIT ?1 OFFSET ?2").map_err(err)?;
+        let mut result=statement.query(params![limit,offset]).map_err(err)?;
+        let mut rows=Vec::new();
+        while let Some(row)=result.next().map_err(err)? {rows.push(comparison_value(row,q,before,after)?);}
+        Ok(SqlPage {rows,total_rows})
+    }
     pub fn analysis_comparison_page(
         &self,
         expected: i64,

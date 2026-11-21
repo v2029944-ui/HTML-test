@@ -294,6 +294,12 @@ impl Storage {
         after: Option<&str>,
         limit: usize,
     ) -> Result<UnifiedNameOptions, String> {
+        self.name_options_window(revision, search, after, limit, None)
+    }
+    pub fn unified_name_options_at_page(&self, revision:i64, search:&str, page_index:usize, limit:usize) -> Result<UnifiedNameOptions,String> {
+        self.name_options_window(revision,search,None,limit,Some(page_index))
+    }
+    fn name_options_window(&self, revision:i64, search:&str, after:Option<&str>, limit:usize, page_index:Option<usize>) -> Result<UnifiedNameOptions,String> {
         if !(1..=50).contains(&limit) || search.len() > 512 {
             return Err("Invalid name option query".into());
         }
@@ -316,7 +322,7 @@ impl Storage {
                 serde_json::to_vec(&json!(["names", revision, search, limit])).map_err(err)?
             )
         );
-        let offset = page_offset(after, &fingerprint)?;
+        let cursor_offset = page_offset(after, &fingerprint)?;
         create_name_catalog(&tx)?;
         let term = normalized(search);
         tx.execute(
@@ -325,6 +331,7 @@ impl Storage {
         )
         .map_err(err)?;
         let total_rows = count_sql(&tx, "SELECT count(*) FROM unified_names")?;
+        let offset=match page_index {Some(index)=>crate::storage::direct_page_offset(index,limit,total_rows)?,None=>cursor_offset};
         let mut stmt=tx.prepare("SELECT key,name,kind FROM unified_names ORDER BY (instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key LIMIT ?2 OFFSET ?3").map_err(err)?;
         let mut result = stmt
             .query(params![term, (limit + 1) as i64, offset])
@@ -445,12 +452,18 @@ impl Storage {
         options: &UnifiedChangeOptions,
         after: Option<&str>,
     ) -> Result<UnifiedChangesPage, String> {
+        self.changes_window(revision,s,q,grouping,options,after,None)
+    }
+    pub fn unified_changes_page_at_page(&self,revision:i64,s:&AnalysisScope,q:&ChangeQuery,grouping:Option<&str>,options:&UnifiedChangeOptions,page_index:usize)->Result<UnifiedChangesPage,String> {
+        self.changes_window(revision,s,q,grouping,options,None,Some(page_index))
+    }
+    fn changes_window(&self,revision:i64,s:&AnalysisScope,q:&ChangeQuery,grouping:Option<&str>,options:&UnifiedChangeOptions,after:Option<&str>,page_index:Option<usize>)->Result<UnifiedChangesPage,String> {
         let mut conn = self.connect()?;
         let tx = conn.transaction().map_err(err)?;
         workspace(&tx, revision, s)?;
         let order = prepare_unified(&tx, s, q, grouping, options)?;
         let fingerprint = fingerprint(&tx, revision, s, json!([q, grouping, options]))?;
-        let offset = page_offset(after, &fingerprint)?;
+        let cursor_offset = page_offset(after, &fingerprint)?;
         let totals = changes_summary(&tx, q)?;
         let unique = |pred: &str| {
             count_sql(&tx,&format!("SELECT count(*) FROM (SELECT org,key FROM unified_values WHERE {pred} GROUP BY org,key)"))
@@ -473,6 +486,7 @@ impl Storage {
             totals,
         };
         let total_rows = count_sql(&tx, "SELECT count(*) FROM unified_visible")?;
+        let offset=match page_index {Some(index)=>crate::storage::direct_page_offset(index,50,total_rows)?,None=>cursor_offset};
         if offset % 50 != 0 || (offset > 0 && offset >= total_rows) {
             return Err("Invalid change page cursor".into());
         }
