@@ -3554,11 +3554,21 @@ function drawChart(periods,orgs,metric,root,options={}) {
   }
   svg.append(svgEl('line',{x1:left,y1:py(0),x2:width-right,y2:py(0),stroke:'var(--axis)'}));
   const step=usableW/periods.length,px=i=>left+step*(i+.5);
-  const gaps=chartTimelineGaps(periods),gapStarts=new Set(gaps.map(gap=>gap.nextIndex));
-  gaps.forEach(gap=>{
-    const x=(px(gap.nextIndex-1)+px(gap.nextIndex))/2;
-    const notice=svgEl('text',{x,y:top+15,'text-anchor':'middle',fill:'var(--warning)','font-size':11},'Пропуск');
-    notice.append(svgEl('title',{},'Нет данных за '+displayDay(gap.first)+' — '+displayDay(periodEnd(gap.last,periods[gap.nextIndex].type))+'. Линия разорвана.'));
+  const breaks=chartTimelineGaps(periods),gapStarts=new Set(breaks.map(gap=>gap.nextIndex));
+  const missingRanges=[];
+  breaks.forEach(({nextIndex,first,last})=>{
+    const hidden=(options.hiddenPeriods||[]).filter(p=>p.start>=first&&p.start<=last);
+    const current=periods[nextIndex];
+    const missing=chartTimelineGaps([periods[nextIndex-1],...hidden,current]);
+    const ranges=missing.map(gap=>displayDay(gap.first)+' — '+displayDay(periodEnd(gap.last,current.type)));
+    missingRanges.push(...ranges);
+    const x=(px(nextIndex-1)+px(nextIndex))/2;
+    const label=missing.length?'Пропуск':hidden.length===1?'Скрыт ноль':'Скрыты нули';
+    const notice=svgEl('text',{x,y:top+15,'text-anchor':'middle',fill:'var(--warning)','font-size':11},label);
+    const details=[];
+    if(ranges.length)details.push('Нет данных за '+ranges.join('; ')+'.');
+    if(hidden.length)details.push('Скрыты подтверждённые нулевые периоды: '+hidden.map(p=>displayPeriod(p)).join(', ')+'.');
+    notice.append(svgEl('title',{},details.join(' ')+(bar?'':' Линия разорвана.')));
     svg.append(notice);
   });
   periods.forEach((p,i)=>{
@@ -3597,10 +3607,9 @@ function drawChart(periods,orgs,metric,root,options={}) {
   root.append(svg);
   const legend=elem('div',null,'chart-legend');
   shown.forEach((x,i)=>{const label=options.label?options.label(x):x;const tag=elem('span',label);tag.title=label;tag.style.setProperty('--series',seriesColor(x));legend.append(tag);});root.append(legend);
-  if(gaps.length){
-    const ranges=gaps.slice(0,3).map(gap=>displayDay(gap.first)+' — '+displayDay(periodEnd(gap.last,periods[gap.nextIndex].type))).join('; ');
-    root.append(elem('p','Между показанными точками нет отчётов за: '+ranges+
-      (gaps.length>3?'; и ещё '+(gaps.length-3)+' промежутков':'')+
+  if(missingRanges.length){
+    root.append(elem('p','Между показанными точками нет отчётов за: '+missingRanges.slice(0,3).join('; ')+
+      (missingRanges.length>3?'; и ещё '+(missingRanges.length-3)+' промежутков':'')+
       '. Линии через пропуски не соединяются.','warn small'));
   }
   if(groups.length>shown.length)root.append(elem('p','Показаны серии '+(page*limit+1)+'–'+(page*limit+shown.length)+'. Все выбранные работы доступны в таблице.','muted small'));

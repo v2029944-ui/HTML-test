@@ -47,6 +47,7 @@ test('confirmed zero filtering keeps missing points and does not change overview
  const points=[{start:'2024-01-01',periods:1,missing:1,total:{count:null,amount:null,average:null}},{start:'2024-01-02',periods:1,missing:0,total:{count:0,amount:0,average:null}}];
  const f=fixture({nativeAnalysisTimeline:async()=>({granularity:'period',points}),nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points})});await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();assert.equal(f.draws.at(-1)[4].data[0],null);assert.equal(f.draws.at(-1)[4].data[1].get('work:W').count,0);
  const overview=f.nodes.get('overviewKpis').textContent;f.nodes.get('hideEmptyPeriods').checked=true;f.nodes.get('hideEmptyPeriods').dispatch('change');await settle();assert.equal(f.draws.at(-1)[0].length,1);assert.equal(f.draws.at(-1)[4].data[0],null);assert.equal(f.nodes.get('overviewKpis').textContent,overview);
+ assert.deepEqual(Array.from(f.draws.at(-1)[4].hiddenPeriods,p=>p.start),['2024-01-02']);
 });
 test('late SQL charts are discarded after scope invalidation and errors clear the old overview',async()=>{
  const wait=deferred();const f=fixture({nativeWorkTimeline:()=>wait.promise});await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();await f.invalidate();wait.resolve({granularity:'period',points:[]});await settle();assert.equal(f.draws.length,0);assert.equal(f.nodes.get('printSummary').disabled,true);

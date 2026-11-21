@@ -298,6 +298,26 @@ test('chart keeps lines across consecutive weeks and breaks across an absent wee
   assert.equal(doubleSegment.items.filter(node=>node.tag==='circle').length,4);
 });
 
+test('hidden zero reports break a line and only genuinely absent days get a missing-report warning',()=>{
+  const day=n=>({type:'day',start:'2026-01-0'+n,end:'2026-01-0'+n});
+  function render(last,hidden){
+    const root=new MockNode('div'),chosen=[day(1),day(last)];
+    const data=[10,20].map(amount=>new Map([['Кран',{amount}]]));
+    run("drawChart(chosen,new Set(['СМУ16']),'amount',root,{categories:['Кран'],data,chart:'line',hiddenPeriods})",
+      {chosen,data,root,hiddenPeriods:hidden.map(day)});
+    const items=nodes(root);
+    assert.equal(items.filter(node=>node.tag==='circle').length,2);
+    assert.equal(items.filter(node=>node.tag==='polyline').length,0);
+    return items.map(node=>node.textContent||'').join(' ');
+  }
+  const zero=render(3,[2]);
+  assert.match(zero,/Скрыт ноль/);
+  assert.doesNotMatch(zero,/Пропуск|нет отчётов за/i);
+  const mixed=render(5,[2,4]);
+  assert.match(mixed,/03\.01\.2026 — 03\.01\.2026/);
+  assert.doesNotMatch(mixed,/нет отчётов за: 02/i);
+});
+
 test('missing monthly period is identified without replacing it with zero',()=>{
   const periodsWithGap=[
     {type:'month',start:'2026-12-01',end:'2026-12-31'},

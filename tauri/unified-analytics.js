@@ -189,12 +189,13 @@ async function renderCharts(index=seriesIndex,paging=false){
   for(let i=4;i<rows.length;i+=4){const batch=await Promise.all(rows.slice(i,i+4).map(row=>api.nativeWorkTimeline(revision,s.type,s.from,s.to,s.organizations,null,row.key,null,s.source==='daily'?s.displayType:null,s.selectedNames)));if(!isCurrent())return;series.push(...batch);}
   if(series.some(item=>item.granularity!==totals.granularity||item.points.length!==totals.points.length||item.points.some((p,i)=>p.start!==totals.points[i].start)))throw Error('Несовпадающие границы SQL-серий. Повторите расчёт.');
   const keep=totals.points.map((p,i)=>!$('hideEmptyPeriods').checked||!confirmedZero(p)||series.some(item=>!confirmedZero(item.points[i]))),points=totals.points.filter((p,i)=>keep[i]),periods=descriptors(points,totals.granularity,s);
+  const hiddenPeriods=descriptors(totals.points.filter((_,i)=>!keep[i]),totals.granularity,s);
   const data=points.map((p,i)=>{if(p.missing!==0)return null;const index=totals.points.indexOf(p);return new Map(rows.map((row,j)=>[row.key,series[j].points[index].missing===0?series[j].points[index].total:{count:null,amount:null,average:null}]));});
   for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id,'',false);
   for(const metric of chosenMetrics())if(state.chart==='table'){
    const raw=[['Итого по выбранным работам',...points.map(p=>p.missing===0?p.total[metric]:null)],...rows.map(row=>[row.name,...data.map(map=>map?.get(row.key)?.[metric]??null)])];
    UI.table($('dataTable'),metric,s.from+' — '+s.to+' · прочерк означает неполные данные.',['Работа / группа',...periods.map(O.displayPeriod)],raw.map(row=>[row[0],...row.slice(1).map(n=>fmt(n,metric))]),{csvRows:raw,csvContext:chartExport(s,isCurrent,'works',[metric])});
-  }else UI.drawChart(periods,new Set(s.organizations),metric,plotSection($('chartsContainer'),metric),{chart:state.chart,orientation:orientation(),categories:rows.map(r=>r.key),data,label:key=>rows.find(r=>r.key===key).name,pointNotice:i=>points[i].missing?'Неполные данные: пропусков '+points[i].missing:''});
+  }else UI.drawChart(periods,new Set(s.organizations),metric,plotSection($('chartsContainer'),metric),{chart:state.chart,orientation:orientation(),hiddenPeriods,categories:rows.map(r=>r.key),data,label:key=>rows.find(r=>r.key===key).name,pointNotice:i=>points[i].missing?'Неполные данные: пропусков '+points[i].missing:''});
   seriesIndex=index;const root=state.chart==='table'?$('dataTable'):$('chartsContainer');pager(root,index,i=>{seriesIndex=i;return renderCharts(i,true);},{size:pageSize,total:allNames?totalNames:selectedRows.size,count:rows.length,label:'Работы на графике',current:isCurrent});
   $('chartHelp').textContent='Выбрано подразделений: '+s.organizations.length+' из '+UI.snapshot.org_names.length+'. Данные сгруппированы '+({day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам',period:'по выбранным периодам'}[totals.granularity]||'по периодам')+'. Пропуски не считаются нулём.';
  }catch(error){if(isCurrent()){for(const id of ['chartsContainer','dataTable'])clear(id,'Не удалось построить аналитику. '+errorText(error));clear('chartOrgTotals');}}
@@ -211,12 +212,13 @@ async function departmentCharts(base,isCurrent){
  }
  for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id);
  const rawSeries=trends.series||[],first=rawSeries[0]?.points||[],keep=first.map((p,i)=>!$('hideEmptyPeriods').checked||!rawSeries.every(series=>confirmedZero(series.points[i]))),points=first.filter((p,i)=>keep[i]),periods=descriptors(points,trends.granularity,s);
+ const hiddenPeriods=descriptors(first.filter((_,i)=>!keep[i]),trends.granularity,s);
  const data=first.map((p,i)=>new Map(rawSeries.map(series=>[series.organization,series.points[i]?.missing===0?series.points[i].total:{count:null,amount:null,average:null}]))).filter((p,i)=>keep[i]);
  if(state.chart==='table'){
   const raw=s.organizations.flatMap(org=>chosen.map(metric=>[org,titles[metric],...data.map(map=>map.get(org)?.[metric]??null)]));
   UI.table($('dataTable'),'amount',s.from+' — '+s.to,['Подразделение','Показатель',...periods.map(O.displayPeriod)],raw.map((row,i)=>[...row.slice(0,2),...row.slice(2).map(n=>fmt(n,chosen[i%chosen.length]))]),{title:'Все выбранные показатели по подразделениям',totalRow:false,csvRows:raw,csvContext:chartExport(s,isCurrent,'organizations',chosen)});
  }else if(chosen.length>1&&value('chartSeriesLayout')==='combined'&&orientation()!=='horizontal')UI.drawDepartments(periods,s.organizations,chosen,data,plotSection($('chartsContainer'),'amount','Совместное сравнение: '+s.organizations.length+' подразделений × '+chosen.length+' показателя'));
- else for(const metric of chosen)UI.drawChart(periods,new Set(s.organizations),metric,plotSection($('chartsContainer'),metric),{chart:state.chart,orientation:orientation(),seriesType:'organizations',categories:s.organizations,data});
+ else for(const metric of chosen)UI.drawChart(periods,new Set(s.organizations),metric,plotSection($('chartsContainer'),metric),{chart:state.chart,orientation:orientation(),hiddenPeriods,seriesType:'organizations',categories:s.organizations,data});
  const raw=organizations.map(org=>[org.org,...chosen.map(metric=>org.total[metric]),org.complete?'Полные данные':'Пропусков: '+org.missing]);
  UI.table($('chartOrgTotals'),'amount',s.from+' — '+s.to,['Подразделение',...chosen.map(m=>titles[m]),'Полнота данных'],raw.map(row=>[row[0],...row.slice(1,-1).map((n,i)=>fmt(n,chosen[i])),row.at(-1)]),{title:'Итог по подразделениям за диапазон',totalRow:false,csvRows:raw,
   headerHelp:['Подразделение из выбранного списка.',...chosen.map(m=>
