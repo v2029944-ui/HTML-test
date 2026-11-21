@@ -83,6 +83,7 @@ impl Checkout {
             }
         }
         let storage = Storage::new(local.path().to_owned())?;
+        storage.revision()?;
         Ok(Self {
             folder: folder.to_owned(),
             local,
@@ -176,6 +177,41 @@ mod tests {
         assert_eq!(fresh.storage.load().unwrap(), data);
         assert_eq!(fresh.commit().unwrap(), 2);
         assert_eq!(head(folder.path()).unwrap(), 2);
+    }
+
+    #[test]
+    fn another_client_reads_the_committed_xlsx_without_reading_the_source_file() {
+        use crate::storage::{import_apply_tests, ImportConfirmation, ImportJob};
+        use analiz_import_core::StageArea;
+        let folder = exchange_folder();
+        let writer = tempfile::tempdir().unwrap();
+        let reader = tempfile::tempdir().unwrap();
+        let source = writer.path().join("daily.xlsx");
+        import_apply_tests::fixture(&source, 3);
+        let area = StageArea::open(writer.path().join("stage")).unwrap();
+        let prepared = import_apply_tests::prepared(&area, &source, "day", "2026-11-01");
+        let checkout = Checkout::open(folder.path(), writer.path()).unwrap();
+        let preview = checkout.storage.preview_import(&prepared).unwrap();
+        assert_eq!(head(folder.path()).unwrap(), 0);
+        let receipt = checkout
+            .storage
+            .apply_import(
+                &prepared,
+                &preview,
+                ImportConfirmation::default(),
+                &ImportJob::new(),
+                |_| {},
+            )
+            .unwrap();
+        assert_eq!((receipt.reports, receipt.rows), (1, 3));
+        let confirmed = checkout.storage.load().unwrap();
+        checkout.commit().unwrap();
+        drop(prepared);
+        fs::remove_file(&source).unwrap();
+        let fresh = Checkout::open(folder.path(), reader.path()).unwrap();
+        assert_eq!(fresh.storage.load().unwrap(), confirmed);
+        assert_eq!(confirmed["reports"][0]["start"], "2026-11-01");
+        assert_eq!(confirmed["reports"][0]["rows"].as_array().unwrap().len(), 3);
     }
 
     #[test]
