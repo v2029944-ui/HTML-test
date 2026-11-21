@@ -294,12 +294,20 @@ impl Storage {
         after: Option<&str>,
         limit: usize,
     ) -> Result<UnifiedNameOptions, String> {
-        self.name_options_window(revision, search, after, limit, None)
+        self.name_options_window(revision, search, after, limit, None, None)
     }
     pub fn unified_name_options_at_page(&self, revision:i64, search:&str, page_index:usize, limit:usize) -> Result<UnifiedNameOptions,String> {
-        self.name_options_window(revision,search,None,limit,Some(page_index))
+        self.name_options_window(revision,search,None,limit,Some(page_index),None)
     }
-    fn name_options_window(&self, revision:i64, search:&str, after:Option<&str>, limit:usize, page_index:Option<usize>) -> Result<UnifiedNameOptions,String> {
+    /// One revision-consistent read returns the catalog total and the surviving selection.
+    pub fn unified_selected_name_options(&self, revision: i64, keys: &[String]) -> Result<UnifiedNameOptions, String> {
+        if keys.len() > 50 || keys.iter().any(String::is_empty) {
+            return Err("Invalid selected name keys".into());
+        }
+        for key in keys { key_bound(key)?; }
+        self.name_options_window(revision, "", None, 50, None, Some(keys))
+    }
+    fn name_options_window(&self, revision:i64, search:&str, after:Option<&str>, limit:usize, page_index:Option<usize>, selected_keys:Option<&[String]>) -> Result<UnifiedNameOptions,String> {
         if !(1..=50).contains(&limit) || search.len() > 512 {
             return Err("Invalid name option query".into());
         }
@@ -331,6 +339,10 @@ impl Storage {
         )
         .map_err(err)?;
         let total_rows = count_sql(&tx, "SELECT count(*) FROM unified_names")?;
+        if let Some(keys) = selected_keys {
+            tx.execute("DELETE FROM unified_names WHERE key NOT IN (SELECT value FROM json_each(?1))",
+                [serde_json::to_string(keys).map_err(err)?]).map_err(err)?;
+        }
         let offset=match page_index {Some(index)=>crate::storage::direct_page_offset(index,limit,total_rows)?,None=>cursor_offset};
         let mut stmt=tx.prepare("SELECT key,name,kind FROM unified_names ORDER BY (instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key LIMIT ?2 OFFSET ?3").map_err(err)?;
         let mut result = stmt

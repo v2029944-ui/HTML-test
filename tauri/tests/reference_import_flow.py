@@ -47,7 +47,7 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     listing = set_folder(page, folder, [p.name for p in folder.glob('*.xlsx')])
     assert len(listing['files']) == 101 and listing['files'][100]['name'] == book.name
     file = listing['files'][100]
-    rule = {'format': 'auto', 'type': 'week', 'start': '2031-01-06', 'sheet': 'Second'}
+    rule = {'format': 'auto', 'type': 'week', 'start': '2031-01-08', 'sheet': 'Second'}
     api(page, 'nativeSetRuleChecked', file['name'], rule, listing['revision'], listing['folder'], file['nativeSignature'])
     page.evaluate('window.unifiedUI.refresh()')
     # The Windows file dialog can return a DOS path instead of the folder's verbatim path.
@@ -64,7 +64,7 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     page.locator('#inspectFile').click()
     wait_for_text(page, '#unifiedImportStatus', 'Проверка завершена', 90_000)
     picker_counts = page.locator('#importPreview .kpi strong').all_text_contents()[:2]
-    expect(page.locator('#importPreview')).to_contain_text('2031-01-06 — 2031-02-16')
+    expect(page.locator('#importPreview')).to_contain_text('2031-01-08 — 2031-02-18')
     expect(page.locator('#sheetSelect')).to_be_enabled()
     page.locator('#importType').select_option('day')
     expect(page.locator('#importPreview')).to_be_empty()
@@ -94,8 +94,8 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     page.locator('#inspectFile').click()
     wait_for_text(page, '#unifiedImportStatus', 'Проверка завершена', 90_000)
     assert auto['reportCount'] == 6 and auto['rowCount'] == 12
-    assert auto['periodRange'] == {'kind': 'week', 'from': '2031-01-06', 'to': '2031-02-16'}
-    expect(page.locator('#importPreview')).to_contain_text('2031-01-06 — 2031-02-16')
+    assert auto['periodRange'] == {'kind': 'week', 'from': '2031-01-08', 'to': '2031-02-18'}
+    expect(page.locator('#importPreview')).to_contain_text('2031-01-08 — 2031-02-18')
     assert picker_counts == [str(auto['reportCount']), str(auto['rowCount'])], picker_counts
     assert page.locator('#importPreview .kpi strong').first.inner_text() == str(auto['reportCount'])
     assert page.locator('#importPreview .kpi strong').nth(1).inner_text() == str(auto['rowCount'])
@@ -107,6 +107,28 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     page.locator('#importType').select_option('week')
     page.locator('#inspectFile').click()
     wait_for_text(page, '#unifiedImportStatus', 'Проверка завершена', 90_000)
+    # A different sheet has a deliberately delayed last set. Only the dates
+    # and doubled amounts of the newly reviewed second sheet may reach SQLite.
+    def choose_date(trigger, value):
+        page.locator(trigger).click()
+        calendar = page.locator('dialog.period-calendar[open]')
+        calendar.locator('[data-stamp="' + value + '"]').click()
+        calendar.get_by_role('button', name='Подтвердить', exact=True).click()
+
+    page.locator('#sheetSelect').select_option('xl/worksheets/sheet1.xml')
+    choose_date('#importWeek + .ref-calendar-field', '2031-01-01')
+    page.locator('#inspectFile').click()
+    wait_for_text(page, '#unifiedImportStatus', 'Проверка завершена', 90_000)
+    if not page.locator('#importAdvanced').evaluate('node=>node.open'):
+        page.locator('#importAdvanced > summary').click()
+    choose_date('#importPeriodDates input[data-ordinal="5"] + .ref-calendar-field', '2031-02-26')
+    page.locator('#inspectFile').click()
+    expect(page.locator('#importPreview')).to_contain_text('2031-01-01 — 2031-03-04', timeout=90_000)
+    page.locator('#sheetSelect').select_option('xl/worksheets/sheet2.xml')
+    choose_date('#importWeek + .ref-calendar-field', rule['start'])
+    expect(page.locator('#saveImport')).to_be_disabled()
+    page.locator('#inspectFile').click()
+    expect(page.locator('#importPreview')).to_contain_text('2031-01-08 — 2031-02-18', timeout=90_000)
     for control in ('unifiedAcceptOverlap', 'unifiedAcceptQuality'):
         field = page.locator('#'+control)
         if field.is_visible():
@@ -116,17 +138,23 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     wait_for_text(page, '#unifiedImportStatus', 'Сохранено отчётов: 6', 90_000)
     page.get_by_role('button', name='Открыть загруженный период', exact=True).click()
     page.wait_for_function('''() => {const s=window.referenceFilters.scope;
-      return s?.type==='week' && s.source==='imported' && s.from==='2031-01-06'
-        && s.to==='2031-02-10' && s.displayTo==='2031-02-16';}''')
+      return s?.type==='week' && s.source==='imported' && s.from==='2031-01-08'
+        && s.to==='2031-02-12' && s.displayTo==='2031-02-18'
+        && s.baseFrom==='2030-11-27' && s.baseTo==='2031-01-01';}''')
     snapshot = api(page, 'nativeSettingsBootstrap')
-    summary = api(page, 'managementReportSummary', snapshot['revision'], {'report_type': 'week'})
+    scope = page.evaluate('window.referenceFilters.scope')
+    summary = api(page, 'managementReportSummary', snapshot['revision'],
+                  {'report_type': scope['type'], 'from': scope['from'], 'to': scope['to']})
     assert summary['reports'] == 6 and abs(summary['amount']-5460) < .000001, summary
+    saved = api(page, 'managementReportWindow', snapshot['revision'], {'report_type': 'week'}, 0, 50)
+    starts = sorted(r['start'] for r in saved['rows'])
+    assert starts == ['2031-01-08', '2031-01-15', '2031-01-22', '2031-01-29', '2031-02-05', '2031-02-12'], starts
     page.screenshot(path=str(output / 'import-flow-second-sheet-week.png'))
     (output / 'import-flow.json').write_text(json.dumps({'folderRows': 101, 'selectedSheet': 'Second',
         'nativePickerPreview': {'sheet': 'Second', 'reportCount': int(picker_counts[0]), 'rowCount': int(picker_counts[1])},
         'automaticPreview': {k: auto[k] for k in ('reportCount', 'rowCount', 'periodRange')},
-        'savedWeeklySummary': summary, 'manualPreviewAndSaveSeconds': time.monotonic()-started,
-        'scope': page.evaluate('window.referenceFilters.scope')}, ensure_ascii=False, indent=2), encoding='utf-8')
+        'savedWeeklyStarts': starts, 'savedWeeklySummary': summary, 'manualPreviewAndSaveSeconds': time.monotonic()-started,
+        'scope': scope}, ensure_ascii=False, indent=2), encoding='utf-8')
     # The SAME valid auto rule must detect a daily book after its source changes.
     # This is preview-only; the six saved weekly reports and revision stay intact.
     from test_daily_wide import wide_xlsx

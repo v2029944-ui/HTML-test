@@ -144,11 +144,13 @@ async function load(){
        (result.folder!==null&&typeof result.folder!=='string')||
        !Number.isSafeInteger(result.revision)||result.revision<0)
       throw Error('Некорректный снимок источников SQLite.');
+    const sameFolder=folder===result.folder;
     folder=result.folder;revision=result.revision;
     invalidate('Список обновлён. Выберите файл для настройки правила.');
     const files=result.files;
     location.textContent=folder?'Выбрана папка: '+folder:'Папка Excel ещё не выбрана.';
-    listedFiles=files;listedRules=result.rules&&typeof result.rules==='object'?result.rules:{};pageIndex=0;renderFiles();
+    listedFiles=files;listedRules=result.rules&&typeof result.rules==='object'?result.rules:{};
+    pageIndex=sameFolder?Math.min(pageIndex,Math.max(0,Math.ceil(files.length/maxVisible)-1)):0;renderFiles();
     void window.nativeFolderAutoImport?.updateSnapshot(result);
     report(folder?'Папка проверена. Состояние автоимпорта указано рядом с переключателем.':
       'Выберите папку Excel. Импорт отчётов выполняется отдельно с проверкой.');
@@ -234,5 +236,6 @@ if(typeof api.onFilesChanged==='function'){
   }
 }
 invalidate();
+if(window.unifiedReports)window.unifiedReports.refreshFolder=load;
 window.nativeFolderReady=load();
 })();

@@ -444,3 +444,60 @@ test('a workspace invalidation clears retained chart dates, controls and results
  await f.invalidate();pending.resolve(result);await settle();
  assert.equal(f.window.unifiedAnalytics.displayedChartScope,null);assert.equal(plot.children.length,0);assert.equal(plot.inert,false);
 });
+
+test('only the displayed work chart or table owns a pager after switching modes',async()=>{
+ const f=fixture(),activePagers=new Map();
+ f.window.sqlRowScroll={
+  attach(root,options){activePagers.set(root.id,options);return root;},
+  reset(root){activePagers.delete(root.id);}
+ };
+ await f.bootstrap();
+ const rows=Array.from({length:17},(_,i)=>({key:'work:'+i,name:'Work '+i,kind:'work'}));
+ f.nodes.get('advancedAnalytics').open=true;
+ await f.window.unifiedAnalytics.applyReferenceScope({...f.published.at(-1),metric:'amount',nameRows:rows});
+ const visible=()=>[...activePagers.keys()].filter(id=>id==='chartsContainer'||id==='dataTable');
+ assert.deepEqual(visible(),['chartsContainer']);
+ f.buttons.find(b=>b.dataset.chart==='table').dispatch('click');await settle();
+ assert.deepEqual(visible(),['dataTable']);
+ assert.equal(activePagers.get('dataTable').count,17);
+ f.buttons.find(b=>b.dataset.chart==='line').dispatch('click');await settle();
+ assert.deepEqual(visible(),['chartsContainer']);
+ await activePagers.get('chartsContainer').go(1);
+ assert.equal(activePagers.get('chartsContainer').index,1);
+});
+
+test('department trends with all performed works allow an empty individual selection',async()=>{
+ const f=fixture({nativeOrganizationTrends:async()=>({granularity:'period',series:[]})});
+ await f.bootstrap();
+ f.nodes.get('advancedAnalytics').open=true;f.nodes.get('chartBreakdown').value='organizations';
+ await f.window.unifiedAnalytics.applyReferenceScope({...f.published.at(-1),metric:'amount',allNames:false,nameRows:[]});
+ const trendReads=()=>f.calls.filter(c=>c.key==='nativeOrganizationTrends');
+ assert.equal(trendReads().length,1);
+ assert.deepEqual([...trendReads()[0].args[7]],[]);
+ assert.match(f.nodes.get('chartHelp').textContent,/все выполненные работы/);
+ f.nodes.get('chartOrgScope').value='selected';f.nodes.get('chartOrgScope').dispatch('change');await settle();
+ assert.equal(trendReads().length,1);
+ assert.match(f.nodes.get('chartsContainer').textContent,/Нет отмеченных работ/);
+ f.nodes.get('chartBreakdown').value='works';f.nodes.get('chartBreakdown').dispatch('change');await settle();
+ assert.match(f.nodes.get('chartsContainer').textContent,/хотя бы одну работу/);
+});
+
+test('overview scope, period label and KPIs follow the same completed SQL response through overlap and failure',async()=>{
+ const pending=[],f=fixture({nativeAnalysisCompare:()=>{const gate=deferred();pending.push(gate);return gate.promise;}});
+ const filters={revision:1,type:'day',displayType:'day',source:'daily',overviewMode:'range',organizations:['A'],metric:'amount',allNames:true,nameRows:[]};
+ const apply=month=>f.window.unifiedAnalytics.applyReferenceScope({...filters,
+  from:'2024-'+month+'-10',to:'2024-'+month+'-11',baseFrom:'2024-'+month+'-08',baseTo:'2024-'+month+'-09'});
+ const result=amount=>{const period={complete:true,periods:1,missing:0,total:{count:1,amount,average:amount}};return {summary:{before:period,after:period}};};
+ const presented=()=>f.window.unifiedAnalytics.displayedOverviewScope;
+ const kpis=f.nodes.get('overviewKpis'),period=f.nodes.get('overviewPeriodText');
+ const jan=apply('01');pending[0].resolve(result(111));await jan;
+ const feb=apply('02'),mar=apply('03');
+ assert.equal(presented().from,'2024-01-10');assert.equal(presented().baseFrom,'2024-01-08');
+ assert.match(period.textContent,/10\.01\.2024/);assert.match(kpis.textContent,/111/);assert.equal(kpis.inert,true);
+ pending[2].resolve(result(888));await mar;
+ pending[1].resolve(result(222));await feb;
+ assert.equal(presented().from,'2024-03-10');assert.match(period.textContent,/10\.03\.2024/);assert.match(kpis.textContent,/888/);
+ const apr=apply('04');pending[3].reject(Error('current error'));await apr;
+ assert.equal(presented(),null);assert.equal(period.textContent,'');assert.equal(kpis.textContent,'');
+ assert.match(f.nodes.get('overviewAlerts').textContent,/current error/);
+});

@@ -1,6 +1,6 @@
 //! Independent current/baseline intervals over real work × organization facts.
 use super::*;
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::atomic::AtomicBool};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -193,6 +193,16 @@ fn change_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReferenceChangeRow> {
         percent: row.get(5)?,
     })
 }
+fn comparable_organizations(c: &Connection, scope: &AnalysisScope) -> Result<Vec<String>, String> {
+    let mut stmt = c.prepare("SELECT f.item FROM analysis_filter_items f JOIN ref_orgs o ON o.org=f.item WHERE f.id=?1 ORDER BY f.ordinal").map_err(err)?;
+    let rows = stmt.query_map([&scope.organizations], |row| row.get(0)).map_err(err)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(err)
+}
+
+fn filtered_rows_sql(q: &ReferenceChangesRequest) -> String {
+    format!("SELECT name,org,before,after,delta,percent FROM ref_changes WHERE {FILTER} ORDER BY {}", order(q))
+}
+
 fn comparison_csv_context(
     writer: &mut impl Write,
     c: &Connection,
@@ -269,7 +279,7 @@ impl Storage {
             prepare_reference(&tx,q,scope)?;
             let counts=tx.query_row("SELECT coalesce(sum(kind='up'),0),coalesce(sum(kind='down'),0),coalesce(sum(kind='new'),0),coalesce(sum(kind='gone'),0) FROM ref_changes",[],|r|Ok(ReferenceChangeCounts {up:r.get(0)?,down:r.get(1)?,new:r.get(2)?,gone:r.get(3)?})).map_err(err)?;
             let leader=tx.query_row("SELECT name,org,before,after,delta,percent FROM ref_changes ORDER BY abs(delta) DESC,name COLLATE classic_ru,org COLLATE classic_ru,name,org LIMIT 1",[],change_row).optional().map_err(err)?;
-            let comparable=tx.prepare("SELECT f.item FROM analysis_filter_items f JOIN ref_orgs o ON o.org=f.item WHERE f.id=?1 ORDER BY f.ordinal").map_err(err)?.query_map([&scope.organizations],|r|r.get(0)).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+            let comparable=comparable_organizations(&tx,scope)?;
             let search=unified_analytics::normalized(&q.search);
             let (total,searched,significant)=tx.query_row(
                 "SELECT count(*) FILTER (WHERE ?1='all' OR (?1='significant' AND kind<>'') OR kind=?1),
@@ -277,10 +287,46 @@ impl Storage {
                  FROM ref_changes WHERE instr(classic_normalized(name),?2)>0",
                 params![q.kind,search],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))
             ).map_err(err)?;
-            let rows=tx.prepare(&format!("SELECT name,org,before,after,delta,percent FROM ref_changes WHERE {FILTER} ORDER BY {} LIMIT 12 OFFSET ?3",order(q))).map_err(err)?.query_map(params![q.kind,search,i64::from(q.page)*12],change_row).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+            let rows=tx.prepare(&(filtered_rows_sql(q)+" LIMIT 12 OFFSET ?3")).map_err(err)?.query_map(params![q.kind,search,i64::from(q.page)*12],change_row).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
             Ok(ReferenceChangesPage {rows,total,searched,significant,counts,leader,comparable})
         })
     }
+    /// Print all matching rows from one snapshot without sending an unbounded IPC response.
+    pub fn reference_changes_print(
+        &self,
+        q: &ReferenceChangesRequest,
+        cancelled: Arc<AtomicBool>,
+        mut send: impl FnMut(Vec<ReferenceChangeRow>) -> Result<(), String>,
+    ) -> Result<Vec<String>, String> {
+        const BATCH_SIZE: usize = 128;
+        if cancelled.load(Ordering::Acquire) {
+            return Err("Печать отменена.".into());
+        }
+        self.reference_scope(q, |scope| {
+            let mut conn = self.connect()?;
+            let stop = Arc::clone(&cancelled);
+            conn.progress_handler(1000, Some(move || stop.load(Ordering::Acquire)));
+            let tx = conn.transaction().map_err(err)?;
+            prepare_reference(&tx, q, scope)?;
+            let mut stmt = tx.prepare(&filtered_rows_sql(q)).map_err(err)?;
+            let mut rows = stmt.query(params![q.kind, unified_analytics::normalized(&q.search)]).map_err(err)?;
+            let mut batch = Vec::with_capacity(BATCH_SIZE);
+            while let Some(row) = rows.next().map_err(err)? {
+                if cancelled.load(Ordering::Acquire) {
+                    return Err("Печать отменена.".into());
+                }
+                batch.push(change_row(row).map_err(err)?);
+                if batch.len() == BATCH_SIZE {
+                    send(std::mem::replace(&mut batch, Vec::with_capacity(BATCH_SIZE)))?;
+                }
+            }
+            if !batch.is_empty() {
+                send(batch)?;
+            }
+            comparable_organizations(&tx, scope)
+        })
+    }
+
     pub fn reference_changes_csv(
         &self,
         q: &ReferenceChangesRequest,
@@ -309,7 +355,7 @@ impl Storage {
                 csv_record(writer,&[Cell::Text("Минимальная сумма"),Cell::Number(Some(q.min_amount))])?;
                 csv_record(writer,&[])?;
                 csv_record(writer,&[Cell::Text("Работа"),Cell::Text("Подразделение"),Cell::Text("Было"),Cell::Text("Стало"),Cell::Text("Изменение"),Cell::Text("%")])?;
-                let mut stmt=tx.prepare(&format!("SELECT name,org,before,after,delta,percent FROM ref_changes WHERE {FILTER} ORDER BY {}",order(q))).map_err(err)?;
+                let mut stmt=tx.prepare(&filtered_rows_sql(q)).map_err(err)?;
                 let mut rows=stmt.query(params![q.kind,unified_analytics::normalized(&q.search)]).map_err(err)?;
                 while let Some(row)=rows.next().map_err(err)? {
                     let value=change_row(row).map_err(err)?;

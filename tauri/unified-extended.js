@@ -225,10 +225,14 @@ function addBoundedPager(root,state,rows,run,total){
  if(window.sqlRowScroll?.attach(root,{index,size:50,total,count:rows.length,label:'Сравнение работ',direct:true,go}))return;
  const bar=UI.el('div',null,'change-pagination'),previous=UI.el('button','← Предыдущая','button secondary'),next=UI.el('button','Следующая →','button secondary');previous.type=next.type='button';previous.disabled=index===0;next.disabled=index+1>=pages;previous.addEventListener('click',()=>go(index-1));next.addEventListener('click',()=>go(index+1));bar.append(previous,UI.el('span','Показано '+rows.length+' из '+total,'muted small'),next);root.append(bar);
 }
+const contributionFields=['contributionResults','contributionCheck'];
 async function comparison(index=0,paging=false){
  if(window.referenceDetail?.active&&!referencePanel('comparison'))return;
  comparisonLayout();if(!scope)return;
  const task=loading('comparison',['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis'],paging);$('analyticsDetails').hidden=true;
+ const contributionTask=loading('contribution',contributionFields);
+ window.sqlRowScroll?.reset($('contributionResults'));
+ let contributionInput=null;
  try{if(!selected())throw Error('Отметьте работы или группы для сравнения.');
   if(value('comparisonMode')==='organizations'){await departmentComparison(task,index);return;}
   const {before,after}=comparisonRanges(),s=scopeFor(after);
@@ -247,9 +251,9 @@ async function comparison(index=0,paging=false){
     'Сравнение недоступно: '+(!beforeComplete&&!afterComplete?'не хватает отчётов базового и анализируемого периодов':!beforeComplete?'не хватает отчётов базового периода':'не хватает отчётов анализируемого периода')+
     (!beforeComplete&&!afterComplete?'. Значения недоступны; пропуск не означает ноль.':'. Показаны только доступные показатели; прочерк не означает ноль.'),'warn small'));
   }
+  contributionInput={before,after,sample};
   if(!beforeComplete&&!afterComplete){
    clear('comparisonTable','Нет доступных значений для сравнения: оба интервала неполны. Проверьте наличие отчётов или выберите другие периоды. Пропуск не означает ноль.');
-   if($('contributions').open)contributions();
    return;
   }
   for(const metric of metrics()){
@@ -283,8 +287,14 @@ async function comparison(index=0,paging=false){
     ['Работа / группа','Значение раньше','Значение сейчас','Разница','Изменение, %'],rows,{csvRows:raw,csvContext:fullExport(task,req,'comparison',metric,{before:{from:before.from,to:before.to}})});
   }
   task.s.index=index;addBoundedPager($('comparisonTable'),task.s,page,i=>comparison(i,true),windowPage.total_rows);
-  if($('contributions').open)contributions();
- }catch(error){task.error(error);}finally{task.done();}
+ }catch(error){contributionInput=null;task.error(error);contributionTask.error(error);}
+ finally{
+  task.done();contributionTask.done();
+  if(task.valid()&&contributionInput){
+   task.s.captured=contributionInput;
+   if($('contributions').open)void contributions();
+  }
+ }
 }
 async function departmentComparison(task,index){
  const range=referencePanel('comparison')?scope:value('comparisonScope')==='range'?fieldsRange('comparisonRangeStart','comparisonRangeEnd'):fieldsRange('comparisonPeriod'),s=scopeFor(range),chosen=[...comparisonMetrics];let baseOrg=value('comparisonBaseOrg');
@@ -330,10 +340,11 @@ async function departmentComparison(task,index){
  for(const metric of chosen){const plot=UI.el('div',null,'metric-plot');$('comparisonDynamicsPlots').append(UI.el('h3',titles[metric]+' · '+caption(range)),plot);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'bar',orientation:orientation(),seriesType:'organizations',categories:s.organizations,data});}
 }
 async function contributions(index=0,paging=false){
- const task=loading('contribution',['contributionResults','contributionCheck'],paging);
- try{if(!scope)throw Error('Выберите периоды.');const {before,after}=comparisonRanges(),s=scopeFor(after,{selectedNames:[],allNames:true}),chosen=metrics().filter(m=>m!=='average');
-  if(referencePanel('comparison')){
-   const sample=await sampleFor(s,[before,after]);if(!task.valid())return;
+ const input=slot('comparison').captured;
+ if(!scope||!input||value('comparisonMode')!=='periods')return;
+ const task=loading('contribution',contributionFields,paging);
+ try{const {before,after,sample}=input,s=scopeFor(after,{selectedNames:[],allNames:true}),chosen=metrics().filter(m=>m!=='average');
+  if(sample){
    if(!sample.included.length){clear('contributionCheck','Нет сопоставимых подразделений.');clear('contributionResults');return;}
    s.organizations=sample.included;
   }

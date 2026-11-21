@@ -685,6 +685,10 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                         page.screenshot(animations='disabled')
                         check_shell_layout(page, headings=True)
                         record(f'17-shell-{theme}-{width}',page.locator('#reportShell'))
+                        fold.locator('summary').click()
+                        page.screenshot(animations='disabled')
+                        check_shell_layout(page, folded=True)
+                        fold.locator('summary').click()
             finally:
                 page.locator('#appearanceTheme').select_option(initial_theme,force=True)
                 if not initially_open and fold.evaluate('el=>el.open'):

@@ -426,3 +426,61 @@ fn all_work_summary_and_changes_are_explicitly_separate_from_selected_detail_gro
         let csv=fs::read_to_string(destination).unwrap();assert!(csv.contains("\"Область работ\";\"Все работы\""));assert!(csv.contains("\"Сумма\";\"1100\";\"2200\";\"1100\";\"100\""));
     }
 }
+
+#[test]
+fn print_streams_the_complete_sorted_filter_from_one_snapshot_in_bounded_batches() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut base = Vec::new();
+    let mut current = Vec::new();
+    for i in 0..1201 {
+        let name = format!("Позиция {i:04}");
+        base.push(row("A", &name, 1., 10.));
+        current.push(row("A", &name, 2., 100. + i as f64));
+    }
+    base.push(row("A", "Позиция исключена по категории", 1., 1000.));
+    current.push(row("A", "Позиция исключена по категории", 1., 100.));
+    base.push(row("A", "Не отвечает поиску", 1., 10.));
+    current.push(row("A", "Не отвечает поиску", 5., 4000.));
+    let revision = prepare(
+        &store,
+        vec![
+            report("base", "2024-01-01", json!(base)),
+            report("now", "2024-01-10", json!(current)),
+        ],
+    );
+    let mut q = request(revision);
+    q.to = q.from.clone();
+    q.page = 99;
+    q.kind = "up".into();
+    q.sort = "delta".into();
+    q.search = "позиц".into();
+
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let mut names = Vec::new();
+    let mut sizes = Vec::new();
+    let sample = store.reference_changes_print(&q, Arc::clone(&cancelled), |rows| {
+        sizes.push(rows.len());
+        names.extend(rows.into_iter().map(|r| r.name));
+        Ok(())
+    }).unwrap();
+    assert_eq!(sample, ["A", "Empty"]);
+    assert_eq!(sizes, [128, 128, 128, 128, 128, 128, 128, 128, 128, 49]);
+    assert_eq!(names, (0..1201).rev().map(|i| format!("Позиция {i:04}")).collect::<Vec<_>>());
+
+    let error = store.reference_changes_print(&q, Arc::clone(&cancelled), |_| Err("Channel closed".into())).unwrap_err();
+    assert_eq!(error, "Channel closed");
+    let c = store.connect().unwrap();
+    assert_eq!(c.query_row("SELECT count(*) FROM analysis_filters", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+    assert_eq!(store.revision().unwrap(), revision);
+    let mut received = 0;
+    assert!(store.reference_changes_print(&q, Arc::clone(&cancelled), |rows| {
+        received += rows.len();
+        cancelled.store(true, Ordering::Release);
+        Ok(())
+    }).is_err());
+    assert_eq!(received, 128);
+    cancelled.store(false, Ordering::Release);
+    q.revision -= 1;
+    assert!(store.reference_changes_print(&q, Arc::clone(&cancelled), |_| panic!("stale revision emitted rows")).is_err());
+}

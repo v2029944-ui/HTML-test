@@ -18,16 +18,16 @@ function fixture(overrides={}){
  const insight=add(s1,'div','insight-card');add(insight,'h2');add(insight,'div');add(insight,'button','','Открыть полный анализ изменений');
  for(let i=0;i<4;i++){const n=add(s2,'button','kpi');add(n,'div');const v=add(n,'div','num');v.setAttribute('data-count','');add(n,'div');}
  add(s2,'button','','Как читать результаты?');const sensitivity=add(s2,'div','filter-sensitivity');add(sensitivity,'button','filter-threshold');add(sensitivity,'span');const leaders=add(s2,'div','leaders');for(let i=0;i<2;i++){const c=add(leaders,'div','card');add(c,'div','leader-name');add(c,'div','leader-value');add(c,'div');}
- const input=add(s2,'input');input.setAttribute('placeholder','Название работы');const sort=add(s2,'select');sort.setAttribute('data-sort','');sort.value='delta';const metric=add(s2,'strong');metric.setAttribute('data-current-change-metric','');const heading=add(s2,'div','changes-heading');add(heading,'h2');
+ const input=add(s2,'input');input.setAttribute('placeholder','Название работы');const sort=add(s2,'select');sort.setAttribute('data-sort','');sort.value='delta';const metric=add(s2,'strong');metric.setAttribute('data-current-change-metric','');const heading=add(s2,'div','changes-heading');add(heading,'h2');add(heading,'span','excluded-orgs');
  add(s2,'p','match-note');const ct=add(add(s2,'div','table-viewport'),'table','changes-table');const head=add(ct,'thead'),tr=add(head,'tr');for(let i=0;i<6;i++)add(tr,'th');add(ct,'tbody');add(s2,'div','table-empty');add(s2,'span','pager-footer');const exp=add(s2,'button','','Скачать CSV');exp.setAttribute('data-export-changes','');
  const total={count:10,amount:100,average:10},full={complete:true,periods:1,missing:0,total,available_reports:1,available_total:total,invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_reports:0};
- const calls=[],exports=[],notices=[],downloads=[];const api={nativeAnalysisCompare:async(...args)=>{calls.push(args);return {summary:{before:full,after:full},divisions:args[6].map(organization=>({organization,before:total,after:total})),top_amount:[],top_count:[]};},nativeAnalysisOrganizations:async(...args)=>args[4].map(org=>({org,complete:true,missing:0,total})),nativeAnalysisRange:async()=>full,referenceChanges:async()=>({rows:[{name:'Work',org:'A',before:1,after:2,delta:1,percent:100}],total:1,searched:1,significant:1,counts:{up:1,down:0,new:0,gone:0},leader:null,comparable:['A']}),chooseCsvPath:async()=>'/tmp/changes.csv',referenceChangesCsv:async(...args)=>exports.push(args),referenceSummaryCsv:async(...args)=>exports.push(args),...overrides};
+ const calls=[],exports=[],notices=[],downloads=[];const api={nativeAnalysisCompare:async(...args)=>{calls.push(args);return {summary:{before:full,after:full},divisions:args[6].map(organization=>({organization,before:total,after:total})),top_amount:[],top_count:[]};},nativeAnalysisOrganizations:async(...args)=>args[4].map(org=>({org,complete:true,missing:0,total})),nativeAnalysisRange:async()=>full,referenceChanges:async()=>({rows:[{name:'Work',org:'A',before:1,after:2,delta:1,percent:100}],total:1,searched:1,significant:1,counts:{up:1,down:0,new:0,gone:0},leader:null,comparable:['A']}),referenceChangesPrint:async(q,emit)=>{const part=await api.referenceChanges({...q,page:0});if(part.rows.length)emit(part.rows);return part.comparable;},chooseCsvPath:async()=>'/tmp/changes.csv',referenceChangesCsv:async(...args)=>exports.push(args),referenceSummaryCsv:async(...args)=>exports.push(args),...overrides};
  const sheet=add(body,'dialog');sheet.id='sheet';sheet.open=false;sheet.close=async()=>{sheet.open=false;await sheet.fire('close');};
  const document={body,createElementNS:(_namespace,tag)=>new Node(tag),createElement:tag=>new Node(tag),querySelector:q=>body.querySelector(q),querySelectorAll:q=>body.querySelectorAll(q),getElementById:id=>body.querySelector('#'+id)};
  const window={sqlRowScroll:require('./scroll-window-fixture.cjs'),desktopAPI:api,referenceDesktop:{dialog:()=>{sheet.open=true;const content=new Node('div');content.append(new Node('h2'));sheet.replaceChildren(content);return content;},navigate:id=>window.referenceResults.setScreen(id),notice:text=>notices.push(text)},referenceFilters:{setMetric:m=>{scope.metric=m;window.referenceResults.refresh(scope);}},unifiedCoverage:{render:async()=>{}},print(){}};
  const scope={revision:1,type:'day',from:'2024-01-02',to:'2024-01-02',baseFrom:'2024-01-01',baseTo:'2024-01-01',organizations:['A'],metric:'amount',source:'daily',displayType:'day'};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../analysis-summary.js'),'utf8'),{window});
- const file=path.join(__dirname,'../reference-results.js');if(fs.existsSync(file))vm.runInNewContext(fs.readFileSync(file,'utf8'),{window,document,Intl,Number,Date,Set,Map,Promise,setTimeout,clearTimeout,console,Blob,URL:{createObjectURL:blob=>{downloads.push(blob);return 'blob:test';},revokeObjectURL(){}}});
+ const file=path.join(__dirname,'../reference-results.js');if(fs.existsSync(file))vm.runInNewContext(fs.readFileSync(file,'utf8'),{window,document,Intl,Number,Date,Set,Map,Promise,setTimeout,clearTimeout,console,Blob,TextEncoder,AbortController,URL:{createObjectURL:blob=>{downloads.push(blob);return 'blob:test';},revokeObjectURL(){}}});
  return {window,document,api,scope,s1,s2,calls,exports,notices,downloads,full,total};
 }
 test('summary presents observed partial totals separately from the comparable sample',async()=>{
@@ -92,8 +92,8 @@ test('changes table and leader display subprecision values without a signed zero
 });
 
 test('print includes every filtered SQL row in order from page zero while leaving the visible page unchanged',async()=>{
- const queries=[],rows=Array.from({length:13},(_,i)=>({name:'Position '+String(i+1).padStart(2,'0'),org:'A',before:i===12?0:1,after:i+2,delta:i+1,percent:i===12?null:100}));
- const f=fixture({referenceChanges:async q=>{queries.push({...q});return {rows:rows.slice(q.page*12,(q.page+1)*12),total:13,searched:13,significant:13,comparable:['A'],counts:{up:13,down:0,new:0,gone:0}};}});
+ const queries=[],prints=[],rows=Array.from({length:13},(_,i)=>({name:'Position '+String(i+1).padStart(2,'0'),org:'A',before:i===12?0:1,after:i+2,delta:i+1,percent:i===12?null:100}));
+ const f=fixture({referenceChanges:async q=>{queries.push({...q});return {rows:rows.slice(q.page*12,(q.page+1)*12),total:13,searched:13,significant:13,comparable:['A'],counts:{up:13,down:0,new:0,gone:0}};},referenceChangesPrint:async(q,emit)=>{prints.push(q);emit(rows.slice(0,12));emit(rows.slice(12));return ['A'];}});
  f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);await f.window.referenceResults.setScreen('s2');
  await f.s2.querySelector('.table-viewport').scrollWindow.go(1);
  let printed;f.window.print=()=>{const root=f.document.getElementById('referencePrintDocument');printed={text:root?.textContent,rows:root?.querySelectorAll('.print-changes tbody tr').map(n=>n.children.map(c=>c.textContent)),mode:f.document.body.dataset.referencePrint};};
@@ -101,17 +101,17 @@ test('print includes every filtered SQL row in order from page zero while leavin
  assert.deepEqual(printed.rows.map(row=>row[0]),rows.map(row=>row.name));assert.equal(printed.mode,'document');
  assert.equal(printed.rows[12][2],'0,00');assert.equal(printed.rows[12][5],'—');
  assert.match(printed.text,/Значимые изменения/);assert.match(printed.text,/Строк: 13/);assert.match(printed.text,/Сопоставимые подразделения: 1 из 1/);
- assert.deepEqual(queries.slice(-2).map(q=>q.page),[0,1]);assert.ok(queries.every(q=>q.metric==='amount'&&q.kind==='significant'&&q.revision===1));
+ assert.deepEqual(queries.map(q=>q.page),[0,1]);assert.deepEqual(prints.map(q=>q.page),[1]);assert.ok(queries.every(q=>q.metric==='amount'&&q.kind==='significant'&&q.revision===1));
  assert.equal(f.s2.querySelectorAll('.changes-table tbody tr').length,1);assert.equal(f.s2.querySelector('.changes-table tbody tr').children[0].textContent,'Position 13');
  assert.equal(f.document.getElementById('referencePrintDocument'),null);assert.equal(f.document.body.dataset.referencePrint,undefined);assert.equal(button.disabled,false);assert.equal(button.focused,true);
 });
 test('changed scope or incomplete SQL print page never prints a partial document',async()=>{
  const delayed=deferred(),f=fixture();f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);await f.window.referenceResults.setScreen('s2');
- f.api.referenceChanges=()=>delayed.promise;let prints=0;f.window.print=()=>prints++;
+ let signal;f.api.referenceChangesPrint=async(q,emit,stop)=>{signal=stop;const reply=await delayed.promise;emit(reply.rows);return reply.comparable;};let prints=0;f.window.print=()=>prints++;
  const button=f.s2.querySelectorAll('button').find(n=>n.textContent==='Печать / PDF'),pending=button.click();await flush();
- await f.window.referenceResults.refresh(null);delayed.resolve({rows:[{name:'old',org:'A'}],total:1,comparable:['A']});await pending;
+ await f.window.referenceResults.refresh(null);assert.equal(signal.aborted,true);delayed.resolve({rows:[{name:'old',org:'A'}],total:1,comparable:['A']});await pending;
  assert.equal(prints,0);assert.equal(f.document.getElementById('referencePrintDocument'),null);
- await f.window.referenceResults.refresh(f.scope);f.api.referenceChanges=async()=>({rows:[],total:1,searched:1,significant:1,comparable:['A'],counts:{up:1,down:0,new:0,gone:0}});await f.window.referenceResults.setScreen('s2');await button.click();assert.equal(prints,0);assert.match(f.notices.at(-1),/страниц|полнот|строк/i);
+ await f.window.referenceResults.refresh(f.scope);f.api.referenceChangesPrint=async()=>['A'];f.api.referenceChanges=async()=>({rows:[],total:1,searched:1,significant:1,comparable:['A'],counts:{up:1,down:0,new:0,gone:0}});await f.window.referenceResults.setScreen('s2');await button.click();assert.equal(prints,0);assert.match(f.notices.at(-1),/страниц|полнот|строк/i);
 });
 test('change table has one read-only metric and headings follow the active category',async()=>{
  const f=fixture();f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);await f.window.referenceResults.setScreen('s2');
@@ -198,4 +198,47 @@ test('editing the search invalidates pending print pages, save chooser and earli
  await new Promise(resolve=>setTimeout(resolve,180));newerSearch.resolve(page('Строка B'));await flush();
  assert.match(f.s2.querySelector('.changes-table').textContent,/Строка B/);
  assert.equal(f.s2.getAttribute('aria-busy'),'false');
+});
+
+test('failed changes reads distinguish unknown counts from zero and clear the old sample; summary CSV ignores changes controls',async()=>{
+ const f=fixture(),results=f.window.referenceResults;f.scope.organizations=['A','B'];
+ results.init();await results.refresh(f.scope);await results.setScreen('s2');
+ const chip=f.s2.querySelector('.excluded-orgs'),search=f.s2.querySelector('input');
+ assert.equal(chip.hidden,false);assert.match(chip.textContent,/B/);
+ assert.deepEqual(f.s2.querySelectorAll('[data-count]').map(n=>n.textContent),['▲ 1','▼ 0','0','0']);
+ await f.s2.querySelectorAll('.kpi')[2].click();f.s2.querySelector('[data-sort]').value='percent';
+ let calls=0;f.api.referenceChanges=async()=>{calls++;throw Error('read rejected');};
+ search.value='я'.repeat(256);await search.fire('input');await new Promise(resolve=>setTimeout(resolve,180));
+ assert.equal(calls,1);assert.match(f.s2.querySelector('.table-empty').textContent,/read rejected/);
+ assert.deepEqual(f.s2.querySelectorAll('[data-count]').map(n=>n.textContent),['—','—','—','—']);
+ assert.ok(f.s2.querySelectorAll('.kpi').every(n=>n.getAttribute('aria-label').includes('нет данных')));
+ assert.equal(chip.hidden,true);assert.equal(chip.textContent,'');
+ search.value+='я';await search.fire('input');await new Promise(resolve=>setTimeout(resolve,180));
+ assert.equal(calls,1);assert.match(f.s2.querySelector('.table-empty').textContent,/512 байт UTF-8/);
+ assert.equal(f.s2.querySelector('[data-export-changes]').disabled,true);
+ await results.setScreen('s1');await f.s1.querySelector('.data-card button').click();
+ assert.equal(f.exports.length,1);const q=f.exports[0][0];
+ assert.deepEqual([q.search,q.kind,q.sort,q.page,q.minAmount,q.minCount,q.percent],['','all','name',0,0,0,0]);
+ assert.deepEqual(Array.from(q.organizations),['A','B']);assert.equal(q.from,f.scope.from);
+});
+test('bounds transition invalidates reads, choosers and controls through screen switches and recovers after failure',async()=>{
+ const f=fixture(),r=f.window.referenceResults;r.init();await r.refresh(f.scope);await r.setScreen('s2');
+ const chooser=deferred();f.api.chooseCsvPath=()=>chooser.promise;
+ const exportPending=f.s2.querySelector('[data-export-changes]').click();
+ const reply=deferred();let reads=0;f.api.referenceChanges=()=>{reads++;return reply.promise;};
+ const readPending=r.setScreen('s2'),oldRow=f.s2.querySelector('tbody tr'),caption=f.s2.querySelector('.report-range').textContent;
+ r.beginScopeChange(f.scope.revision);
+ chooser.resolve('/tmp/obsolete.csv');await exportPending;assert.equal(f.exports.length,0);
+ await r.setScreen('s1');await r.setScreen('s2');
+ await f.s2.querySelector('input').fire('input');await new Promise(resolve=>setTimeout(resolve,180));
+ reply.resolve({rows:[],total:0,searched:0,significant:0,comparable:[],counts:{up:0,down:0,new:0,gone:0}});await readPending;
+ assert.equal(reads,1);assert.equal(f.s2.querySelector('tbody tr'),oldRow);assert.equal(f.s2.querySelector('.report-range').textContent,caption);
+ for(const screen of [f.s1,f.s2])assert.equal(screen.getAttribute('aria-busy'),'true');
+ r.failScopeChange('Не удалось прочитать даты источника');
+ assert.equal(f.s2.querySelector('tbody tr'),null);assert.match(f.s2.querySelector('.table-empty').textContent,/даты источника/);
+ assert.equal(f.s1.querySelector('.metric-value').textContent,'—');assert.match(f.s1.querySelector('.quality-notice').textContent,/даты источника/);
+ assert.equal(f.s2.querySelector('[data-export-changes]').disabled,true);assert.equal(f.s1.querySelector('.data-card button').disabled,true);
+ await r.setScreen('s1');await r.setScreen('s2');assert.equal(reads,1);
+ await r.refresh(f.scope);assert.equal(reads,2);assert.match(f.s1.querySelector('.metric-value').textContent,/100/);
+ r.beginScopeChange(2);assert.equal(f.s1.querySelector('.metric-value').textContent,'—');
 });

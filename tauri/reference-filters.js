@@ -17,17 +17,20 @@ const today=()=>{const d=new Date();return C.dateAt(d.getFullYear(),d.getMonth()
 let initialized=false,scope=null,revision=null,snapshot=null,latestDay=null,lastTicket=0,latestType=null,userDates=false,syncFields=null;
 let orgs=new Set(),orgNames=[],allOrgs=true,allNames=true,nameRows=new Map(),nameCount=0,metric='amount';
 let kind='week',source='daily',mode='range',rule='prev',custom=null,from,to;
+let importedWeekday=1,boundsPending=false;
+const detailPanels=['chartPanel','structurePanel','comparison','usualPanel','regularityPanel','overviewPanel','changes'];
 function previousYear(value){
  const d=C.dateOf(value),y=d.getUTCFullYear()-1,m=d.getUTCMonth();
  return C.dateAt(y,m,Math.min(d.getUTCDate(),C.dateOf(C.dateAt(y,m+1,0)).getUTCDate()));
 }
-function importedBound(value){return C.period(value,kind)[0];}
+function filterPeriod(value,unit=kind){return C.period(value,unit,source==='imported'?importedWeekday:1);}
+function importedBound(value){return filterPeriod(value)[0];}
 function baseRange(){
  const n=size(from,to);
  if(rule==='year')return [previousYear(from),previousYear(to)];
  if(rule==='prevWeek'||rule==='prevMonth'){
   const unit=rule==='prevWeek'?'week':'month';
-  return C.period(C.day(C.period(from,unit)[0],-1),unit);
+  return filterPeriod(C.day(filterPeriod(from,unit)[0],-1),unit);
  }
  if(source==='imported'&&kind==='month'){
   const idx=date=>Number(date.slice(0,4))*12+Number(date.slice(5,7));
@@ -47,7 +50,7 @@ function allowRule(value){
  return true;
 }
 function dates(start,end=start){
- const lo=C.period(start,kind)[0],hi=C.period(mode==='single'?start:end,kind)[1];
+ const lo=filterPeriod(start)[0],hi=filterPeriod(mode==='single'?start:end)[1];
  if(!C.valid(lo)||!C.valid(hi)||lo>hi)return false;
  from=lo;to=hi;return true;
 }
@@ -59,7 +62,8 @@ function quick(index){
 }
 function applyQuick(index){
  const p=quick(index);if(!p)return;
- kind=p.kind;mode=p.mode;source='daily';userDates=true;dates(p.from,p.to);if(custom)custom=C.period(custom,kind)[0];publish();
+ kind=p.kind;mode=p.mode;source='daily';userDates=true;dates(p.from,p.to);if(custom)custom=filterPeriod(custom)[0];
+ return boundsPending&&snapshot?readBounds(snapshot):publish();
 }
 function shift(direction){
  let lo,hi;
@@ -72,8 +76,8 @@ function shift(direction){
 }
 function chooseDate(target,anchor){
  const current=target==='base'?baseRange()[0]:target==='end'?to:from;
- C.open({anchor,title:target==='base'?'Базовый период':mode==='single'?'Период':target==='start'?'Начало диапазона':'Конец диапазона',unit:kind,initial:current,apply(value){
-  if(target==='base'){rule='custom';custom=C.period(value,kind)[0];}
+ C.open({anchor,title:target==='base'?'Базовый период':mode==='single'?'Период':target==='start'?'Начало диапазона':'Конец диапазона',unit:kind,initial:current,spanFor:filterPeriod,apply(value){
+  if(target==='base'){rule='custom';custom=filterPeriod(value)[0];}
   else {userDates=true;if(target==='end')dates(value<from?value:from,value);else dates(value,value>to?value:to);}
   publish();
  }});
@@ -103,6 +107,7 @@ function paint(lo,hi){
 }
 let appliedDetailScope;
 function syncDetails(){
+ if(boundsPending)return;
  const current=scope?.revision===UI.revision?scope:null;
  // Revisiting a tool keeps its local choices until a shared filter actually changes.
  if(current===appliedDetailScope)return;
@@ -110,6 +115,7 @@ function syncDetails(){
  return window.unifiedAnalytics.applyReferenceScope(current);
 }
 function publish(){
+ if(boundsPending)return;
  const [baseFrom,baseTo]=baseRange();
  if(![from,to,baseFrom,baseTo].every(C.valid)){
   UI.notice('Период за пределами поддерживаемого календаря.',true);scope=null;window.referenceResults.refresh(null);return;
@@ -120,14 +126,24 @@ function publish(){
   displayFrom:from,displayTo:to,displayBaseFrom:baseFrom,displayBaseTo:baseTo,organizations:[...orgs],metric,
   allNames,nameRows:[...nameRows.values()],selectedNames:allNames?[]:[...nameRows.values()].map(row=>row.name),selectedKeys:allNames?[]:[...nameRows.keys()]};
  const result=window.referenceResults.refresh(scope);
- if(['chartPanel','structurePanel','comparison','usualPanel','regularityPanel','overviewPanel','changes'].includes(window.referenceDetail?.active))void syncDetails();
+ if(detailPanels.includes(window.referenceDetail?.active))void syncDetails();
  return result;
 }
 function setMetric(value){if(value!=='amount'&&value!=='count')return;metric=value;return publish();}
 function openImportedPeriod(range){
  if(!range||!['day','week','month'].includes(range.kind)||!C.valid(range.from)||!C.valid(range.to)||range.from>range.to)return false;
- ++lastTicket;kind=range.kind;source=kind==='day'?'daily':'imported';mode='range';rule='prev';custom=null;userDates=true;
- from=range.from;to=range.to;return publish();
+ kind=range.kind;source=kind==='day'?'daily':'imported';mode='range';rule='prev';custom=null;userDates=true;
+ from=range.from;to=range.to;
+ if(kind==='week'){
+  const lastStart=C.day(to,-6);
+  // Mixed weekday schedules cannot be described by one weekly SQL sequence.
+  if(range.mixedWeekStarts||C.dateOf(from).getUTCDay()!==C.dateOf(lastStart).getUTCDay()){
+   from=lastStart;
+   UI.notice('Загружены недели с разными днями начала. Открыта последняя загруженная неделя.');
+  }
+  importedWeekday=C.dateOf(from).getUTCDay();
+ }
+ return boundsPending&&snapshot?readBounds(snapshot):publish();
 }
 function setOrganizations(values){orgs=new Set(values.filter(x=>orgNames.includes(x)));allOrgs=orgs.size===orgNames.length;return publish();}
 function close(box){box.closest('dialog')?.close();}
@@ -208,50 +224,71 @@ function chooseWorks(anchor){
 }
 async function readBounds(snap){
  const mine=++lastTicket;
+ setBoundsPending(true);
+ window.referenceResults.beginScopeChange(snap.revision);
  const reportType=source==='daily'?'day':kind;
  try{
   const daily=UI.api.unifiedPeriodOptions(snap.revision,'day',null,null,1);
-  const [last,selected,names]=await Promise.all([daily,reportType==='day'?daily:UI.api.unifiedPeriodOptions(snap.revision,reportType,null,null,1),UI.api.unifiedNameOptions(snap.revision,'',null,1)]);
+  const selectedKeys=allNames?[]:[...nameRows.keys()];
+  const metadata=selectedKeys.length?UI.api.unifiedSelectedNameOptions(snap.revision,selectedKeys):UI.api.unifiedNameOptions(snap.revision,'',null,1);
+  const [last,selected,names]=await Promise.all([daily,reportType==='day'?daily:UI.api.unifiedPeriodOptions(snap.revision,reportType,null,null,1),metadata]);
   if(mine!==lastTicket||UI.revision!==snap.revision)return;
   latestDay=last.max;latestType=selected.max;nameCount=names.total_rows;
-  if(!userDates)dates(latestType||today());
-  return publish();
+  if(selectedKeys.length){
+   const available=new Map(names.rows.map(row=>[row.key,row]));
+   // Preserve changes the user made while this metadata read was in flight.
+   for(const key of selectedKeys)if(nameRows.has(key)){
+    if(available.has(key))nameRows.set(key,available.get(key));else nameRows.delete(key);
+   }
+  }
+  if(!userDates){
+   if(source==='imported'&&kind==='week')importedWeekday=latestType?C.dateOf(latestType).getUTCDay():1;
+   dates(latestType||today());
+  }
+  setBoundsPending(false);return publish();
  }catch(error){
   if(mine!==lastTicket||UI.revision!==snap.revision)return;
-  scope=null;window.referenceResults.refresh(null);UI.notice('Не удалось прочитать периоды. '+(window.analizUserError?.(error)||error.message),true);
+  setBoundsPending(false);scope=null;
+  if(detailPanels.includes(window.referenceDetail?.active))void syncDetails();
+  const message='Не удалось прочитать периоды. '+(window.analizUserError?.(error)||error.message);
+  window.referenceResults.failScopeChange(message);UI.notice(message,true);
+ }
+}
+function setBoundsPending(busy){
+ boundsPending=busy;
+ for(const id of [...detailPanels,'analyticsDetails','changeDetails']){
+  const node=document.getElementById(id);if(node)node.inert=busy;
  }
 }
 function configure(snap){
  ++lastTicket;
- if(!snap){snapshot=null;revision=null;scope=null;window.referenceResults.refresh(null);return;}
- const changed=previousRevision!==null&&previousRevision!==snap.revision;
- previousRevision=snap.revision;snapshot=snap;revision=snap.revision;
+ if(!snap){setBoundsPending(false);snapshot=null;revision=null;scope=null;window.referenceResults.refresh(null);return;}
+ snapshot=snap;revision=snap.revision;
  orgNames=snap.org_names.slice();orgs=new Set(allOrgs?orgNames:[...orgs].filter(x=>orgNames.includes(x)));
- if(changed&&!allNames){nameRows.clear();}
  return readBounds(snap);
 }
 function reset(){
  window.referenceResults.resetSelection?.();
  source='daily';kind='week';mode='range';rule='prev';metric='amount';custom=null;userDates=false;
  allNames=true;nameRows.clear();orgs=new Set(orgNames);allOrgs=true;
- dates(latestDay||today());return publish();
+ dates(latestDay||today());return boundsPending&&snapshot?readBounds(snapshot):publish();
 }
 function setKind(value){
  if(kind===value)return;
  kind=value;
  if(kind==='year')source='daily';
  if(!allowRule(rule))rule='prev';
- if(custom)custom=C.period(custom,kind)[0];
- dates(from,to);publish();
- if(snapshot&&source==='imported')void readBounds(snapshot);
+ if(custom)custom=filterPeriod(custom)[0];
+ dates(from,to);
+ if(snapshot&&(source==='imported'||boundsPending))return readBounds(snapshot);
+ return publish();
 }
 function sourceChanged(){
  source=one('#referenceSource').value;
  if(!allowRule(rule))rule='prev';
- userDates=false;latestType=null;scope=null;window.referenceResults.refresh(null);
+ userDates=false;latestType=null;
  if(snapshot)void readBounds(snapshot);else publish();
 }
-let previousRevision=null;
 function init(){
  if(initialized)return;
  initialized=true;dates(today());

@@ -52,9 +52,12 @@
       (panel.querySelector(':scope > summary, :scope > .sectionbar, :scope > h2') || panel.firstElementChild).after(line);
     }
     const selected = window.unifiedUI.scope;
-    const scope = key === 'chartPanel' ? window.unifiedAnalytics?.displayedChartScope || selected : selected;
+    const analytics = window.unifiedAnalytics;
+    const displayed = key === 'chartPanel' ? analytics?.displayedChartScope : key === 'overviewPanel' ? analytics?.displayedOverviewScope : null;
+    const scope = displayed || selected;
     const pendingPeriod = scope && selected && (scope.from !== selected.from || scope.to !== selected.to ||
-      scope.displayType !== selected.displayType || scope.source !== selected.source);
+      scope.displayType !== selected.displayType || scope.source !== selected.source ||
+      (key === 'overviewPanel' && (scope.baseFrom !== selected.baseFrom || scope.baseTo !== selected.baseTo)));
     const showDate = value => value.split('-').reverse().join('.');
     const interval = (lo, hi) => lo === hi ? showDate(lo) : showDate(lo) + ' — ' + showDate(hi);
     const end = raw => scope.source === 'daily' ? raw : window.unifiedOriginal.periodEnd(raw, scope.displayType);
@@ -103,8 +106,12 @@
     if (comparisonOrigin !== origin) { localBase = null; comparisonOrigin = origin; }
     return localBase || {from:scope.baseFrom, to:scope.baseTo};
   }
+  function comparisonPeriod(scope, date, unit) {
+    const weekStartsOn = unit === 'week' && scope.source === 'imported' ? window.referenceCalendar.dateOf(scope.from).getUTCDay() : 1;
+    return window.referenceCalendar.period(date, unit, weekStartsOn);
+  }
   function visibleEnd(scope, date) {
-    return scope.source === 'daily' ? date : window.referenceCalendar.period(date, scope.displayType)[1];
+    return scope.source === 'daily' ? date : comparisonPeriod(scope, date, scope.displayType)[1];
   }
   function compareDates() {
     const scope = window.unifiedUI.scope, before = comparisonBase(scope);
@@ -166,9 +173,9 @@
         if (!before) return;
         const unit = scope.source === 'daily' ? 'day' : scope.displayType;
         window.referenceCalendar.open({anchor:button, title:'Базовый период · '+label, unit,
-          initial:index ? before.to : before.from, apply(value) {
+          initial:index ? before.to : before.from, spanFor:(date, kind) => comparisonPeriod(scope, date, kind), apply(value) {
             if (scope !== window.unifiedUI.scope) return;
-            const start = window.referenceCalendar.period(value,unit)[0];
+            const start = comparisonPeriod(scope,value,unit)[0];
             localBase = index ? {from:before.from < start ? before.from : start,to:start}
               : {from:start,to:before.to > start ? before.to : start};
             compareDates();scopeLine('comparison');window.unifiedExtended.openComparison();
@@ -252,5 +259,6 @@
 
   window.referenceDetail = Object.freeze({init, show, hide, currentComparison,
     refreshChartCaption() { if (active === 'chartPanel') scopeLine(active); },
+    refreshOverviewCaption() { if (active === 'overviewPanel') scopeLine(active); },
     get active() { return active; }});
 })();

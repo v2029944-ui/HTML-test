@@ -42,6 +42,7 @@ pub async fn unified_name_options(
     after: Option<String>,
     limit: usize,
     page_index: Option<usize>,
+    selected_keys: Option<Vec<String>>,
     workspace_token: Option<String>,
 ) -> Result<UnifiedNameOptions, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -51,6 +52,12 @@ pub async fn unified_name_options(
             crate::storage::shared_runtime::Access::Read,
             |routed_storage| {
                 let store = routed_storage;
+                if let Some(keys) = &selected_keys {
+                    if !search.is_empty() || page_index.is_some() || after.is_some() || limit != 50 {
+                        return Err("Selected name lookup cannot be combined with search or paging".into());
+                    }
+                    return store.unified_selected_name_options(revision, keys);
+                }
                 if let Some(index) = page_index {
                     if after.is_some() {
                         return Err("Do not combine a cursor and a page index".into());

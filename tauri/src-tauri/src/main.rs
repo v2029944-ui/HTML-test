@@ -18,7 +18,7 @@ mod native_coverage;
 mod native_pagination;
 use native_pagination::{unified_report_window, unified_report_org_window, native_quality_matrix_reports_at_page};
 mod native_reference_changes;
-use native_reference_changes::{reference_changes,reference_changes_csv,reference_summary_csv};
+use native_reference_changes::{reference_changes,reference_changes_csv,reference_changes_print,reference_summary_csv};
 use native_coverage::{native_quality_matrix_page,native_quality_matrix_reports};
 mod native_name_selection;
 mod unified_commands;
@@ -1765,6 +1765,7 @@ fn main() {
             shared_workspace_discard_pending,
             reference_changes,
             reference_changes_csv,
+            reference_changes_print,
             reference_summary_csv,
             unified_period_options,
             unified_name_options,

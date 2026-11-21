@@ -26,6 +26,8 @@ SHELL_METRICS = """() => {
   });
   const headings=[...document.querySelectorAll('#reportShell .filter-fold > summary strong,#reportShell .date-group-title')].filter(visible)
     .map(el=>({title:el.textContent.trim(),ratio:ratio(el)}));
+  const captions=[...document.querySelectorAll('#reportShell .filter-summary, #s1 .report-range a[href="#reportShell"]')].filter(visible)
+    .map(el=>({text:el.textContent.trim(),ratio:ratio(el)}));
   const quick=[...document.querySelectorAll('#reportShell .quick-actions button')].filter(visible).map(rect);
   const chipsAligned=quick.every(r=>Math.abs(r.height-quick[0].height)<=1 &&
     quick.every(other=>Math.abs(r.top-other.top)>=r.height-1 || Math.abs(r.top-other.top)<=1));
@@ -34,11 +36,11 @@ SHELL_METRICS = """() => {
   if(visible(actions) && visible(main) && visible(actions.previousElementSibling)){
     summaryGaps=[rect(actions).top-rect(actions.previousElementSibling).bottom,rect(main).bottom-rect(actions).bottom];
   }
-  return {width:innerWidth,headings,fields,chipsAligned,summaryGaps};
+  return {width:innerWidth,headings,captions,fields,chipsAligned,summaryGaps};
 }"""
 
 
-def check_shell_layout(page, *, headings=False, chart=False):
+def check_shell_layout(page, *, headings=False, chart=False, folded=False):
     """Called after theme/layout transitions have settled."""
     metrics = page.evaluate(SHELL_METRICS)
     if headings:
@@ -48,6 +50,9 @@ def check_shell_layout(page, *, headings=False, chart=False):
         gaps = metrics['summaryGaps']
         if gaps is not None:
             assert gaps[0] > 0 and abs(gaps[0] - gaps[1]) <= 2, metrics
+    if headings or folded:
+        assert len(metrics['captions']) == (2 if folded else 1), metrics
+        assert all(part['ratio'] >= 4.5 for part in metrics['captions']), metrics
     if chart:
         assert metrics['fields'], metrics
         assert all(f['space'] + 1 >= f['longest'] for f in metrics['fields']), metrics

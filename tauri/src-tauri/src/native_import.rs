@@ -4,6 +4,7 @@
 //! revision-checked publication. No report JSON enters the WebView.
 use crate::storage::{ImportConfirmation, ImportCounts, ImportJob, ImportPreview, ImportReceipt, Storage};
 use analiz_import_core::{LegacyOptions, Limits, PreparedImport, QualityCounts, SourceDiagnostics, StageArea, WideOptions};
+use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{path::Path, sync::{atomic::AtomicBool, Arc}};
@@ -31,10 +32,26 @@ pub struct NativeWideReview {
     pub sample_source_issues: serde_json::Value,
 }
 #[derive(Serialize)]
+#[serde(rename_all="camelCase")]
 pub struct NativePeriodRange {
     pub kind: String,
     pub from: String,
     pub to: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub mixed_week_starts: bool,
+}
+impl NativePeriodRange {
+    fn include(&mut self, kind: &str, start: &str, end: &str) -> Result<(), String> {
+        if self.kind != kind { return Err("Mixed reviewed report types".into()); }
+        if kind == "week" && !self.mixed_week_starts {
+            let weekday = |value: &str| NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                .map(|day| day.weekday()).map_err(|error| error.to_string());
+            self.mixed_week_starts = weekday(&self.from)? != weekday(start)?;
+        }
+        if start < self.from.as_str() { self.from = start.to_owned(); }
+        if end > self.to.as_str() { self.to = end.to_owned(); }
+        Ok(())
+    }
 }
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
@@ -111,12 +128,9 @@ fn review<T: serde::Serialize>(
     let mut rows=0u64;
     while let Some(report)=prepared.next_report(after).map_err(|e|e.to_string())? {
         match &mut period_range {
-            Some(range) => {
-                if range.kind!=report.kind {return Err("Mixed reviewed report types".into());}
-                if report.start<range.from {range.from=report.start.clone();}
-                if report.end>range.to {range.to=report.end.clone();}
-            }
-            None => period_range=Some(NativePeriodRange{kind:report.kind.clone(),from:report.start.clone(),to:report.end.clone()}),
+            Some(range) => range.include(&report.kind, &report.start, &report.end)?,
+            None => period_range=Some(NativePeriodRange{kind:report.kind.clone(),
+                from:report.start.clone(),to:report.end.clone(),mixed_week_starts:false}),
         }
         let month=report.start.get(..7).ok_or("Invalid reviewed period start")?;
         let day=report.start.get(8..).and_then(|s|s.parse::<u32>().ok()).filter(|d|(1..=31).contains(d)).ok_or("Invalid reviewed period day")?;
@@ -723,6 +737,17 @@ mod reviewed_quality_tests {
         writer.start_file("xl/worksheets/sheet1.xml", SimpleFileOptions::default()).unwrap();
         write!(writer,r#"<worksheet><sheetData><row r="2"><c r="A2" t="inlineStr"><is><t>СМУ16</t></is></c><c r="B2"><v>1</v></c><c r="C2"><v>2</v></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>{name}</t></is></c><c r="B3"><v>1</v></c><c r="C3"><v>2</v></c></row></sheetData></worksheet>"#).unwrap();
         writer.finish().unwrap();
+    }
+
+    #[test]
+    fn reviewed_week_range_records_an_off_schedule_week_between_matching_endpoints() {
+        let mut range = NativePeriodRange { kind: "week".into(), from: "2026-11-04".into(),
+            to: "2026-11-10".into(), mixed_week_starts: false };
+        range.include("week", "2026-11-25", "2026-12-01").unwrap();
+        assert!(serde_json::to_value(&range).unwrap().get("mixedWeekStarts").is_none());
+        range.include("week", "2026-11-12", "2026-11-18").unwrap();
+        assert!(range.mixed_week_starts);
+        assert_eq!((range.from.as_str(), range.to.as_str()), ("2026-11-04", "2026-12-01"));
     }
 
     #[test]

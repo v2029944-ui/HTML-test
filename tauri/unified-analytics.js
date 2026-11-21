@@ -5,7 +5,8 @@
 const UI=window.unifiedUI,O=window.unifiedOriginal,api=UI.api,$=UI.$;
 const titles=window.analysisSummary.titles;
 let initialized=false,scope=null,ticket=0,nameTicket=0,chartTicket=0,selectionReady=false,allNames=false,totalNames=0;
-let overviewRevision=null,displayedChart=null;
+let displayedOverviewScope=null,displayedChart=null;
+const overviewResults=['overviewKpis','overviewInsights','overviewOrganizations','overviewAlerts'];
 const chartResults=['chartsContainer','dataTable','chartOrgTotals'];
 let selectedRows=new Map(),namePage=null,nameIndex=0,seriesIndex=0,printCapture=null,lastRevision=null,searchTimer=null;
 const state=UI.state;
@@ -26,7 +27,11 @@ function clearChart(){
  clear('chartHelp');
  chartBusy(false);
 }
-function invalidateScope(){scope=null;printCapture=null;chartTicket++;clearChart();UI.publishScope(null);}
+function invalidateScope(){
+ scope=null;printCapture=null;displayedOverviewScope=null;chartTicket++;clearChart();
+ for(const id of overviewResults){clear(id);$(id).inert=false;$(id).setAttribute('aria-busy','false');}
+ clear('overviewPeriodText');$('printSummary').disabled=true;UI.publishScope(null);
+}
 function valid(mine,revision){return ticket===mine&&UI.revision===revision;}
 function fmt(n,m='count'){return UI.fmt(n,m);}
 function errorText(e){return window.analizUserError?window.analizUserError(e):(e?.message||String(e));}
@@ -134,7 +139,7 @@ function coverageDetails(label,s){
  return details;
 }
 function drawOverview(result,organizations,s,before){
- for(const id of ['overviewKpis','overviewInsights','overviewOrganizations','overviewAlerts'])clear(id);
+ for(const id of overviewResults)clear(id);
  const summary=result.summary,current=summary.after,previous=summary.before,root=$('overviewKpis'),insights=$('overviewInsights');
  $('overviewPeriodText').textContent=sourceRangeLabel(s)+' · '+s.organizations.join(', ');$('printSummary').disabled=!current.periods;
  for(const [metric,label] of [['amount','Сумма выполненных работ'],['count','Количество / объём'],['average','Сумма / количество (объём)']]){const card=UI.el('div',null,'kpi'),now=current.total[metric],old=previous.total[metric];card.append(UI.el('span',label),UI.el('strong',fmt(now,metric)),UI.el('small',overviewDifference(now,old,metric),Number.isFinite(now)&&Number.isFinite(old)?now>old?'numeric-rise':now<old?'numeric-fall':'':''));root.append(card);}
@@ -162,26 +167,31 @@ function drawOverview(result,organizations,s,before){
  else {for(const metric of ['amount','count']){const line=UI.el('div',null,'overview-line');line.append(UI.el('strong',titles[metric]+': '+overviewDifference(current.total[metric],previous.total[metric],metric)));insights.append(line);}const metric=state.selectedMetrics.has('amount')?'amount':'count';for(const row of (result['top_'+metric]||[]).filter(row=>row[metric]?.delta!==0).slice(0,2)){const m=row[metric],line=UI.el('div',null,'overview-line');line.append(UI.el('strong',row.name+': '+(m.delta>0?'+':'')+fmt(m.delta,metric),m.delta>0?'numeric-rise':'numeric-fall'),UI.el('small','Один из крупнейших вкладов в изменение '+titles[metric].toLowerCase()));insights.append(line);}}
  insights.append(UI.el('p','Единицы суммы и количества / объёма необходимо сверять с источником. Дробное количество может означать объём, а не число работ.','muted small'));
  printCapture={revision:s.revision,scope:s,before,summary,organizations,result};
+ displayedOverviewScope=s;window.referenceDetail?.refreshOverviewCaption?.();
 }
 async function calculate(shared=null){
- const mine=++ticket,revision=UI.revision,results=['overviewKpis','overviewInsights','overviewOrganizations','overviewAlerts'];
+ const mine=++ticket,revision=UI.revision;
  printCapture=null;chartTicket++;$('printSummary').disabled=true;
  if(displayedChart){
   if(displayedChart.scope.revision!==revision)clearChart();
   else chartBusy(true);
  }
- for(const id of results){if(overviewRevision!==revision)clear(id,'Загрузка…');$(id).inert=true;$(id).setAttribute('aria-busy','true');}
+ if(displayedOverviewScope?.revision!==revision){
+  displayedOverviewScope=null;clear('overviewPeriodText');
+  for(const id of overviewResults)clear(id,'Загрузка…');
+ }
+ for(const id of overviewResults){$(id).inert=true;$(id).setAttribute('aria-busy','true');}
  try{if(!Number.isSafeInteger(revision))throw Error('Дождитесь подготовки данных.');layout();const displayType=value('periodType'),source=value('unifiedSource'),range=shared?{displayType,source,type:shared.type,from:shared.from,to:shared.to}:UI.range(displayType,value('rangeStart'),value('rangeEnd'),source);if(!range||!orgs().length)throw Error('Выберите корректный период и подразделения.');const s={...range,revision,organizations:orgs(),selectedNames:[],selectedKeys:[],allNames:false,nameRows:[]},before=shared?{...range,from:shared.baseFrom,to:shared.baseTo}:chosenBaseRange(s);if(!before)throw Error('Базовый период выходит за допустимые календарные границы.');s.baseFrom=before.from;s.baseTo=before.to;s.overviewMode=value('overviewMode');scope=s;
   // Reference selections already include the work filters and exact period bounds.
   if(shared)publish();
   const [overview,organizations]=await window.analysisSummary.read(api,shared||s);
-  if(!valid(mine,revision))return;drawOverview(overview,organizations,s,before);overviewRevision=revision;
+  if(!valid(mine,revision))return;drawOverview(overview,organizations,s,before);
    if(!overview.summary.after.complete)void suggestWeeklyReports(s);
   if(!selectionReady){const ranked=await top(true);if(!valid(mine,revision))return;if(!ranked){const page=await api.unifiedNameOptionsAtPage(revision,'',0,8);if(!valid(mine,revision))return;selectedRows=new Map(page.rows.map(r=>[r.key,r]));}selectionReady=true;}
   if(!shared)publish();
   selectionCount();void names(nameIndex);if($('advancedAnalytics').open)await renderCharts();
- }catch(error){if(valid(mine,revision)){overviewRevision=null;invalidateScope();for(const id of ['overviewKpis','overviewInsights','overviewOrganizations'])clear(id);clear('overviewAlerts','Не удалось загрузить обзор. '+errorText(error));}}
- finally{if(valid(mine,revision))for(const id of results){$(id).inert=false;$(id).setAttribute('aria-busy','false');}}
+ }catch(error){if(valid(mine,revision)){invalidateScope();clear('overviewAlerts','Не удалось загрузить обзор. '+errorText(error));}}
+ finally{if(valid(mine,revision))for(const id of overviewResults){$(id).inert=false;$(id).setAttribute('aria-busy','false');}}
 }
 function descriptors(points,granularity,s){const kind=granularity==='period'?s.displayType:granularity;return points.map(p=>{const start=p.start.length===7?p.start+'-01':p.start;const end=O.periodEnd(start,kind);return {type:kind,start,actualStart:s.source==='daily'&&s.from>start?s.from:start,end:s.source==='daily'&&s.to<end?s.to:end};});}
 const allPeriodsHidden='Фильтр скрыл все подтверждённые нулевые периоды в этой выборке. Снимите фильтр нулевых периодов, чтобы увидеть их.';
@@ -215,8 +225,8 @@ async function renderCharts(index=seriesIndex,paging=false){
   displayedChart={scope:requestedScope,mode:state.chart};layout();
   window.referenceDetail?.refreshChartCaption?.();
  };
- try{if(!allNames&&!selectedRows.size)throw Error('Выберите хотя бы одну работу или группу.');
-  if(value('chartBreakdown')==='organizations'){await departmentCharts(s,isCurrent);if(isCurrent())commitView();return;}
+ try{if(value('chartBreakdown')==='organizations'){await departmentCharts(s,isCurrent);if(isCurrent())commitView();return;}
+  if(!allNames&&!selectedRows.size)throw Error('Выберите хотя бы одну работу или группу.');
   const pageSize=state.chart==='table'?50:8;let rows,next=null,localOffset=0;
   if(allNames){const page=await api.unifiedNameOptionsAtPage(revision,'',index,pageSize);if(!isCurrent())return;rows=page.rows;next=page.next;totalNames=page.total_rows;}
   else {localOffset=index*pageSize;rows=[...selectedRows.values()].slice(localOffset,localOffset+pageSize);next=localOffset+pageSize<selectedRows.size?localOffset+pageSize:null;}
@@ -228,14 +238,15 @@ async function renderCharts(index=seriesIndex,paging=false){
   const keep=totals.points.map((p,i)=>!$('hideEmptyPeriods').checked||!confirmedZero(p)||series.some(item=>!confirmedZero(item.points[i]))),points=totals.points.filter((p,i)=>keep[i]),periods=descriptors(points,totals.granularity,s);
   const hiddenPeriods=descriptors(totals.points.filter((_,i)=>!keep[i]),totals.granularity,s);
   const data=points.map((p,i)=>{if(p.missing!==0)return null;const index=totals.points.indexOf(p);return new Map(rows.map((row,j)=>[row.key,series[j].points[index].missing===0?series[j].points[index].total:{count:null,amount:null,average:null}]));});
-  for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id,'',false);
+  const root=state.chart==='table'?$('dataTable'):$('chartsContainer');
+  for(const id of chartResults)clear(id,'',$(id)!==root);
   const filteredAll=hiddenPeriods.length>0&&!points.length;
   if(filteredAll)clear(state.chart==='table'?'dataTable':'chartsContainer',allPeriodsHidden,false);
   for(const metric of chosenMetrics())if(state.chart==='table'){
    const raw=[['Итого по выбранным работам',...points.map(p=>p.missing===0?p.total[metric]:null)],...rows.map(row=>[row.name,...data.map(map=>map?.get(row.key)?.[metric]??null)])];
    UI.table($('dataTable'),metric,s.from+' — '+s.to+' · прочерк означает неполные данные.',['Работа / группа',...periods.map(O.displayPeriod)],raw.map(row=>[row[0],...row.slice(1).map(n=>fmt(n,metric))]),{csvRows:raw,csvContext:chartExport(s,isCurrent,'works',[metric])});
   }else if(!filteredAll)UI.drawChart(periods,new Set(s.organizations),metric,plotSection($('chartsContainer'),metric,titles[metric]+' · '+chartInterval(s)),{chart:state.chart,orientation:orientation(),hiddenPeriods,categories:rows.map(r=>r.key),data,label:key=>rows.find(r=>r.key===key).name,pointNotice:i=>points[i].missing?'Неполные данные: пропусков '+points[i].missing:''});
-  commitView();seriesIndex=index;const root=state.chart==='table'?$('dataTable'):$('chartsContainer');pager(root,index,i=>{seriesIndex=i;return renderCharts(i,true);},{size:pageSize,total:allNames?totalNames:selectedRows.size,count:rows.length,label:'Работы на графике',current:isCurrent});
+  commitView();seriesIndex=index;pager(root,index,i=>{seriesIndex=i;return renderCharts(i,true);},{size:pageSize,total:allNames?totalNames:selectedRows.size,count:rows.length,label:'Работы на графике',current:isCurrent});
   $('chartHelp').textContent='Выбрано подразделений: '+s.organizations.length+' из '+UI.snapshot.org_names.length+'. Данные сгруппированы '+({day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам',period:'по выбранным периодам'}[totals.granularity]||'по периодам')+'. Пропуски не считаются нулём.';
  }catch(error){if(isCurrent()){for(const id of ['chartsContainer','dataTable'])clear(id,'Не удалось построить аналитику. '+errorText(error));clear('chartOrgTotals');clear('chartHelp');commitView();}}
  finally{if(isCurrent())chartBusy(false);}
@@ -270,7 +281,7 @@ async function departmentCharts(base,isCurrent){
  $('chartHelp').textContent='Подразделений: '+s.organizations.length+'. Учитываются '+(all?'все выполненные работы.':'отмеченные работы и группы.')+' Прочерк — неполные данные; средняя сумма рассчитана из общей суммы и количества. Данные сгруппированы '+({day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам',period:'по выбранным периодам'}[trends.granularity]||'по периодам')+'.';
 }
 async function configure(snapshot){
- if(!snapshot){overviewRevision=null;ticket++;nameTicket++;invalidateScope();clear('overviewAlerts','Подготовка данных…');for(const id of ['overviewKpis','overviewInsights','overviewOrganizations','categories'])clear(id);$('printSummary').disabled=true;return;}
+ if(!snapshot){ticket++;nameTicket++;invalidateScope();clear('overviewAlerts','Подготовка данных…');clear('categories');return;}
  const mine=++ticket,revision=snapshot.revision;invalidateScope();
  if(lastRevision!==null&&lastRevision!==revision){selectionReady=false;allNames=false;selectedRows.clear();}lastRevision=revision;
  filters();const kind=value('periodType')||'week',source=value('unifiedSource')||'daily';
@@ -321,5 +332,5 @@ function applyReferenceScope(shared){
  allNames=shared.allNames;selectionReady=true;seriesIndex=0;nameIndex=0;
  filters();selectionCount();return calculate(shared);
 }
-window.unifiedAnalytics=Object.freeze({init,applyReferenceScope,get displayedChartScope(){return displayedChart?.scope||null;}});
+window.unifiedAnalytics=Object.freeze({init,applyReferenceScope,get displayedOverviewScope(){return displayedOverviewScope;},get displayedChartScope(){return displayedChart?.scope||null;}});
 })();

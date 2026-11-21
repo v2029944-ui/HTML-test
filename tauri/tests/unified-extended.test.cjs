@@ -379,3 +379,42 @@ test('history receives focus before SQL and closing restores the same logical so
  assert.equal(fx.nodes.get('changeDetails').hidden,true);assert.equal(focused,replacement,'same occurrence when two metric rows have the same work');
  wait.resolve({points:[],granularity:'day'});await settle();assert.equal(focused,replacement);
 });
+
+test('contribution CSV becomes unavailable as soon as the local baseline changes and stays unavailable after comparison failure',async()=>{
+ let baseline='2024-01-08',blocked;
+ const saved=[],compositionReads=[];
+ const period={complete:true,periods:1,missing:0,total:{count:1,amount:10,average:10}};
+ const f=fixture({
+  nativeAnalysisOrganizations:async()=>[{org:'A',...period}],
+  nativeAnalysisCompare:()=>blocked?blocked.promise:Promise.resolve({summary:{before:period,after:period}}),
+  unifiedComparisonWindow:async()=>({rows:[],total_rows:0}),
+  nativeCompositionPageAtPage:async(_request,before)=>{
+   compositionReads.push(before.from);
+   return {rows:[{name:'Work',key:'work:Work',kind:'work',base:1,current:2,delta:1,percent:100,contribution:100}],
+    total_rows:1,baseComplete:true,currentComplete:true,check:{sum:1,delta:1,reconciled:true}};
+  },
+  chooseCsvPath:async()=>'/tmp/contribution.csv',referenceDetailCsv:async spec=>saved.push(spec)
+ });
+ f.UI.state.selectedMetrics=new Set(['amount']);
+ f.window.referenceDetail={active:'comparison',currentComparison:()=>({
+  before:{from:baseline,to:'2024-01-09'},after:{from:'2024-01-10',to:'2024-01-11'}})};
+ f.publish();const detail=f.nodes.get('contributions'),results=f.nodes.get('contributionResults');
+ detail.open=true;await f.window.unifiedExtended.openComparison();await settle();
+ const old=f.tables.findLast(t=>t.root===results.id).options.csvContext;
+ const dialog=deferred();f.UI.api.chooseCsvPath=()=>dialog.promise;
+ const saving=old.export();
+ baseline='2024-01-05';blocked=deferred();
+ const update=f.window.unifiedExtended.openComparison();
+ assert.equal(results.inert,true);
+ dialog.resolve('/tmp/old.csv');await assert.rejects(saving,/изменились/);
+ await assert.rejects(old.export(),/изменились/);
+ detail.dispatch('toggle');await settle();
+ assert.deepEqual(compositionReads,['2024-01-08']);
+ blocked.reject(Error('comparison read failed'));await update;
+ assert.match(results.textContent,/comparison read failed/);assert.equal(results.children.some(n=>n.tagName==='TABLE'),false);
+ detail.dispatch('toggle');await settle();await assert.rejects(old.export(),/изменились/);
+ assert.deepEqual(compositionReads,['2024-01-08']);assert.equal(saved.length,0);
+ blocked=null;await f.window.unifiedExtended.openComparison();await settle();
+ await f.tables.findLast(t=>t.root===results.id).options.csvContext.export();
+ assert.equal(saved.length,1);assert.deepEqual({...saved[0].before},{from:'2024-01-05',to:'2024-01-09'});
+});

@@ -983,6 +983,8 @@ body:has(#refRoot)>footer {display:none}
 #refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader,#toolsPage,#sheet,.period-calendar) {color:var(--text);background:var(--bg)}
 #refRoot[data-theme="light"] :is(.app-header,.tools-column header) {background:var(--surface)!important;border-color:var(--border)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader) :is(.card,.kpi,.sel,.btn,.filter-picker,.filter-shift,.chip,.change-metrics button,.filter-threshold,.filter-base-edit,.filter-reset) {color:var(--text);border-color:var(--field-border);background:var(--surface)}
+#refRoot[data-theme="light"] #reportShell .filter-summary {color:var(--muted)}
+#refRoot[data-theme="light"] :is(#s1,#s2) .report-range a[href="#reportShell"] {color:var(--accent)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) :is(.app-header nav button[aria-current="page"],.app-header nav button:hover,.filter-base-edit,.analytics-trigger,.edit-dates-link) {color:var(--accent)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) :is(button.pri,button.on,button[aria-pressed="true"]:not(.kpi)) {background:var(--accent-fill);color:var(--on-accent)}
 #refRoot[data-theme="light"] :is(#s1,#s2) :is(th,.quality-notice) {background:var(--subtle)!important;border-color:var(--border)!important;color:var(--text)}

@@ -41,6 +41,7 @@ class DesktopTablePager(unittest.TestCase):
             nativeAnalysisRange:async()=>full,
             referenceChanges:async r=>{
               reads.push([r.page,r.search]);
+              if(window.readDelay) await new Promise(resolve=>setTimeout(resolve,window.readDelay));
               const total=r.search?1:91,rows=Array.from({length:Math.min(12,total-12*r.page)},(_,i)=>({
                 name:r.search||'Работа '+(12*r.page+i+1),org:'A',before:1,after:2,delta:1,percent:100}));
               return {rows,total,searched:total,significant:total,comparable:['A'],counts:{up:total,down:0,gone:0,new:0}};
@@ -69,7 +70,21 @@ class DesktopTablePager(unittest.TestCase):
         expect(nav.locator('[data-page-action=next]')).to_be_disabled()
         nav.locator('[data-page-action=previous]').click()
         expect(nav.locator('[data-page-range]')).to_have_text('Позиции 73–84 из 91')
-        p.locator('#s2 input[placeholder]').fill('Другая работа')
+        p.evaluate('window.readDelay=100')
+        previous=nav.locator('[data-page-action=previous]')
+        previous.focus();previous.press('Enter')
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 61–72 из 91')
+        expect(previous).to_be_focused()
+        category=p.locator('#s2 .kpi').first
+        category.focus();category.press('Enter')
+        expect(p.locator('#s2 .changes-heading h2')).to_have_text('Рост')
+        expect(category).to_be_focused()
+        category.press('Enter')
+        search=p.locator('#s2 input[placeholder]')
+        search.focus()
+        expect(p.locator('#s2 .changes-heading h2')).to_have_text('Значимые изменения')
+        expect(search).to_be_focused()
+        search.fill('Другая работа')
         expect(rows).to_have_count(1)
         expect(rows.first).to_contain_text('Другая работа')
         self.assertEqual(p.evaluate('reads.at(-1)'),[0,'Другая работа'])
@@ -223,7 +238,7 @@ class DesktopTablePager(unittest.TestCase):
         expect(p.locator('#periods td').first).to_have_text('0')
         self.assertEqual(p.evaluate('calls'),[0,4,0])
 
-    def test_sql_work_selection_survives_page_changes_and_search(self):
+    def load_reference_filters(self):
         p=self.page;p.set_content((TAURI/'reference-shell.html').read_text())
         p.add_style_tag(path=str(TAURI/'reference-shell.css'))
         self.assets()
@@ -231,19 +246,40 @@ class DesktopTablePager(unittest.TestCase):
           window.calls=[];const snap={revision:1,org_names:['A','B']};
           window.unifiedUI={api:{unifiedPeriodOptions:async()=>({max:'2024-02-29'}),
             unifiedNameOptions:async()=>({total_rows:128}),
+            unifiedSelectedNameOptions:async(revision,keys)=>({total_rows:128,rows:keys.filter(k=>k==='93'&&revision<3)
+              .map(key=>({key,kind:'work',name:'Работа 93'}))}),
             unifiedNameOptionsAtPage:async(revision,search,index,limit)=>{
               const offset=index*limit,total=search?1:128;calls.push({search,offset,limit});
               return {total_rows:total,next:offset+limit<total?String(offset+limit):null,
               rows:Array.from({length:Math.min(limit,total-offset)},(_,i)=>({key:String(search?93:offset+i),kind:'work',name:'Работа '+(search?93:offset+i)}))};
-            }},revision:1,snapshot:snap,onSnapshot(){},notice:t=>{throw Error(t)}};
+            }},revision:1,snapshot:snap,onSnapshot(fn){this.updateSnapshot=fn},notice:t=>{window.lastNotice=t}};
           window.referenceDesktop={dialog(title,anchor){const dialog=document.querySelector('#sheet'),
             root=document.querySelector('#dialogBody');root.replaceChildren();dialog.showModal();return root;}};
-          window.referenceResults={refresh:scope=>window.testScope=scope};
+          window.referenceResults={beginScopeChange(){},failScopeChange(message){throw Error(message);},refresh:scope=>window.testScope=scope};
         }""")
         for name in ['native-period-selection','reference-calendar','reference-filters']:
             p.add_script_tag(path=str(TAURI/(name+'.js')))
         p.evaluate('referenceFilters.init()')
         p.wait_for_function('window.testScope?.revision===1')
+        return p
+
+    def test_imported_week_scope_uses_the_saved_weekday(self):
+        p=self.load_reference_filters()
+        for start,end,last,base in (
+                ('2026-11-09','2026-11-15','2026-11-09','2026-11-02'),
+                ('2026-11-11','2026-11-17','2026-11-11','2026-11-04'),
+                ('2026-11-11','2026-11-24','2026-11-18','2026-10-28')):
+            p.evaluate("([from,to])=>referenceFilters.openImportedPeriod({kind:'week',from,to})", [start,end])
+            scope=p.evaluate('referenceFilters.scope')
+            self.assertEqual((scope['from'],scope['to'],scope['displayTo'],scope['baseFrom']), (start,last,end,base))
+        p.locator('[data-shift="1"]').click()
+        self.assertEqual(p.evaluate('referenceFilters.scope.from'),'2026-11-25')
+        p.evaluate("referenceFilters.openImportedPeriod({kind:'week',from:'2026-11-04',to:'2026-12-01',mixedWeekStarts:true})")
+        self.assertEqual(p.evaluate('[referenceFilters.scope.from,referenceFilters.scope.to]'), ['2026-11-25']*2)
+        self.assertIn('последняя загруженная неделя',p.evaluate('lastNotice'))
+
+    def test_sql_work_selection_survives_page_changes_search_and_revisions(self):
+        p=self.load_reference_filters()
         p.locator('[data-pick=works]').click()
         nav=p.locator('[data-sql-pager=reference-work-options]')
         box=p.locator('#sheet .filter-checkboxes')
@@ -262,3 +298,11 @@ class DesktopTablePager(unittest.TestCase):
         p.get_by_role('button',name='Применить',exact=True).click()
         self.assertEqual(p.evaluate('referenceFilters.scope.selectedKeys'),['93'])
         self.assertEqual(p.evaluate("calls.filter(r=>r.limit===50).map(r=>r.offset)"),[0,50,100,50,0])
+        for revision,expected in [(2,['93']),(3,[])]:
+            p.evaluate('''async rev=>{
+              await unifiedUI.updateSnapshot(null);
+              unifiedUI.revision=rev;unifiedUI.snapshot.revision=rev;
+              await unifiedUI.updateSnapshot(unifiedUI.snapshot);
+            }''',revision)
+            self.assertEqual(p.evaluate('referenceFilters.scope.selectedKeys'),expected)
+            self.assertFalse(p.evaluate('referenceFilters.scope.allNames'))
