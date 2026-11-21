@@ -17,6 +17,7 @@ pub struct NativeWideReview {
     pub source_hash: String,
     pub revision: i64,
     pub report_count: u64,
+    pub period_range: Option<NativePeriodRange>,
     pub row_count: u64,
     pub catalog_entries: u64,
     pub conflicts: ImportCounts,
@@ -28,6 +29,12 @@ pub struct NativeWideReview {
     pub sample_reports: Vec<NativeReportSample>,
     pub sample_report_issues: Vec<serde_json::Value>,
     pub sample_source_issues: serde_json::Value,
+}
+#[derive(Serialize)]
+pub struct NativePeriodRange {
+    pub kind: String,
+    pub from: String,
+    pub to: String,
 }
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
@@ -99,9 +106,18 @@ fn review<T: serde::Serialize>(
     let mut quality_period_months=std::collections::BTreeMap::new();
     let mut quality_periods_partial=false;
     let mut after=0;
+    let mut period_range:Option<NativePeriodRange>=None;
     let mut reports=0u64;
     let mut rows=0u64;
     while let Some(report)=prepared.next_report(after).map_err(|e|e.to_string())? {
+        match &mut period_range {
+            Some(range) => {
+                if range.kind!=report.kind {return Err("Mixed reviewed report types".into());}
+                if report.start<range.from {range.from=report.start.clone();}
+                if report.end>range.to {range.to=report.end.clone();}
+            }
+            None => period_range=Some(NativePeriodRange{kind:report.kind.clone(),from:report.start.clone(),to:report.end.clone()}),
+        }
         let month=report.start.get(..7).ok_or("Invalid reviewed period start")?;
         let day=report.start.get(8..).and_then(|s|s.parse::<u32>().ok()).filter(|d|(1..=31).contains(d)).ok_or("Invalid reviewed period day")?;
         let key=format!("{}:{month}",report.kind);
@@ -150,7 +166,7 @@ fn review<T: serde::Serialize>(
         source_name:prepared.source_name().to_string(),
         source_hash:prepared.source_hash().to_string(),
         revision:preview.revision(),
-        report_count:reports,row_count:rows,catalog_entries,
+        report_count:reports,period_range,row_count:rows,catalog_entries,
         conflicts:preview.counts().clone(),
         quality:prepared.quality().clone(),
         diagnostics:prepared.source_diagnostics().clone(),
@@ -714,6 +730,8 @@ mod reviewed_quality_tests {
         let reviewed=with_legacy_prepared(&store,"native-import-stages",source,options(),|p,v,o|review(p,v,o,b"legacy-manual-review-v1\0",&o.organizations)).unwrap();
         assert_eq!(reviewed.quality_period_months.get("day:2024-01"),Some(&1));
         assert!(!reviewed.quality_periods_partial);
+        let range=reviewed.period_range.as_ref().unwrap();
+        assert_eq!((&*range.kind,&*range.from,&*range.to),("day","2024-01-01","2024-01-01"));
         let make_query=||ReviewedQualityQuery{
             source:source.into(),selection:QualityImportOptions::Legacy(options()),review_token:reviewed.review_token.clone(),filter:Default::default(),
         };

@@ -110,6 +110,12 @@ jobs:
           New-Item -ItemType Directory -Force "tauri/test-artifacts" | Out-Null
           Copy-Item $setups[0].FullName "tauri/test-artifacts/setup.exe"
           Copy-Item ($setups[0].FullName + ".sig") "tauri/test-artifacts/setup.exe.sig"
+      - name: Verify Windows icons on a clean install and an in-place upgrade
+        shell: powershell
+        env:
+          REFERENCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          .\tauri\tests\windows_icon.ps1 -Candidate tauri/test-artifacts/setup.exe -OutputDirectory tauri/test-artifacts
       - name: Build non-distributable GUI test installer with WebView2 CDP
         id: gui_smoke_build
         if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'

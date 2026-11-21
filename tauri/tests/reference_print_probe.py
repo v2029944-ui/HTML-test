@@ -486,7 +486,7 @@ _CANCEL_CONTROL = r"""() => {
 }"""
 
 
-def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227'):
+def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227', *, screen='#s1'):
     """Return evidence; unsupported/error are diagnostic statuses, never Cancel passes."""
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
@@ -526,7 +526,7 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
         save()
         try:
             # A real visible production element; no evaluate(click) or print replacement.
-            page.locator('#s1').get_by_role('button', name='Печать / PDF', exact=True).click(
+            page.locator(screen).get_by_role('button', name='Печать / PDF', exact=True).click(
                 timeout=5000, no_wait_after=True)
             attempt['click'] = 'completed'
         except PlaywrightError as error:
@@ -699,7 +699,7 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
                 report['status'] = 'targeted-' + action + '-closure-not-confirmed'
                 return report
             try:
-                action_result['source_focus'] = page.locator('#s1').get_by_role(
+                action_result['source_focus'] = page.locator(screen).get_by_role(
                     'button', name='Печать / PDF', exact=True).evaluate(
                         '(node) => ({documentFocused:document.hasFocus(),buttonFocused:document.activeElement===node})',
                         timeout=3000)

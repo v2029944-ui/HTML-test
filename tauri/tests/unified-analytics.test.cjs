@@ -29,9 +29,10 @@ function fixture(overrides={}){
  const defaults={nativeQualityMatrixPage:async(...args)=>matrixPage(...args),unifiedPeriodOptions:async()=>({rows:[{start:'2024-01-01',end:'2024-01-01'}],min:'2024-01-01',max:'2024-01-02',total_rows:2,next:null}),unifiedNameOptions:async()=>({rows:[{key:'work:W',name:'W',kind:'work'}],next:null,total_rows:1}),nativeAnalysisCompare:async()=>({summary:{before:summary,after:summary},top_count:[],top_amount:[]}),nativeAnalysisOrganizations:async()=>[{org:'A',complete:true,missing:0,total:totals}],nativeAnalysisRanking:async()=>({complete:true,rows:[{key:'work:W',name:'W',kind:'work'}]}),nativeAnalysisTimeline:async()=>({granularity:'period',points}),nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points})};
  const methods={...defaults,...overrides};methods.unifiedNameOptionsAtPage??=(revision,term,index,limit)=>methods.unifiedNameOptions(revision,term,null,limit);
  const api=new Proxy(methods,{get(target,key){if(key==='load'||key==='save')throw Error('Forbidden full history');if(!(key in target))throw Error('Unexpected API '+key);return (...args)=>{calls.push({key,args});return target[key](...args);};}});
- const originalHelpers={periodEnd:(start,kind)=>{const d=new Date(start+'T00:00:00Z');if(kind==='week')d.setUTCDate(d.getUTCDate()+6);else if(kind==='month'){d.setUTCMonth(d.getUTCMonth()+1);d.setUTCDate(0);}return d.toISOString().slice(0,10);},displayPeriod:p=>p.start,renderMultiFilter:(id,items,selected,callback)=>multi.set(id,{items,selected,callback})};
+ const originalHelpers={displayDay:date=>date,departmentChartTitle:(n,m)=>n+' / '+m,periodEnd:(start,kind)=>{const d=new Date(start+'T00:00:00Z');if(kind==='week')d.setUTCDate(d.getUTCDate()+6);else if(kind==='month'){d.setUTCMonth(d.getUTCMonth()+1);d.setUTCDate(0);}return d.toISOString().slice(0,10);},displayPeriod:p=>p.start,renderMultiFilter:(id,items,selected,callback)=>multi.set(id,{items,selected,callback})};
  const UI={api,revision:1,snapshot:{revision:1,org_names:['A','B','C','D']},state:{selectedOrganizations:new Set(['A']),selectedMetrics:new Set(['amount','count']),chartMetrics:new Set(['amount','count']),chart:'bar'},$:id=>nodes.get(id),el:(tag,text,cls)=>{const n=new Element(tag,text);n.className=cls;return n;},fmt:n=>Number.isFinite(n)?String(n):'—',notice:(...args)=>notices.push(args),table:(root,metric,caption,headers,rows,options)=>{tables.push({root:root.id,metric,rows,options});root.append(new Element('table',rows.map(r=>r.join('|')).join('\n')));},drawChart:(...args)=>draws.push(args),drawDepartments:(...args)=>draws.push(args),setPeriodInput:(id,kind,date)=>{const node=nodes.get(id);node.dataset.periodType=kind;if(date!==undefined)node.value=date;},range:(kind,from,to,source)=>from&&from<=to?{type:source==='daily'?'day':kind,displayType:kind,source,from,to}:null,publishScope:s=>published.push(s),onSnapshot:fn=>snapshotHook=fn,onView:(view,fn)=>viewHook=fn};
  const window={unifiedUI:UI,unifiedOriginal:originalHelpers,nativePeriodSelection:{fromIsoDate:date=>date,normalize:(_kind,date)=>date},print:()=>prints++};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../analysis-summary.js'),'utf8'),{window});
  vm.runInNewContext(coverageScript,{window,Date,Map,Set});
  vm.runInNewContext(script,{window,document:{querySelectorAll:selector=>selector==='[data-chart]'?buttons:[]},Date,Map,Set,setTimeout,clearTimeout});window.unifiedAnalytics.init();
  return {UI,window,nodes,buttons,draws,tables,published,multi,calls,notices,get prints(){return prints;},bootstrap:async()=>{await snapshotHook(UI.snapshot);await settle();},invalidate:()=>snapshotHook(null)};
@@ -48,6 +49,17 @@ test('confirmed zero filtering keeps missing points and does not change overview
  const f=fixture({nativeAnalysisTimeline:async()=>({granularity:'period',points}),nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points})});await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();assert.equal(f.draws.at(-1)[4].data[0],null);assert.equal(f.draws.at(-1)[4].data[1].get('work:W').count,0);
  const overview=f.nodes.get('overviewKpis').textContent;f.nodes.get('hideEmptyPeriods').checked=true;f.nodes.get('hideEmptyPeriods').dispatch('change');await settle();assert.equal(f.draws.at(-1)[0].length,1);assert.equal(f.draws.at(-1)[4].data[0],null);assert.equal(f.nodes.get('overviewKpis').textContent,overview);
  assert.deepEqual(Array.from(f.draws.at(-1)[4].hiddenPeriods,p=>p.start),['2024-01-02']);
+});
+test('hiding every reported period explains the empty chart and retains table export',async()=>{
+ const points=[{start:'2024-01-01',periods:1,missing:0,has_activity:false,total:{count:0,amount:0,average:null}}];
+ const timeline=async()=>({granularity:'period',points});
+ const f=fixture({nativeAnalysisTimeline:timeline,nativeWorkTimeline:timeline});
+ await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ f.nodes.get('hideEmptyPeriods').checked=true;f.nodes.get('hideEmptyPeriods').dispatch('change');await settle();
+ assert.match(f.nodes.get('chartsContainer').textContent,/Фильтр скрыл все/);
+ f.buttons.find(b=>b.dataset.chart==='table').dispatch('click');await settle();
+ assert.match(f.nodes.get('dataTable').textContent,/Фильтр скрыл все/);
+ assert.ok(f.tables.at(-1));
 });
 test('late SQL charts are discarded after scope invalidation and errors clear the old overview',async()=>{
  const wait=deferred();const f=fixture({nativeWorkTimeline:()=>wait.promise});await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();await f.invalidate();wait.resolve({granularity:'period',points:[]});await settle();assert.equal(f.draws.length,0);assert.equal(f.nodes.get('printSummary').disabled,true);
@@ -283,12 +295,14 @@ test('department charts and CSV retain organizations after the first eight serie
  assert.equal(table.options.csvRows.length,10);assert.equal(table.options.csvRows[9][2],-10.75);
  assert.ok(queries.every(orgs=>orgs.length<=8));
 });
-test('horizontal department guide describes original units instead of normalized percentages',async()=>{
+test('horizontal combined department charts use the same scale as vertical bars while separate charts show original units',async()=>{
  const f=fixture({nativeOrganizationTrends:async()=>({granularity:'period',series:[{organization:'A',points:[{start:'2024-01-02',missing:0,total:{amount:20,count:2,average:10}}]}]})});
  await f.bootstrap();f.nodes.get('chartBreakdown').value='organizations';
  f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
  assert.match(f.nodes.get('chartReadGuide').textContent,/% от максимума/);
  f.nodes.get('chartOrientation').value='horizontal';f.nodes.get('chartOrientation').dispatch('change');await settle();
+ assert.match(f.nodes.get('chartReadGuide').textContent,/% от максимума/);
+ f.nodes.get('chartSeriesLayout').value='separate';f.nodes.get('chartSeriesLayout').dispatch('change');await settle();
  assert.match(f.nodes.get('chartReadGuide').textContent,/в исходных единицах/);
  assert.doesNotMatch(f.nodes.get('chartReadGuide').textContent,/% от максимума/);
 });
@@ -377,4 +391,17 @@ test('successful reference overview publishes its validated detail scope once',a
  await pending;
  assert.deepEqual(f.published.filter(Boolean),[initial]);
  assert.equal(f.calls.filter(call=>call.key==='nativeAnalysisCompare').length,1);
+});
+
+test('a completed chart survives three overlapping mode switches and only the newest SQL response can replace it',async()=>{
+ let hold=false;const gates=[],points=[{start:'2024-01-02',periods:1,missing:0,total:{amount:40,count:2,average:20}}];
+ const f=fixture({nativeWorkTimeline:async()=>{if(hold){const gate=deferred();gates.push(gate);await gate.promise;}return {granularity:'period',points};},nativeAnalysisTimeline:async()=>({granularity:'period',points})});
+ await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ const plot=f.nodes.get('chartsContainer'),table=f.nodes.get('dataTable'),previous=plot.children[0];assert.ok(previous);
+ hold=true;
+ for(const mode of ['table','line','table']){f.buttons.find(b=>b.dataset.chart===mode).dispatch('click');await settle();assert.equal(plot.children[0],previous);assert.equal(plot.hidden,false);assert.equal(plot.inert,true);}
+ assert.equal(gates.length,3);
+ gates[2].resolve();await settle();const newest=table.children[0];assert.ok(newest);assert.equal(table.hidden,false);
+ gates[1].resolve();gates[0].reject(Error('old read failed'));await settle();assert.equal(table.children[0],newest);assert.equal(table.inert,false);
+ f.buttons[0].dispatch('click');await settle();gates.at(-1).reject(Error('database unavailable'));await settle();assert.match(plot.textContent,/database unavailable/);assert.equal(plot.inert,false);
 });

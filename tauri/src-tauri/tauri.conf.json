@@ -29,7 +29,12 @@
     ],
     "icon": [
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico"
+      }
+    }
   },
   "plugins": {
     "updater": {

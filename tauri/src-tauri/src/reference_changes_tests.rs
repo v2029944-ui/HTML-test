@@ -176,7 +176,7 @@ fn row_pages_sorting_complete_csv_and_formula_protection_are_consistent() {
     store.reference_changes_csv(&q, &path).unwrap();
     let csv = fs::read_to_string(&path).unwrap();
     assert!(csv.starts_with('\u{feff}'));
-    assert_eq!(csv.lines().count(), 28);
+    assert_eq!(csv.lines().skip_while(|line|!line.starts_with("\"Работа\";")).skip(1).count(), 27);
     assert!(csv.contains("'=SUM(A1)"));
     assert!(store.reference_changes_csv(&q, &path).is_err());
     q.metric = "count".into();
@@ -316,8 +316,9 @@ fn summary_csv_exports_observed_partial_values_and_leaves_unknown_cells_empty() 
     assert!(csv.contains("\"A\";\"20\";\"2\";\"100\";\"10\";\"частичные данные\""));
     assert!(csv.contains("\"Empty\";\"0\";\"0\";\"0\";\"\";\"частичные данные\""));
     assert!(csv.contains("\"Missing\";\"\";\"\";\"\";\"\";\"нет данных\""));
-    assert!(csv.find("\"A\";").unwrap()<csv.find("\"Empty\";").unwrap());
-    assert!(csv.find("\"Empty\";").unwrap()<csv.find("\"Missing\";").unwrap());
+    let observed=csv.split("\"Подразделение\";\"Сумма\";").nth(1).unwrap();
+    assert!(observed.find("\"A\";").unwrap()<observed.find("\"Empty\";").unwrap());
+    assert!(observed.find("\"Empty\";").unwrap()<observed.find("\"Missing\";").unwrap());
     assert!(store.reference_summary_csv(&q, &path).is_err());
     q.to = q.from.clone();
     let full = dir.path().join("full-summary.csv");
@@ -345,4 +346,83 @@ fn summary_csv_exports_observed_partial_values_and_leaves_unknown_cells_empty() 
             .unwrap(),
         0
     );
+}
+
+#[test]
+fn comparable_sample_and_totals_match_overview_changes_comparison_and_exports() {
+    for (missing_base, missing_current, zero_base) in [(false,true,false),(true,false,false),(true,true,false),(false,true,true)] {
+        let dir=tempdir().unwrap();let store=Storage::new(dir.path().into()).unwrap();
+        let organizations=["A","B","Empty","D"];
+        let mut reports=Vec::new();
+        for (id,start,baseline,last,value) in [("b1","2024-01-01",true,false,10.),("b2","2024-01-02",true,true,20.),("a1","2024-01-10",false,false,30.),("a2","2024-01-11",false,true,40.)] {
+            let present:Vec<_>=organizations.iter().copied().filter(|org|*org!="D"||!last||!(if baseline{missing_base}else{missing_current})).collect();
+            let rows:Vec<_>=present.iter().map(|org| {let amount=if *org=="D"{10000.}else if baseline&&zero_base{0.}else{value};row(org,"Work",amount/10.,amount)}).collect();
+            reports.push(json!({"id":id,"type":"day","start":start,"end":start,"organizations":present,"rows":rows,"warnings":["Сохранённое контрольное замечание"]}));
+        }
+        let revision=prepare(&store,reports);let mut q=request(revision);q.base_to="2024-01-02".into();q.organizations=organizations.iter().map(|org|org.to_string()).collect();
+        let changes=store.reference_changes(&q).unwrap();assert_eq!(changes.comparable,["A","B","Empty"]);assert_eq!(changes.rows.len(),3);
+        let query=ComparisonQuery{before:q.baseline(),after:q.current(),percent:0.,min_count:0.,min_amount:0.};
+        store.reference_scope(&q,|scope| {
+            let overview=store.analysis_comparison_dashboard(revision,scope,&query)?;
+            let before=store.analysis_organization_page(revision,scope,&q.baseline(),None,50)?;
+            let after=store.analysis_organization_page(revision,scope,&q.current(),None,50)?;
+            let mut included:Vec<_>=before.iter().filter(|row|row.complete&&after.iter().any(|other|other.org==row.org&&other.complete)).map(|row|row.org.clone()).collect();included.sort();
+            let mut declared=changes.comparable.clone();declared.sort();assert_eq!(included,declared);
+            let mut divisions:Vec<_>=overview.divisions.iter().filter(|row|row.before.amount.is_some()&&row.after.amount.is_some()).map(|row|row.organization.clone()).collect();divisions.sort();assert_eq!(divisions,declared);
+            assert_eq!(overview.summary.before.complete,!missing_base);assert_eq!(overview.summary.after.complete,!missing_current);
+            assert!(overview.summary.before.import_warning_reports>0);assert!(overview.summary.after.import_warning_reports>0);
+            Ok(())
+        }).unwrap();
+        let mut sample=q.clone();sample.organizations=changes.comparable.clone();
+        store.reference_scope(&sample,|scope| {
+            let comparison=store.analysis_comparison_dashboard(revision,scope,&query)?;
+            let window=store.analysis_comparison_window(revision,scope,&query,None,0,50)?;
+            let before=if zero_base{0.}else{90.};
+            assert_eq!(comparison.summary.before.total.amount,Some(before));assert_eq!(comparison.summary.after.total.amount,Some(210.));
+            let measure=comparison.summary.amount.as_ref().unwrap();assert_eq!(measure.delta,210.-before);assert_eq!(measure.percent.is_none(),zero_base);
+            assert_eq!(window.rows.len(),1);assert_eq!(window.rows[0].amount.as_ref().unwrap().base,before);assert_eq!(window.rows[0].amount.as_ref().unwrap().current,210.);
+            assert_eq!(changes.rows.iter().map(|row|row.before).sum::<f64>(),before);assert_eq!(changes.rows.iter().map(|row|row.after).sum::<f64>(),210.);
+            Ok(())
+        }).unwrap();
+        let summary=dir.path().join("summary.csv");let change_csv=dir.path().join("changes.csv");store.reference_summary_csv(&q,&summary).unwrap();store.reference_changes_csv(&q,&change_csv).unwrap();
+        for path in [summary,change_csv] {
+            let csv=fs::read_to_string(path).unwrap();
+            assert!(csv.contains("\"Сопоставимые подразделения\";\"3\";\"4\";\"A, B, Empty\""),"CSV must declare the exact common sample: {csv}");
+            let reason=if missing_base&&missing_current{"неполные базовый и анализируемый интервалы"}else if missing_base{"неполный базовый интервал"}else{"неполный анализируемый интервал"};
+            assert!(csv.contains(&format!("\"Состав сравнения\";\"D\";\"{reason}\"")));
+            assert!(csv.contains(if zero_base{"\"Сумма\";\"0\";\"210\";\"210\";\"\""}else{"\"Сумма\";\"90\";\"210\";\"120\";"}));
+        }
+        assert_eq!(store.revision().unwrap(),revision);
+    }
+}
+
+#[test]
+fn no_common_sample_exports_unknown_comparison_totals_instead_of_zero() {
+    let dir=tempdir().unwrap();let store=Storage::new(dir.path().into()).unwrap();
+    let revision=prepare(&store,vec![json!({"id":"base","type":"day","start":"2024-01-01","end":"2024-01-01","organizations":["A","B"],"rows":[row("A","Work",1.,10.),row("B","Work",2.,20.)]}),json!({"id":"current","type":"day","start":"2024-01-10","end":"2024-01-10","organizations":["Empty","D"],"rows":[row("Empty","Work",3.,30.),row("D","Work",4.,40.)]})]);
+    let mut q=request(revision);q.to=q.from.clone();q.organizations=vec!["A".into(),"B".into(),"Empty".into(),"D".into()];
+    let result=store.reference_changes(&q).unwrap();assert!(result.comparable.is_empty());assert!(result.rows.is_empty());
+    for (summary,file) in [(true,"summary.csv"),(false,"changes.csv")] {
+        let path=dir.path().join(file);if summary{store.reference_summary_csv(&q,&path).unwrap();}else{store.reference_changes_csv(&q,&path).unwrap();}
+        let csv=fs::read_to_string(path).unwrap();assert!(csv.contains("\"Сопоставимые подразделения\";\"0\";\"4\";\"\""));assert!(csv.contains("\"Сумма\";\"\";\"\";\"\";\"\""));
+    }
+}
+
+#[test]
+fn all_work_summary_and_changes_are_explicitly_separate_from_selected_detail_group_totals() {
+    let dir=tempdir().unwrap();let store=Storage::new(dir.path().into()).unwrap();
+    let revision=prepare(&store,vec![report("base","2024-01-01",json!([row("A","Work",1.,10.),row("A","Other",9.,90.),row("A","Independent",100.,1000.)])),report("now","2024-01-10",json!([row("A","Work",2.,20.),row("A","Other",18.,180.),row("A","Independent",200.,2000.)]))]);
+    let mut q=request(revision);q.to=q.from.clone();q.organizations=vec!["A".into()];
+    let changes=store.reference_changes(&q).unwrap();assert_eq!(changes.rows.iter().map(|row|row.before).sum::<f64>(),1100.);assert_eq!(changes.rows.iter().map(|row|row.after).sum::<f64>(),2200.);
+    store.reference_scope(&q,|scope| {
+        let filter=store.analysis_filter_create(revision,"names")?;store.analysis_filter_append(revision,&filter,&["Combined".into()])?;store.analysis_filter_seal(revision,&filter)?;
+        let selected=AnalysisScope{report_type:scope.report_type.clone(),organizations:scope.organizations.clone(),names:Some(filter.clone())};
+        let query=ComparisonQuery{before:q.baseline(),after:q.current(),percent:0.,min_count:0.,min_amount:0.};
+        let overview=store.analysis_comparison_dashboard(revision,scope,&query)?;let detail=store.analysis_comparison_dashboard(revision,&selected,&query)?;
+        assert_eq!(overview.summary.before.total.amount,Some(1100.));assert_eq!(overview.summary.after.total.amount,Some(2200.));assert_eq!(detail.summary.before.total.amount,Some(100.));assert_eq!(detail.summary.after.total.amount,Some(200.));store.analysis_filter_delete(&filter)
+    }).unwrap();
+    for (summary,name) in [(true,"summary.csv"),(false,"changes.csv")] {
+        let destination=dir.path().join(name);if summary{store.reference_summary_csv(&q,&destination).unwrap();}else{store.reference_changes_csv(&q,&destination).unwrap();}
+        let csv=fs::read_to_string(destination).unwrap();assert!(csv.contains("\"Область работ\";\"Все работы\""));assert!(csv.contains("\"Сумма\";\"1100\";\"2200\";\"1100\";\"100\""));
+    }
 }

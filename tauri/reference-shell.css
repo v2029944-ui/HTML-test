@@ -980,6 +980,8 @@ body:has(#refRoot)>footer {display:none}
 #refRoot #s1 .metric-delta button {font:inherit;color:inherit;min-height:22px;background:none;border:0;border-bottom:1px dotted currentColor;cursor:pointer}
 #s1 .insight-row {display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding-block:10px;border-bottom:1px solid var(--ui-line)}
 #s1 .insight-row strong {flex:none}
+#reportShell .filter-fold > summary strong,
+#reportShell .report-dates .date-group-title {color:var(--text,#e8edf4)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader,#toolsPage,#sheet,.period-calendar) {color:var(--text);background:var(--bg)}
 #refRoot[data-theme="light"] :is(.app-header,.tools-column header) {background:var(--surface)!important;border-color:var(--border)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader) :is(.card,.kpi,.sel,.btn,.filter-picker,.filter-shift,.chip,.change-metrics button,.filter-threshold,.filter-base-edit,.filter-reset) {color:var(--text);border-color:var(--field-border);background:var(--surface)}
@@ -1015,4 +1017,19 @@ body:has(#refRoot)>footer {display:none}
  #groupCatalog .catalog-actions {flex-wrap:wrap}
  #groupCatalog .catalog-actions .button {flex:1;min-width:0}
  #groupCatalog .catalog-row {gap:8px;padding-inline:0}
+}
+
+/* A full filtered print document is independent of the visible SQL page. */
+#referencePrintDocument {display:none}
+@media print {
+ body[data-reference-print="document"] > :not(#referencePrintDocument) {display:none!important}
+ body[data-reference-print="document"] #referencePrintDocument {display:block!important;color:#111;background:#fff;font:10pt/1.4 Arial,sans-serif}
+ #referencePrintDocument h1 {font-size:18pt;margin:0 0 12pt}
+ #referencePrintDocument h2 {font-size:12pt;margin:14pt 0 6pt}
+ #referencePrintDocument p {margin:6pt 0}
+ #referencePrintDocument table {border-collapse:collapse;width:100%;margin:10pt 0;table-layout:auto}
+ #referencePrintDocument th,#referencePrintDocument td {padding:5pt;border:1px solid #999;background:#fff!important;color:#111!important;overflow-wrap:anywhere;white-space:normal}
+ #referencePrintDocument thead {display:table-header-group}
+ #referencePrintDocument tr {break-inside:avoid}
+ #referencePrintDocument .num {text-align:right;font-variant-numeric:tabular-nums}
 }

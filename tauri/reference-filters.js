@@ -124,6 +124,11 @@ function publish(){
  return result;
 }
 function setMetric(value){if(value!=='amount'&&value!=='count')return;metric=value;return publish();}
+function openImportedPeriod(range){
+ if(!range||!['day','week','month'].includes(range.kind)||!C.valid(range.from)||!C.valid(range.to)||range.from>range.to)return false;
+ ++lastTicket;kind=range.kind;source=kind==='day'?'daily':'imported';mode='range';rule='prev';custom=null;userDates=true;
+ from=range.from;to=range.to;return publish();
+}
 function setOrganizations(values){orgs=new Set(values.filter(x=>orgNames.includes(x)));allOrgs=orgs.size===orgNames.length;return publish();}
 function close(box){box.closest('dialog')?.close();}
 function listShell(title,anchor,described){
@@ -273,5 +278,5 @@ function init(){
  if(UI.snapshot)void configure(UI.snapshot);
 }
 function refresh(){syncFields?.();return publish();}
-window.referenceFilters=Object.freeze({init,refresh,setMetric,setOrganizations,syncDetails,get scope(){return scope;}});
+window.referenceFilters=Object.freeze({init,refresh,setMetric,setOrganizations,openImportedPeriod,syncDetails,get scope(){return scope;}});
 })();

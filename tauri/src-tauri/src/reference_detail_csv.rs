@@ -55,6 +55,7 @@ fn context(
             headers(w, &[label, &values])?;
         }
     }
+    if s.names.is_none(){headers(w,&["Работы / группы","Все работы"])?;}
     Ok(())
 }
 fn status(code: &str) -> &str {

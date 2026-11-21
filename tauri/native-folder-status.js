@@ -15,6 +15,8 @@ const fields={
 if(!choose||!refresh||!location||!status||!rows||!count||
    Object.values(fields).some(item=>!item))return;
 const maxVisible=100;
+let pageIndex=0,listedFiles=[],listedRules={};
+const pager=document.createElement('div');pager.id='sourceFolderPager';rows.parentElement?.after(pager);
 const autoEnabled=()=>window.nativeFolderAutoImport?.isEnabled()===true;
 const ruleEffect=()=>autoEnabled()
   ?'Автоимпорт включён. После сохранения правила новые отчёты без замечаний и пересечений могут быть добавлены автоматически.'
@@ -70,6 +72,7 @@ function openEditor(file,rule){
     ruleMessage('Этот файл использует расширенную настройку листов и столбцов. Откройте файл для проверки в форме «Импорт Excel», измените настройки и нажмите «Запомнить настройки файла для автоимпорта».',true);
     return;
   }
+  const editor=$('sourceRuleEditor');if(editor)editor.open=true;
   selected={name:file.name,signature:file.nativeSignature,folder,revision};
   fields.file.textContent='Файл: '+file.name;
   fields.format.value=['auto','legacy','daily-wide'].includes(rule?.format)?rule.format:'legacy';
@@ -107,6 +110,30 @@ function makeRule(){
   }
   return result;
 }
+function renderFiles(){
+ rows.replaceChildren();count.textContent='Найдено XLSX: '+listedFiles.length;
+
+    for(const file of listedFiles.slice(pageIndex*maxVisible,(pageIndex+1)*maxVisible)){
+      if(!file||typeof file.name!=='string'||!Number.isFinite(file.size)||
+         file.size<0||typeof file.tooLarge!=='boolean')
+        throw Error('Некорректные метаданные XLSX.');
+      const hasRule=Object.prototype.hasOwnProperty.call(listedRules,file.name);
+      const tr=make('tr');
+      tr.append(
+        make('td',file.name),
+        make('td',Math.ceil(file.size/1024)+' КБ'),
+        make('td',(file.nativeTooLarge??file.tooLarge)?'Превышен предел нативного импорта (100 МиБ)':hasRule?'Есть правило':'Правило не задано')
+      );
+      const action=make('td'),button=make('button','Настроить правило'),inspect=make('button','Проверить');
+      inspect.type='button';inspect.disabled=(file.nativeTooLarge??file.tooLarge)||!file.nativeSignature;inspect.setAttribute('aria-label','Проверить '+file.name);inspect.addEventListener('click',()=>{if(busy||changing)return;const path=folder.replace(/[\\/]$/,'')+(folder.includes('\\')?'\\':'/')+file.name;void window.unifiedReports?.openSource(path);});
+      button.type='button';button.disabled=(file.nativeTooLarge??file.tooLarge)||!file.nativeSignature;
+      button.setAttribute('aria-label','Настроить правило для '+file.name);
+      button.addEventListener('click',()=>openEditor(file,hasRule?listedRules[file.name]:null));
+      action.append(inspect,button);tr.append(action);rows.append(tr);
+    }
+ window.sqlRowScroll.attach(rows,{index:pageIndex,size:maxVisible,count:rows.children.length,total:listedFiles.length,controlsOnly:true,footer:pager,label:'Страницы файлов Excel',go:index=>{if(busy||changing)return false;pageIndex=index;renderFiles();}});
+ lock();
+}
 async function load(){
   if(closed)return;
   if(busy||changing){pending=true;return;}
@@ -121,33 +148,13 @@ async function load(){
     invalidate('Список обновлён. Выберите файл для настройки правила.');
     const files=result.files;
     location.textContent=folder?'Выбрана папка: '+folder:'Папка Excel ещё не выбрана.';
-    count.textContent='Найдено XLSX: '+files.length+
-      (files.length>maxVisible?' · показаны первые '+maxVisible:'');
-    rows.replaceChildren();
-    const rules=result.rules&&typeof result.rules==='object'?result.rules:{};
-    for(const file of files.slice(0,maxVisible)){
-      if(!file||typeof file.name!=='string'||!Number.isFinite(file.size)||
-         file.size<0||typeof file.tooLarge!=='boolean')
-        throw Error('Некорректные метаданные XLSX.');
-      const hasRule=Object.prototype.hasOwnProperty.call(rules,file.name);
-      const tr=make('tr');
-      tr.append(
-        make('td',file.name),
-        make('td',Math.ceil(file.size/1024)+' КБ'),
-        make('td',(file.nativeTooLarge??file.tooLarge)?'Превышен предел нативного импорта (100 МиБ)':hasRule?'Есть правило':'Правило не задано')
-      );
-      const action=make('td'),button=make('button','Настроить');
-      button.type='button';button.disabled=(file.nativeTooLarge??file.tooLarge)||!file.nativeSignature;
-      button.setAttribute('aria-label','Настроить правило для '+file.name);
-      button.addEventListener('click',()=>openEditor(file,hasRule?rules[file.name]:null));
-      action.append(button);tr.append(action);rows.append(tr);
-    }
+    listedFiles=files;listedRules=result.rules&&typeof result.rules==='object'?result.rules:{};pageIndex=0;renderFiles();
     void window.nativeFolderAutoImport?.updateSnapshot(result);
     report(folder?'Папка проверена. Состояние автоимпорта указано рядом с переключателем.':
       'Выберите папку Excel. Импорт отчётов выполняется отдельно с проверкой.');
   }catch(error){
     void window.nativeFolderAutoImport?.updateSnapshot(null);
-    rows.replaceChildren();
+    listedFiles=[];renderFiles();
     invalidate();
     count.textContent='Список XLSX недоступен.';
     report('Не удалось проверить папку Excel: '+String(error?.message||error),true);

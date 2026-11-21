@@ -14,13 +14,13 @@ function mount(overrides={}){
   querySelectorAll(s){const all=this.children.flatMap(x=>x&&typeof x==='object'?[x,...x.querySelectorAll('*')]:[]);if(s==='*')return all;if(s==='button')return all.filter(x=>x.tag==='button');if(s==='input,select,textarea,button')return all.filter(x=>['input','select','textarea','button'].includes(x.tag));if(s==='[data-mapping]')return all.filter(x=>x.dataset.mapping);if(s==='input[data-ordinal]')return all.filter(x=>x.tag==='input'&&x.dataset.ordinal!==undefined);return [];}
   querySelector(s){return this.querySelectorAll('*').find(x=>s==='[data-field="'+x.dataset.field+'"]')||null;}
  }
- const ids=['reports','reportCount','upload','calendarDetails','reportCalendar','calendarRange','calendarPrev','calendarNext','qualitySource','qualityPeriod','qualityOrg','qualityType','qualityTable','qualitySummary','qualityPage','qualityPrev','qualityNext','qualityHeading','replaceExisting','importPreview','excelFile','importFormat','importType','importWeek','importMonth','sheetSelect','dailyYear','importMappingMode','inspectFile','saveImport','dailyWideOptions','weekStartLabel','monthStartLabel','importDateCaption','importManualWrap','importColumnMappings','addImportMapping','excelFileStatus','dailySheetChoices','importPeriodDates','saveDailyFolderRule'];
+ const ids=['reports','reportCount','upload','calendarDetails','reportCalendar','calendarRange','calendarPrev','calendarNext','qualitySource','qualityPeriod','qualityOrg','qualityType','qualityTable','qualitySummary','qualityPage','qualityPrev','qualityNext','qualityHeading','reportPeriods','uploadedReports','importAdvanced','replaceExisting','importPreview','excelFile','importFormat','importType','importWeek','importMonth','sheetSelect','dailyYear','importMappingMode','inspectFile','saveImport','dailyWideOptions','weekStartLabel','monthStartLabel','importDateCaption','importManualWrap','importColumnMappings','addImportMapping','excelFileStatus','dailySheetChoices','importPeriodDates','saveDailyFolderRule'];
  const root=new E();for(const id of ids){const e=new E(id.includes('File')?'input':'div');e.id=id;const p=new E();root.append(p);p.append(e);}
  const filterRoot=new E(),qualityLabel=new E();filterRoot.append(qualityLabel);qualityLabel.append(nodes.qualityType);
  Object.assign(nodes.importFormat,{value:'legacy'});nodes.importType.value='day';nodes.importWeek.value='2024-01-01';nodes.importMappingMode.value='auto';nodes.qualitySource.value='saved';for(const id of ['qualityPeriod','qualityOrg','qualityType'])nodes[id].value='all';
  const api={managementReportWindow:async()=>({rows:[],total_rows:0}),managementReportSummary:async()=>({reports:0,rows:0,amount:0,latest:'2024-01-01'}),managementReportOrgWindow:async()=>({rows:[],total_rows:0}),unifiedCalendar:async(revision,year)=>({revision,year,days:[]}),nativeDailyRollup:async()=>({points:[],next_cursor:null}),unifiedQualityPage:async()=>({issues:[],next_offset:null,total:0,counts:{}}),chooseWideXlsx:async()=>null,nativeImportSheets:async()=>[{name:'Дни',component:'xl/worksheets/sheet1.xml'}],nativeLegacyImportSheets:async()=>['xl/worksheets/sheet1.xml'],nativeLegacyImportPreview:async()=>({reviewToken:'a'.repeat(64),reportCount:1,rowCount:2,conflicts:{},quality:{},sampleReports:[]}),nativeLegacyImportApply:async()=>({reports:1,rows:2,revision:2}),chooseSqliteBackupPath:async()=>null,...overrides};
  let snapshotHook,viewHook;const UI={api,$:id=>nodes[id],el:(tag,text,cls)=>{const e=new E(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;},tableHelp:(section,_table,headers,help)=>{section.headerHints=headers.filter((_,i)=>help[i]);},revision:1,snapshot:{org_names:['A','B','C','D']},fmt:v=>v??'—',onSnapshot:fn=>snapshotHook=fn,onView:(_,fn)=>viewHook=fn,refresh:async()=>{UI.revision++;snapshotHook(UI.snapshot);}};
- const window={sqlRowScroll:require('./scroll-window-fixture.cjs'),unifiedUI:UI,confirm:()=>true};const document={createElement:t=>new E(t),head:new E('head')};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../unified-reports.js'),'utf8'),{window,document,console});window.unifiedReports.init();return {nodes,UI,window,refresh:()=>window.unifiedReports.refresh(),snapshot:(value=UI.snapshot)=>snapshotHook(value),view:()=>viewHook()};
+ const window={sqlRowScroll:require('./scroll-window-fixture.cjs'),unifiedUI:UI,confirm:()=>true};const document={createElement:t=>new E(t),head:new E('head')};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../unified-reports.js'),'utf8'),{window,document,console});window.unifiedReports.init();return {nodes,UI,window,refresh:async()=>{await window.unifiedReports.openView('list');await window.unifiedReports.openView('calendar');await window.unifiedReports.openView('quality');},snapshot:(value=UI.snapshot)=>snapshotHook(value),view:()=>viewHook()};
 }
 const text=e=>[e.textContent||'',...e.children.map(x=>typeof x==='object'?text(x):'')].join(' ');
 const flush=()=>new Promise(r=>setImmediate(r));
@@ -153,10 +153,7 @@ test('reports and their organizations request an arbitrary page directly and kee
 test('connected-file picker preserves Windows verbatim separators and Unix paths',async()=>{
  for(const [folder,expected] of [[String.raw`\\?\C:\Excel`,String.raw`\\?\C:\Excel\B.xlsx`],['/tmp/excel','/tmp/excel/B.xlsx']]){
   let selected=null;const ui=mount({list:async()=>({folder,files:[{name:'B.xlsx'}],rules:{}}),chooseFolder:async()=>null,nativeImportSheets:async source=>{selected=source;return [{name:'Дни',component:'xl/worksheets/sheet1.xml'}];}});
-  const picker=ui.nodes.sourceManualFile.parentElement;
-  await picker.children.find(x=>x.textContent==='Показать файлы папки').click();
-  assert.equal(ui.nodes.sourceManualFile.value,expected);
-  await picker.children.find(x=>x.textContent==='Открыть для проверки').click();await flush();assert.equal(selected,expected);
+  await ui.window.unifiedReports.openSource(expected);assert.equal(selected,expected);
  }
 });
 
@@ -200,7 +197,7 @@ test('successful XLSX commit remains successful when view refresh fails',async()
  ui.UI.refresh=async()=>{throw Error('refresh unavailable');};
  await ui.nodes.saveImport.click();
  assert.equal(applies,1);
- assert.match(ui.nodes.unifiedImportStatus.textContent,/Сохранено: 1 отчётов/);
+ assert.match(ui.nodes.unifiedImportStatus.textContent,/Сохранено отчётов: 1/);
  assert.match(ui.nodes.unifiedImportStatus.textContent,/Не удалось обновить отображение/);
  assert.doesNotMatch(ui.nodes.unifiedImportStatus.textContent,/Не сохранено/);
  await ui.nodes.saveImport.click();assert.equal(applies,1,'review must be invalidated after commit');
@@ -299,4 +296,31 @@ test('partial older staged metadata lists only confirmed dates and explains manu
  await ui.nodes.excelFile.click();ui.nodes.importWeek.value='2024-02-01';await ui.nodes.inspectFile.click();
  ui.nodes.qualitySource.value='pending';await ui.nodes.qualitySource.fire('change');await flush();
  assert.deepEqual(ui.nodes.qualityPeriod.children.map(o=>o.value),['all','day:2024-02-03']);assert.match(ui.nodes.qualityPeriodHint.textContent,/в полях «С» и «По»/);
+});
+
+
+test('import opening makes no calendar/list/quality reads; each history view loads only its own bounded query',async()=>{
+ const calls=[];const ui=mount({managementReportWindow:async()=>{calls.push('reports');return {rows:[],total_rows:0};},managementReportSummary:async()=>{calls.push('summary');return {reports:0,rows:0,amount:null};},unifiedCalendar:async()=>{calls.push('calendar');return {days:[]};},nativeDailyRollup:async()=>{calls.push('rollup');return {points:[],next_cursor:null};},unifiedQualityPage:async()=>{calls.push('quality');return {issues:[],total:0,counts:{}};}});
+ await ui.view();ui.snapshot();await flush();assert.deepEqual(calls,[]);
+ await ui.window.unifiedReports.openView('list');assert.deepEqual(calls,['reports','summary']);calls.length=0;
+ await ui.window.unifiedReports.openView('calendar');assert.deepEqual(calls,['calendar','rollup','rollup','rollup']);calls.length=0;
+ await ui.window.unifiedReports.openView('quality');assert.deepEqual(calls,['quality']);
+});
+test('a legacy folder rule resolves the same logical second sheet as native folder import',async()=>{
+ let received;const ui=mount({chooseWideXlsx:async()=>'/excel/two.xlsx',nativeImportSheets:async()=>[{name:'Первый',component:'xl/first.xml'},{name:'Второй',component:'xl/second.xml'}],list:async()=>({folder:'/excel',files:[{name:'two.xlsx',nativeSignature:'sig'}],rules:{'two.xlsx':{format:'legacy',type:'week',start:'2024-02-05',sheet:'Второй'}}}),nativeLegacyImportPreview:async(_,options)=>{received=options;return {reviewToken:'a'.repeat(64),reportCount:1,conflicts:{},quality:{}};}});
+ await ui.nodes.excelFile.click();assert.equal(ui.nodes.sheetSelect.value,'xl/second.xml');await ui.nodes.inspectFile.click();assert.equal(received.sheet,'xl/second.xml');assert.equal(received.kind,'week');assert.equal(received.start,'2024-02-05');
+});
+test('changing parameters clears displayed old numbers immediately, including while preview is pending',async()=>{
+ const ui=mount({chooseWideXlsx:async()=>'/tmp/A.xlsx'});await ui.nodes.excelFile.click();await ui.nodes.inspectFile.click();assert.ok(ui.nodes.importPreview.children.length);
+ await ui.nodes.importWeek.fire('change');assert.equal(ui.nodes.importPreview.children.length,0);assert.equal(ui.nodes.saveImport.disabled,true);
+ let finish;ui.UI.api.nativeLegacyImportPreview=()=>new Promise(r=>finish=r);const pending=ui.nodes.inspectFile.click();await flush();await ui.nodes.importMonth.fire('change');finish({reviewToken:'b'.repeat(64),reportCount:99,quality:{},conflicts:{}});await pending;assert.equal(ui.nodes.importPreview.children.length,0);assert.equal(ui.nodes.saveImport.disabled,true);
+});
+test('daily rule action exists only for a checked file in connected folder',async()=>{
+ for(const path of ['/outside/day.xlsx','/excel/day.xlsx']){const ui=mount({chooseWideXlsx:async()=>path,list:async()=>({folder:'/excel',files:[{name:'day.xlsx',nativeSignature:'sig'}],rules:{}}),nativeSetRuleChecked:async()=>{},nativeWideImportPreview:async()=>({reviewToken:'a'.repeat(64),reportCount:1,quality:{},conflicts:{}})});await ui.nodes.excelFile.click();ui.nodes.importFormat.value='daily-wide';await ui.nodes.importFormat.fire('change');await ui.nodes.inspectFile.click();assert.equal(ui.nodes.saveDailyFolderRule.hidden,path.startsWith('/outside'));assert.equal(ui.nodes.sheetSelect.parentElement.hidden,true);assert.notEqual(ui.nodes.unifiedYearDetails.open,true);}
+});
+test('saved weekly import opens its exact native range through the shared filter seam',async()=>{
+ const range={kind:'week',from:'2024-02-05',to:'2024-03-03'},opened=[],ui=mount({chooseWideXlsx:async()=>'/tmp/week.xlsx',nativeLegacyImportPreview:async()=>({reviewToken:'a'.repeat(64),reportCount:4,rowCount:4,quality:{},conflicts:{},periodRange:range})});ui.window.referenceFilters={openImportedPeriod:r=>opened.push(r)};ui.window.referenceDesktop={navigate:id=>opened.push(id)};await ui.nodes.excelFile.click();await ui.nodes.inspectFile.click();assert.match(text(ui.nodes.importPreview),/2024-02-05 — 2024-03-03/);await ui.nodes.saveImport.click();const action=ui.nodes.importPreview.querySelectorAll('button').find(b=>b.textContent==='Открыть загруженный период');assert.ok(action);await action.click();assert.deepEqual(opened,[range,'s1']);
+});
+test('saved report count wording remains grammatical for 1,2,5,11,21',async()=>{
+ for(const reports of [1,2,5,11,21]){const ui=mount({chooseWideXlsx:async()=>'/tmp/count.xlsx',nativeLegacyImportApply:async()=>({reports,rows:reports,revision:2})});await ui.nodes.excelFile.click();await ui.nodes.inspectFile.click();await ui.nodes.saveImport.click();assert.match(ui.nodes.unifiedImportStatus.textContent,new RegExp('Сохранено отчётов: '+reports+' ·'));}
 });

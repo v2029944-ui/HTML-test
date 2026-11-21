@@ -47,6 +47,7 @@ class DesktopTablePager(unittest.TestCase):
             }
           };
         }""")
+        p.add_script_tag(path=str(TAURI/'analysis-summary.js'))
         p.add_script_tag(path=str(TAURI/'reference-results.js'))
         p.evaluate("""async()=>{referenceResults.init();await referenceResults.refresh({revision:1,type:'day',
             from:'2024-01-02',to:'2024-01-02',baseFrom:'2024-01-01',baseTo:'2024-01-01',

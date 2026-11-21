@@ -83,7 +83,13 @@
     disclosures();
     const focus = opener ? byId('toolsTitle') : nav.querySelector('[aria-pressed=true]');
     focus.focus({preventScroll:true});
-    if (opener) tools.scrollIntoView({block:'start'});
+    if (opener) {
+      // Collapsing filters changes the sticky offset in ResizeObserver. Scroll
+      // after that layout rather than retaining the expanded filter height.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (panel === key) tools.scrollIntoView({block:'start'});
+      }));
+    }
   }
 
   function navigate(id) {

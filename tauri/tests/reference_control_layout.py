@@ -20,6 +20,16 @@ def check_control_layout(page):
       const paint = document.createElement('canvas').getContext('2d');
       const color = value => { paint.fillStyle = value; return paint.fillStyle; };
       const close = (a,b) => Math.abs(a-b) <= tolerance;
+      if (innerWidth >= 720) {
+        const tables = document.querySelectorAll('#s1 .table-viewport table,#s2 .changes-table,#refNative[data-panel] .metric-table,#refNative[data-panel] .table-scroll table');
+        for (const table of tables) {
+          if (!visible(table)) continue;
+          for (const cell of table.querySelectorAll('thead tr:first-child > :is(th,td),tbody tr:first-child > :is(td,th)')) {
+            if (visible(cell) && getComputedStyle(cell).textAlign !== 'center')
+              errors.push([table.caption?.innerText || table.className,cell.textContent.slice(0,60),'cell content not centered']);
+          }
+        }
+      }
       const fields = [...document.querySelectorAll('#refNative label > .ref-calendar-field')];
       for (const field of fields) {
         if (!visible(field)) continue;

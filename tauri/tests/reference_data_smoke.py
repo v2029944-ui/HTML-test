@@ -290,7 +290,8 @@ def check_reference_data(page, output):
         if method == 'referenceSummaryCsv':
             assert rows[0][1:] == [scope()['from'], scope()['to']], rows
             assert rows[1][1:] == [scope()['baseFrom'], scope()['baseTo']], rows
-            data = rows[4:]
+            header = next(i for i, row in enumerate(rows) if row[:2] == ['Подразделение', 'Сумма'])
+            data = rows[header + 1:]
             assert len(data) == 4 and {r[0] for r in data} == set(organizations), rows
             if empty:
                 assert all(row[1:5] == ['', '', '', ''] and row[5] == 'нет данных' for row in data), rows
@@ -298,10 +299,15 @@ def check_reference_data(page, output):
                 assert all(_number(row[1]) == 145 and _number(row[2]) == 14.5 for row in data), rows
                 assert all(_number(row[3]) == 25 for row in data), rows
         else:
-            assert len(rows) == (1 if empty else 5), rows
+            header = next(i for i, row in enumerate(rows) if row[:2] == ['Работа', 'Подразделение'])
+            data = rows[header + 1:]
+            assert len(data) == (0 if empty else 4), rows
             if not empty:
                 assert all(row[0] == 'Альфа' and _number(row[2]) == 155 and
-                           _number(row[3]) == 145 and _number(row[4]) == -10 for row in rows[1:]), rows
+                           _number(row[3]) == 145 and _number(row[4]) == -10 for row in data), rows
+        sample = next(row for row in rows if row and row[0] == 'Сопоставимые подразделения')
+        assert sample[1:3] == [('0' if empty else '4'), '4'], rows
+        assert sample[3] == ('' if empty else ', '.join(organizations)), rows
         try:
             _api(page, method, request(), str(path))
         except PlaywrightError:

@@ -637,7 +637,7 @@ class ImportControls(unittest.TestCase):
             for(const categories of [orgs,[orgs[1]],[orgs[1],orgs[0]]]){
               drawChart([period],new Set(categories),'amount',root,{chart,seriesType:'organizations',categories,data});
               cases.push([...root.querySelectorAll('.chart-legend span')].every(node=>node.style.getPropertyValue('--series')===departmentSeriesColor(node.textContent)));
-              cases.push([...root.querySelectorAll('[data-chart-tooltip]')].every(node=>node.getAttribute('fill')===departmentSeriesColor(node.dataset.chartTooltip.split(' · ')[0])));
+              cases.push([...root.querySelectorAll('[data-chart-tooltip]')].every(node=>(node.getAttribute('fill')||node.querySelector('.chart-ranking-fill')?.style.getPropertyValue('--rank-color'))===departmentSeriesColor(node.dataset.chartTooltip.split(' · ')[0])));
             }
           }
           drawChart([period],new Set(orgs),'amount',root,{categories:['Работа 1','Работа 2']});const before=read();

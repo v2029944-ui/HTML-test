@@ -773,8 +773,8 @@ input[type=checkbox]{accent-color:var(--accent-fill)}
 h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 .kpi strong,.table td:not(:first-child),.metric-plot svg text{font-family:var(--font-numeric);font-variant-numeric:tabular-nums}
 .metric-plot svg polyline{filter:var(--line-glow)}
-.metric-plot svg :is(circle,rect):hover{stroke:var(--text);stroke-width:2px}
-.metric-plot svg :is(circle,rect):focus-visible{outline:2px solid var(--focus);outline-offset:3px;stroke:var(--text);stroke-width:2px}
+.metric-plot svg :is(circle,rect,polygon):hover{stroke:var(--text);stroke-width:2px}
+.metric-plot svg :is(circle,rect,polygon):focus-visible{outline:2px solid var(--focus);outline-offset:3px;stroke:var(--text);stroke-width:2px}
 .metric-plot svg rect{rx:var(--radius-control)}
 .table tbody tr:nth-child(even) td{background:var(--row-alt)}
 .table tbody tr:hover td{background:var(--hover)}
@@ -1222,6 +1222,8 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 .calendar-overlap small,.calendar-partial small{color:var(--negative);font-weight:700}
 .chart-series-control{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;font-size:var(--ui-legend-font,14px)}
 .chart-series-control select{width:auto;min-width:100px;max-width:100%}
+.metric-chart .metric-plot,.panel .metric-plot{height:auto;max-height:none;overflow-x:auto}
+.metric-plot .chart-series{pointer-events:none}
 .metric-plot>.chart-legend{max-height:none;overflow:visible;flex-wrap:wrap}
 .filter-scope-title{font-size:var(--ui-legend-font,14px);margin:0 0 12px}
 
@@ -1496,7 +1498,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
             <label>Что сравнивать<select id="chartBreakdown"><option value="works">Работы и группы</option><option value="organizations">Подразделения по показателям</option></select></label>
             <label id="chartOrgScopeLabel" hidden>Какие услуги учитывать<select id="chartOrgScope"><option value="all">Все выполненные работы</option><option value="selected">Только отмеченные работы и группы</option></select></label>
             <div id="chartMetricsWrap" class="chart-metric-control" hidden><span>Показатели этого графика</span><div id="chartMetrics" class="multi-choices"></div></div>
-            <label id="chartSeriesLayoutLabel" hidden>Как расположить показатели<select id="chartSeriesLayout"><option value="combined">Вместе — относительная шкала (%)</option><option value="separate">Отдельно — исходные значения</option></select></label>
+            <label id="chartSeriesLayoutLabel" hidden>Как расположить показатели<select id="chartSeriesLayout"><option value="separate">Отдельно — исходные значения</option><option value="combined">Вместе — % от максимума каждого показателя</option></select></label>
           </div>
         </div>
         <details class="quick-help" id="chartNotes" hidden><summary>Настройки и шкалы графика</summary>
@@ -3492,12 +3494,13 @@ function renderSinglePeriodRanking(root,period,shown,data,metric,options,seriesC
   }).filter(item=>Number.isFinite(item.value))
     .sort((a,b)=>b.value-a.value||a.label.localeCompare(b.label,'ru'));
   if(!rows.length){empty(root,'Нет сопоставимых значений за выбранный период.');return;}
-  root.append(elem('p','Рейтинг за '+displayPeriod(period)+'. Для динамики выберите несколько периодов.','muted small'));
+  const interval=period.end&&period.end!==period.start?displayDay(period.start)+' — '+displayDay(period.end):displayDay(period.start);
+  root.append(elem('p','Рейтинг за '+interval+' ('+metricTitle(metric)+'). Для динамики выберите несколько периодов.','muted small'));
   if(rows.some(row=>row.value<0))
     root.append(elem('p','Длина столбца показывает модуль значения; знак указан рядом с числом.','muted small'));
   const largest=Math.max(0,...rows.map(row=>Math.abs(row.value)));
   const list=elem('div',null,'chart-ranking');list.setAttribute('role','list');
-  list.setAttribute('aria-label','Рейтинг работ и групп за '+displayPeriod(period));
+  list.setAttribute('aria-label','Рейтинг за '+interval+' ('+metricTitle(metric)+')');
   rows.forEach(row=>{
     const line=elem('div',null,'chart-ranking-row'),name=elem('span',row.label,'chart-ranking-name');
     name.title=row.label;
@@ -3507,7 +3510,8 @@ function renderSinglePeriodRanking(root,period,shown,data,metric,options,seriesC
     track.append(fill);
     const amount=elem('strong',fmtNumber(row.value,metric),'chart-ranking-value');
     line.setAttribute('role','listitem');
-    line.setAttribute('aria-label',row.label+': '+fmtNumber(row.value,metric));
+    line.dataset.chartTooltip=row.label+' · '+interval+' · '+metricTitle(metric)+': '+fmtNumber(row.value,metric);
+    line.setAttribute('aria-label',line.dataset.chartTooltip);line.setAttribute('tabindex','0');
     line.append(name,track,amount);list.append(line);
   });
   root.append(list);
@@ -3528,7 +3532,7 @@ function drawChart(periods,orgs,metric,root,options={}) {
     select.value=String(page);select.addEventListener('change',()=>{options.seriesPage=Number(select.value);drawChart(periods,orgs,metric,root,options);root.querySelector('select')?.focus();});
     control.append(select);root.append(control);if(restoreSeriesFocus)select.focus({preventScroll:true});
   }
-  const seriesColor=name=>options.seriesType==='organizations'?departmentSeriesColor(name):workSeriesColor(name);
+  const seriesColor=options.seriesType==='organizations'?name=>departmentSeriesColor(name,groups.indexOf(name)):visibleWorkColors(shown);
   const data=options.data||periods.map(p=>reportHasOrganizations(p,orgs)?summary(p,orgs).by:null);
   if(periods.length===1){
     renderSinglePeriodRanking(root,periods[0],shown,data[0],metric,options,seriesColor);
@@ -4300,20 +4304,48 @@ function workSeriesColor(key){
   let hash=0;for(const character of identity)hash=(Math.imul(hash,31)+character.codePointAt(0))>>>0;
   return COLORS[(hash+4)%COLORS.length];
 }
+function visibleWorkColors(names){
+  const assigned=new Map(),used=new Set();
+  for(const name of [...names].sort()){
+    let index=COLORS.indexOf(workSeriesColor(name));
+    if(used.size<COLORS.length)while(used.has(COLORS[index]))index=(index+1)%COLORS.length;
+    const color=COLORS[index];assigned.set(name,color);used.add(color);
+  }
+  return name=>assigned.get(name);
+}
+function chartCount(n,one,few,many){
+  const v=n%100,last=n%10;
+  return n+' '+(v>=11&&v<=14?many:last===1?one:last>=2&&last<=4?few:many);
+}
+function departmentChartTitle(organizations,metrics){
+  return chartCount(organizations,'подразделение','подразделения','подразделений')+' · '+
+    chartCount(metrics,'показатель','показателя','показателей')+' (% от максимума каждого показателя)';
+}
 function departmentSeriesColor(organization,orgIndex=0){
   const position=state.settings.orgNames.indexOf(organization);
   return COLORS[(position<0?orgIndex:position)%COLORS.length];
 }
-function departmentLegendSample(metric,color,bar){
+let metricPatternId=0;
+function metricMarker(metric,x,y,color){
+  if(metric==='count')return svgEl('polygon',{points:[[x,y-5],[x+5,y+4],[x-5,y+4]].map(p=>p.join(',')).join(' '),fill:color});
+  if(metric==='average')return svgEl('polygon',{points:[[x,y-5],[x+5,y],[x,y+5],[x-5,y]].map(p=>p.join(',')).join(' '),fill:color});
+  return svgEl('circle',{cx:x,cy:y,r:4,fill:color});
+}
+function metricBarFill(svg,metric,color){
+  if(metric==='amount')return color;
+  const id='metric-pattern-'+(++metricPatternId),defs=svgEl('defs'),pattern=svgEl('pattern',{id,width:6,height:6,patternUnits:'userSpaceOnUse'});
+  pattern.append(svgEl('rect',{width:6,height:6,fill:'var(--surface)'}));
+  pattern.append(metric==='count'?svgEl('path',{d:'M-1 1L1 -1M0 6L6 0M5 7L7 5',stroke:color,'stroke-width':2}):svgEl('circle',{cx:3,cy:3,r:1.8,fill:color}));
+  defs.append(pattern);svg.append(defs);return 'url(#'+id+')';
+}
+function departmentLegendSample(metric,color,bar,fill){
   const style=departmentMetricStyle(metric);
   const svg=svgEl('svg',{viewBox:'0 0 38 16',width:38,height:16,'aria-hidden':'true',focusable:'false'});
-  if(bar){
-    svg.append(svgEl('rect',{x:3,y:2,width:30,height:12,fill:color,
-      'fill-opacity':style.barOpacity,stroke:color,'stroke-width':1}));
-  }else{
+  if(bar)svg.append(svgEl('rect',{x:3,y:2,width:30,height:12,fill:fill||color,stroke:color,'stroke-width':1}));
+  else{
     const attrs={x1:1,y1:8,x2:37,y2:8,stroke:color,'stroke-width':3,'stroke-linecap':'butt'};
     if(style.dash)attrs['stroke-dasharray']=style.dash;
-    svg.append(svgEl('line',attrs));
+    svg.append(svgEl('line',attrs),metricMarker(metric,19,8,color));
   }
   return svg;
 }
@@ -4328,19 +4360,21 @@ function departmentScaleMax(series){
 }
 // Разные единицы не наносятся на одну абсолютную ось: каждый показатель
 // нормируется по своему максимальному по модулю значению; исходные числа сохраняются.
-function drawDepartmentMultiChart(periods,organizations,metrics,data,root){
-  chartRenders.set(root,()=>drawDepartmentMultiChart(periods,organizations,metrics,data,root));
+function drawDepartmentMultiChart(periods,organizations,metrics,data,root,options={}){
+  chartRenders.set(root,()=>drawDepartmentMultiChart(periods,organizations,metrics,data,root,options));
   root.replaceChildren();
   const series=departmentMultiSeries(organizations,metrics,data);
   if(!periods.length||!series.length){empty(root,'Нет выбранных показателей или отчётных периодов');return;}
-  if(periods.length===1&&state.chart==='line'){
-    empty(root,'Для динамики подразделений выберите несколько периодов. Для сравнения за один период переключитесь на «Столбцы» или «Таблица значений».');
-    return;
-  }
-  const scales=departmentScaleMax(series),bar=state.chart==='bar';
+  const scales=departmentScaleMax(series),bar=state.chart==='bar',horizontal=bar&&options.orientation==='horizontal';
+  const pageSize=12,page=horizontal?Math.min(Math.floor((periods.length-1)/pageSize),options.page||0):0;
+  const start=page*pageSize,shown=horizontal?periods.slice(start,start+pageSize):periods;
+  if(horizontal&&periods.length>pageSize&&window.unifiedChartPager)window.unifiedChartPager(root,'chart-periods',{
+    index:page,size:pageSize,count:shown.length,total:periods.length,axis:'x',label:'Периоды горизонтальной диаграммы',
+    go:index=>{options.page=index;drawDepartmentMultiChart(periods,organizations,metrics,data,root,options);}
+  });
   const phone=window.matchMedia?.('(max-width:740px)').matches||false;
-  const left=phone?55:76,right=phone?15:28,top=27,bottom=80,height=phone?325:370;
-  const width=phone?Math.max(root.clientWidth||Math.max(240,innerWidth-64),left+right+periods.length*Math.max(84,bar?series.length*16:0)):
+  const left=horizontal?155:phone?55:76,right=phone?15:28,top=27,bottom=horizontal?20:80,height=horizontal?top+shown.length*(series.length*18+22)+bottom:phone?325:370;
+  const width=horizontal?Math.max(root.clientWidth||740,640):phone?Math.max(root.clientWidth||Math.max(240,innerWidth-64),left+right+periods.length*Math.max(84,bar?series.length*16:0)):
     Math.max(800,periods.length*Math.max(116,bar?series.length*19:116));
   const usableW=width-left-right,usableH=height-top-bottom;
   const negative=series.some(entry=>entry.values.some(value=>Number.isFinite(value)&&value<0));
@@ -4349,23 +4383,26 @@ function drawDepartmentMultiChart(periods,organizations,metrics,data,root){
   const svg=svgEl('svg',{viewBox:'0 0 '+width+' '+height,role:'img',
     'aria-label':'Сравнение подразделений и показателей. Шкала в процентах от максимума по каждому показателю'});
   svg.style.minWidth=width+'px';
+  const hx=value=>left+(value-min)/(max-min)*usableW;
   for(let i=0;i<=4;i++){
-    const value=min+(max-min)*i/4,y=py(value);
-    svg.append(svgEl('line',{x1:left,y1:y,x2:width-right,y2:y,stroke:'var(--grid)'}));
-    svg.append(svgEl('text',{x:left-8,y:y+4,'text-anchor':'end',fill:'var(--plot-label)','font-size':11},fmtNumber(value,'count')+'%'));
+    const value=min+(max-min)*i/4,y=py(value),x=hx(value);
+    svg.append(svgEl('line',{x1:horizontal?x:left,y1:horizontal?top:y,x2:horizontal?x:width-right,y2:horizontal?height-bottom:y,stroke:value===0?'var(--axis)':'var(--grid)'}));
+    svg.append(svgEl('text',{x:horizontal?x:left-8,y:horizontal?16:y+4,'text-anchor':horizontal?'middle':'end',fill:'var(--plot-label)','font-size':11},fmtNumber(value,'count')+'%'));
   }
-  svg.append(svgEl('line',{x1:left,y1:py(0),x2:width-right,y2:py(0),stroke:'var(--axis)'}));
-  periods.forEach((period,i)=>{
-    const label=svgEl('text',{x:px(i),y:height-49,'text-anchor':'middle',fill:'var(--plot-label)','font-size':11},
-      plotPeriodLabel(period));
+  const rowHeight=series.length*18+22;
+  shown.forEach((period,i)=>{
+    const label=svgEl('text',{x:horizontal?8:px(i),y:horizontal?top+i*rowHeight+14:height-49,'text-anchor':horizontal?'start':'middle',fill:'var(--plot-label)','font-size':11},
+      horizontal?displayPeriod(period):plotPeriodLabel(period));
     label.append(svgEl('title',{},displayPeriod(period)));svg.append(label);
-    svg.append(svgEl('text',{x:px(i),y:height-32,'text-anchor':'middle',fill:'var(--plot-label)','font-size':10},period.start.slice(0,4)));
-    if(series.every(entry=>entry.values[i]===null))
-      svg.append(svgEl('text',{x:px(i),y:top+18,'text-anchor':'middle',fill:'var(--warning)','font-size':11},'Нет данных'));
+    if(!horizontal)svg.append(svgEl('text',{x:px(i),y:height-32,'text-anchor':'middle',fill:'var(--plot-label)','font-size':10},period.start.slice(0,4)));
+    if(series.every(entry=>entry.values[start+i]===null))
+      svg.append(svgEl('text',{x:horizontal?left+5:px(i),y:horizontal?top+i*rowHeight+14:top+18,fill:'var(--warning)','font-size':11},'Нет данных'));
   });
+  const fills=[],gaps=new Set(chartTimelineGaps(periods).map(gap=>gap.nextIndex));
   series.forEach((entry,index)=>{
     const color=departmentSeriesColor(entry.organization,entry.orgIndex),maximum=scales.get(entry.metric)||0;
     const style=departmentMetricStyle(entry.metric),dash=style.dash;
+    const fill=bar?metricBarFill(svg,entry.metric,color):color;fills.push(fill);
     let segment=[];
     const flush=()=>{
       if(segment.length>1){
@@ -4375,20 +4412,21 @@ function drawDepartmentMultiChart(periods,organizations,metrics,data,root){
       }
       segment=[];
     };
-    entry.values.forEach((value,i)=>{
+    shown.forEach((period,i)=>{
+      const value=entry.values[start+i];if(gaps.has(start+i))flush();
       if(!Number.isFinite(value)){flush();return;}
       const normalized=maximum?value/maximum*100:0,y=py(normalized);
       let mark;
       if(bar){
         const w=step*.84/series.length,x=px(i)-step*.42+index*w;
-        mark=svgEl('rect',{x:x+1,y:Math.min(y,py(0)),width:Math.max(1,w-2),
-          height:Math.max(1,Math.abs(y-py(0))),fill:color,'fill-opacity':style.barOpacity,
-          stroke:color,'stroke-width':.5});
+        mark=horizontal?svgEl('rect',{x:Math.min(hx(0),hx(normalized)),y:top+i*rowHeight+index*18+3,width:Math.max(1,Math.abs(hx(normalized)-hx(0))),height:14,fill,stroke:color}):
+          svgEl('rect',{x:x+1,y:Math.min(y,py(0)),width:Math.max(1,w-2),height:Math.max(1,Math.abs(y-py(0))),fill,stroke:color,'stroke-width':1});
       }else{
-        segment.push([px(i),y]);
-        mark=svgEl('circle',{cx:px(i),cy:y,r:4,fill:color});
+        // A small, consistent offset within the date keeps coincident values inspectable.
+        const x=px(i)+(index-(series.length-1)/2)*Math.min(10,step*.7/series.length);
+        segment.push([x,y]);mark=metricMarker(entry.metric,x,y,color);
       }
-      mark.dataset.chartTooltip=entry.label+' · '+displayPeriod(periods[i])+': '+fmtNumber(value,entry.metric)+
+      mark.dataset.chartTooltip=entry.label+' · '+displayPeriod(period)+': '+fmtNumber(value,entry.metric)+
         ' (шкала: '+fmtNumber(normalized,'count')+'% от максимума показателя)';
       mark.setAttribute('tabindex','0');mark.setAttribute('aria-label',mark.dataset.chartTooltip);
       mark.setAttribute('aria-describedby','chartTooltip');svg.append(mark);
@@ -4399,10 +4437,10 @@ function drawDepartmentMultiChart(periods,organizations,metrics,data,root){
   const legend=elem('div',null,'chart-legend chart-legend--departments');
   legend.setAttribute('role','list');
   legend.setAttribute('aria-label','Обозначения подразделений и показателей');
-  series.forEach(entry=>{
+  series.forEach((entry,index)=>{
     const label=entry.label,tag=elem('span');
     tag.title=label;tag.setAttribute('role','listitem');
-    tag.append(departmentLegendSample(entry.metric,departmentSeriesColor(entry.organization,entry.orgIndex),bar),elem('span',label));
+    tag.append(departmentLegendSample(entry.metric,departmentSeriesColor(entry.organization,entry.orgIndex),bar,fills[index]),elem('span',label));
     legend.append(tag);
   });
   root.append(legend);
@@ -4437,7 +4475,7 @@ function renderDepartmentTrend(index,orgs,metrics){
       });
   }else if(metrics.length>1&&$('chartSeriesLayout').value==='combined'){
     const section=elem('section',null,'metric-chart'),plot=elem('div',null,'metric-plot');
-    section.append(elem('h3','Совместное сравнение: '+organizations.length+' подразделений × '+metrics.length+' показателя'),plot);
+    section.append(elem('h3',departmentChartTitle(organizations.length,metrics.length)),plot);
     charts.append(section);drawDepartmentMultiChart(periods,organizations,metrics,data,plot);
   }else{
     for(const metric of metrics){
