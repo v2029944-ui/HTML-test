@@ -121,7 +121,7 @@ fn failed_mutation_is_discarded_without_publication_and_local_config_is_not_shar
         a.execute(Some(&team.workspace_token), Access::Read, |store| store
             .info())
             .unwrap()["folder"],
-        excel.path().to_string_lossy().as_ref()
+        excel.path().canonicalize().unwrap().to_string_lossy().as_ref()
     );
 }
 
