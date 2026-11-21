@@ -1,12 +1,12 @@
 # Анализ работ — Tauri для Windows и автономный HTML
 
-Основная платформа — Windows x64, Tauri 2 и системный WebView2. Данные сохраняются локально в SQLite в папке «Документы/Анализ работ». Автономный [`index.html`](../index.html) остаётся самостоятельной браузерной версией.
+Основная платформа — Windows x64, Tauri 2 и системный WebView2. Личные данные хранятся в SQLite в папке «Документы/Анализ работ». При подключении к общей папке компьютеры обмениваются проверенными снимками отчётов. Автономный [`index.html`](../index.html) остаётся самостоятельной браузерной версией.
 
-## Выпуск 1.9.5 для Windows x64
+## Выпуск 1.10.0 для Windows x64
 
-[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.9.5/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.9.5/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.9.5](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.9.5)
+[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.10.0/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.10.0/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.10.0](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.10.0)
 
-Обновление до 1.9.5 доступно через «Настройки → Проверить обновления». [Ход разработки и оставшиеся задачи](../docs/ROADMAP.md).
+Обновление до 1.10.0 доступно через «Настройки → Проверить обновления». [Ход разработки и оставшиеся задачи](../docs/ROADMAP.md).
 
 ## Общая база сотрудников в версии 1.10.0
 
@@ -24,7 +24,7 @@
 
 Подписанные установки 1.5.1, 1.6.0 и 1.6.1 могут обновиться до предварительной 1.7.0 через приложение. Перед установкой сохраните резервную копию SQLite и исходных Excel. Неподписанные сборки без ключа требуют ручной установки подписанного EXE. SQLite остаётся основным режимом, схема базы не меняется; автоимпорт без разрешения не включается.
 
-Онлайн-канал [tauri-latest.json](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-updates/tauri-latest.json) проверен: версия 1.7.0, подпись совпадает с опубликованным установщиком, публичный HTTP 200. [Подписанный выпуск и Windows/WebView2](https://github.com/v2029944-ui/HTML-test/actions/runs/44534276975). GitHub Release сохраняет отметку предварительного.
+При выпуске 1.7.0 канал [tauri-latest.json](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-updates/tauri-latest.json) проверен: версия 1.7.0, подпись совпадает с опубликованным установщиком, публичный HTTP 200. [Подписанный выпуск и Windows/WebView2](https://github.com/v2029944-ui/HTML-test/actions/runs/44534276975). GitHub Release сохраняет отметку предварительного.
 ## Опубликованная 1.5.1
 
 [**Скачать подписанный установщик 1.5.1 (Windows x64)**](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.5.1/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.5.1/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [полный GitHub Release](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.5.1) · [заметки к выпуску](release-notes/1.5.1.md).
