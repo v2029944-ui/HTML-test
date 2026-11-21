@@ -102,7 +102,7 @@
   function comparisonBase(scope) {
     if (!scope?.baseFrom || !scope.baseTo) return null;
     const origin = JSON.stringify([window.sharedWorkspace?.state?.workspace_token, scope.revision,
-      scope.source, scope.displayType, scope.from, scope.to, scope.baseFrom, scope.baseTo]);
+      scope.source, scope.displayType, scope.from, scope.to]);
     if (comparisonOrigin !== origin) { localBase = null; comparisonOrigin = origin; }
     return localBase || {from:scope.baseFrom, to:scope.baseTo};
   }

@@ -79,5 +79,11 @@ class CalendarFocus(unittest.TestCase):
                 unifiedUI.scope={...unifiedUI.scope, baseFrom:'2026-10-19',baseTo:'2026-10-19'};
                 unifiedUI.changed();
             }""")
+            expect(end).to_have_text('10.11.2026')
+            reset = page.locator('[data-reset-base]')
+            reset.click()
+            expect(edit).to_be_focused()
+            expect(page.locator('#comparison .detail-date-scope')).to_contain_text('25.10.2026')
+            edit.click()
             expect(end).to_have_text('25.10.2026')
             browser.close()
