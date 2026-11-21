@@ -32,6 +32,9 @@ icu_collator = "1.5"
 icu_provider = { version = "1.5", features = ["sync"] }
 sha2 = "0.10"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_LibraryLoader", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
 [dev-dependencies]
 zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
 

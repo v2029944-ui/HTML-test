@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod windows_taskbar;
 mod storage;
 mod native_shared_runtime;
 use native_shared_runtime::{shared_workspace_status,shared_workspace_choose_folder,shared_workspace_connect,shared_workspace_sync,shared_workspace_disconnect,shared_workspace_discard_pending};
@@ -1611,6 +1613,10 @@ fn smoke_configuration() -> Result<Option<(std::path::PathBuf, u16)>, String> {
 fn main() {
     #[allow(unused_mut)]
     let mut context = tauri::generate_context!();
+    #[cfg(windows)]
+    if let Err(error) = windows_taskbar::set_process_identity(&context.config().identifier) {
+        eprintln!("Unable to set Windows application identity: {error}");
+    }
     #[cfg(feature = "ci-webview2")]
     let smoke = smoke_configuration().expect("Invalid CI-only smoke configuration");
     #[cfg(feature = "ci-webview2")]
@@ -1668,6 +1674,15 @@ fn main() {
                             "--remote-debugging-address=127.0.0.1 --remote-debugging-port={port}"
                         ))
                         .build()?;
+                }
+            }
+            #[cfg(windows)]
+            for window in app.webview_windows().values() {
+                let icon = window.hwnd()
+                    .map_err(|error| std::io::Error::other(error.to_string()))
+                    .and_then(|hwnd| windows_taskbar::set_large_icon(hwnd.0));
+                if let Err(error) = icon {
+                    eprintln!("Unable to set the Windows taskbar icon: {error}");
                 }
             }
             Ok(())

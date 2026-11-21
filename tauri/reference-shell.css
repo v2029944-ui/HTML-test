@@ -867,12 +867,10 @@
 }
 :is(#s1,#sharedHeader,#reportShell) .org-warning:hover {background:#383024}
 :is(#s1,#sharedHeader,#reportShell) .org-warning svg {display:block;stroke:currentColor}
-:is(#s1,#sharedHeader,#reportShell) .data-card .bar {margin-inline:auto 0}
+:is(#s1,#sharedHeader,#reportShell) .data-card .bar {margin-inline:auto}
 :is(#s1,#sharedHeader,#reportShell) .data-card table :is(th,td),#s2 .changes-table :is(th,td),#sheet table.sample-values :is(th,td) {
-  text-align:right!important;font-variant-numeric:tabular-nums;
+  text-align:center!important;vertical-align:middle;font-variant-numeric:tabular-nums;
 }
-:is(#s1,#sharedHeader,#reportShell) .data-card table :is(th,td):first-child,#s2 .changes-table :is(th,td):nth-child(-n+2),
-#sheet table.sample-values :is(th,td):first-child,#sheet .matrix table :is(th,td) {text-align:left!important}
 #s2 .changes-table td:nth-child(-n+2), #s2 .position-heading>span {color:inherit}
 #s2 .kind-grid .kpi::after {display:none}
 #s2 .kind-grid .kpi[aria-pressed=true] {background:#302c20;border-color:#dbba5a;box-shadow:inset 0 0 0 1px #c9a541}

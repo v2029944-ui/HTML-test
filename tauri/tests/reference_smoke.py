@@ -387,8 +387,12 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         page.locator('#importType').select_option('day')
         date_trigger = page.locator('#importWeek + .ref-calendar-field')
         calendar(date_trigger, '06-import-day', 'days')
-        calendar(page.locator('#referenceReportYear'), '06-report-calendar-year', 'years')
         record('07-import', page.locator('#toolsPage'))
+        page.locator('#unifiedUploadCalendar').click()
+        report_year = page.locator('#referenceReportYear')
+        expect(report_year).to_be_visible()
+        expect(report_year).not_to_contain_text('загрузка')
+        calendar(report_year, '06-report-calendar-year', 'years')
         close_panel(importer)
 
         # Tabs must switch actual native sections, not another application route.

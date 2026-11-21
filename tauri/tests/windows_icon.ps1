@@ -29,7 +29,6 @@ public static class AnalizIcon {
    try{return Copy(info.Icon);}finally{DestroyIcon(info.Icon);}
  }
  [DllImport("user32")] static extern IntPtr SendMessageTimeout(IntPtr h,uint m,IntPtr w,IntPtr l,uint flags,uint ms,out IntPtr result);
- [DllImport("user32",EntryPoint="GetClassLongPtrW")] static extern IntPtr ClassIcon(IntPtr h,int i);
  [DllImport("user32",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string cls,string title);
  [DllImport("user32")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
  [DllImport("user32")] static extern bool SetCursorPos(int x,int y);
@@ -48,11 +47,13 @@ public static class AnalizIcon {
      return Copy(icon);
    }finally{if(icon!=IntPtr.Zero)DestroyIcon(icon);}
  }
- public static Bitmap FromWindow(IntPtr hwnd){
-   foreach(int kind in new[]{1,0,2}){IntPtr icon;
-     if(SendMessageTimeout(hwnd,127,new IntPtr(kind),IntPtr.Zero,2,3000,out icon)!=IntPtr.Zero && icon!=IntPtr.Zero)return Copy(icon);}
-   foreach(int index in new[]{-14,-34}){IntPtr icon=ClassIcon(hwnd,index);if(icon!=IntPtr.Zero)return Copy(icon);}
-   throw new Exception("No HWND or window class icon");
+ public static Bitmap FromWindow(IntPtr hwnd,int kind){
+   for(int attempt=0;attempt<20;attempt++){
+     IntPtr icon;
+     if(SendMessageTimeout(hwnd,127,new IntPtr(kind),IntPtr.Zero,2,500,out icon)!=IntPtr.Zero && icon!=IntPtr.Zero)return Copy(icon);
+     System.Threading.Thread.Sleep(250);
+   }
+   throw new Exception("WM_GETICON returned no "+(kind==1?"large taskbar":"small window")+" icon");
  }
  static bool Pixel(Bitmap b,int x,int y,int size,double u,double v,bool white){
    Color p=b.GetPixel(x+(int)(size*u),y+(int)(size*v));
@@ -85,8 +86,9 @@ New-Item -ItemType Directory $env:APPDATA,$env:LOCALAPPDATA | Out-Null
 $shell=New-Object -ComObject WScript.Shell
 $result=[ordered]@{sha=$env:REFERENCE_HEAD_SHA;clean=@{};upgrade=@{}}
 function Save-Result { $result | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 (Join-Path $out 'reference-windows-icons.json') }
-function Run-Setup($setup) {
-    $process=Start-Process $setup -ArgumentList ('/S /D='+$install) -PassThru
+function Run-Setup($setup,[switch]$Update) {
+    $mode=if($Update){'/P /UPDATE'}else{'/S'}
+    $process=Start-Process $setup -ArgumentList ($mode+' /D='+$install) -PassThru
     if(!$process.WaitForExit(180000)){throw "Installation timed out"}
     if($process.ExitCode -ne 0){throw "Installer returned $($process.ExitCode)"}
     $exe=@(Get-ChildItem -LiteralPath $install -Filter '*.exe' -File | Where-Object {$_.Name -notmatch '^uninstall'})
@@ -132,19 +134,24 @@ function Taskbar-Button{
     }
 }
 function Capture-Taskbar($name,$record){
-    $b=$null
-    for($i=0;$i -lt 12 -and !$b;$i++){Start-Sleep -Milliseconds 250;$b=Taskbar-Button}
-    if(!$b){$record.taskbar='unverified: no visible app button in Explorer accessibility tree';return}
-    $r=$b.Current.BoundingRectangle
-    $image=New-Object Drawing.Bitmap ([int]$r.Width),([int]$r.Height)
-    try{
-        $g=[Drawing.Graphics]::FromImage($image)
-        try{$g.CopyFromScreen([int]$r.X,[int]$r.Y,0,0,$image.Size)}finally{$g.Dispose()}
-        $image.Save((Join-Path $out ("reference-taskbar-"+$name+".png")))
-        $record.button=$b.Current.Name
-        if(![AnalizIcon]::TaskbarMark($image)){throw "Explorer displays a different icon: $name"}
-        $record.taskbar='verified from visible Explorer pixels'
-    }finally{$image.Dispose()}
+    for($i=0;$i -lt 20;$i++){
+        Start-Sleep -Milliseconds 300
+        $b=Taskbar-Button
+        if(!$b){continue}
+        $r=$b.Current.BoundingRectangle
+        $image=New-Object Drawing.Bitmap ([int]$r.Width),([int]$r.Height)
+        try{
+            $g=[Drawing.Graphics]::FromImage($image)
+            try{$g.CopyFromScreen([int]$r.X,[int]$r.Y,0,0,$image.Size)}finally{$g.Dispose()}
+            $image.Save((Join-Path $out ("reference-taskbar-"+$name+".png")))
+            $record.button=$b.Current.Name
+            if([AnalizIcon]::TaskbarMark($image)){
+                $record.taskbar='verified from visible Explorer pixels';return
+            }
+        }finally{$image.Dispose()}
+    }
+    if($record.button){throw "Explorer displays a different icon: $name"}
+    $record.taskbar='unverified: no visible app button in Explorer accessibility tree'
 }
 function Find-Pin($path){
     if(Test-Path -LiteralPath $pinDir){
@@ -190,14 +197,19 @@ function Try-Pin($path){
 }
 $exe=$null
 try{
-    Check-Bitmap ([AnalizIcon]::FromFile($Candidate)) 'installer';$result.clean.installer='verified'
-    $exe=Run-Setup $Candidate
-    Check-Bitmap ([AnalizIcon]::FromFile($exe)) 'clean-exe';$result.clean.exe='verified'
-    $hwnd=Main-Window $exe
-    Check-Bitmap ([AnalizIcon]::FromWindow($hwnd)) 'clean-window';$result.clean.hwnd='verified'
-    Capture-Taskbar 'clean' $result.clean
+    try{
+        Check-Bitmap ([AnalizIcon]::FromFile($Candidate)) 'installer';$result.clean.installer='verified'
+        $exe=Run-Setup $Candidate
+        Check-Bitmap ([AnalizIcon]::FromFile($exe)) 'clean-exe';$result.clean.exe='verified'
+        $hwnd=Main-Window $exe
+        Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,0)) 'clean-window'
+        Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,1)) 'clean-taskbar-hwnd'
+        $result.clean.hwnd='verified small and large'
+        Capture-Taskbar 'clean' $result.clean
+    }catch{$result.clean.error=$_.Exception.Message}
     Save-Result
-    Stop-Owned $exe;Uninstall-Owned
+    if($exe){Stop-Owned $exe}
+    Uninstall-Owned
     $old=Join-Path $root 'stable-1.10.0.exe'
     Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.10.0/Analiz-rabot-Tauri-Windows-x64-setup.exe' -OutFile $old
     $oldHash=(Get-FileHash $old -Algorithm SHA256).Hash
@@ -208,7 +220,7 @@ try{
     $pin=Try-Pin $oldExe
     $result.upgrade.pinBefore=if($pin){'verified real shell shortcut'}else{'unverified: Explorer did not expose or create the pin'}
     Stop-Owned $oldExe
-    $exe=Run-Setup $Candidate
+    $exe=Run-Setup $Candidate -Update
     if($exe -ne $oldExe -or (Get-FileHash $exe -Algorithm SHA256).Hash -eq $oldExeHash){throw 'Existing executable was not replaced in place'}
     Check-Bitmap ([AnalizIcon]::FromFile($exe)) 'upgrade-exe';$result.upgrade.exe='verified in place over stable 1.10.0'
     if($pin){
@@ -219,8 +231,11 @@ try{
         Capture-Taskbar 'existing-pin' $result.upgrade.pinned
     }
     $hwnd=Main-Window $exe
-    Check-Bitmap ([AnalizIcon]::FromWindow($hwnd)) 'upgrade-window';$result.upgrade.hwnd='verified'
+    Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,0)) 'upgrade-window'
+    Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,1)) 'upgrade-taskbar-hwnd'
+    $result.upgrade.hwnd='verified small and large'
     Capture-Taskbar 'upgrade' $result.upgrade
+    if($result.clean.error){throw $result.clean.error}
 }catch{$result.error=$_.Exception.Message;throw}
 finally{
     Save-Result
