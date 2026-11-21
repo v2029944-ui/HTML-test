@@ -69,13 +69,13 @@ def smb_workspace(root):
     $account=[System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     New-SmbShare -Name $env:ANALIZ_SMOKE_SHARE_NAME -Path $env:ANALIZ_SMOKE_SHARE_PATH -FullAccess $account -ErrorAction Stop | Out-Null
     $share=Get-SmbShare -Name $env:ANALIZ_SMOKE_SHARE_NAME -ErrorAction Stop
-    if($share.Path -cne $env:ANALIZ_SMOKE_SHARE_PATH){throw 'Unexpected SMB backing path'}
+    if($share.Path -ine $env:ANALIZ_SMOKE_SHARE_PATH){throw 'Unexpected SMB backing path'}
     """
     remove = r"""
     $ErrorActionPreference='Stop'
     $shares=@(Get-SmbShare -ErrorAction Stop | Where-Object {$_.Name -ceq $env:ANALIZ_SMOKE_SHARE_NAME})
     if($shares.Count -eq 0){exit 0}
-    if($shares.Count -ne 1 -or $shares[0].Path -cne $env:ANALIZ_SMOKE_SHARE_PATH){throw 'Refusing to remove a different SMB share'}
+    if($shares.Count -ne 1 -or $shares[0].Path -ine $env:ANALIZ_SMOKE_SHARE_PATH){throw 'Refusing to remove a different SMB share'}
     Remove-SmbShare -Name $env:ANALIZ_SMOKE_SHARE_NAME -Force -ErrorAction Stop
     """
     failure = None
@@ -174,7 +174,7 @@ class InstalledClient:
         script = r"""
         $ErrorActionPreference='Stop'
         $process=Get-Process -Id $env:ANALIZ_SMOKE_PID -ErrorAction Stop
-        if($process.Path -cne $env:ANALIZ_SMOKE_BINARY){throw 'Independent client binary mismatch'}
+        if($process.Path -ine $env:ANALIZ_SMOKE_BINARY){throw 'Independent client binary mismatch'}
         if(-not $process.CloseMainWindow()){throw 'Independent client refused normal close'}
         """
         subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', script],
@@ -313,7 +313,7 @@ def run():
         record.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding='utf-8')
 
     try:
-        with windows_test_workspace() as root:
+        with windows_test_workspace(os.environ.get('RUNNER_TEMP')) as root:
             root = Path(root)
             destination = root / 'installed'
             installer_env = dict(os.environ, ANALIZ_SMOKE_DATA_ROOT=str(root / 'installer-data'),
@@ -327,7 +327,7 @@ def run():
             script = r"""
             $ErrorActionPreference='Stop'
             Get-Process analiz-rabot-tauri -ErrorAction SilentlyContinue |
-              Where-Object {$_.Path -ceq $env:ANALIZ_SMOKE_BINARY} |
+              Where-Object {$_.Path -eq $env:ANALIZ_SMOKE_BINARY} |
               ForEach-Object {taskkill /PID $_.Id /T /F | Out-Null}
             """
             subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-Command', script],

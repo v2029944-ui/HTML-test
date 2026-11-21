@@ -219,9 +219,10 @@ jobs:
         shell: pwsh
         run: |
           python -m unittest discover -s tauri/tests -p test_reference_shared_smoke.py -v
-          if ($LASTEXITCODE -ne 0) { throw 'Shared client identification tests failed' }
+          $sharedTestExit = $LASTEXITCODE
           python tauri/tests/windows_shared_smoke.py
           if ($LASTEXITCODE -ne 0) { throw 'Installed independent SMB clients failed' }
+          if ($sharedTestExit -ne 0) { throw 'Shared client identification tests failed' }
       - name: Retain installed shared-workspace diagnostics
         if: ${{ always() && steps.gui_smoke_build.outcome == 'success' }}
         uses: actions/upload-artifact@v4

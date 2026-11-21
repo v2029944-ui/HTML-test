@@ -1237,9 +1237,9 @@ def check_folder_rule_and_revocation(page, workbook, confirmations):
     auto_probe.unlink()
 
 @contextmanager
-def windows_test_workspace():
+def windows_test_workspace(parent=None):
     """Release only this test's WebView2 workers before deleting their temporary profile."""
-    workspace=Path(tempfile.mkdtemp(prefix='analiz-webview2-'))
+    workspace=Path(tempfile.mkdtemp(prefix='analiz-webview2-',dir=parent))
     def cleanup_workspace():
         cleanup_script=r"""
         $token=$env:ANALIZ_SMOKE_PROFILE_TOKEN

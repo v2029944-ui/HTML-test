@@ -1,12 +1,14 @@
 """Safety contracts for the installed SMB E2E. These tests send no OS input."""
 import ctypes
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
-from windows_shared_smoke import InstalledClient, generations, native_select, require_private_database, windows_path
+from windows_shared_smoke import InstalledClient, generations, native_select, require_private_database, smb_workspace, windows_path
 from windows_smoke import invoke
 
 
@@ -14,12 +16,14 @@ class ClientIsolationTests(unittest.TestCase):
     def test_distinct_client_roots_profiles_and_ports_do_not_change_parent_environment(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            parent_environment = dict(os.environ)
             first = InstalledClient(None, root / 'app.exe', root / 'a', 'a', 9231, root)
             second = InstalledClient(None, root / 'app.exe', root / 'b', 'b', 9232, root)
             for key in ('ANALIZ_SMOKE_DATA_ROOT', 'ANALIZ_SMOKE_CDP_PORT', 'WEBVIEW2_USER_DATA_FOLDER'):
                 self.assertNotEqual(first.env[key], second.env[key])
             self.assertFalse(first.data.exists())
             self.assertFalse(second.data.exists())
+            self.assertEqual(dict(os.environ), parent_environment)
 
     def test_database_must_be_on_its_own_local_root_not_unc_or_a_prefix_collision(self):
         root = r'C:\fixture\client-a\data'
@@ -47,6 +51,27 @@ class ClientIsolationTests(unittest.TestCase):
             snapshot.write_bytes(b'changed')
             self.assertNotEqual(generations(root), before)
 
+    def test_unverified_cdp_endpoint_is_never_closed(self):
+        client = InstalledClient(None, Path('unused.exe'), Path('unused-root'), 'fixture', 9231, Path('.'))
+        browser = Mock()
+        client.browser = browser
+        client._disconnect()
+        browser.close.assert_not_called()
+
+    def test_partial_share_provisioning_failure_still_attempts_scoped_cleanup(self):
+        failure = subprocess.CalledProcessError(1, 'create-share')
+        with tempfile.TemporaryDirectory() as temporary, patch(
+                'windows_shared_smoke.subprocess.run', side_effect=[failure, Mock(returncode=0)]) as execute:
+            with self.assertRaises(subprocess.CalledProcessError) as caught:
+                with smb_workspace(Path(temporary)):
+                    self.fail('A failed provision must not start clients')
+            self.assertIs(caught.exception, failure)
+            self.assertEqual(execute.call_count, 2)
+            create, cleanup = execute.call_args_list
+            self.assertEqual(create.kwargs['env']['ANALIZ_SMOKE_SHARE_NAME'],
+                             cleanup.kwargs['env']['ANALIZ_SMOKE_SHARE_NAME'])
+            self.assertIn('Remove-SmbShare', cleanup.args[0][-1])
+
 
 class FixtureInvokeTests(unittest.TestCase):
     def test_protected_raw_fixture_command_captures_identity_without_mutating_arguments(self):
@@ -72,6 +97,9 @@ class FixtureInvokeTests(unittest.TestCase):
 
 class FolderControlTests(unittest.TestCase):
     def setUp(self):
+        self.make_client()
+
+    def make_client(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.folder = Path(self.temporary.name)
@@ -111,7 +139,7 @@ class FolderControlTests(unittest.TestCase):
     def test_foreign_process_or_wrong_control_class_never_receives_input(self):
         for condition in ('foreign', 'class', 'disabled', 'not-child', 'wrong-id'):
             with self.subTest(condition=condition):
-                self.setUp()
+                self.make_client()
                 native = self.client.confirmations
                 if condition == 'foreign':
                     native.process.return_value = 99
@@ -126,6 +154,14 @@ class FolderControlTests(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     native_select(self.client, self.folder, 'folder', 'fixture')
                 self.client.dialogs.message.assert_not_called()
+
+    def test_wrong_native_readback_is_refused_before_idok(self):
+        original = self.client.dialogs.message.side_effect
+        self.client.dialogs.message.side_effect = lambda hwnd, code, wparam=0, lparam=0: (
+            0 if code == 0x000D else original(hwnd, code, wparam, lparam))
+        with self.assertRaisesRegex(AssertionError, 'did not round trip'):
+            native_select(self.client, self.folder, 'folder', 'fixture')
+        self.assertEqual([call.args[1] for call in self.client.dialogs.message.call_args_list], [0x000C, 0x000D])
 
 
 if __name__ == '__main__':
