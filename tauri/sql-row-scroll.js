@@ -132,7 +132,7 @@ function attach(root,options){
  if(!root?.parentElement)return null;
  const {index,size,count,total,go,footer}=options;
  if(!Number.isSafeInteger(index)||index<0||!Number.isSafeInteger(size)||size<1||
-    !Number.isSafeInteger(total)||total<0||!Number.isSafeInteger(count)||count<0||count>size||
+    !Number.isSafeInteger(total)||total<=0||!Number.isSafeInteger(count)||count<0||count>size||
     typeof go!=='function'){
   reset(root);return null;
  }

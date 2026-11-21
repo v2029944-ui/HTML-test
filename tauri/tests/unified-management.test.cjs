@@ -31,6 +31,14 @@ function mount(){
  return {nodes,body,backupPanel,UI,api,reads,writes,messages,questions,pickers,snapshot,views,scopes,setConfirm:v=>confirm=v,setPrompt:v=>prompt=v,setBackup:v=>backup=v,setSource:v=>source=v,setHandler:fn=>handler=fn};
 }
 test('no snapshot causes no reads or writes, and search/pagination stay on server',async()=>{const m=mount();await m.nodes.saveGroup.fire();assert.equal(m.writes.length,0);assert.equal(m.reads.length,0);m.snapshot(7);m.views.groups();await tick();m.nodes.workSearch.value='вся база';await m.nodes.workSearch.fire('input');assert.deepEqual(m.reads.at(-1),[7,'works','вся база',null,0,50]);await m.nodes.worksList.scrollWindow.go(1);assert.deepEqual(m.reads.at(-1),[7,'works','вся база',null,50,50]);});
+test('empty group list distinguishes initial setup from an unsuccessful search',async()=>{
+ const m=mount();
+ m.setHandler(()=>({rows:[],total:0,grouped:0,ungrouped:0}));
+ m.snapshot(7);m.views.groups();await tick();
+ assert.equal(m.nodes.groupSearchCount.textContent,'Групп пока нет');
+ m.nodes.groupSearch.value='Ремонт';await m.nodes.groupSearch.fire('input');await tick();
+ assert.equal(m.nodes.groupSearchCount.textContent,'По запросу групп не найдено');
+});
 test('catalog search and labelled editor precede the bounded list and keep SQL search on each page',async()=>{
  const m=mount(),panel=m.nodes.groupCatalog;
  const tools=panel.children.find(n=>n.id==='catalogControls'),list=panel.children.find(n=>n.id==='catalogList');

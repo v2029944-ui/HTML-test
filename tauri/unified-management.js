@@ -82,7 +82,10 @@ function init(){
   select.addEventListener('change',guard(async r=>{if(r!==expected)return;await mutate(expected,()=>api.unifiedWorkAssign(expected,row.name,select.value||null),'Работа перенесена.');}));
   label.append(select);box.append(el('span',row.name),search,find,label,footer);void targets();return box;
  }
- groups.render=(result,expected)=>{for(const p of memberPages){clear(p);pages.delete(p);}memberPages.clear(); $('groupSearchCount').textContent='Найдено групп: '+result.total;for(const group of result.rows){const details=el('details',null,'group-details'),summary=el('summary',group.name),actions=el('div',null,'actions'),memberRoot=el('div',null,'group-members');summary.append(el('small','Работ: '+group.members));details.append(summary,actions,memberRoot);
+ groups.render=(result,expected)=>{for(const p of memberPages){clear(p);pages.delete(p);}memberPages.clear();
+  $('groupSearchCount').textContent=result.total?'Найдено групп: '+result.total:
+   groups.query().trim()?'По запросу групп не найдено':'Групп пока нет';
+  for(const group of result.rows){const details=el('details',null,'group-details'),summary=el('summary',group.name),actions=el('div',null,'actions'),memberRoot=el('div',null,'group-members');summary.append(el('small','Работ: '+group.members));details.append(summary,actions,memberRoot);
   const rename=button('Переименовать',async()=>{
    if(busy||!valid(expected))return;
    await guard(async()=>{
