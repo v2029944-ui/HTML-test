@@ -64,9 +64,12 @@ test('updater does not start during an active import',async()=>{
   await f.ids.installAppUpdate.listeners.click();assert.equal(f.counts().downloads,0);
 });
 test('release manifest points at a distinct HTTPS Tauri installer',()=>{
-  const m=manifest('0.2.0','tauri-v0.2.0','signed-value\n');assert.equal(m.version,'0.2.0');
+  const version=require('../package.json').version,tag='tauri-v'+version;
+  const m=manifest(version,tag,'signed-value\n');assert.equal(m.version,version);
+  const notes=fs.readFileSync(require.resolve('../release-notes/'+version+'.md'),'utf8').trim();
+  assert.equal(m.notes,notes);
   assert.equal(m.platforms['windows-x86_64'].signature,'signed-value');
-  assert.match(m.platforms['windows-x86_64'].url,/^https:\/\/github.com\/v2029944-ui\/HTML-test\/releases\/download\/tauri-v0.2.0\/.*Tauri.*\.exe$/);
+  assert.equal(m.platforms['windows-x86_64'].url,'https://github.com/v2029944-ui/HTML-test/releases/download/'+tag+'/Analiz-rabot-Tauri-Windows-x64-setup.exe');
   assert.throws(()=>manifest('0.2.0','tauri-updates','sig'));assert.throws(()=>manifest('0.2.0','tag',''));
 });
 
@@ -99,4 +102,13 @@ for(const target of ['excelImports','folderImport','reads','saves'])test('instal
 test('operations are checked again after the confirmation resolves',async()=>{
  const f=await fixture({onConfirm:ctx=>{ctx.window.tauriOperations.saves=1;}});f.approve(true);
  await f.ids.installAppUpdate.listeners.click();assert.equal(f.counts().downloads,0);assert.equal(f.ctx.window.tauriOperations.updating,false);
+});
+test('an active synchronization or pending publication keeps the running version until data is settled',async()=>{
+ const f=await fixture();f.approve(true);
+ f.ctx.window.sharedWorkspace={busy:true,state:{pending:false}};
+ await f.ids.installAppUpdate.listeners.click();assert.equal(f.counts().downloads,0);
+ f.ctx.window.sharedWorkspace={busy:false,state:{pending:true}};
+ await f.ids.installAppUpdate.listeners.click();assert.equal(f.counts().downloads,0);
+ f.ctx.window.sharedWorkspace.state.pending=false;
+ await f.ids.installAppUpdate.listeners.click();assert.equal(f.counts().downloads,1);
 });
