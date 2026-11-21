@@ -46,10 +46,11 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     listing = set_folder(page, folder, [p.name for p in folder.glob('*.xlsx')])
     assert len(listing['files']) == 101 and listing['files'][100]['name'] == book.name
     file = listing['files'][100]
-    rule = {'format': 'legacy', 'type': 'week', 'start': '2031-01-06', 'sheet': 'Second'}
+    rule = {'format': 'auto', 'type': 'week', 'start': '2031-01-06', 'sheet': 'Second'}
     api(page, 'nativeSetRuleChecked', file['name'], rule, listing['revision'], listing['folder'], file['nativeSignature'])
     page.evaluate('window.unifiedUI.refresh()')
     page.locator('#sourceFolderRefresh').click()
+    expect(page.locator('#sourceFolderRefresh')).to_be_enabled()
     wait_for_text(page, '#sourceFolderCount', '101')
     pager = page.locator('[data-sql-pager="sourceFolderRows"]')
     pager.locator('[data-page-action="choose"]').click()
@@ -105,6 +106,36 @@ def check_reference_import_flow(page, temporary, confirmations, output):
         'automaticPreview': {k: auto[k] for k in ('reportCount', 'rowCount', 'periodRange')},
         'savedWeeklySummary': summary, 'manualPreviewAndSaveSeconds': time.monotonic()-started,
         'scope': page.evaluate('window.referenceFilters.scope')}, ensure_ascii=False, indent=2), encoding='utf-8')
+    # The SAME valid auto rule must detect a daily book after its source changes.
+    # This is preview-only; the six saved weekly reports and revision stay intact.
+    from test_daily_wide import wide_xlsx
+    book.write_bytes(wide_xlsx(2024))
+    navigate(page, 'upload')
+    page.locator('#sourceFolderRefresh').click()
+    expect(page.locator('#sourceFolderRefresh')).to_be_enabled()
+    pager = page.locator('[data-sql-pager="sourceFolderRows"]')
+    pager.locator('[data-page-action="choose"]').click()
+    pager.locator('[data-page-number="2"]').click()
+    page.locator('#sourceFolderRows tr').filter(has_text=book.name).get_by_role(
+        'button', name='Проверить '+book.name, exact=True).click()
+    expect(page.locator('#importFormat')).to_have_value('daily-wide', timeout=90_000)
+    expect(page.locator('#sheetSelect')).not_to_be_visible()
+    page.locator('#inspectFile').click()
+    wait_for_text(page, '#unifiedImportStatus', 'Проверка завершена', 90_000)
+    assert page.locator('#importPreview .kpi strong').first.inner_text() == '366'
+    listing = api(page, 'list')
+    file = next(f for f in listing['files'] if f['name'] == book.name)
+    lease = api(page, 'nativeFolderImportSession', True)
+    try:
+        auto_daily = api(page, 'nativeFolderImportPreview', {'session': lease, 'folder': listing['folder'],
+            'revision': listing['revision'], 'name': file['name'], 'signature': file['nativeSignature']})
+    finally:
+        api(page, 'nativeFolderImportSession', False)
+    assert auto_daily['reportCount'] == 366
+    expect(page.locator('#importPreview')).to_contain_text(
+        auto_daily['periodRange']['from']+' — '+auto_daily['periodRange']['to'])
+    assert api(page, 'nativeRevision') == snapshot['revision']
+    page.screenshot(path=str(output / 'import-flow-auto-daily-preview.png'))
     # Remove only the six synthetic reports just created, preserving all pre-test settings.
     api(page, 'unifiedClearReports', snapshot['revision'])
     invoke(page, 'set_folder', {'folder': previous})

@@ -297,6 +297,7 @@ fn with_legacy_prepared<T>(
 pub async fn native_import_sheets(
     app: tauri::AppHandle,
     source: String,
+    rule: Option<crate::storage::Rule>,
     workspace_token: Option<String>,
 ) -> Result<Vec<NativeWorksheet>, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -329,6 +330,12 @@ pub async fn native_import_sheets(
                 if sheets.len() > 64 {
                     return Err("Too many Excel worksheets for native review".into());
                 }
+                let auto_sheets = if let Some(rule)=rule.filter(|r|r.format.as_deref()==Some("auto")) {
+                    let organizations=storage.folder_import_organizations(storage.revision()?)?;
+                    let options=rule.native_wide_options(organizations)?;
+                    Some(stage.detect_wide(&options,Arc::new(AtomicBool::new(false)))
+                        .map_err(|e|e.to_string())?)
+                } else {None};
                 let mut result = Vec::new();
                 for (name, component) in sheets {
                     if !stage
@@ -336,7 +343,8 @@ pub async fn native_import_sheets(
                         .map_err(|e| e.to_string())?
                         .is_empty()
                     {
-                        result.push(NativeWorksheet { name, component });
+                        let daily_wide=auto_sheets.as_ref().map(|sheets|sheets.iter().any(|sheet|sheet.component==component));
+                        result.push(NativeWorksheet { name, component, daily_wide });
                     }
                 }
                 Ok(result)
@@ -351,6 +359,8 @@ pub async fn native_import_sheets(
 pub struct NativeWorksheet {
     pub name: String,
     pub component: String,
+    #[serde(rename="dailyWide",skip_serializing_if="Option::is_none")]
+    pub daily_wide: Option<bool>,
 }
 
 #[tauri::command]

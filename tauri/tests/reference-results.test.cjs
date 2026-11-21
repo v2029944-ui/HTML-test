@@ -147,3 +147,11 @@ test('same-revision summary and changes keep their own completed captions and ro
  assert.equal(f.s1.querySelector('tbody tr'),null);assert.equal(f.s2.querySelector('tbody tr'),null);
  assert.equal(f.s1.getAttribute('aria-busy'),'false');assert.equal(f.s2.getAttribute('aria-busy'),'false');
 });
+
+test('zero-base comparison prints confirmed zero without a negative sign and leaves percent unavailable',async()=>{
+ const f=fixture();f.api.nativeAnalysisCompare=async()=>({summary:{before:{...f.full,total:{amount:-0,count:-0,average:null}},after:f.full,amount:{delta:100,percent:null},count:{delta:10,percent:null}},divisions:[{organization:'A',before:{amount:-0,count:-0,average:null},after:f.total}],top_amount:[],top_count:[]});
+ f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);
+ let rows;f.window.print=()=>{rows=f.document.getElementById('referencePrintDocument').querySelectorAll('.print-comparison tbody tr').map(row=>row.children.map(cell=>cell.textContent));};
+ await f.s1.querySelectorAll('button').find(n=>n.textContent==='Печать / PDF').click();
+ assert.deepEqual(rows[0].slice(1),['0,00','100,00','+100,00','—']);assert.equal(rows[1][1],'0,000');assert.equal(rows[2][1],'—');
+});

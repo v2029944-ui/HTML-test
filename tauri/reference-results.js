@@ -8,7 +8,7 @@ let modalHeading=null,shownSummaryRevision=null,shownChangesRevision=null;
 let kind='significant',page=0,percent=30,minCount=5,minAmount=1000;
 const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined&&text!==null)n.textContent=String(text);if(cls)n.className=cls;return n;};
 const button=(text,run,cls='btn')=>{const n=el('button',text,cls);n.type='button';n.addEventListener('click',run);return n;};
-const fmt=(n,metric='amount')=>Number.isFinite(n)?new Intl.NumberFormat('ru-RU',{minimumFractionDigits:metric==='count'?3:2,maximumFractionDigits:metric==='count'?3:2}).format(n):'—';
+const fmt=(n,metric='amount')=>Number.isFinite(n)?new Intl.NumberFormat('ru-RU',{minimumFractionDigits:metric==='count'?3:2,maximumFractionDigits:metric==='count'?3:2}).format(n===0?0:n):'—';
 function displayedChange(delta,metric){
  if(!Number.isFinite(delta))return {value:'—',label:'—',direction:'neutral'};
  const value=fmt(Math.abs(delta),metric);
@@ -150,6 +150,7 @@ function printContext(root,s,comparable,comparison,overview){
   root.append(el('p','Исключены из сравнения: '+excluded.join(', ')+'.'));
   for(const org of excluded){const row=overview?.divisions?.find(value=>value.organization===org),before=Number.isFinite(row?.before?.amount)&&Number.isFinite(row?.before?.count),after=Number.isFinite(row?.after?.amount)&&Number.isFinite(row?.after?.count);root.append(el('p',org+': '+(row?!before&&!after?'неполные базовый и анализируемый интервалы':!before?'неполный базовый интервал':'неполный анализируемый интервал':'нет пригодных отчётов за весь базовый или анализируемый интервал')+'.'));}
  }
+ for(const [label,period]of [['База',overview?.summary?.before],['Анализ',overview?.summary?.after]]){if(period){const count=value=>Number.isSafeInteger(value)?String(value):'—';root.append(el('p',label+': пропусков отчётов — '+count(period.missing)+'; ошибочных отчётов — '+count(period.invalid_reports)+'; отчётов с замечаниями — '+count(period.import_warning_reports)+'.'));}}
  if(comparable.length&&comparison){
   root.append(el('h2','Итоги сопоставимых подразделений'));
   printTable(root,['Показатель','Было','Стало','Изменение','Изменение, %'],['amount','count','average'].map(metric=>[titles[metric],fmt(comparison.before?.total?.[metric],metric),fmt(comparison.after?.total?.[metric],metric),displayedChange(comparison[metric]?.delta,metric).value,pct(comparison[metric]?.percent)]),'print-comparison');

@@ -40,3 +40,9 @@ test('recovery IPC remains available without exposing desktop restoration contro
  ]);
  assert.equal(m.events.at(-1).detail.saves,0);
 });
+
+test('worksheet auto-rule metadata forwards only the selected native rule',async()=>{
+ const m=mount(),rule={format:'auto',type:'week',start:'2024-02-05',sheet:'Second'};
+ await m.api.nativeImportSheets('C:/Excel/two.xlsx',rule);
+ assert.deepEqual(JSON.parse(JSON.stringify(m.calls[0])),{command:'native_import_sheets',args:{source:'C:/Excel/two.xlsx',rule}});
+});

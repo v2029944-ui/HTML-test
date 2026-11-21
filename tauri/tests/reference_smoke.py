@@ -465,6 +465,43 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                                 record(f'08-chart-controls-{width}', page.locator('#chartPanel .chart-view-controls'))
                         finally:
                             page.set_viewport_size(saved_size)
+                    if has_reports and page.locator('#chartSeriesLayout').is_visible():
+                        layout = page.locator('#chartSeriesLayout')
+                        original_layout = layout.input_value()
+                        chart = page.locator('#chartPanel')
+                        layout.select_option('combined')
+                        for mode, direction in [('line', None), ('bar', 'vertical'), ('bar', 'horizontal')]:
+                            chart.locator('[data-reference-line]' if mode == 'line' else '[data-chart="bar"]').click()
+                            if direction:
+                                page.locator('#chartOrientation').select_option(direction)
+                            step = '08-department-combined-' + (direction or mode)
+                            record(step, chart)
+                            plot = chart.locator('.metric-plot').first
+                            if not plot.count():
+                                inventory.append({'step': step, 'unavailable': chart.locator('#chartsContainer').inner_text()})
+                                continue
+                            results = plot.evaluate('''(root, mode) => {
+                                const svg=root.querySelector('svg[role=img]'), legend=root.querySelector('.chart-legend');
+                                if (!svg || !legend) return {unavailable:root.innerText};
+                                const marks=[...svg.querySelectorAll('[data-chart-tooltip]')];
+                                const labels=[...legend.querySelectorAll('[role=listitem]')];
+                                const matches=marks.every(mark => {
+                                    const item=labels.find(entry=>mark.dataset.chartTooltip.startsWith(entry.textContent+' · '));
+                                    if(!item || mark.tabIndex!==0 || mark.getAttribute('aria-label')!==mark.dataset.chartTooltip)return false;
+                                    const sample=item.querySelector(mode==='bar'?'rect':'circle,polygon');
+                                    return sample?.tagName===mark.tagName && sample.getAttribute('fill')===mark.getAttribute('fill') &&
+                                      (mode==='bar'||sample.tagName!=='polygon'||sample.points.length===mark.points.length);
+                                });
+                                return {marks:marks.length,labels:labels.length,matches,
+                                  scroll:root.scrollHeight-root.clientHeight,legendScroll:legend.scrollHeight-legend.clientHeight};
+                            }''', mode)
+                            if 'unavailable' not in results:
+                                assert results['matches'] and results['labels'] >= 2, results
+                                assert results['scroll'] <= 1 and results['legendScroll'] <= 1, results
+                            inventory.append({'step': step + '-geometry', **results})
+                        page.locator('#chartOrientation').select_option('vertical')
+                        chart.locator('[data-reference-line]').click()
+                        layout.select_option(original_layout)
                     record('08-department-totals', page.locator('#toolsPage'))
                 table_help('#chartOrgTotals .metric-table', '08-department-totals-table-help')
                 if breakdown.input_value() != previous_breakdown:

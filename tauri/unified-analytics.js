@@ -164,7 +164,7 @@ async function calculate(shared=null){
  }catch(error){if(valid(mine,revision)){overviewRevision=null;chartRevision=null;invalidateScope();for(const id of ['overviewKpis','overviewInsights','overviewOrganizations'])clear(id);clear('overviewAlerts','Не удалось загрузить обзор. '+errorText(error));for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id);}}
  finally{if(valid(mine,revision))for(const id of results){$(id).inert=false;$(id).setAttribute('aria-busy','false');}}
 }
-function descriptors(points,granularity,s){const kind=granularity==='period'?s.displayType:granularity;return points.map(p=>{const start=p.start.length===7?p.start+'-01':p.start;return {type:kind,start,end:O.periodEnd(start,kind)};});}
+function descriptors(points,granularity,s){const kind=granularity==='period'?s.displayType:granularity;return points.map(p=>{const start=p.start.length===7?p.start+'-01':p.start;const end=O.periodEnd(start,kind);return {type:kind,start,actualStart:s.source==='daily'&&s.from>start?s.from:start,end:s.source==='daily'&&s.to<end?s.to:end};});}
 const allPeriodsHidden='Фильтр скрыл все подтверждённые нулевые периоды в этой выборке. Снимите фильтр нулевых периодов, чтобы увидеть их.';
 function confirmedZero(point){return point&&point.missing===0&&point.has_activity!==true&&point.total?.count===0&&point.total?.amount===0;}
 function chartInterval(s){const to=s.source==='daily'?s.to:O.periodEnd(s.to,s.displayType);return O.displayDay(s.from)+(to===s.from?'':' — '+O.displayDay(to));}
