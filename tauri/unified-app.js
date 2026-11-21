@@ -10,8 +10,14 @@ window.appReady=Promise.resolve().then(async()=>{
  }
  for(const name of ['unifiedManagement','unifiedReports','unifiedExtended','unifiedAnalytics'])window[name].init();
  UI.init();
+ await window.sharedWorkspace?.init();
  window.referenceDesktop?.init();
- await UI.refresh();
+ try{await UI.refresh();}
+ catch(error){
+  const active=window.sharedWorkspace?.state;
+  if(!active||active.mode!=='shared'||(active.available&&!active.pending))throw error;
+  // Settings and automatic reconnection remain usable while the configured share is offline.
+ }
  return true;
 }).catch(error=>{
  window.unifiedUI?.notice('Не удалось открыть приложение: '+(error?.message||String(error)),true);

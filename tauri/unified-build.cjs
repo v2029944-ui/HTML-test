@@ -131,10 +131,22 @@ function buildUnified(source){
  const relocated=html.indexOf('<section class="panel" id="comparison"');
  html=html.slice(0,relocated)+'      '+structure+'\n      '+html.slice(relocated);
 
- html=html.replace('</head>','<meta name="analiz-unified-sql" content="true"><link rel="stylesheet" href="tauri-app-status.css"><link rel="stylesheet" href="tauri-unified.css"><link rel="stylesheet" href="tauri-sql-row-scroll.css"><script src="tauri-bridge.js"></script></head>');
+ html=html.replace('</head>','<meta name="analiz-unified-sql" content="true"><link rel="stylesheet" href="tauri-app-status.css"><link rel="stylesheet" href="tauri-unified.css"><link rel="stylesheet" href="tauri-sql-row-scroll.css"><script src="tauri-shared-workspace.js"></script><script src="tauri-bridge.js"></script></head>');
+ const storageView='<section id="storage" class="view">';
+ if(!html.includes(storageView))throw Error('Missing storage settings view');
+ html=html.replace(storageView,storageView+
+  '<section id="sharedWorkspacePanel" class="panel" aria-labelledby="sharedWorkspaceHeading">'+
+  '<h2 id="sharedWorkspaceHeading">Общая база</h2>'+
+  '<p>Выберите одну и ту же общую папку на рабочих компьютерах. Пустая папка откроется с пустой базой. Личные отчёты останутся на этом компьютере.</p>'+
+  '<p id="sharedWorkspaceStatus" role="status" aria-live="polite">Проверка подключения…</p>'+
+  '<p id="sharedWorkspaceMessage" role="status" hidden></p><div class="actions">'+
+  '<button type="button" class="button primary" id="sharedWorkspaceConnect">Подключить общую папку</button>'+
+  '<button type="button" class="button secondary" id="sharedWorkspaceRetry" hidden>Повторить подключение</button>'+
+  '<button type="button" class="button secondary" id="sharedWorkspaceDiscard" hidden>Отменить неподтверждённые изменения и обновить</button></div></section>');
+ html=html.replace('Удалить все импортированные отчёты на этом устройстве.', 'Удалить все импортированные отчёты из активной базы.');
  html=html.replace('Данные остаются в этом браузере','Локальная база SQLite');
  html=html.replace('и защиты от очистки данных браузера.','и защиты от потери данных.');
- html=html.replace('Работает в браузере · Без отправки Excel на сервер · На другом устройстве данные не появляются автоматически','Локальная база SQLite · Без отправки Excel на сервер · Для переноса на другое устройство сохраните резервную копию');
+ html=html.replace('Работает в браузере · Без отправки Excel на сервер · На другом устройстве данные не появляются автоматически','Анализ работ · SQLite');
  html=html.replace('>Скачать группы (JSON)</button>','>Экспорт групп</button>').replace('>Импорт групп JSON<input','>Импорт групп<input').replace('Добавить справочник услуг из Excel\n','Импорт справочника Excel\n');
  const catalog=html.match(/<div class="catalog-toolbar">[\s\S]*?<\/div>/);
  if(catalog){html=html.replace(catalog[0],'');const groups=html.indexOf('id="importGroups"');const end=html.indexOf('</div>',groups);if(groups<0||end<0)throw Error('Missing group import toolbar');html=html.slice(0,end)+catalog[0]+html.slice(end);}

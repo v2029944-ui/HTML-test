@@ -86,9 +86,10 @@ function init(){
   const rename=button('Переименовать',async()=>{
    if(busy||!valid(expected))return;
    await guard(async()=>{
+    const opened=U.generation;
     const name=await requestGroupName(rename,group);
     if(name===null)return;
-    if(!valid(expected))throw Error('База изменилась. Повторите действие.');
+    if(opened!==U.generation||!valid(expected))throw Error('База изменилась. Повторите действие.');
     await mutate(expected,()=>api.nativeGroupRename(expected,group.handle,name),'Группа переименована.');
     if(active&&valid(revision))await load(groups,groups.offset);
    })();
@@ -124,7 +125,7 @@ function init(){
  file('catalogFile',async expected=>{const source=await api.chooseXlsx();if(!source)return;const review=await api.unifiedCatalogPreview(expected,source);if(!valid(expected))throw Error('База изменилась. Повторите импорт.');if(!await confirmAction(expected,'Добавить услуги из Excel? Найдено: '+review.catalog+'.'))return;await mutate(expected,()=>api.unifiedCatalogApply(expected,source,review.hash,true),'Справочник добавлен.');});
  function organizationFields(){const root=$('organizationFields');root.replaceChildren();orgInput.replaceChildren();const none=el('option','Без подразделения');none.value='';orgInput.append(none);for(const [i,name] of U.state.settings.orgNames.entries()){const label=el('label','Подразделение '+(i+1)),input=el('input');input.value=name;input.dataset.org=i;label.append(input);root.append(label);const option=el('option',name);option.value=name;orgInput.append(option);}}
  bind('saveOrganizations',guard(async expected=>{const names=Array.from($('organizationFields').querySelectorAll('input'),n=>n.value.trim());const normalize=s=>s.toLowerCase().replace(/[.,;:]+$/,'').replace(/\s+/g,' ');if(names.length!==4||names.some(n=>!n)||new Set(names.map(normalize)).size!==4)throw Error('Нужны четыре непустых разных названия подразделений.');if(!await confirmAction(expected,'Изменить названия подразделений во всех отчётах и справочнике? Сначала будет создана резервная копия SQLite.'))return;const destination=await api.chooseSqliteBackupPath('analiz-before-rename.sqlite3');if(!destination)return;await mutate(expected,()=>api.unifiedRenameOrganizations(expected,names,destination),'Названия сохранены. Резервная копия создана.');}));
- bind('clearReports',guard(async expected=>{if(!await confirmAction(expected,'Удалить все импортированные отчёты? Группы останутся.'))return;await mutate(expected,()=>api.unifiedClearReports(expected),'Отчёты удалены.');}));
+ bind('clearReports',guard(async expected=>{const question=window.sharedWorkspace?.state?.mode==='shared'?'Удалить все импортированные отчёты из общей базы для всех пользователей? Группы останутся.':'Удалить все импортированные отчёты? Группы останутся.';if(!await confirmAction(expected,question))return;await mutate(expected,()=>api.unifiedClearReports(expected),'Отчёты удалены.');}));
  bind('exportBackup',guard(async()=>{const destination=await api.chooseSqliteBackupPath('analiz-backup.sqlite3');if(!destination)return;await api.nativeBackupSqlite(destination);U.notice('Проверенная резервная копия SQLite сохранена.');}));
  $('exportBackup').title='Сохранить проверенную резервную копию SQLite';$('clearReports').title='Удалить загруженные отчёты после подтверждения';$('importBackup').accept='.sqlite3';const backupPanel=$('importBackup').parentNode.parentNode.parentNode,restoreStatus=el('p','','muted small');backupPanel.append(restoreStatus);function restoreMessage(text){restoreStatus.textContent=text;}
  file('importBackup',async()=>{const source=await api.chooseRestoreBackupPath();if(!source){if(!restore)restoreMessage('Выбор отменён.');return;}restore=null;restoreMessage('Проверка резервной копии…');const preview=await api.nativeRestorePreview(source);if(!preview||!/^[a-f0-9]{64}$/i.test(preview.verification)||!Number.isSafeInteger(preview.reportCount)||preview.reportCount<0)throw Error('Не удалось подтвердить целостность резервной копии.');restore={source,verification:preview.verification};restoreMessage('Копия проверена. Отчётов: '+preview.reportCount+'. Рабочая база не изменена.');});
@@ -157,7 +158,7 @@ function init(){
  U.onScope(scope=>{if(scope){U.setPeriodInput('groupAuditFrom',scope.displayType,scope.from);U.setPeriodInput('groupAuditTo',scope.displayType,scope.to);}clear(audit);$('groupAuditCoverage').textContent=scope?'':auditEmptyPeriod;if(scope&&active&&$('groupAuditPanel').open)void load(audit);});$('groupAuditPanel').addEventListener('toggle',()=>{if($('groupAuditPanel').open)void load(audit);});
  U.onSnapshot(snapshot=>{revision=Number.isSafeInteger(snapshot?.revision)?snapshot.revision:null;editTicket++;editing=null;selected=new Set();resetCatalogEditor();for(const p of pages)clear(p);$('groupSearchCount').textContent='';$('groupCoverage').textContent='';$('catalogStatus').textContent='';$('groupAuditCoverage').textContent=U.scope?'':auditEmptyPeriod;organizationFields();lock();if(active&&valid(revision)){void load(groups);void load(works);if(catalogPanel.open)void load(catalog);if($('groupAuditPanel').open)void load(audit);}});
  U.onView('groups',()=>{active=true;if(valid(revision)){void load(groups,groups.offset);void load(works,works.offset);if(catalogPanel.open)void load(catalog);}});U.onView('storage',()=>{organizationFields();});
- $('storageModeInfo').textContent='Отчёты хранятся в SQLite на этом устройстве. Резервная копия включает отчёты, группы, справочник и настройки.';
+ $('storageModeInfo').textContent='Резервная копия активной базы включает отчёты, группы, справочник и настройки.';
  if(typeof api.nativeRestoreLaunchInfo==='function')void api.nativeRestoreLaunchInfo().then(result=>{if(result?.message)restoreMessage(result.message);if(result?.restartRequired)restoreMessage('Восстановление ожидает перезапуска приложения.');}).catch(fail);
  lock();
 }

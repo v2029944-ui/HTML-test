@@ -5,6 +5,7 @@
 const api=window.desktopAPI,$=id=>document.getElementById(id);
 if(!api?.nativeMetricKinds)return;
 const userError=window.analizUserError||(()=>'Операция не выполнена. Перезапустите программу и повторите действие.');
+let loadingCatalog=null;
 let kinds=[],profiles=[],source=null,review=null,format=null,xlsxArgs=null,busy=false;
 const ui=window.unifiedUI;
 const currentRevision=()=>ui?.revision??null;
@@ -42,7 +43,8 @@ function render(values,kind,container){
   el.append(box);
  }
 }
-if(typeof ui?.onSnapshot==='function')ui.onSnapshot(()=>{
+if(typeof ui?.onSnapshot==='function')ui.onSnapshot(snapshot=>{
+ if(snapshot&&!kinds.length)void loadCatalog();
  clearReview();
  $('metricKindTotals').replaceChildren();
  $('metricKindCount').textContent='Данные изменились. Повторите расчёт.';
@@ -161,7 +163,7 @@ $('metricKindApply').addEventListener('click',async()=>{
  }finally{busy=false;controls();}
 });
 controls();
-window.metricKindWorkspaceReady=(async()=>{
+async function readCatalog(){
  try{
   [kinds,profiles]=await Promise.all([api.nativeMetricKinds(),api.nativeMetricXlsxProfiles()]);
   if(!Array.isArray(kinds)||!kinds.length||!Array.isArray(profiles))
@@ -184,5 +186,10 @@ window.metricKindWorkspaceReady=(async()=>{
   status('Ошибка загрузки видов отчётов: '+userError(err),true);
   return [];
  }finally{controls();}
-})();
+}
+function loadCatalog(){
+ if(!loadingCatalog)loadingCatalog=readCatalog().finally(()=>{loadingCatalog=null;});
+ return loadingCatalog;
+}
+window.metricKindWorkspaceReady=loadCatalog();
 })();

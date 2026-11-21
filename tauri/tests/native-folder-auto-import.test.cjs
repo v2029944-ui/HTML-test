@@ -102,3 +102,20 @@ test('rejected asynchronous consent leaves no enabled autoimport session',async(
  const x=mount({confirm:async()=>{throw Error('dialog failed');}});await x.toggle(true);
  assert.equal(x.auto.isEnabled(),false);assert.equal(x.e.sourceAutoImport.checked,false);assert.ok(!x.requests('session').includes(true));assert.match(x.e.sourceAutoStatus.textContent,/Не удалось/);
 });
+test('connecting a workspace revokes an active local import and waits for its unfinished preview',async()=>{
+ const preview=deferred(),started=deferred();
+ const x=mount({preview:()=>{started.resolve();return preview.result;}});
+ const enabling=x.toggle(true);await started.result;
+ let stopped=false;const stopping=x.auto.stopForWorkspaceChange().then(()=>{stopped=true;});
+ assert.equal(x.e.sourceAutoImport.checked,false);assert.equal(x.auto.isEnabled(),false);
+ await Promise.resolve();assert.equal(stopped,false);
+ preview.resolve(x.preview);await Promise.all([enabling,stopping]);
+ assert.deepEqual(x.requests('session'),[true,false]);assert.deepEqual(x.requests('apply'),[]);
+ await x.auto.updateSnapshot(x.snapshot);assert.deepEqual(x.requests('apply'),[]);
+});
+test('peer checkout invalidates pending consent without requesting a lease on the new database',async()=>{
+ const consent=deferred(),x=mount({confirm:()=>consent.result});
+ const enabling=x.toggle(true);x.auto.forgetWorkspaceSession();consent.resolve(true);await enabling;
+ assert.equal(x.e.sourceAutoImport.checked,false);assert.equal(x.auto.isEnabled(),false);
+ assert.deepEqual(x.requests('session'),[]);assert.deepEqual(x.requests('apply'),[]);
+});

@@ -120,3 +120,4 @@
 @media (max-width:740px) {
   #refNative .chart-mode-line > label {width:100%;min-width:0}
 }
+#sharedWorkspaceStatus, #sharedWorkspaceMessage {overflow-wrap:anywhere}

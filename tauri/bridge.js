@@ -4,7 +4,8 @@
   if(!tauri?.core?.invoke || !tauri?.dialog?.open) {
     throw Error('Tauri API не инициализирован. Откройте приложение через Tauri, а не как файл HTML.');
   }
-  const invoke=(command,args)=>tauri.core.invoke(command,args||{});
+  const invoke=(command,args)=>window.sharedWorkspace
+    ?window.sharedWorkspace.invoke(command,args||{}):tauri.core.invoke(command,args||{});
   const operations=window.tauriOperations={saves:0,reads:0,updating:false};
   function reportOperation(command){
     // Activity observers must never interrupt IPC or hide its original error.
@@ -98,13 +99,15 @@
   if(typeof originalConfirm==='function')window.confirm=function(...args){
     const opener=visibleOpener(document?.activeElement)||(activation?.isConnected?activation:null);
     const expectedInteraction=interaction;
+    const token=window.sharedWorkspace?.state?.workspace_token;
     const answer=originalConfirm.apply(this,args);
-    const finish=accepted=>{if(accepted===false)restoreOpener(opener,expectedInteraction);return accepted;};
+    const finish=accepted=>{if(accepted===false)restoreOpener(opener,expectedInteraction);return accepted&&token!==window.sharedWorkspace?.state?.workspace_token?false:accepted;};
     return answer&&typeof answer.then==='function'?answer.then(finish):finish(answer);
   };
   async function nativePicker(kind,options){
     if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
     if(pickerOpen)throw Error('Закройте открытый диалог выбора файла.');
+    const token=window.sharedWorkspace?.state?.workspace_token;
     const active=document?.activeElement;
     const opener=(activation?.isConnected?activation:visibleOpener(active));
     const expectedInteraction=interaction;
@@ -113,7 +116,8 @@
     opener?.setAttribute('aria-busy','true');opener?.setAttribute('aria-disabled','true');
     let cancelled=true;
     try{
-      const result=await tauri.dialog[kind](options);
+      const result=kind==='sharedFolder' ? await tauri.core.invoke('shared_workspace_choose_folder') : await tauri.dialog[kind](options);
+      if(token!==window.sharedWorkspace?.state?.workspace_token)throw Error('Активная база изменилась. Повторите выбор.');
       cancelled=result===null||result===undefined||result===false||result==='';
       return result;
     }finally{
@@ -293,6 +297,7 @@
       'native_report_page',{revision,filter,after,limit},'reads'),
     save:data=>tracked('save_data',{data},'saves'),
     info:()=>invoke('get_info'),
+    chooseSharedFolder:()=>nativePicker('sharedFolder'),
     chooseFolder:async()=>{
       const folder=await nativePicker('open',{directory:true,multiple:false,title:'Папка с Excel-отчётами'});
       return folder?tracked('set_folder',{folder},'saves'):null;
