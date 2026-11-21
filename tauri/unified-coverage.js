@@ -121,7 +121,7 @@ async function render(root,s,active){
      details.addEventListener('toggle',()=>{if(details.open&&!loaded&&valid()){loaded=true;void loadNotes(notes,report.id,valid);}});card.append(details);cards.append(card);
     }
     const pages=Math.max(1,Math.ceil(result.total_rows/20)),go=i=>{if(valid()&&Number.isSafeInteger(i)&&i>=0&&i<pages&&i!==index)return load(i);return false;};
-    if(!window.sqlRowScroll?.attach(cards,{index,size:20,count:result.rows.length,total:result.total_rows,label:'Отчёты выбранной ячейки',direct:true,go,footer:reportsStatus})){const previous=button('← Предыдущие отчёты',()=>go(index-1)),next=button('Следующие отчёты →',()=>go(index+1));previous.disabled=index===0;next.disabled=index+1>=pages;reportsStatus.append(previous,el('span','Показано '+result.rows.length+' из '+result.total_rows,'muted small'),next);}
+    if(!window.sqlRowScroll?.attach(cards,{index,size:20,count:result.rows.length,total:result.total_rows,label:'Отчёты выбранной ячейки',direct:true,go,footer:reportsStatus})&&result.total_rows>0){const previous=button('← Предыдущие отчёты',()=>go(index-1)),next=button('Следующие отчёты →',()=>go(index+1));previous.disabled=index===0;next.disabled=index+1>=pages;reportsStatus.append(previous,el('span','Показано '+result.rows.length+' из '+result.total_rows,'muted small'),next);}
    }catch(error){if(valid()){window.sqlRowScroll?.reset(cards);content.replaceChildren(el('p','Не удалось прочитать отчёты: '+errorText(error),'warn small'));}}
   }
   void load();
@@ -150,7 +150,7 @@ async function render(root,s,active){
     if(result.warning_fallback)summary.append(el('p','Есть признак замечания без сохранённого подробного описания.','warn small'));
     if(result.invalid_entries)summary.append(el('p','Неподдерживаемых записей диагностики: '+result.invalid_entries+'.','warn small'));
     const index=Math.floor(offset/50),pages=Math.max(1,Math.ceil(result.total_rows/50)),go=i=>{if(current()&&request===sequence&&Number.isSafeInteger(i)&&i>=0&&i<pages&&i!==index)return load(i*50);return false;};
-    if(!window.sqlRowScroll?.attach(issues,{index,size:50,count:result.issues.length,total:result.total_rows,label:'Сохранённые замечания',direct:true,go,footer:notesStatus})){const previous=button('← Предыдущие замечания',()=>go(index-1)),next=button('Следующие замечания →',()=>go(index+1));previous.disabled=index===0;next.disabled=index+1>=pages;notesStatus.append(previous,el('span','Показано '+result.issues.length+' из '+result.total_rows,'muted small'),next);}
+    if(!window.sqlRowScroll?.attach(issues,{index,size:50,count:result.issues.length,total:result.total_rows,label:'Сохранённые замечания',direct:true,go,footer:notesStatus})&&result.total_rows>0){const previous=button('← Предыдущие замечания',()=>go(index-1)),next=button('Следующие замечания →',()=>go(index+1));previous.disabled=index===0;next.disabled=index+1>=pages;notesStatus.append(previous,el('span','Показано '+result.issues.length+' из '+result.total_rows,'muted small'),next);}
     if(scope==='report'&&result.source_anchor)notesStatus.append(button('Замечания источника',()=>{if(current()){scope='source';window.sqlRowScroll?.reset(issues);void load();}}));
     if(scope==='source')notesStatus.append(button('Замечания выбранного отчёта',()=>{if(current()){scope='report';window.sqlRowScroll?.reset(issues);void load();}}));
    }catch(error){if(current()&&request===sequence){window.sqlRowScroll?.reset(issues);root.replaceChildren(el('p','Не удалось прочитать замечания: '+errorText(error),'warn small'));}}

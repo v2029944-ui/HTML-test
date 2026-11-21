@@ -524,7 +524,8 @@ def check_reference_data(page, output):
             inspection.get_by_role('button', name='Замечания выбранного отчёта', exact=True).click()
             expect(inspection).to_contain_text('Признак явного нуля: нет.', timeout=TIMEOUT)
         expect(inspection.get_by_role('button', name='Следующие замечания →', exact=True)).to_have_count(0)
-        expect(inspection.locator('[data-sql-pager="coverage-notes"] [data-page-action="next"]')).to_have_attribute('aria-disabled', 'true')
+        expect(inspection.locator('[data-sql-pager="coverage-notes"]')).not_to_be_visible()
+        expect(inspection).not_to_contain_text('Показано 0 из 0')
         evidence['diagnostic_paging'] = 'No further diagnostic rows in the zero-issue fixture.'
         record('05-current-quality-evidence', '#sheet')
         detail.locator(':scope > summary').focus()
