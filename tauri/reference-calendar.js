@@ -12,9 +12,9 @@ function dateAt(year,month,day=1){
 function day(value,offset){
  const date=dateOf(value);date.setUTCDate(date.getUTCDate()+offset);return serial(date);
 }
-function period(value,unit){
+function period(value,unit,weekStartsOn=1){
  const date=dateOf(value),year=date.getUTCFullYear(),month=date.getUTCMonth();
- if(unit==='week'){const start=day(value,-((date.getUTCDay()+6)%7));return [start,day(start,6)];}
+ if(unit==='week'){const start=day(value,-((date.getUTCDay()-weekStartsOn+7)%7));return [start,day(start,6)];}
  if(unit==='month')return [dateAt(year,month),dateAt(year,month+1,0)];
  if(unit==='year')return [dateAt(year,0),dateAt(year,11,31)];
  return [value,value];

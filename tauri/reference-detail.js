@@ -32,8 +32,8 @@
   }
 
   function scopeLine(key) {
-    if (!analyticPanels.includes(key)) return;
-    const panel = $(key);
+    if (!analyticPanels.includes(key) && !['overviewPanel','changes'].includes(key)) return;
+    const panel = key === 'changes' ? $('changesHeading').parentElement : $(key);
     let line = panel.querySelector(':scope > .detail-date-scope');
     if (!line) {
       line = document.createElement('p');
@@ -49,16 +49,25 @@
         fold.scrollIntoView({block:'start'});
       };
       line.append(document.createElement('span'), document.createElement('span'), edit);
-      panel.querySelector(':scope > summary, :scope > .sectionbar')?.after(line);
+      (panel.querySelector(':scope > summary, :scope > .sectionbar, :scope > h2') || panel.firstElementChild).after(line);
     }
-    const scope = window.unifiedUI.scope;
+    const selected = window.unifiedUI.scope;
+    const analytics = window.unifiedAnalytics;
+    const displayed = key === 'chartPanel' ? analytics?.displayedChartScope : key === 'overviewPanel' ? analytics?.displayedOverviewScope : null;
+    const scope = displayed || selected;
+    const pendingPeriod = scope && selected && (scope.from !== selected.from || scope.to !== selected.to ||
+      scope.displayType !== selected.displayType || scope.source !== selected.source ||
+      (key === 'overviewPanel' && (scope.baseFrom !== selected.baseFrom || scope.baseTo !== selected.baseTo)));
     const showDate = value => value.split('-').reverse().join('.');
     const interval = (lo, hi) => lo === hi ? showDate(lo) : showDate(lo) + ' — ' + showDate(hi);
     const end = raw => scope.source === 'daily' ? raw : window.unifiedOriginal.periodEnd(raw, scope.displayType);
     const [period, base] = line.children;
-    period.textContent = scope ? 'Общий период ' + interval(scope.from, end(scope.to)) : 'Нет выбранного периода';
-    base.hidden = !(scope?.baseFrom && scope.baseTo && ['structurePanel','comparison','regularityPanel'].includes(key));
-    base.textContent = base.hidden ? '' : 'База ' + interval(scope.baseFrom, end(scope.baseTo));
+    period.textContent = scope ? (pendingPeriod ? 'Показан период ' : 'Общий период ') + interval(scope.from, end(scope.to)) : 'Нет выбранного периода';
+    base.hidden = !(scope?.baseFrom && scope.baseTo && ['structurePanel','comparison','regularityPanel','overviewPanel'].includes(key));
+    const before = key === 'comparison' && $('comparisonMode').value === 'periods' ? comparisonBase(scope) : null;
+    if (key === 'comparison' && !before) base.hidden = true;
+    base.textContent = base.hidden ? '' : (before && localBase ? 'Локальная база ' : 'База ') +
+      interval(before?.from || scope.baseFrom, end(before?.to || scope.baseTo));
   }
 
   function chartButtons() {
@@ -89,50 +98,36 @@
     }
   }
 
-  let comparisonOrigin = '', comparisonWindow = '', dates = null, dateMode = 'shared';
-  const dateCaptions = ['Базовый период · С','Базовый период · По','Анализируемый период · С','Анализируемый период · По'];
-  function previousEqual(lo,hi) {
-    return [window.referenceCalendar.day(lo, -(1 + Math.round((Date.parse(hi)-Date.parse(lo))/86400000))),
-      window.referenceCalendar.day(lo,-1)];
+  let comparisonOrigin = '', localBase = null;
+  function comparisonBase(scope) {
+    if (!scope?.baseFrom || !scope.baseTo) return null;
+    const origin = JSON.stringify([window.sharedWorkspace?.state?.workspace_token, scope.revision,
+      scope.source, scope.displayType, scope.from, scope.to]);
+    if (comparisonOrigin !== origin) { localBase = null; comparisonOrigin = origin; }
+    return localBase || {from:scope.baseFrom, to:scope.baseTo};
   }
-  function priorYear(stamp) {
-    const c=window.referenceCalendar,d=c.dateOf(stamp),year=d.getUTCFullYear()-1,month=d.getUTCMonth();
-    return c.dateAt(year,month,Math.min(d.getUTCDate(),c.dateOf(c.dateAt(year,month+1,0)).getUTCDate()));
+  function comparisonPeriod(scope, date, unit) {
+    const weekStartsOn = unit === 'week' && scope.source === 'imported' ? window.referenceCalendar.dateOf(scope.from).getUTCDay() : 1;
+    return window.referenceCalendar.period(date, unit, weekStartsOn);
+  }
+  function visibleEnd(scope, date) {
+    return scope.source === 'daily' ? date : comparisonPeriod(scope, date, scope.displayType)[1];
   }
   function compareDates() {
-    const scope=window.unifiedUI.scope,toolbar=$('refComparisonDates');
-    if(!scope || scope.source!=='daily' || !scope.baseFrom || !scope.baseTo) {
-      if(toolbar) toolbar.hidden=true;
-      $('periodComparisonFilters').classList.remove('ref-local-date-fields');
-      // A pending SQL refresh can temporarily clear scope before publishing the same interval.
-      if(scope){dates=null;comparisonOrigin='';}
-      return;
+    const scope = window.unifiedUI.scope, before = comparisonBase(scope);
+    if (!$('refComparisonDates')) buildComparisonToolbar();
+    const root = $('refComparisonDates');
+    root.hidden = !before || $('comparisonMode').value !== 'periods';
+    if (root.hidden) return;
+    const last = visibleEnd(scope,before.to), length = (a,b) => 1 + Math.round((Date.parse(b)-Date.parse(a))/86400000);
+    const days = length(before.from,last), currentDays = length(scope.from,visibleEnd(scope,scope.to));
+    root.querySelector('[data-lengths]').textContent = 'Дней в базе: ' + days + ' · в анализируемом периоде: ' + currentDays +
+      (days === currentDays ? '' : ' · Интервалы разной длительности.');
+    for (const [i,date] of [before.from,last].entries()) {
+      const field = root.querySelector('[data-compare-date="'+i+'"]');
+      field.textContent = window.referenceCalendar.stamp(date);
+      field.setAttribute('aria-label', (i ? 'Базовый период · По · ' : 'Базовый период · С · ') + field.textContent);
     }
-    const range=[scope.revision,scope.from,scope.to].join('/');
-    const signature=[range,scope.baseFrom,scope.baseTo].join('/');
-    if(signature!==comparisonOrigin) {
-      if (!comparisonOrigin || comparisonWindow!==range || dateMode!=='manual') {
-        dates=[scope.baseFrom,scope.baseTo,scope.from,scope.to];dateMode='shared';
-      }
-      comparisonOrigin=signature;comparisonWindow=range;
-    }
-    if(!toolbar) buildComparisonToolbar();
-    const root=$('refComparisonDates'),periods=$('comparisonMode').value==='periods';
-    root.hidden=!periods;
-    $('periodComparisonFilters').classList.toggle('ref-local-date-fields',periods);
-    if(!periods)return;
-    for (const [i,button] of [...root.querySelectorAll('[data-compare-date]')].entries()) {
-      button.textContent=window.referenceCalendar.stamp(dates[i]);
-      button.setAttribute('aria-label',dateCaptions[i]+' · '+button.textContent);
-      button.disabled=i<2&&dateMode!=='manual';
-    }
-    for(const button of root.querySelectorAll('[data-preset]'))button.setAttribute('aria-pressed',String(button.dataset.preset===dateMode));
-    root.querySelector('[data-edit-base]').textContent=dateMode==='manual'?'Автоподбор':'Изменить';
-    root.querySelector('[data-reset-base]').hidden=dateMode==='shared';
-    const days=(lo,hi)=>1+Math.round((Date.parse(hi)-Date.parse(lo))/86400000);
-    const lengths=[days(dates[0],dates[1]),days(dates[2],dates[3])];
-    root.querySelector('[data-lengths]').textContent='Дней в базе: '+lengths[0]+' · в анализируемом периоде: '+lengths[1]+
-      (lengths[0]===lengths[1]?'':' · Интервалы разной длительности.');
   }
   function comparisonTabs() {
     const select = $('comparisonMode');
@@ -164,64 +159,46 @@
     }
   }
   function buildComparisonToolbar() {
-    const root=document.createElement('div');root.id='refComparisonDates';
-    const presets=document.createElement('div');presets.className='ref-cmp-presets';
-    const c=window.referenceCalendar;
-    const button=(label,run)=>{const b=document.createElement('button');b.type='button';b.className='button secondary';b.textContent=label;b.onclick=()=>run(b);return b;};
-    const commit=(next,mode)=>{
-      if(!next.every(c.valid)){window.unifiedUI.notice('Выбранный интервал выходит за допустимые календарные границы.',true);return;}
-      dates=next;dateMode=mode;compareDates();window.unifiedExtended.openComparison();
+    const root = document.createElement('div'); root.id = 'refComparisonDates';
+    const editor = document.createElement('details'), toggle = document.createElement('summary');
+    toggle.dataset.editBase = ''; toggle.textContent = 'Изменить базу сравнения'; editor.append(toggle);
+    const group = document.createElement('div'); group.className = 'ref-comparison-card';
+    for (const [index,label] of ['С','По'].entries()) {
+      const field = document.createElement('div'), caption = document.createElement('span');
+      caption.textContent = label;
+      const button = document.createElement('button');
+      button.type = 'button'; button.dataset.compareDate = String(index); button.setAttribute('aria-haspopup','dialog');
+      button.onclick = () => {
+        const scope = window.unifiedUI.scope, before = comparisonBase(scope);
+        if (!before) return;
+        const unit = scope.source === 'daily' ? 'day' : scope.displayType;
+        window.referenceCalendar.open({anchor:button, title:'Базовый период · '+label, unit,
+          initial:index ? before.to : before.from, spanFor:(date, kind) => comparisonPeriod(scope, date, kind), apply(value) {
+            if (scope !== window.unifiedUI.scope) return;
+            const start = comparisonPeriod(scope,value,unit)[0];
+            localBase = index ? {from:before.from < start ? before.from : start,to:start}
+              : {from:start,to:before.to > start ? before.to : start};
+            compareDates();scopeLine('comparison');window.unifiedExtended.openComparison();
+          }});
+      };
+      field.append(caption,button);group.append(field);
+    }
+    const reset = document.createElement('button');reset.type = 'button';reset.className = 'button secondary';
+    reset.textContent = 'Использовать общую базу'; reset.dataset.resetBase = '';
+    reset.onclick = () => {
+      localBase = null;editor.open = false;compareDates();scopeLine('comparison');toggle.focus();
+      window.unifiedExtended.openComparison();
     };
-    for(const [mode,label] of [['week','Прошлая неделя'],['month','Прошлый месяц'],['year','Год назад']]) {
-      const b=button(label,()=>{
-        let [,,lo,hi]=dates,base;
-        if(mode==='year')base=[priorYear(lo),priorYear(hi)];
-        else{
-          [lo,hi]=c.period(hi,mode);
-          base=mode==='month'?c.period(c.day(lo,-1),'month'):previousEqual(lo,hi);
-        }
-        commit([...base,lo,hi],mode);
-      });
-      b.dataset.preset=mode;presets.append(b);
-    }
-    root.append(presets);
-    for(const [i,title] of ['Базовый период','Анализируемый период'].entries()){
-      const group=document.createElement('fieldset');group.className='ref-comparison-card';
-      const legend=document.createElement('legend');legend.textContent=title;group.append(legend);
-      for(let j=0;j<2;j++){
-        const index=2*i+j,field=document.createElement('div'),caption=document.createElement('span');
-        caption.textContent=j?'По':'С';
-        const b=button('',anchor=>c.open({anchor,title:dateCaptions[index],initial:dates[index],unit:'day',apply(value){
-          const next=dates.slice();next[index]=value;
-          if(next[2*i]>next[2*i+1])next[2*i+(1-j)]=value;
-          let mode=dateMode;
-          if(i===1&&mode!=='manual'){
-            [next[0],next[1]]=mode==='year'?[priorYear(next[2]),priorYear(next[3])]:previousEqual(next[2],next[3]);
-            if(mode!=='year')mode='auto';
-          }
-          commit(next,mode);
-        }}));
-        b.dataset.compareDate=String(index);b.setAttribute('aria-haspopup','dialog');field.append(caption,b);group.append(field);
-      }
-      if(i===0){
-        const edit=button('Изменить',()=>{
-          if(dateMode==='manual')commit([...previousEqual(dates[2],dates[3]),...dates.slice(2)],'auto');
-          else {dateMode='manual';compareDates();group.querySelector('[data-compare-date]').focus();}
-        });
-        edit.dataset.editBase='';group.append(edit);
-      }
-      root.append(group);
-    }
-    const lengths=document.createElement('p');lengths.dataset.lengths='';lengths.className='muted small';
-    const reset=button('Использовать общий период',()=>{comparisonOrigin='';compareDates();window.unifiedExtended.openComparison();});
-    reset.dataset.resetBase='';root.append(lengths,reset);$('periodComparisonFilters').before(root);
-    $('comparisonMode').addEventListener('change',compareDates);
+    group.append(reset);editor.append(group);
+    const lengths = document.createElement('p');lengths.dataset.lengths = '';lengths.className = 'muted small';
+    root.append(editor,lengths);$('periodComparisonFilters').before(root);
+    $('comparisonMode').addEventListener('change',() => {compareDates();scopeLine('comparison');});
   }
   function currentComparison() {
-    if(active!=='comparison'||window.unifiedUI.scope?.source!=='daily')return null;
-    compareDates();
-    if(!dates)return null;
-    return {before:{from:dates[0],to:dates[1]},after:{from:dates[2],to:dates[3]}};
+    const scope = window.unifiedUI.scope;
+    if (active !== 'comparison') return null;
+    const before = comparisonBase(scope);
+    return before ? {before,after:{from:scope.from,to:scope.to}} : null;
   }
 
   function init() {
@@ -280,5 +257,8 @@
     $('structurePanel').hidden = true;
   }
 
-  window.referenceDetail = Object.freeze({init, show, hide, currentComparison, get active() { return active; }});
+  window.referenceDetail = Object.freeze({init, show, hide, currentComparison,
+    refreshChartCaption() { if (active === 'chartPanel') scopeLine(active); },
+    refreshOverviewCaption() { if (active === 'overviewPanel') scopeLine(active); },
+    get active() { return active; }});
 })();

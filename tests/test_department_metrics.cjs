@@ -172,7 +172,7 @@ test('line and bar modes render six series with correct labels and source-value 
     const all=nodes(root);
     const plot=all.find(node=>node.tag==='svg'&&node.attributes.role==='img');
     assert.ok(plot,'График SVG существует');
-    assert.equal(nodes(plot).filter(node=>node.tag===shape).length,expected);
+    assert.equal(nodes(plot).filter(node=>node.tag===shape&&(mode==='line'||node.dataset.chartTooltip)).length,expected);
     assert.equal(all.filter(node=>node.attributes.role==='listitem').length,6);
     const marks=all.filter(node=>node.dataset.chartTooltip);
     assert.equal(marks.length,12);
@@ -193,7 +193,7 @@ test('missing values are gaps, while real zeros are plotted',()=>{
   run('state.chart="line";drawDepartmentMultiChart(periods,organizations,metrics,missing,root)',{
     root,periods,organizations,metrics,missing
   });
-  assert.equal(nodes(root).filter(node=>node.tag==='circle').length,8);
+  assert.equal(nodes(root).filter(node=>node.dataset.chartTooltip).length,8);
   assert.equal(nodes(root).filter(node=>node.tag==='polyline').length,2);
 });
 
@@ -246,20 +246,19 @@ test('solid/dashed/dotted line styles are tied to metrics, not selection order',
   assert.ok(linePaths.some(node=>node.attributes['stroke-dasharray']==='8 4'));
 });
 
-test('bar legend swatches match fill intensity of their plotted metrics',()=>{
-  const root=new MockNode('div');
-  run('state.chart="bar";drawDepartmentMultiChart(periods,organizations,metrics,data,root)',{
-    root,periods,organizations,metrics,data
-  });
-  const all=nodes(root),items=all.filter(node=>node.attributes.role==='listitem');
-  assert.equal(items.length,6);
-  assert.equal(items[0].children[0].children[0].attributes['fill-opacity'],'1');
-  assert.equal(items[1].children[0].children[0].attributes['fill-opacity'],'0.72');
-  assert.equal(items[2].children[0].children[0].attributes['fill-opacity'],'0.48');
-  const plot=all.find(node=>node.tag==='svg'&&node.attributes.role==='img');
-  assert.ok(plot);
-  assert.equal(nodes(plot).filter(node=>node.tag==='rect').length,12);
-  assert.equal(items[0].children[0].children[0].attributes.fill,items[1].children[0].children[0].attributes.fill);
+test('all twelve department and metric swatches match actual marks in either orientation',()=>{
+  const orgs=['СМУ16','АВТО','A','B'],values=periods.map(()=>new Map(orgs.map(org=>[org,{amount:30,count:3,average:10}])));
+  for(const orientation of ['horizontal','vertical']){
+    const root=new MockNode('div');
+    run("state.chart='bar';drawDepartmentMultiChart(periods,orgs,metrics,values,root,{orientation})",{periods,orgs,metrics,values,root,orientation});
+    const all=nodes(root),items=all.filter(node=>node.attributes.role==='listitem'),marks=all.filter(node=>node.dataset.chartTooltip);
+    assert.equal(marks.length,24);assert.equal(items.length,12);
+    items.forEach((item,i)=>{
+      const swatch=item.children[0].children[0],mark=marks[i*2];assert.equal(mark.attributes.fill,swatch.attributes.fill);assert.equal(mark.attributes.stroke,swatch.attributes.stroke);
+      if(i%3===0)assert.equal(mark.attributes.stroke,mark.attributes.fill);
+      else{const pattern=all.find(node=>'url(#'+node.attributes.id+')'===mark.attributes.fill);assert.equal(pattern.children[1].tag,i%3===1?'path':'circle');}
+    });
+  }
 });
 
 test('raw work names and internal work keys keep the same chart color',()=>{
@@ -296,6 +295,26 @@ test('chart keeps lines across consecutive weeks and breaks across an absent wee
   const doubleSegment=draw([first,second,late,later],seriesData);
   assert.equal(doubleSegment.items.filter(node=>node.tag==='polyline').length,2);
   assert.equal(doubleSegment.items.filter(node=>node.tag==='circle').length,4);
+});
+
+test('hidden zero reports break a line and only genuinely absent days get a missing-report warning',()=>{
+  const day=n=>({type:'day',start:'2026-01-0'+n,end:'2026-01-0'+n});
+  function render(last,hidden){
+    const root=new MockNode('div'),chosen=[day(1),day(last)];
+    const data=[10,20].map(amount=>new Map([['Кран',{amount}]]));
+    run("drawChart(chosen,new Set(['СМУ16']),'amount',root,{categories:['Кран'],data,chart:'line',hiddenPeriods})",
+      {chosen,data,root,hiddenPeriods:hidden.map(day)});
+    const items=nodes(root);
+    assert.equal(items.filter(node=>node.tag==='circle').length,2);
+    assert.equal(items.filter(node=>node.tag==='polyline').length,0);
+    return items.map(node=>node.textContent||'').join(' ');
+  }
+  const zero=render(3,[2]);
+  assert.match(zero,/Скрыт ноль/);
+  assert.doesNotMatch(zero,/Пропуск|нет отчётов за/i);
+  const mixed=render(5,[2,4]);
+  assert.match(mixed,/03\.01\.2026 — 03\.01\.2026/);
+  assert.doesNotMatch(mixed,/нет отчётов за: 02/i);
 });
 
 test('missing monthly period is identified without replacing it with zero',()=>{
@@ -350,7 +369,7 @@ test('one period shows an accessible, descending horizontal ranking instead of a
   assert.equal(rows[0].children[1].children[0].style['--rank-share'],'100%');
   assert.equal(rows[2].children[1].children[0].style['--rank-share'],'0%');
   assert.ok(all.some(node=>node.textContent?.includes('Для динамики выберите несколько периодов')));
-  assert.match(rows[0].attributes['aria-label'],/Расточка: 27,48/);
+  assert.match(rows[0].attributes['aria-label'],/Расточка.*Сумма: 27,48/);
 });
 
 test('ranking flags actual negative values and never turns incomplete reports into zero',()=>{
@@ -370,13 +389,13 @@ test('ranking flags actual negative values and never turns incomplete reports in
   assert.ok(nodes(missing).some(node=>node.textContent?.includes('Отсутствующие данные не считаются нулём')));
 });
 
-test('combined multi-metric view explains why a line cannot show one period',()=>{
+test('one date exposes every coincident department and metric with separate focusable markers',()=>{
   const root=new MockNode('div'),one=[periods[0]],oneData=[data[0]];
-  run("state.chart='line';drawDepartmentMultiChart(one,organizations,metrics,oneData,root)",{
-    root,one,oneData,organizations,metrics
-  });
-  assert.equal(nodes(root).filter(node=>node.tag==='svg').length,0);
-  assert.ok(nodes(root).some(node=>node.textContent?.includes('выберите несколько периодов')));
+  run("state.chart='line';drawDepartmentMultiChart(one,organizations,metrics,oneData,root)",{root,one,oneData,organizations,metrics});
+  const marks=nodes(root).filter(n=>n.dataset.chartTooltip);assert.equal(marks.length,6);
+  assert.deepEqual(marks.map(n=>n.tag),['circle','polygon','polygon','circle','polygon','polygon']);
+  assert.equal(new Set(marks.map(n=>n.attributes.cx||n.attributes.points.split(',')[0])).size,6);
+  assert.ok(marks.every(n=>n.attributes.tabindex==='0'));
   run("state.chart='bar';drawDepartmentMultiChart(one,organizations,metrics,oneData,root)",{
     root,one,oneData,organizations,metrics
   });
@@ -434,3 +453,16 @@ test('comparison KPI cards display blue and purple numeric directions',()=>{
   context.document.getElementById=undefined;
 });
 
+
+test('visible work colors are deterministic and distinct even for a pair with the same preferred color',()=>{
+ const pair=['Ремонт','Покраска'];assert.equal(run('workSeriesColor(pair[0])===workSeriesColor(pair[1])',{pair}),true);
+ const assigned=names=>Array.from(run('pair.map(visibleWorkColors(names))',{names,pair}));
+ assert.equal(new Set(assigned(pair)).size,2);assert.deepEqual(assigned(pair),assigned([...pair].reverse()));
+});
+test('ranking includes actual day and multi-month endpoints and metric',()=>{
+ for(const [end,expected] of [['2025-01-01','01.01.2025'],['2025-01-03','01.01.2025 — 03.01.2025'],['2025-03-31','01.01.2025 — 31.03.2025']]){
+  const one=[{type:'month',start:'2025-01-01',end}],root=new MockNode('div'),input=[new Map([['A',{amount:1}]])];
+  run("drawChart(one,new Set(['A']),'amount',root,{categories:['A'],data:input,chart:'line'})",{one,root,input});
+  assert.ok(nodes(root).some(n=>n.textContent?.includes('Рейтинг за '+expected+' (Сумма).')));
+ }
+});

@@ -69,7 +69,7 @@ function horizontalBars(periods,shown,data,metric,root,options,color,redraw){
    const x=px(v);
    const mark=make('rect',{x:Math.min(x,zero),y:ybar,width:Math.max(1,Math.abs(x-zero)),height:13,rx:2,fill:color(name),tabindex:0});
    const accessible=(options.label?options.label(name):name)+' · '+caption+': '+presentation.fmt(v,metric);
-   mark.setAttribute('aria-label',accessible);mark.append(make('title',{},accessible));svg.append(mark);
+   mark.dataset.chartTooltip=accessible;mark.setAttribute('aria-describedby','chartTooltip');mark.setAttribute('aria-label',accessible);mark.append(make('title',{},accessible));svg.append(mark);
   });
  });
  const wrap=document.createElement('div');wrap.className='horizontal-bar-scroll';wrap.append(svg);root.append(wrap);

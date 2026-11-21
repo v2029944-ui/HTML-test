@@ -64,13 +64,18 @@
     activity.append(dismiss);
   }
   const main=$('sqlMain')||document.querySelector?.('main');
+  let showTimer=null,readVisible=false;
   function renderActivity(detail){
     const reads=Number(detail?.reads)||0,saves=Number(detail?.saves)||0;
     const busy=reads>0||saves>0;
     if(busy && !wasBusy)activityOpener=document.activeElement;
     if(!busy){activityDismissed=false;activityOpener=null;}
     wasBusy=busy;
-    if(activity)activity.hidden=!busy||activityDismissed;
+    if(!busy){if(showTimer!==null)clearTimeout(showTimer);showTimer=null;readVisible=false;}
+    if(activity&&busy&&!saves&&!readVisible&&!activityDismissed&&showTimer===null){
+      showTimer=setTimeout(()=>{showTimer=null;readVisible=true;if(wasBusy&&!activityDismissed)activity.hidden=false;},200);
+    }
+    if(activity)activity.hidden=!busy||activityDismissed||(!saves&&!readVisible);
     if(main)main.setAttribute('aria-busy',String(busy));
     if(activityText)activityText.textContent=saves>0
       ?'Сохранение данных…':reads>0?'Загрузка отчётов и расчёт показателей…':'';

@@ -30,3 +30,10 @@ test('desktop starts in reference colors and honors previously selected appearan
   assert.equal(theme('"system","minimal","modern"'), 'system');
   assert.equal(theme('"light","paper","compact"'), 'light');
 });
+
+
+test('main change metric is read only and neighboring periods have a distinct heading',()=>{
+ assert.doesNotMatch(html,/data-change-metric=/);assert.match(html,/data-current-change-metric=/);
+ assert.match(html,/<h2 id="changesHeading">Изменения между соседними периодами<\/h2>/);
+ assert.match(html,/<div class="changes-heading"><h2[^>]*>Значимые изменения<\/h2>/);
+});

@@ -29,7 +29,16 @@
     ],
     "icon": [
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "icons/icon.ico": "analysis-bars-blue.ico"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows-installer.nsh",
+        "installerIcon": "icons/icon.ico"
+      }
+    }
   },
   "plugins": {
     "updater": {

@@ -123,3 +123,13 @@ test('diagnostic scope relevance and explicit omitted rows remain visible as sav
  const f=evidenceFixture(()=>({issues:[{kind:'invalid',reason:'Не удалось прочитать',sheet:'Q1',organization:'B',date:'2024-02-03',source_row:18,work_cell:null,count_cell:'B18',amount_cell:'C18',cells:[],relevant:false,scope:'source-period',skipped:true},{kind:'invalid',reason:'Детальная строка исключена',sheet:'Q1',organization:'B',date:null,source_row:19,work_cell:'A19',count_cell:'B19',amount_cell:'C19',cells:[],relevant:null,scope:null,skipped:true}],evidence:evidence({omitted_row_entries:1})}));await openReportNotes(f);
  assert.match(f.root.textContent,/Явно исключённые строки отчёта: 1/);assert.match(f.root.textContent,/Замечание периода источника/);assert.match(f.root.textContent,/Сохранённая пометка: неактуально/);assert.match(f.root.textContent,/Строка помечена как исключённая/);assert.match(f.root.textContent,/Строка: 18/);assert.match(f.root.textContent,/Подразделение: B/);
 });
+
+test('matrix navigation retains the previous dates and disables cell actions until the new page is ready',async()=>{
+ const gate=deferred();let reads=0,last;
+ const f=fixture({nativeQualityMatrixPage:async(_r,_kind,from,to,orgs)=>{if(++reads===2)await gate.promise;return page(from,to,orgs);}});
+ f.window.sqlRowScroll={attach:(root,options)=>{last={root,options};return root;},reset(){}};
+ f.scope.from='2024-01-01';f.scope.to='2024-03-01';await f.render();
+ const host=last.root,table=host.children[0],pending=last.options.go(1);
+ assert.equal(host.children[0],table);assert.equal(host.inert,true);assert.match(table.textContent,/01.01.2024/);
+ gate.resolve();await pending;assert.notEqual(host.children[0],table);assert.equal(host.inert,false);assert.match(host.textContent,/01.02.2024/);
+});

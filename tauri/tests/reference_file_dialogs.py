@@ -1,6 +1,6 @@
-"""Cancel only verified, owned Windows common file dialogs in the installed app.
+"""Exercise verified, owned Windows common file dialogs in the installed app.
 
-The empty-database walkthrough only cancels. The after-data walkthrough opens an
+The import flow opens a synthetic XLSX for preview. The after-data walkthrough opens an
 isolated backup for read-only verification, then tests copy/schedule/cancel via
 real IPC on that backup. It never accepts a Save destination or replaces the live
 database. No dialog/IPC API is replaced.
@@ -364,30 +364,33 @@ class OwnedFileDialogs:
             time.sleep(.05)
         raise AssertionError('Owned file dialog did not appear: ' + expected)
 
-    def open_backup_for_preview(self, hwnd, owner, title, backup, screenshot):
-        assert title == 'Проверить резервную копию SQLite', 'Only restore-preview Open may be accepted'
+    def open_file_for_preview(self, hwnd, owner, title, source, screenshot):
+        sources = {'Проверить резервную копию SQLite': ('.sqlite3', 'open-backup'),
+                   'Выберите XLSX для нативного импорта': ('.xlsx', 'open-xlsx')}
+        assert title in sources, 'Only a read-only preview Open may be accepted'
+        suffix, action = sources[title]
         self.verify_window(hwnd, owner, title)
         assert self.native.window_class(hwnd) == '#32770'
-        backup = Path(backup)
-        assert backup.is_absolute() and backup.is_file() and backup.suffix == '.sqlite3'
+        source = Path(source)
+        assert source.is_absolute() and source.is_file() and source.suffix == suffix
         facts, _ = self.inspect(hwnd, title, screenshot)
         edit, opened = self.backup_open_controls(hwnd, facts)
-        text = ctypes.create_unicode_buffer(str(backup))
-        assert self.message(edit, 0x000C, 0, ctypes.addressof(text)), 'WM_SETTEXT refused backup path'
-        readback = ctypes.create_unicode_buffer(len(str(backup)) + 2)
+        text = ctypes.create_unicode_buffer(str(source))
+        assert self.message(edit, 0x000C, 0, ctypes.addressof(text)), 'WM_SETTEXT refused the selected file path'
+        readback = ctypes.create_unicode_buffer(len(str(source)) + 2)
         self.message(edit, 0x000D, len(readback), ctypes.addressof(readback))  # WM_GETTEXT, cross-process
-        assert readback.value == str(backup), 'Verified file-name edit did not retain the backup path'
+        assert readback.value == str(source), 'Verified file-name edit did not retain the selected file path'
         self.verify_window(hwnd, owner, title)
         assert self.backup_open_controls(hwnd, facts) == (edit, opened)
-        self.message(opened, 0x00F5)  # BM_CLICK only on verified IDOK in restore-preview Open
-        fact = {'action': 'open-backup', 'controlId': 1, 'fileNameControlId': 1148,
+        self.message(opened, 0x00F5)  # BM_CLICK only on verified IDOK in the preview chooser
+        fact = {'action': action, 'controlId': 1, 'fileNameControlId': 1148,
                 'fileNameClass': 'Edit', 'delivery': 'WM_SETTEXT + BM_CLICK verified IDOK'}
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if not self.user32.IsWindowVisible(hwnd) and self.user32.IsWindowEnabled(owner):
                 return fact
             time.sleep(.05)
-        raise AssertionError('Read-only backup Open did not return')
+        raise AssertionError('Read-only file Open did not return')
 
     def dismiss(self, hwnd, owner, title, how, screenshot=None):
         assert self.native.process(hwnd) == self.native.pid and self.title(hwnd) == title
@@ -512,6 +515,8 @@ def check_reference_file_dialogs(page, nativeConfirmations, output):
     exercise('report-xlsx', page.locator('#excelFile'), 'Выберите XLSX для нативного импорта')
     page.wait_for_function('typeof window.nativeFolderReady !== "undefined"', timeout=TIMEOUT)
     page.evaluate('window.nativeFolderReady')
+    if not page.locator('#desktopSource').evaluate('node=>node.open'):
+        page.locator('#desktopSource > summary').click()
     exercise('excel-folder', page.locator('#sourceFolderChoose'), 'Папка с Excel-отчётами')
 
     section('Настройки')
@@ -607,7 +612,7 @@ def check_reference_data_file_dialogs(page, nativeConfirmations, output):
         chooser.click()
         title = 'Проверить резервную копию SQLite'
         hwnd, owner = walk.dialogs.find(title)
-        opened = walk.dialogs.open_backup_for_preview(
+        opened = walk.dialogs.open_file_for_preview(
             hwnd, owner, title, backup, walk.output / 'native-file-verified-backup-open.png')
         walk.settled()
         status = chooser.locator('xpath=../..').locator('p').filter(

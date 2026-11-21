@@ -20,10 +20,12 @@ function setup({mounts=true,version=deferred(),operations=null,observerThrows=fa
   addEventListener(name,fn){(listeners[name]??=[]).push(fn);},
   dispatchEvent(event){events.push(event);for(const fn of listeners[event.type]||[])fn(event);if(observerThrows)throw Error('observer failed');},tauriOperations:operations};
  class CustomEvent{constructor(type,init){this.type=type;this.detail=init.detail;}}
- const context={window,document,CustomEvent,setInterval(){},clearInterval(){}};
+ const timers=new Map();let nextTimer=0;
+ const runTimers=()=>{for(const [id,fn] of timers){timers.delete(id);fn();}};
+ const context={window,document,CustomEvent,setInterval(){},clearInterval(){},setTimeout(fn){timers.set(++nextTimer,fn);return nextTimer;},clearTimeout(id){timers.delete(id);}};
  function loadBridge(){vm.runInNewContext(bridge,context);}
  function loadStatus(){vm.runInNewContext(statusSource(),context);}
- return{window,document,ids,main,headerActions,events,pending,version,loadBridge,loadStatus};
+ return{runTimers,window,document,ids,main,headerActions,events,pending,version,loadBridge,loadStatus};
 }
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 test('installed version comes from runtime independently of available updater version',async()=>{
@@ -57,7 +59,7 @@ test('bridge activity remains visible until concurrent reads and writes settle, 
  assert.equal(ui.events[3].detail.reads,0);assert.equal(ui.events[3].detail.saves,0);
 });
 test('status initializes from pending operations that began before it loaded',()=>{
- const ui=setup({operations:{reads:2,saves:0,updating:false}});ui.loadStatus();
+ const ui=setup({operations:{reads:2,saves:0,updating:false}});ui.loadStatus();assert.equal(ui.ids.appActivity.hidden,true);ui.runTimers();
  assert.equal(ui.ids.appActivity.hidden,false);assert.match(ui.ids.appActivityText.textContent,/Загруз/i);
  assert.equal(ui.main.attributes['aria-busy'],'true');
  ui.version.resolve('1.6.2');
@@ -87,14 +89,21 @@ test('no DOM mounts or Tauri API does not throw',()=>{
 test('dismissing an activity notification preserves the operation and resets for the next one',async()=>{
  const ui=setup();ui.loadBridge();ui.loadStatus();
  const read=ui.window.desktopAPI.nativeRevision();
- const dismiss=ui.ids.appActivity.children.find(n=>n.className==='status-dismiss');
+ ui.runTimers();const dismiss=ui.ids.appActivity.children.find(n=>n.className==='status-dismiss');
  dismiss.onclick();
  assert.equal(ui.ids.appActivity.hidden,true);
  assert.equal(ui.main.attributes['aria-busy'],'true');
  assert.equal(ui.window.tauriOperations.reads,1);
  ui.pending[0].resolve(1);await read;
  assert.equal(ui.main.attributes['aria-busy'],'false');
- const next=ui.window.desktopAPI.nativeRevision();
+ const next=ui.window.desktopAPI.nativeRevision();ui.runTimers();
  assert.equal(ui.ids.appActivity.hidden,false);
  ui.pending[1].resolve(1);await next;
+});
+
+test('a completed short read never flashes a notification',async()=>{
+ const ui=setup();ui.loadBridge();ui.loadStatus();
+ const read=ui.window.desktopAPI.nativeRevision();assert.equal(ui.ids.appActivity.hidden,true);
+ ui.pending[0].resolve(1);await read;ui.runTimers();
+ assert.equal(ui.ids.appActivity.hidden,true);assert.equal(ui.main.attributes['aria-busy'],'false');
 });

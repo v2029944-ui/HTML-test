@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from reference_print_probe import _NATIVE, _attribute_preview
 
@@ -369,6 +370,40 @@ if(-not $refused){throw 'Unknown target was not refused before any Win32 call'}
                                     capture_output=True, encoding='utf-8', errors='replace', timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('PASS physical Escape packet', result.stdout)
+
+
+
+
+class DelayedPrintTargetTests(unittest.TestCase):
+    def test_async_print_preparation_waits_for_attributed_target_on_open_and_reopen(self):
+        from reference_print_probe import _wait_for_print_target
+        for label in ('opened', 'reopened'):
+            clock = [0.0]
+            seen = []
+            def capture(name):
+                seen.append(name)
+                return {'ready': len(seen) == 5}
+            def attribute(snapshot, before, source):
+                self.assertEqual(before, {'existing': 'preview'})
+                self.assertEqual(source, 'source-id')
+                return {'id': 'owned-print'} if snapshot['ready'] else None
+            def advance(seconds):
+                clock[0] += seconds
+            with patch('reference_print_probe.time.monotonic', side_effect=lambda: clock[0]), patch('reference_print_probe.time.sleep', side_effect=advance):
+                target = _wait_for_print_target(capture, attribute, {'existing': 'preview'}, 'source-id', label, timeout=3)
+            self.assertEqual(target, {'id': 'owned-print'})
+            self.assertEqual(seen, [label + '-' + str(i) for i in range(5)])
+            self.assertEqual(clock[0], 2)
+
+    def test_timeout_keeps_unattributed_print_unavailable(self):
+        from reference_print_probe import _wait_for_print_target
+        clock = [0.0]
+        def advance(seconds):
+            clock[0] += seconds
+        with patch('reference_print_probe.time.monotonic', side_effect=lambda: clock[0]), patch('reference_print_probe.time.sleep', side_effect=advance):
+            result = _wait_for_print_target(lambda name: {}, lambda *args: None, {}, 'source-id', 'opened', timeout=1)
+        self.assertIsNone(result)
+        self.assertEqual(clock[0], 1)
 
 
 if __name__ == '__main__':

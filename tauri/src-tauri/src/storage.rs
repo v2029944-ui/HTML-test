@@ -772,6 +772,37 @@ impl Storage {
             .map_err(|_| "Для Excel требуются четыре организации.".into())
     }
 
+    /// Resolve only the book selected by the user. The connected folder can be offline.
+    pub fn import_folder_context(&self, source: &Path) -> Result<Option<Value>, String> {
+        if !source.is_absolute() || !source.extension().and_then(|v| v.to_str())
+            .is_some_and(|v| v.eq_ignore_ascii_case("xlsx")) {
+            return Err("Выберите файл XLSX с полным путём.".into());
+        }
+        let conn = self.connect()?;
+        let snapshot = conn.unchecked_transaction().map_err(err)?;
+        let config = self.config(&snapshot)?;
+        let Some(folder) = config.folder else { return Ok(None) };
+        let revision = read_model::revision(&snapshot)?;
+        snapshot.commit().map_err(err)?;
+
+        let meta = fs::symlink_metadata(source).map_err(err)?;
+        if !meta.is_file() { return Ok(None); }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            if meta.file_attributes() & 0x400 != 0 { return Ok(None); }
+        }
+        // set_folder stores the OS canonical name. Resolve the picker result in
+        // the same way, preserving case-sensitive directories and UNC paths.
+        let path = fs::canonicalize(source).map_err(err)?;
+        if path.parent() != Some(Path::new(&folder)) { return Ok(None); }
+        let Some(name) = path.file_name().and_then(|s| s.to_str()).filter(|s| safe_excel_name(s))
+            else { return Ok(None) };
+        let signature = native_file_signature(&meta);
+        Ok(Some(json!({"folder":folder,"revision":revision,"name":name,
+            "nativeSignature":signature,"rule":config.rules.get(name)})))
+    }
+
     pub fn list_excel(&self) -> Result<Value, String> {
         let _guard = self.gate.lock().map_err(err)?;
         let conn = self.connect()?;
@@ -1002,6 +1033,43 @@ mod tests {
         symlink(&outside, &folder).unwrap();
         let target_signature = native_file_signature(&fs::metadata(&target).unwrap());
         assert!(open_checked_folder_excel(&source, &target_signature).is_err());
+    }
+
+    #[test]
+    fn manual_import_resolves_a_single_file_without_enumerating_the_connected_folder() {
+        let temp = tempdir().unwrap();
+        let store = Storage::new(temp.path().join("db")).unwrap();
+        let folder = temp.path().join("Connected");
+        fs::create_dir(&folder).unwrap();
+        let book = folder.join("February.xlsx");
+        fs::write(&book, b"folder").unwrap();
+        let outside = temp.path().join("February.xlsx");
+        fs::write(&outside, b"local").unwrap();
+        store.set_folder(folder.to_string_lossy().into_owned()).unwrap();
+        store.set_rule("February.xlsx".into(), Rule { kind:"week".into(),start:"2024-02-05".into(),
+            sheet:"Second".into(),format:Some("legacy".into()),..Default::default() }).unwrap();
+
+        let from_picker = store.import_folder_context(&book).unwrap().unwrap();
+        let canonical = fs::canonicalize(&book).unwrap();
+        assert_eq!(from_picker,store.import_folder_context(&canonical).unwrap().unwrap());
+        assert_eq!(from_picker["folder"].as_str(),canonical.parent().and_then(Path::to_str));
+        assert_eq!(from_picker["rule"]["sheet"],"Second");
+        assert_eq!(from_picker["nativeSignature"],native_file_signature(&fs::metadata(&book).unwrap()));
+        #[cfg(windows)]
+        {
+            let alternate = folder.with_file_name("CONNECTED").join("february.XLSX");
+            if alternate.exists() { assert_eq!(from_picker,store.import_folder_context(&alternate).unwrap().unwrap()); }
+        }
+        #[cfg(unix)]
+        {
+            let alias = folder.join("alias.xlsx");
+            std::os::unix::fs::symlink(&outside,&alias).unwrap();
+            assert!(store.import_folder_context(&alias).unwrap().is_none());
+            fs::remove_file(alias).unwrap();
+        }
+        fs::rename(&folder,temp.path().join("Disconnected")).unwrap();
+        assert!(store.list_excel().is_err());
+        assert!(store.import_folder_context(&outside).unwrap().is_none());
     }
 
     #[test]

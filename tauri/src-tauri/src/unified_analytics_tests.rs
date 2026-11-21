@@ -474,3 +474,16 @@ fn group_audit_csv_keeps_all_filtered_rows_and_unknown_coverage() {
     assert!(store.unified_group_audit_csv(rev+1,&scope,&query,"ungrouped","export",&stale).is_err());
     assert!(!stale.exists());
 }
+
+#[test]
+fn a_refresh_resolves_selected_keys_beyond_the_first_catalog_page() {
+    let (_dir, store, revision, _) = fixture();
+    let selected = vec!["work:ЯРКАЯ услуга".into(), "work:Исчезла".into()];
+    let names = store.unified_selected_name_options(revision, &selected).unwrap();
+    assert_eq!(names.total_rows, 75);
+    assert_eq!(names.rows.len(), 1);
+    assert_eq!(names.rows[0].key, selected[0]);
+    assert!(names.next.is_none());
+    assert!(store.unified_selected_name_options(revision + 1, &selected).is_err());
+    assert!(store.unified_selected_name_options(revision, &vec!["work:a".into(); 51]).is_err());
+}

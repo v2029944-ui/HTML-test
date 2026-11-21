@@ -18,9 +18,17 @@
 #refNative[data-panel] .view.active {display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
 #refNative[data-panel] .view.active > .panel {margin:0}
 #refNative[data-panel] :is(button,select,input,label,summary) {overflow-wrap:anywhere}
-#refNative[data-panel] .chart-view-controls {grid-template-columns:repeat(auto-fit,minmax(min(100%,210px),1fr))}
+/* The longest option must fit the closed native select. Let its field move
+   to the next row when a second field would truncate that option. */
+#refNative[data-panel] #chartPanel .chart-view-controls {display:flex;flex-wrap:wrap}
+#refNative[data-panel] #chartPanel .chart-view-controls > :is(label,.chart-metric-control) {flex:1 1 max-content;min-width:0;max-width:100%;width:auto}
+#refNative[data-panel] #chartPanel .chart-view-controls > label {min-width:min(100%,calc(23 * var(--control-size,1rem)))}
+#refNative[data-panel] #chartPanel .chart-view-controls > #chartOrgScopeLabel {min-width:min(100%,calc(26 * var(--control-size,1rem)))}
+#refNative[data-panel] #chartPanel .chart-view-controls > #chartSeriesLayoutLabel {min-width:min(100%,calc(32 * var(--control-size,1rem)))}
+#refNative[data-panel] #chartPanel .chart-view-controls select {width:100%;min-width:0;max-width:100%}
 #refNative[data-panel] .table-scroll {overflow-x:auto}
 #refNative[data-panel] :is(td,th) {font-variant-numeric:tabular-nums}
+#refNative[data-panel] :is(.metric-table,.table-scroll table) :is(td,th) {text-align:center;vertical-align:middle}
 #refNative[data-panel] .comparison-warning {display:grid;gap:6px;margin:12px 0;padding:12px 14px;border-left:3px solid var(--warning);background:var(--warning-bg,var(--subtle));color:var(--text)}
 #refNative[data-panel] .comparison-warning :is(p,details) {margin:0}
 #refNative[data-panel] .comparison-warning button {justify-self:start}
@@ -37,16 +45,16 @@
 #refNative[data-panel="chartPanel"] .ref-hide-orientation,
 #refNative:not([data-panel]) .detail-date-scope {display:none!important}
 #refNative:not([data-panel="comparison"]) #refComparisonDates,
-#refNative[data-panel="comparison"] #periodComparisonFilters.ref-local-date-fields,
 #refComparisonDates[hidden] {display:none!important}
-#refComparisonDates {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr));gap:10px;margin:14px 0;align-items:start}
-#refComparisonDates .ref-cmp-presets {grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px}
-#refComparisonDates .ref-comparison-card {padding:10px 12px;margin:0;border:1px solid var(--border);border-radius:var(--radius-control);display:flex;gap:8px;flex-wrap:wrap;align-items:end;min-width:0}
+#refNative[data-panel="overviewPanel"] .dashboard-filter-panel :is(.period-toolbar,label:has(> #periodType),label:has(> #unifiedSource)),
+#refNative[data-panel="comparison"] :is(#periodComparisonFilters,#comparisonPeriodOverride,#comparisonRangeGroup,#comparisonPeriodLabel,label:has(> #comparisonScope)),
+#refNative[data-panel="structurePanel"] :is(label:has(> #structureBase),label:has(> #structureCurrent),#structurePeriodOverride),
+#refNative[data-panel="usualPanel"] :is(label:has(> #usualPeriod),#usualPeriodOverride),
+#refNative[data-panel="changes"] :is(#changesPeriodOverride,#changeDatePair,label:has(> #changesType),label:has(> #changesMethod)) {display:none!important}
+#refComparisonDates {display:grid;gap:8px;margin:14px 0}
+#refComparisonDates .ref-comparison-card {display:flex;flex-wrap:wrap;align-items:end;gap:8px;margin-top:8px}
 #refComparisonDates .ref-comparison-card > div {display:grid;gap:3px}
-#refComparisonDates legend {font-weight:650;padding-inline:4px}
-#refComparisonDates [data-lengths] {grid-column:1/-1;margin:0}
-#refComparisonDates [data-reset-base] {justify-self:start}
-#refComparisonDates [aria-pressed=true] {background:var(--selected);border-color:var(--accent)}
+#refComparisonDates [data-lengths] {margin:0}
 #refNative:not([data-panel="comparison"]) #refComparisonModes,
 #refNative[data-panel="comparison"] #comparison .section-filter-row > label:has(> #comparisonMode) {display:none!important}
 #refComparisonModes {width:fit-content;max-width:100%;display:flex;flex-wrap:wrap}

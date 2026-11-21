@@ -29,9 +29,10 @@ function fixture(overrides={}){
  const defaults={nativeQualityMatrixPage:async(...args)=>matrixPage(...args),unifiedPeriodOptions:async()=>({rows:[{start:'2024-01-01',end:'2024-01-01'}],min:'2024-01-01',max:'2024-01-02',total_rows:2,next:null}),unifiedNameOptions:async()=>({rows:[{key:'work:W',name:'W',kind:'work'}],next:null,total_rows:1}),nativeAnalysisCompare:async()=>({summary:{before:summary,after:summary},top_count:[],top_amount:[]}),nativeAnalysisOrganizations:async()=>[{org:'A',complete:true,missing:0,total:totals}],nativeAnalysisRanking:async()=>({complete:true,rows:[{key:'work:W',name:'W',kind:'work'}]}),nativeAnalysisTimeline:async()=>({granularity:'period',points}),nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points})};
  const methods={...defaults,...overrides};methods.unifiedNameOptionsAtPage??=(revision,term,index,limit)=>methods.unifiedNameOptions(revision,term,null,limit);
  const api=new Proxy(methods,{get(target,key){if(key==='load'||key==='save')throw Error('Forbidden full history');if(!(key in target))throw Error('Unexpected API '+key);return (...args)=>{calls.push({key,args});return target[key](...args);};}});
- const originalHelpers={periodEnd:(start,kind)=>{const d=new Date(start+'T00:00:00Z');if(kind==='week')d.setUTCDate(d.getUTCDate()+6);else if(kind==='month'){d.setUTCMonth(d.getUTCMonth()+1);d.setUTCDate(0);}return d.toISOString().slice(0,10);},displayPeriod:p=>p.start,renderMultiFilter:(id,items,selected,callback)=>multi.set(id,{items,selected,callback})};
+ const originalHelpers={displayDay:date=>date,departmentChartTitle:(n,m)=>n+' / '+m,periodEnd:(start,kind)=>{const d=new Date(start+'T00:00:00Z');if(kind==='week')d.setUTCDate(d.getUTCDate()+6);else if(kind==='month'){d.setUTCMonth(d.getUTCMonth()+1);d.setUTCDate(0);}return d.toISOString().slice(0,10);},displayPeriod:p=>p.start,renderMultiFilter:(id,items,selected,callback)=>multi.set(id,{items,selected,callback})};
  const UI={api,revision:1,snapshot:{revision:1,org_names:['A','B','C','D']},state:{selectedOrganizations:new Set(['A']),selectedMetrics:new Set(['amount','count']),chartMetrics:new Set(['amount','count']),chart:'bar'},$:id=>nodes.get(id),el:(tag,text,cls)=>{const n=new Element(tag,text);n.className=cls;return n;},fmt:n=>Number.isFinite(n)?String(n):'—',notice:(...args)=>notices.push(args),table:(root,metric,caption,headers,rows,options)=>{tables.push({root:root.id,metric,rows,options});root.append(new Element('table',rows.map(r=>r.join('|')).join('\n')));},drawChart:(...args)=>draws.push(args),drawDepartments:(...args)=>draws.push(args),setPeriodInput:(id,kind,date)=>{const node=nodes.get(id);node.dataset.periodType=kind;if(date!==undefined)node.value=date;},range:(kind,from,to,source)=>from&&from<=to?{type:source==='daily'?'day':kind,displayType:kind,source,from,to}:null,publishScope:s=>published.push(s),onSnapshot:fn=>snapshotHook=fn,onView:(view,fn)=>viewHook=fn};
  const window={unifiedUI:UI,unifiedOriginal:originalHelpers,nativePeriodSelection:{fromIsoDate:date=>date,normalize:(_kind,date)=>date},print:()=>prints++};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../analysis-summary.js'),'utf8'),{window});
  vm.runInNewContext(coverageScript,{window,Date,Map,Set});
  vm.runInNewContext(script,{window,document:{querySelectorAll:selector=>selector==='[data-chart]'?buttons:[]},Date,Map,Set,setTimeout,clearTimeout});window.unifiedAnalytics.init();
  return {UI,window,nodes,buttons,draws,tables,published,multi,calls,notices,get prints(){return prints;},bootstrap:async()=>{await snapshotHook(UI.snapshot);await settle();},invalidate:()=>snapshotHook(null)};
@@ -47,6 +48,18 @@ test('confirmed zero filtering keeps missing points and does not change overview
  const points=[{start:'2024-01-01',periods:1,missing:1,total:{count:null,amount:null,average:null}},{start:'2024-01-02',periods:1,missing:0,total:{count:0,amount:0,average:null}}];
  const f=fixture({nativeAnalysisTimeline:async()=>({granularity:'period',points}),nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points})});await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();assert.equal(f.draws.at(-1)[4].data[0],null);assert.equal(f.draws.at(-1)[4].data[1].get('work:W').count,0);
  const overview=f.nodes.get('overviewKpis').textContent;f.nodes.get('hideEmptyPeriods').checked=true;f.nodes.get('hideEmptyPeriods').dispatch('change');await settle();assert.equal(f.draws.at(-1)[0].length,1);assert.equal(f.draws.at(-1)[4].data[0],null);assert.equal(f.nodes.get('overviewKpis').textContent,overview);
+ assert.deepEqual(Array.from(f.draws.at(-1)[4].hiddenPeriods,p=>p.start),['2024-01-02']);
+});
+test('hiding every reported period explains the empty chart and retains table export',async()=>{
+ const points=[{start:'2024-01-01',periods:1,missing:0,has_activity:false,total:{count:0,amount:0,average:null}}];
+ const timeline=async()=>({granularity:'period',points});
+ const f=fixture({nativeAnalysisTimeline:timeline,nativeWorkTimeline:timeline});
+ await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ f.nodes.get('hideEmptyPeriods').checked=true;f.nodes.get('hideEmptyPeriods').dispatch('change');await settle();
+ assert.match(f.nodes.get('chartsContainer').textContent,/Фильтр скрыл все/);
+ f.buttons.find(b=>b.dataset.chart==='table').dispatch('click');await settle();
+ assert.match(f.nodes.get('dataTable').textContent,/Фильтр скрыл все/);
+ assert.ok(f.tables.at(-1));
 });
 test('late SQL charts are discarded after scope invalidation and errors clear the old overview',async()=>{
  const wait=deferred();const f=fixture({nativeWorkTimeline:()=>wait.promise});await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();await f.invalidate();wait.resolve({granularity:'period',points:[]});await settle();assert.equal(f.draws.length,0);assert.equal(f.nodes.get('printSummary').disabled,true);
@@ -282,12 +295,14 @@ test('department charts and CSV retain organizations after the first eight serie
  assert.equal(table.options.csvRows.length,10);assert.equal(table.options.csvRows[9][2],-10.75);
  assert.ok(queries.every(orgs=>orgs.length<=8));
 });
-test('horizontal department guide describes original units instead of normalized percentages',async()=>{
+test('horizontal combined department charts use the same scale as vertical bars while separate charts show original units',async()=>{
  const f=fixture({nativeOrganizationTrends:async()=>({granularity:'period',series:[{organization:'A',points:[{start:'2024-01-02',missing:0,total:{amount:20,count:2,average:10}}]}]})});
  await f.bootstrap();f.nodes.get('chartBreakdown').value='organizations';
  f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
  assert.match(f.nodes.get('chartReadGuide').textContent,/% от максимума/);
  f.nodes.get('chartOrientation').value='horizontal';f.nodes.get('chartOrientation').dispatch('change');await settle();
+ assert.match(f.nodes.get('chartReadGuide').textContent,/% от максимума/);
+ f.nodes.get('chartSeriesLayout').value='separate';f.nodes.get('chartSeriesLayout').dispatch('change');await settle();
  assert.match(f.nodes.get('chartReadGuide').textContent,/в исходных единицах/);
  assert.doesNotMatch(f.nodes.get('chartReadGuide').textContent,/% от максимума/);
 });
@@ -376,4 +391,113 @@ test('successful reference overview publishes its validated detail scope once',a
  await pending;
  assert.deepEqual(f.published.filter(Boolean),[initial]);
  assert.equal(f.calls.filter(call=>call.key==='nativeAnalysisCompare').length,1);
+});
+
+test('a completed chart survives three overlapping mode switches and only the newest SQL response can replace it',async()=>{
+ let hold=false;const gates=[],points=[{start:'2024-01-02',periods:1,missing:0,total:{amount:40,count:2,average:20}}];
+ const f=fixture({nativeWorkTimeline:async()=>{if(hold){const gate=deferred();gates.push(gate);await gate.promise;}return {granularity:'period',points};},nativeAnalysisTimeline:async()=>({granularity:'period',points})});
+ await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ const plot=f.nodes.get('chartsContainer'),table=f.nodes.get('dataTable'),previous=plot.children[0];assert.ok(previous);
+ hold=true;
+ for(const mode of ['table','line','table']){f.buttons.find(b=>b.dataset.chart===mode).dispatch('click');await settle();assert.equal(plot.children[0],previous);assert.equal(plot.hidden,false);assert.equal(plot.inert,true);}
+ assert.equal(gates.length,3);
+ gates[2].resolve();await settle();const newest=table.children[0];assert.ok(newest);assert.equal(table.hidden,false);
+ gates[1].resolve();gates[0].reject(Error('old read failed'));await settle();assert.equal(table.children[0],newest);assert.equal(table.inert,false);
+ f.buttons[0].dispatch('click');await settle();gates.at(-1).reject(Error('database unavailable'));await settle();assert.match(plot.textContent,/database unavailable/);assert.equal(plot.inert,false);
+});
+
+test('chart contents and caption keep the completed period throughout a delayed filter change',async()=>{
+ const overview=deferred(),timeline=deferred();
+ const total={count:2,amount:4,average:2},summary={complete:true,periods:1,total};
+ const result={summary:{before:summary,after:summary}};
+ const points={granularity:'period',points:[]};
+ let updating=false,refreshDate=null;
+ const f=fixture({nativeAnalysisCompare:()=>updating?overview.promise:Promise.resolve(result),
+  nativeWorkTimeline:()=>updating?timeline.promise:Promise.resolve(points),nativeAnalysisTimeline:async()=>points});
+ f.window.referenceDetail={active:'chartPanel',refreshChartCaption(){refreshDate=f.window.unifiedAnalytics.displayedChartScope?.from;}};
+ const filters={revision:1,type:'day',displayType:'day',source:'daily',overviewMode:'single',
+  from:'2024-01-01',to:'2024-01-01',baseFrom:'2023-12-31',baseTo:'2023-12-31',organizations:['A'],metric:'amount',allNames:true,nameRows:[]};
+ const plot=f.nodes.get('chartsContainer');
+ f.nodes.get('advancedAnalytics').open=true;
+ await f.window.unifiedAnalytics.applyReferenceScope(filters);
+ const old=plot.children[0];
+ assert.equal(refreshDate,filters.from);
+ updating=true;
+ const next=f.window.unifiedAnalytics.applyReferenceScope({...filters,from:'2024-02-01',to:'2024-02-01'});
+ assert.equal(f.published.at(-1).from,'2024-02-01');
+ assert.equal(plot.inert,true);
+ assert.equal(f.window.unifiedAnalytics.displayedChartScope.from,filters.from);
+ overview.resolve(result);await settle();
+ assert.equal(plot.children[0],old);assert.equal(plot.inert,true);assert.equal(refreshDate,filters.from);
+ timeline.resolve(points);await next;
+ assert.equal(refreshDate,'2024-02-01');assert.notEqual(plot.children[0],old);assert.equal(plot.inert,false);
+});
+
+test('a workspace invalidation clears retained chart dates, controls and results even with SQL in flight',async()=>{
+ const pending=deferred();let late=false;
+ const result={granularity:'period',points:[]};
+ const f=fixture({nativeWorkTimeline:()=>late?pending.promise:Promise.resolve(result),nativeAnalysisTimeline:async()=>result});
+ await f.bootstrap();const plot=f.nodes.get('chartsContainer');
+ f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ assert.ok(f.window.unifiedAnalytics.displayedChartScope);
+ late=true;f.buttons[0].dispatch('click');assert.equal(plot.inert,true);
+ await f.invalidate();pending.resolve(result);await settle();
+ assert.equal(f.window.unifiedAnalytics.displayedChartScope,null);assert.equal(plot.children.length,0);assert.equal(plot.inert,false);
+});
+
+test('only the displayed work chart or table owns a pager after switching modes',async()=>{
+ const f=fixture(),activePagers=new Map();
+ f.window.sqlRowScroll={
+  attach(root,options){activePagers.set(root.id,options);return root;},
+  reset(root){activePagers.delete(root.id);}
+ };
+ await f.bootstrap();
+ const rows=Array.from({length:17},(_,i)=>({key:'work:'+i,name:'Work '+i,kind:'work'}));
+ f.nodes.get('advancedAnalytics').open=true;
+ await f.window.unifiedAnalytics.applyReferenceScope({...f.published.at(-1),metric:'amount',nameRows:rows});
+ const visible=()=>[...activePagers.keys()].filter(id=>id==='chartsContainer'||id==='dataTable');
+ assert.deepEqual(visible(),['chartsContainer']);
+ f.buttons.find(b=>b.dataset.chart==='table').dispatch('click');await settle();
+ assert.deepEqual(visible(),['dataTable']);
+ assert.equal(activePagers.get('dataTable').count,17);
+ f.buttons.find(b=>b.dataset.chart==='line').dispatch('click');await settle();
+ assert.deepEqual(visible(),['chartsContainer']);
+ await activePagers.get('chartsContainer').go(1);
+ assert.equal(activePagers.get('chartsContainer').index,1);
+});
+
+test('department trends with all performed works allow an empty individual selection',async()=>{
+ const f=fixture({nativeOrganizationTrends:async()=>({granularity:'period',series:[]})});
+ await f.bootstrap();
+ f.nodes.get('advancedAnalytics').open=true;f.nodes.get('chartBreakdown').value='organizations';
+ await f.window.unifiedAnalytics.applyReferenceScope({...f.published.at(-1),metric:'amount',allNames:false,nameRows:[]});
+ const trendReads=()=>f.calls.filter(c=>c.key==='nativeOrganizationTrends');
+ assert.equal(trendReads().length,1);
+ assert.deepEqual([...trendReads()[0].args[7]],[]);
+ assert.match(f.nodes.get('chartHelp').textContent,/все выполненные работы/);
+ f.nodes.get('chartOrgScope').value='selected';f.nodes.get('chartOrgScope').dispatch('change');await settle();
+ assert.equal(trendReads().length,1);
+ assert.match(f.nodes.get('chartsContainer').textContent,/Нет отмеченных работ/);
+ f.nodes.get('chartBreakdown').value='works';f.nodes.get('chartBreakdown').dispatch('change');await settle();
+ assert.match(f.nodes.get('chartsContainer').textContent,/хотя бы одну работу/);
+});
+
+test('overview scope, period label and KPIs follow the same completed SQL response through overlap and failure',async()=>{
+ const pending=[],f=fixture({nativeAnalysisCompare:()=>{const gate=deferred();pending.push(gate);return gate.promise;}});
+ const filters={revision:1,type:'day',displayType:'day',source:'daily',overviewMode:'range',organizations:['A'],metric:'amount',allNames:true,nameRows:[]};
+ const apply=month=>f.window.unifiedAnalytics.applyReferenceScope({...filters,
+  from:'2024-'+month+'-10',to:'2024-'+month+'-11',baseFrom:'2024-'+month+'-08',baseTo:'2024-'+month+'-09'});
+ const result=amount=>{const period={complete:true,periods:1,missing:0,total:{count:1,amount,average:amount}};return {summary:{before:period,after:period}};};
+ const presented=()=>f.window.unifiedAnalytics.displayedOverviewScope;
+ const kpis=f.nodes.get('overviewKpis'),period=f.nodes.get('overviewPeriodText');
+ const jan=apply('01');pending[0].resolve(result(111));await jan;
+ const feb=apply('02'),mar=apply('03');
+ assert.equal(presented().from,'2024-01-10');assert.equal(presented().baseFrom,'2024-01-08');
+ assert.match(period.textContent,/10\.01\.2024/);assert.match(kpis.textContent,/111/);assert.equal(kpis.inert,true);
+ pending[2].resolve(result(888));await mar;
+ pending[1].resolve(result(222));await feb;
+ assert.equal(presented().from,'2024-03-10');assert.match(period.textContent,/10\.03\.2024/);assert.match(kpis.textContent,/888/);
+ const apr=apply('04');pending[3].reject(Error('current error'));await apr;
+ assert.equal(presented(),null);assert.equal(period.textContent,'');assert.equal(kpis.textContent,'');
+ assert.match(f.nodes.get('overviewAlerts').textContent,/current error/);
 });

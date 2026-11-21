@@ -61,7 +61,7 @@ test('real folder controller restores focus only after its asynchronous cancella
  const node=()=>({disabled:false,value:'',textContent:'',events:{},children:[],
   addEventListener(name,fn){this.events[name]=fn;},setAttribute(){},replaceChildren(...items){this.children=items;},append(...items){this.children.push(...items);}});
  const nodes=Object.fromEntries(ids.map(id=>[id,id==='sourceFolderChoose'?f.trigger:node()]));
- f.document.getElementById=id=>nodes[id];f.document.createElement=node;
+ f.document.getElementById=id=>nodes[id];f.document.createElement=node;f.window.sqlRowScroll=require('./scroll-window-fixture.cjs');
  let lists=0;
  f.window.__TAURI__.core.invoke=async command=>{f.calls.push(command);assert.equal(command,'list_excel');return ++lists<=2?listing:reload.promise;};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-folder-status.js'),'utf8'),f.context);

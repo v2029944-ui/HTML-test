@@ -48,3 +48,12 @@ test('programmatic calendar period changes update the visible weekly range befor
   assert.equal(source.value, '2024-02', 'calendar month remains the SQL input');
   assert.equal(source.dataset.unifiedTouched, undefined);
 });
+
+test('imported weeks use their report weekday for navigation across months and years', () => {
+  const window = {};
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../reference-calendar.js'), 'utf8'), {window});
+  const {period} = window.referenceCalendar;
+  assert.deepEqual([...period('2026-11-17', 'week', 3)], ['2026-11-11','2026-11-17']);
+  assert.deepEqual([...period('2027-01-01', 'week', 3)], ['2026-12-30','2027-01-05']);
+  assert.deepEqual([...period('2026-11-17', 'week')], ['2026-11-16','2026-11-22']);
+});
