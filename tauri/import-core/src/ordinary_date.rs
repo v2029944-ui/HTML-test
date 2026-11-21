@@ -83,11 +83,17 @@ pub(super) fn check(
     selected: NaiveDate, cancel: &AtomicBool,
 ) -> Result<Vec<Notice>> {
     let first = &mappings[0];
-    let left = first.work_col;
-    let right = mappings.iter().filter(|m| m.work_col > left).map(|m| m.work_col - 1)
-        .fold(left.max(first.count_col).max(first.amount_col), u32::min);
+    let left = first.work_col.min(first.count_col).min(first.amount_col);
+    let right = first.work_col.max(first.count_col).max(first.amount_col);
     let mut truncated = first.header_row > 64 || right-left >= 64;
     let right = right.min(left+63);
+    let own = [first.work_col, first.count_col, first.amount_col];
+    let other_ranges: Vec<_> = mappings.iter().skip(1).map(|m| {
+        m.work_col.min(m.count_col).min(m.amount_col)..=m.work_col.max(m.count_col).max(m.amount_col)
+    }).collect();
+    let allowed: Vec<_> = (left..=right).map(|col| {
+        own.contains(&col) || !other_ranges.iter().any(|range| range.contains(&col))
+    }).collect();
     let mut query = stage.db.prepare(
         "SELECT c.row_num,c.col_num,substr(COALESCE(s.value,c.value),1,4097)
          FROM cells c LEFT JOIN strings s ON c.kind='s' AND s.id=CAST(c.value AS INTEGER)
@@ -101,6 +107,7 @@ pub(super) fn check(
     while let Some(item) = rows.next()? {
         check_cancel(cancel)?;
         let (row, col): (u32, u32) = (item.get(0)?, item.get(1)?);
+        if !allowed[(col-left) as usize] { continue; }
         let value = item.get::<_, Option<String>>(2)?.unwrap_or_default();
         if value.chars().count() > 4096 { truncated = true; continue; }
         let text = value.trim();
@@ -111,7 +118,7 @@ pub(super) fn check(
             if wanted != cfg.kind { continue; }
             if let Some(inline) = label.get(2).filter(|m| !m.as_str().trim().is_empty()) {
                 (text_date(inline.as_str(), &cfg.kind), col)
-            } else if col < right {
+            } else if col < right && allowed[(col+1-left) as usize] {
                 (adjacent_date(stage, cfg, row, col+1, &mut styles_ready, cancel)?, col+1)
             } else { continue; }
         } else {

@@ -575,3 +575,40 @@ test('a newline in a worksheet name round-trips in the ordinary text editor for 
  assert.equal(preview.mappings[name].header_row,18);
  assert.deepEqual(JSON.parse(JSON.stringify(saved.mappings)),{[name]:mapping});
 });
+
+test('all eligible sheets ignores a draft sequential period and restores it in selected mode',async()=>{
+ const previews=[],ui=mount({chooseWideXlsx:async()=>'/tmp/days.xlsx',nativeWideImportPreview:async(_,options)=>{previews.push(options);return importReview;}});
+ await ui.nodes.excelFile.click();await changeImportField(ui,'importFormat','daily-wide');
+ await changeImportField(ui,'unifiedWidePeriod0','q2');
+ await changeImportField(ui,'unifiedWideSheetMode','auto');await ui.nodes.inspectFile.click();
+ assert.deepEqual(previews.map(o=>[Array.from(o.sheets),Object.keys(o.sequential_periods)]),[[[],[]]]);
+ assert.equal(ui.nodes.saveImport.disabled,false);
+ await changeImportField(ui,'unifiedWideSheetMode','selected');await ui.nodes.inspectFile.click();
+ assert.equal(previews.length,1);assert.match(ui.nodes.unifiedImportStatus.textContent,/год/);
+ await changeImportField(ui,'dailyYear','2024');await ui.nodes.inspectFile.click();
+ assert.equal(previews[1].sequential_periods['Дни'].quarter,2);
+});
+
+test('duplicate manual daily mappings must be resolved before preview or saving',async()=>{
+ const previews=[],ui=mount({chooseWideXlsx:async()=>'/tmp/days.xlsx',nativeWideImportPreview:async(_,options)=>{previews.push(options);return importReview;}});
+ await ui.nodes.excelFile.click();await changeImportField(ui,'importFormat','daily-wide');
+ ui.nodes.unifiedWideMapping.value='Дни; 1; A; B\nДни; 2; D; E';await ui.nodes.unifiedWideMapping.fire('input');
+ await ui.nodes.inspectFile.click();assert.equal(previews.length,0);assert.equal(ui.nodes.saveImport.disabled,true);
+ assert.match(ui.nodes.unifiedImportStatus.textContent,/Дни/);
+ ui.nodes.unifiedWideMapping.value='Дни; 2; D; E';await ui.nodes.unifiedWideMapping.fire('input');await ui.nodes.inspectFile.click();
+ assert.equal(previews[0].mappings['Дни'].work_col,4);
+});
+
+test('daily mappings must use a selected sheet and cannot silently ignore an amount total',async()=>{
+ const previews=[],ui=mount({chooseWideXlsx:async()=>'/tmp/days.xlsx',
+  nativeImportSheets:async()=>[{name:'A',component:'a.xml'},{name:'B',component:'b.xml'}],
+  nativeWideImportPreview:async(_,options)=>{previews.push(options);return importReview;}});
+ await ui.nodes.excelFile.click();await changeImportField(ui,'importFormat','daily-wide');
+ ui.nodes.unifiedWideSheet0.checked=true;await ui.nodes.unifiedWideSheet0.fire('change');
+ for(const [line,error] of [['B; 1; A; B',/Отметьте лист «B»/],['A; 1; A; B; ; F',/итогового количества/]]){
+  ui.nodes.unifiedWideMapping.value=line;await ui.nodes.unifiedWideMapping.fire('input');await ui.nodes.inspectFile.click();
+  assert.equal(previews.length,0);assert.match(ui.nodes.unifiedImportStatus.textContent,error);
+ }
+ ui.nodes.unifiedWideMapping.value='A; 1; A; B; E; F';await ui.nodes.unifiedWideMapping.fire('input');await ui.nodes.inspectFile.click();
+ assert.equal(previews[0].mappings.A.total_amount_col,6);
+});

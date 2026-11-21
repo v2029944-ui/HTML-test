@@ -1776,6 +1776,7 @@ fn main() {
             unified_pattern_page,
             unified_comparison_page,
             unified_comparison_window,
+            unified_organization_work_window,
             unified_group_audit_page,
             unified_rename_organizations,
             unified_clear_reports,

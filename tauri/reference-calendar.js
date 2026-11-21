@@ -60,9 +60,12 @@ function openCalendar({anchor, title, initial, unit='day', allowed, variants, al
    if(ticket!==weekRequest||!dialog.isConnected)return;
    weekStatus='Не удалось прочитать недели. Выберите дату повторно.';
   }
-  const focusDate=grid.contains(document.activeElement)?document.activeElement.dataset.stamp:null;
+  const focused=document.activeElement;
+  const focusDate=grid.contains(focused)?focused.dataset.stamp:null;
+  const toolbarIndex=Array.prototype.indexOf.call(toolbar.children,focused);
   draw();
   if(focusDate)grid.querySelector('[data-stamp="'+focusDate+'"]')?.focus({preventScroll:true});
+  else if(toolbarIndex>=0)toolbar.children[toolbarIndex]?.focus({preventScroll:true});
   position();
  }
  function choose(v){
@@ -84,7 +87,7 @@ function openCalendar({anchor, title, initial, unit='day', allowed, variants, al
   titleButton.disabled=mode==='years';titleButton.title=mode==='days'?'Выбрать месяц':'Выбрать год';
   const prev=press('‹',()=>move(-1)),next=press('›',()=>move(1));prev.setAttribute('aria-label','Назад по календарю');next.setAttribute('aria-label','Вперёд по календарю');toolbar.append(prev,titleButton,next);
   const [lo,hi]=weekStart?[weekStart,day(weekStart,6)]:!weekField.hidden?[selected,selected]:spanFor(selected,unit);
-  summary.textContent=unit==='year'?selected.slice(0,4):unit==='month'?capital(monthName.format(dateOf(selected)))+' '+selected.slice(0,4):unit==='week'?short(lo)+' — '+short(hi)+' · '+hi.slice(0,4):fullDate.format(dateOf(selected));
+  summary.textContent=unit==='year'?selected.slice(0,4):unit==='month'?capital(monthName.format(dateOf(selected)))+' '+selected.slice(0,4):unit==='week'?(lo.slice(0,4)===hi.slice(0,4)?short(lo):stamp(lo))+' — '+stamp(hi):fullDate.format(dateOf(selected));
   if(weekStatus)summary.textContent=weekStatus;
   else if(!weekField.hidden&&!weekStart)summary.textContent='На эту дату приходится несколько отчётных недель.';
   if(allSelected)summary.textContent=allLabel;

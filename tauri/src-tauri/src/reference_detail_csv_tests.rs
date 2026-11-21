@@ -169,3 +169,76 @@ fn imported_detail_csv_labels_the_inclusive_end_of_each_source_period() {
         assert!(csv.contains(&format!(r#""Базовый период";"{previous}";"{previous_end}""#)),"{csv}");
     }
 }
+
+#[test]
+fn department_work_pages_and_detail_csvs_keep_group_and_work_namesakes_separate() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Storage::new(dir.path().join("store")).unwrap();
+    let report = |day: &str, factor: f64| {
+        let mut rows = Vec::new();
+        for (org, group, work) in [("A",100.,40.),("B",200.,60.)] {
+            for (name, amount) in [("Сварка",group),("Я",work)] {
+                rows.push(json!({"organization":org,"work":name,"amount":amount*factor,"count":1}));
+            }
+        }
+        // The matching pair straddles the 50-row page boundary.
+        for i in 0..49 {
+            rows.push(json!({"organization":"A","work":format!("А{i:02}"),"amount":0,"count":0}));
+        }
+        json!({"id":day,"type":"day","start":day,"end":day,"organizations":["A","B"],"rows":rows})
+    };
+    let first = "2025-03-01";
+    let second = "2025-03-02";
+    store.save(json!({"reports":[report(first,0.5),report(second,1.)],
+        "settings":{"orgNames":["A","B","C","D"],"groups":[{"id":"g","name":"Я","works":["Сварка"]}],"catalog":[]}})).unwrap();
+    let revision = store.revision().unwrap();
+    for day in [first,second] {store.analysis_index_report(day,revision).unwrap();}
+    store.analysis_index_settings(revision).unwrap();
+    let make_scope = |names: &[&str]| {
+        let orgs = store.analysis_filter_create(revision,"organizations").unwrap();
+        let items:Vec<_> = names.iter().map(|name|(*name).to_owned()).collect();
+        store.analysis_filter_append(revision,&orgs,&items).unwrap();
+        store.analysis_filter_seal(revision,&orgs).unwrap();
+        AnalysisScope { report_type:"day".into(), organizations:orgs, names:None }
+    };
+    let scope = make_scope(&["B","A","C"]);
+    let range = RangeQuery {from:second.into(),to:second.into()};
+    let mut q = query();
+    q.from = second.into();
+    q.to = second.into();
+    for (index, label, key, b, a) in [(0,"Я (группа)","group:g",200.,100.),(1,"Я (работа)","work:Я",60.,40.)] {
+        let page = store.organization_work_window(revision,&scope,&range,index,50).unwrap();
+        assert_eq!(page.total_rows,51);
+        let item = page.rows.last().unwrap();
+        assert_eq!(item.entry.name,label);
+        assert_eq!(item.entry.key,key);
+        let cells:Vec<_> = item.rows.iter().map(|org|(org.org.as_str(),org.total.amount)).collect();
+        assert_eq!(cells,vec![("B",Some(b)),("A",Some(a)),("C",None)]);
+    }
+    assert!(store.organization_work_window(revision,&scope,&range,2,50).is_err());
+    let spec = serde_json::from_value(json!({"section":"organizations","metric":"amount","baseOrg":"B"})).unwrap();
+    let path = dir.path().join("organization.csv");
+    store.reference_detail_csv(revision,&scope,&q,None,&spec,&path).unwrap();
+    let csv = std::fs::read_to_string(path).unwrap();
+    for expected in [r#""Я (группа)";"200";"100";"-100";"-50";"";"";"""#,
+        r#""Я (работа)";"60";"40";"-20";"-33,333333333333"#] {
+        assert!(csv.contains(expected),"{csv}");
+    }
+    let covered = make_scope(&["A","B"]);
+    for section in ["comparison","contributions","structure","usual","regularity"] {
+        let mut options = json!({"section":section,"metric":"amount"});
+        if matches!(section,"usual"|"regularity") {
+            options["window"] = json!(4);
+            options["options"] = json!({"search":"","status":"all"});
+        } else {
+            options["before"] = json!({"from":first,"to":first});
+            if section == "structure" {options["limit"] = json!(10);}
+        }
+        let spec = serde_json::from_value(options).unwrap();
+        let path = dir.path().join(format!("{section}.csv"));
+        store.reference_detail_csv(revision,&covered,&q,None,&spec,&path).unwrap();
+        let csv = std::fs::read_to_string(path).unwrap();
+        assert_eq!(csv.lines().filter(|r|r.starts_with(r#""Я (группа)";"#)).count(),1,"{section}: {csv}");
+        assert_eq!(csv.lines().filter(|r|r.starts_with(r#""Я";"#)).count(),1,"{section}: {csv}");
+    }
+}

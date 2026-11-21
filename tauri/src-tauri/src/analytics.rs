@@ -1802,7 +1802,7 @@ impl Storage {
         if !matches!(metric, "amount" | "count") {
             return Err("Unknown ranking metric".into());
         }
-        if !matches!(category, "all" | "work" | "group") {
+        if !matches!(category, "all" | "work" | "group" | "selectable") {
             return Err("Unknown ranking category".into());
         }
         let mut c = self.connect()?;
@@ -1813,19 +1813,25 @@ impl Storage {
         if !complete(&tx, 1, org)? {
             return Ok(RankingSummary { complete: false, rows: Vec::new() });
         }
-        // Every predicate and sort expression is fixed SQL, not user input.
-        let sql = if org.is_some() {
-            "SELECT key,name,kind,count,amount,active FROM temp.an_values
-             WHERE slot=1 AND org=?3 AND (?1='all' OR kind=?1)
-             ORDER BY ABS(CASE WHEN ?2='count' THEN count ELSE amount END) DESC,
-                      key ASC LIMIT 12"
+        // The manual work filter accepts unique names of at most 512 UTF-8 bytes.
+        // Apply its catalog before the ranking limit, preserving the unrestricted ranking.
+        let names_filter = if category == "selectable" {
+            unified_analytics::create_name_catalog(&tx, false)?;
+            "AND key IN (SELECT key FROM unified_names)"
         } else {
-            "SELECT key,name,kind,count,amount,active FROM temp.an_combined
-             WHERE slot=1 AND ?3 IS NULL AND (?1='all' OR kind=?1)
-             ORDER BY ABS(CASE WHEN ?2='count' THEN count ELSE amount END) DESC,
-                      key ASC LIMIT 12"
+            ""
         };
-        let mut stmt = tx.prepare(sql).map_err(err)?;
+        let (table, division) = if org.is_some() {
+            ("temp.an_values", "org=?3")
+        } else {
+            ("temp.an_combined", "?3 IS NULL")
+        };
+        let sql = format!(
+            "SELECT key,name,kind,count,amount,active FROM {table}
+             WHERE slot=1 AND {division} AND (?1 IN ('all','selectable') OR kind=?1) {names_filter}
+             ORDER BY ABS(CASE WHEN ?2='count' THEN count ELSE amount END) DESC, key ASC LIMIT 12"
+        );
+        let mut stmt = tx.prepare(&sql).map_err(err)?;
         let mut cursor = stmt.query(params![category, metric, org]).map_err(err)?;
         let mut rows = Vec::new();
         while let Some(r) = cursor.next().map_err(err)? {

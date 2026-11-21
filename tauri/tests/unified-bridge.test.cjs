@@ -54,3 +54,10 @@ test('all-work series paging distinguishes keyed rows from selectable names',asy
  assert.equal(m.calls[0].args.allSeries,true);
  assert.equal(m.calls[1].args.allSeries,undefined);
 });
+
+test('organization work pages carry the same scope, revision and absolute page as the detailed table',async()=>{
+ const m=mount(),request={revision:7,source:'daily',displayType:'day',organizations:['B','A'],selectedNames:[],query:{from:'2025-03-01',to:'2025-03-02'}};
+ await m.api.unifiedOrganizationWorkWindow(request,1,50);
+ assert.deepEqual(JSON.parse(JSON.stringify(m.calls[0])),{command:'unified_organization_work_window',args:{request,pageIndex:1,limit:50}});
+ assert.equal(m.events.at(-1).detail.reads,0);
+});

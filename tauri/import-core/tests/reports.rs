@@ -640,6 +640,10 @@ fn only_verified_header_dates_create_a_manual_quality_notice() {
         ("Начало периода", r#"<c r="B1" s="1"><v>60</v></c>"#, false, "day", "2026-11-09", None),
         ("Начало периода", r#"<c r="B1" s="1"><v>60</v></c>"#, true, "day", "2026-11-09", Some("B1")),
         ("Начало периода", r#"<c r="B1"><v>46000</v></c>"#, false, "day", "2026-11-09", None),
+        ("Начало периода", r#"<c r="B1" s="2"><v>46000</v></c>"#, false, "week", "2026-11-09", None),
+        ("Начало периода", r#"<c r="B1" s="3"><v>46000</v></c>"#, false, "week", "2026-11-09", None),
+        ("Начало периода", r#"<c r="B1" s="4"><v>46000</v></c>"#, false, "week", "2026-11-09", None),
+        ("Начало периода", r#"<c r="B1" s="5"><v>46000</v></c>"#, false, "week", "2026-11-09", Some("B1")),
         ("Начало периода", r#"<c r="B1" t="d"><v>2026-11-09T00:00:00</v></c>"#, false, "week", "2026-10-19", Some("B1")),
         ("Дата печати: 09.11.2026", "", false, "week", "2026-10-19", None),
         ("Период с 2024-02 по 29.02.2024", "", false, "month", "2024-03-01", None),
@@ -653,7 +657,11 @@ fn only_verified_header_dates_create_a_manual_quality_notice() {
         workbook.start_file("xl/workbook.xml", SimpleFileOptions::default()).unwrap();
         write!(workbook, r#"<workbook><workbookPr date1904="{}"/></workbook>"#, early_1904 as u8).unwrap();
         workbook.start_file("xl/styles.xml", SimpleFileOptions::default()).unwrap();
-        write!(workbook, r#"<styleSheet><cellXfs><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>"#).unwrap();
+        write!(workbook, r#"<styleSheet><numFmts>
+            <numFmt numFmtId="164" formatCode="[Red]0.00"/><numFmt numFmtId="165" formatCode="0_d"/>
+            <numFmt numFmtId="166" formatCode="[$-409]dd-mmm-yyyy"/></numFmts>
+            <cellXfs><xf numFmtId="0"/><xf numFmtId="14"/><xf numFmtId="164"/><xf numFmtId="21"/>
+            <xf numFmtId="165"/><xf numFmtId="166"/></cellXfs></styleSheet>"#).unwrap();
         workbook.start_file("xl/worksheets/sheet1.xml", SimpleFileOptions::default()).unwrap();
         write!(workbook, r#"<worksheet><sheetData>
         <row r="1"><c r="A1" t="inlineStr"><is><t>{label}</t></is></c>{adjacent}</row>
@@ -674,4 +682,54 @@ fn only_verified_header_dates_create_a_manual_quality_notice() {
             assert_eq!(issue.work_cell.as_deref(), Some(address));
         }
     }
+}
+
+#[test]
+fn reordered_manual_columns_keep_the_period_date_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("reordered.xlsx");
+    fixture_rows(&file, &[
+        vec!["Начало периода", "2026-11-09"],
+        vec!["Количество", "Сумма", "Работа"],
+        vec!["1", "125", "СМУ16"],
+        vec!["1", "125", "Работа А"],
+    ]);
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut stage = area.ingest(&file, Limits::default(), &cancel, |_| {}).unwrap();
+    let mut cfg = options("week", "2026-10-19");
+    cfg.mappings = Some(vec![TripleMapping { header_row: 2, work_col: 3, count_col: 1, amount_col: 2 }]);
+    let summary = stage.convert_legacy(&cfg, &cancel, |_| {}).unwrap();
+    assert_eq!(summary.issues, 1);
+    let report = stage.report_page(0, 1).unwrap().remove(0);
+    assert_eq!((report.count, report.amount), (1., 125.));
+    let issue = stage.report_issues(&report.id, 0, 1).unwrap().remove(0);
+    assert_eq!(issue.work_cell.as_deref(), Some("B1"));
+}
+
+#[test]
+fn interleaved_manual_columns_only_accept_the_first_blocks_own_label_and_date() {
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("interleaved.xlsx");
+    fixture_rows(&file, &[
+        vec!["Начало периода", "2026-11-02", "Начало периода: 2026-11-16", "", "Начало периода", "2026-11-09"],
+        vec!["", "", "", "Начало периода", "2026-11-23"],
+        vec!["Количество", "Работа", "Количество", "Сумма", "Работа", "Сумма"],
+        vec!["1", "СМУ16", "2", "60", "СМУ16", "125"],
+        vec!["1", "Работа Б", "2", "60", "Работа А", "125"],
+    ]);
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut stage = area.ingest(&file, Limits::default(), &cancel, |_| {}).unwrap();
+    let mut cfg = options("week", "2026-10-19");
+    cfg.mappings = Some(vec![
+        TripleMapping { header_row: 3, work_col: 5, count_col: 1, amount_col: 6 },
+        TripleMapping { header_row: 3, work_col: 2, count_col: 3, amount_col: 4 },
+    ]);
+    let summary = stage.convert_legacy(&cfg, &cancel, |_| {}).unwrap();
+    assert_eq!(summary.issues, 1);
+    let reports = stage.report_page(0, 2).unwrap();
+    assert_eq!((reports[0].amount, reports[1].amount), (125., 60.));
+    let issue = stage.report_issues(&reports[0].id, 0, 1).unwrap().remove(0);
+    assert_eq!(issue.work_cell.as_deref(), Some("F1"));
 }

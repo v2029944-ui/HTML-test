@@ -543,3 +543,21 @@ test('all-work dynamics requests identities for both namesakes and itemizes the 
   ['Итого по выбранным работам','150'],['Ремонт (группа)','100'],['Ремонт (работа)','40'],['Уборка','10'],
  ]);
 });
+test('detailed overview distinguishes namesakes and neutralizes sub-precision changes on screen and in print',async()=>{
+ const period=amount=>({complete:true,periods:1,missing:0,total:{amount,count:1,average:amount}});
+ const top_amount=[{kind:'work',name:'Ремонт',amount:{delta:.002}},{kind:'group',name:'Ремонт',amount:{delta:-.002}}];
+ const f=fixture({nativeAnalysisCompare:async()=>({summary:{before:period(100),after:period(100.002)},top_amount,top_count:[]})});
+ f.UI.fmt=(n,m)=>Number.isFinite(n)?new Intl.NumberFormat('ru-RU',{minimumFractionDigits:m==='count'?0:2,maximumFractionDigits:m==='count'?3:2}).format(n):'—';
+ await f.bootstrap();f.nodes.get('printSummary').dispatch('click');
+ for(const id of ['overviewInsights','printReport']){
+  const text=f.nodes.get(id).textContent;assert.doesNotMatch(text,/[-+−]0,00/);
+  assert.match(text,/Ремонт \(группа\)/);assert.match(text,/≈ без изменений/);
+ }
+ for(const card of f.nodes.get('overviewKpis').children.slice(0,3))assert.ok(!card.children.at(-1).className);
+});
+test('top-eight selection publishes only names accepted by the work filter',async()=>{
+ const invalid={key:'group:g',name:'Ремонт',kind:'group'},valid={key:'work:Шины',name:'Шины',kind:'work'};
+ const f=fixture({nativeAnalysisRanking:async(_r,_t,_from,_to,_orgs,_org,_metric,category)=>({complete:true,rows:category==='selectable'?[valid]:[invalid,valid]})});
+ await f.bootstrap();f.nodes.get('selectTop').dispatch('click');await settle();
+ assert.deepEqual(Array.from(f.published.at(-1).selectedKeys),[valid.key]);
+});

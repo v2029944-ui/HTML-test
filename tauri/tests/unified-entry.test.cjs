@@ -140,3 +140,15 @@ test('trend and composition occupy one presentation switch, retaining native SQL
  assert.equal([...html.matchAll(/id="structurePanel"/g)].length,1);
  assert.equal([...html.matchAll(/id="chartPanel"/g)].length,1);
 });
+
+test('partial monthly chart and table headings show the actual dates but keep calendar keys for gap checks',()=>{
+ const context={window:{}};vm.runInNewContext(require('../unified-build.cjs').buildUnified(original).script,context);
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../analysis-summary.js'),'utf8'),context);
+ const O=context.window.unifiedOriginal,scope={source:'daily',displayType:'day',from:'2024-01-28',to:'2024-06-03'};
+ const periods=context.window.analysisSummary.timelinePeriods(['2024-01','2024-02','2024-06'].map(start=>({start})),'month',scope,O.periodEnd);
+ assert.equal(periods[0].start,'2024-01-01');
+ assert.equal(O.displayPeriod(periods[0]),'28.01.2024 — 31.01.2024');
+ assert.equal(O.displayPeriod(periods[2]),'01.06.2024 — 03.06.2024');
+ assert.match(O.displayPeriod(periods[1]),/февраль/);
+ context.period=periods[0];assert.equal(vm.runInNewContext('plotPeriodLabel(period)',context),'28.01–31.01');
+});

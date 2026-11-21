@@ -448,3 +448,54 @@ test('overview comparison shortcut uses the same section router as the compariso
  const shortcut=f.nodes.get('overviewShowComparison');shortcut.dispatch('click');
  assert.deepEqual(calls,[['comparison',shortcut]]);
 });
+
+test('usual level captions expand calendar keys into the full sampled dates',async()=>{
+ for(const [source,kind,from,to,first,last,baseEnd,currentEnd] of [
+  ['imported','week','2024-01-10','2024-01-10','2023-12-13','2024-01-03','09.01.2024','16.01.2024'],
+  ['imported','month','2024-02-01','2024-02-01','2023-10-01','2024-01-01','31.01.2024','29.02.2024'],
+  ['daily','month','2024-02-01','2024-02-29','2023-10-01','2024-01-01','31.01.2024','29.02.2024']
+ ]){
+  const f=fixture({unifiedPatternPage:async()=>({rows:[],total_rows:0,used:4,expected:4,previous_used:4,current_complete:true,baseline_from:first,baseline_to:last,current_from:from,current_to:from})});
+  f.UI.range=()=>({type:source==='daily'?'day':kind,displayType:kind,source,from,to});f.publish({displayType:kind,source,type:source==='daily'?'day':kind,from,to});
+  f.nodes.get('usualPeriod').value=from;f.nodes.get('usualPanel').open=true;f.nodes.get('usualPanel').dispatch('toggle');await settle();
+  const caption=f.tables.find(t=>t.root==='usualResults').caption;
+  assert.ok(caption.includes(baseEnd)&&caption.endsWith(currentEnd),caption);
+ }
+});
+
+test('department comparison uses identity-keyed rows for an entire catalog page and matches both organizations',async()=>{
+ const totals=[{org:'A',complete:true,missing:0,total:{amount:150}},{org:'B',complete:true,missing:0,total:{amount:260}}];
+ const rows=[['group:g','Ремонт (группа)','group',100,200],['work:Ремонт','Ремонт (работа)','work',40,60],['work:Уборка','Уборка','work',10,0]];
+ const calls=[];
+ const f=fixture({
+  nativeAnalysisOrganizations:async()=>totals,
+  unifiedNameOptionsAtPage:async()=>({rows:[{name:'Уборка',key:'work:Уборка',kind:'work'}],total_rows:1}),
+  unifiedOrganizationWorkWindow:async(req,index,limit)=>{calls.push([req,index,limit]);return {rows:rows.map(([key,name,kind,a,b])=>({entry:{key,name,kind},rows:[{org:'A',total:{amount:a}},{org:'B',total:{amount:b}}]})),total_rows:3};},
+  nativeOrganizationTrends:async()=>({granularity:'period',series:[]}),
+  nativeWorkTimeline:async(...args)=>{calls.push(args);return {points:[]};}
+ });
+ f.window.referenceDetail={active:'comparison'};
+ f.publish({organizations:['A','B'],selectedNames:[],selectedKeys:[],nameRows:[],allNames:true});
+ f.nodes.get('comparisonMode').value='organizations';f.nodes.get('comparisonBaseOrg').value='A';
+ await f.window.unifiedExtended.openComparison();
+ const table=f.tables.find(t=>t.metric==='amount');assert.ok(table);
+ assert.deepEqual(Array.from(table.rows.slice(1),r=>[r[0].textContent,r[1],r[2]]),rows.map(r=>[r[1],String(r[3]),String(r[4])]));
+ assert.deepEqual(Array.from(table.options.csvRows.slice(1),r=>Array.from(r).slice(0,3)),rows.map(r=>[r[1],r[3],r[4]]));
+ assert.equal(calls[0][1],0);assert.equal(calls[0][2],50);
+ table.rows[1][0].dispatch('click');await settle();assert.equal(calls[1][6],'group:g');
+});
+
+test('opening a group uses the same qualified label in the history title and chart',async()=>{
+ const metric={base:10,current:25,delta:15,percent:150};
+ const f=fixture({
+  nativeAnalysisCompare:async()=>({summary:{before:{complete:true,total:{amount:10}},after:{complete:true,total:{amount:25}}}}),
+  unifiedComparisonWindow:async()=>({rows:[{name:'Ремонт',kind:'group',key:'group:g',amount:metric}],total_rows:1}),
+  nativeWorkTimeline:async()=>({granularity:'period',points:[{start:'2024-01-02',missing:0,total:{amount:25}}]})
+ });
+ const labels=[];f.UI.drawChart=(_p,_o,_m,_root,options)=>labels.push(options.label());
+ f.publish();await f.window.unifiedExtended.openComparison();
+ const button=f.tables.find(t=>t.metric==='amount').rows[1][0];
+ assert.equal(button.textContent,'Ремонт (группа)');button.dispatch('click');await settle();
+ assert.equal(f.nodes.get('analyticsDetailTitle').textContent,button.textContent);
+ assert.ok(labels.length);assert.ok(labels.every(label=>label===button.textContent));
+});

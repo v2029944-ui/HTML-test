@@ -331,6 +331,31 @@ pub async fn unified_comparison_window(
 }
 
 #[tauri::command]
+pub async fn unified_organization_work_window(
+    app: AppHandle,
+    request: AdvancedRequest,
+    page_index: usize,
+    limit: usize,
+    workspace_token: Option<String>,
+) -> Result<SqlPage<OrganizationWorkValues>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |store| {
+                let range = RangeQuery { from: request.query.from.clone(), to: request.query.to.clone() };
+                request.with_scope(store, |scope, _| {
+                    store.organization_work_window(request.revision, scope, &range, page_index, limit)
+                })
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn unified_group_audit_page(
     app: AppHandle,
     request: AdvancedRequest,

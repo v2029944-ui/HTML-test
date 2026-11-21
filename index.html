@@ -2294,7 +2294,7 @@ length_base[28] = 258;
         if(value===null&&first(cell,'f'))budget.uncachedFormulaCells++;
         else if(value===null||typeof value==='string'&&value.trim()==='')budget.emptyCells++;
         else budget.filledCells++;
-        if(dateStyles.has(Number(cell.getAttribute('s')||0)))table['!dateCells'].add(index+':'+c);
+        if(cell.getAttribute('t')==='d'||typeof value==='number'&&dateStyles.has(Number(cell.getAttribute('s')||0)))table['!dateCells'].add(index+':'+c);
       }
       table[index]=result;
     }
@@ -2313,7 +2313,7 @@ length_base[28] = 258;
     const strings=sharedXml?nodes(parseXml(sharedXml),'si').map(si=>nodes(si,'t').map(x=>x.textContent).join('')):[];
     const styleXml=load('xl/styles.xml',true),dateStyles=new Set();
     if(styleXml){const styles=parseXml(styleXml),custom=new Map(nodes(styles,'numFmt').map(node=>[Number(node.getAttribute('numFmtId')),node.getAttribute('formatCode')||'']));
-      nodes(first(styles,'cellXfs')||styles,'xf').forEach((node,index)=>{const id=Number(node.getAttribute('numFmtId'));const format=(custom.get(id)||'').replace(/"[^"]*"|\\./g,'');if(id>=14&&id<=22||/[dy]/i.test(format))dateStyles.add(index);});}
+      nodes(first(styles,'cellXfs')||styles,'xf').forEach((node,index)=>{const id=Number(node.getAttribute('numFmtId'));const format=(custom.get(id)||'').replace(/"[^"]*"|\[[^\]]*\]|[\\_*]./g,'');if(id>=14&&id<=17||id===22||/[dy]/i.test(format))dateStyles.add(index);});}
     const SheetNames=[],Sheets=Object.create(null),budget={cells:0,filledCells:0,emptyCells:0,uncachedFormulaCells:0};
     const date1904=['1','true'].includes(first(workbook,'workbookPr')?.getAttribute('date1904'));
     for(const sheet of nodes(workbook,'sheet')){
@@ -2621,6 +2621,7 @@ function dailyHeaderInfo(sheet,mapping=null){
     const {workCol,headerRow,firstDayCol}=mapping;
     if(![workCol,headerRow,firstDayCol].every(Number.isInteger)||workCol<0||firstDayCol<0||workCol>=2048||firstDayCol>=2048||headerRow<0||headerRow>=sheet.length)
       throw Error('Проверьте ручные столбцы и строку заголовков.');
+    if(mapping.totalAmountCol!=null&&mapping.totalCountCol==null)throw Error('Укажите столбец итогового количества вместе с итоговой суммой.');
     const width=sheet.reduce((n,row)=>Math.max(n,row?.length||0),0),end=mapping.totalCountCol??width;
     const pairs=[];for(let c=firstDayCol;c+1<end;c+=2)pairs.push({countCol:c,amountCol:c+1});
     return {workCol,headerRow,pairs,totals:mapping.totalCountCol!==undefined&&mapping.totalCountCol!==null?{countCol:mapping.totalCountCol,amountCol:mapping.totalAmountCol??mapping.totalCountCol+1}:null};
@@ -2705,14 +2706,16 @@ function dailyPeriodCoverage(sheetName,headerText,year,dates){
   return {start:dates.slice().sort()[0],end:dates.slice().sort().at(-1)};
 }
 function parseDailyWorkbook(workbook,options={}){
-  const names=options.sheets?.length?options.sheets:findDailySheets(workbook);
+  const mappings=new Map(Object.entries(options.mappings||{}));
+  const names=options.sheets?.length?options.sheets:workbook.SheetNames.filter(name=>mappings.has(name)||dailyHeaderInfo(workbook.Sheets[name]));
+  for(const name of mappings.keys())if(!names.includes(name))throw Error('Лист «'+name+'» из ручной настройки отсутствует среди листов для загрузки. Проверьте книгу и правило.');
   if(!names.length)throw Error('Не найдены листы с общим столбцом работ и дневными парами. Выберите лист и ручную настройку.');
   if(names.length>12||new Set(names).size!==names.length)throw Error('Выберите не более 12 разных листов.');
   const reports=[],sheets=[],seenDates=new Map();
   for(const name of names){
     const sheet=workbook.Sheets[name];if(!sheet)throw Error('Лист «'+name+'» отсутствует в книге.');
     try{
-      const info=dailyHeaderInfo(sheet,options.mappings?.[name]);
+      const info=dailyHeaderInfo(sheet,mappings.get(name));
       if(!info)throw Error('Не найдены дневные пары. Укажите столбцы и строку заголовков вручную.');
       const headerText=sheet.slice(0,info.headerRow+1).map(row=>(row||[]).filter(value=>typeof value==='string').join(' ')).join(' ');
       const pairs=[],totalPairs=[];
@@ -2845,16 +2848,30 @@ function ordinaryDateToken(value,type){
 function ordinaryDateEvidence(matrix,mappings,type){
   const result={candidates:[],conflict:false,truncated:false};
   const first=mappings?.[0];if(!first)return result;
-  const begin=first.col,end=Math.min(...mappings.filter(m=>m.col>begin).map(m=>m.col),Math.max(begin,first.countCol??begin+1,first.amountCol??begin+2)+1);
+  const columns=m=>[m.col,m.countCol??m.col+1,m.amountCol??m.col+2];
+  const firstColumns=columns(first),begin=Math.min(...firstColumns);
+  const end=Math.max(...firstColumns)+1;
+  const otherRanges=mappings.slice(1).map(columns).map(cols=>[Math.min(...cols),Math.max(...cols)]);
   const lastRow=Math.min(first.headerRow,63),lastCol=Math.min(end,begin+64);
   result.truncated=first.headerRow>63||end>begin+64;
+  const allowed=new Set();
+  for(let col=begin;col<lastCol;col++)if(firstColumns.includes(col)||!otherRanges.some(([lo,hi])=>col>=lo&&col<=hi))allowed.add(col);
   const add=(raw,label,row,col,dateCol)=>{
+    if(matrix['!dateCells']?.has(row+':'+dateCol)){
+      if(typeof raw==='number'){
+        const date1904=!!matrix['!date1904'];if(!date1904&&Math.floor(raw)===60)return;
+        const parts=dailyDateParts(raw,date1904,true);if(!parts)return;
+        raw=String(parts.year)+'-'+String(parts.month).padStart(2,'0')+'-'+String(parts.day).padStart(2,'0');
+      }else if(typeof raw==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw)&&Number.isFinite(Date.parse(raw))){
+        raw=raw.slice(0,10);
+      }
+    }
     const date=ordinaryDateToken(raw,type);if(!date)return;
     if(result.candidates.length===16){result.truncated=true;return;}
     result.candidates.push({date,labelCell:excelCellRef(col,row+1),dateCell:excelCellRef(dateCol,row+1),label:label.slice(0,160)});
   };
   const kinds={недели:'week',месяца:'month',дня:'day'};
-  for(let r=0;r<=lastRow;r++)for(let c=begin;c<lastCol;c++){
+  for(let r=0;r<=lastRow;r++)for(const c of allowed){
     const value=matrix[r]?.[c];if(typeof value!=='string')continue;
     if(value.length>4096){result.truncated=true;continue;}
     const text=value.trim();
@@ -2863,7 +2880,7 @@ function ordinaryDateEvidence(matrix,mappings,type){
       if(kinds[label[1].toLocaleLowerCase('ru-RU')]&&kinds[label[1].toLocaleLowerCase('ru-RU')]!==type)continue;
       const inline=label[2]?.trim();
       if(inline)add(inline,text,r,c,c);
-      else if(c+1<lastCol)add(matrix[r]?.[c+1],text,r,c,c+1);
+      else if(allowed.has(c+1))add(matrix[r]?.[c+1],text,r,c,c+1);
       continue;
     }
     const range=/^(?:(?:отч[её]тный\s+)?период)\s*(?:[:=—-]\s*)?с\s+(\d{4}-\d{2}-\d{2}|\d{2}[./]\d{2}[./]\d{4})\s+по\s+(\d{4}-\d{2}-\d{2}|\d{2}[./]\d{2}[./]\d{4})$/iu.exec(text);

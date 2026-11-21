@@ -103,6 +103,17 @@ class DailyWideImport(unittest.TestCase):
         self.assertTrue(self.page.evaluate("!state.pending.some(r=>r.start==='2024-02-05')"))
         self.assertTrue(self.page.evaluate("state.pending.some(r=>r.issues.some(i=>i.type==='missing-day'))"))
         self.page.once('dialog',lambda dialog:dialog.dismiss());self.page.locator('#saveImport').click();self.assertEqual(self.page.evaluate('state.reports.length'),0)
+    def test_changed_workbook_must_keep_every_sheet_in_the_saved_mapping(self):
+        self.upload(wide_xlsx(2024))
+        outcome=self.page.evaluate("""()=>{
+          const mappings={'Старое имя':{workCol:0,headerRow:18,firstDayCol:1}};
+          try{return parseDailyWorkbook(state.workbook,{sheets:[],mappings}).reports.length;}
+          catch(error){return error.message;}
+        }""")
+        self.assertIsInstance(outcome,str)
+        self.assertIn('Старое имя',outcome)
+        self.assertEqual(self.page.evaluate('state.reports.length'),0)
+
     def test_folder_wide_sync_real_parser_and_labeled_fields(self):
         self.page.evaluate('''payload=>{
           window.wideBytes=payload;window.signature='1';window.writes=0;

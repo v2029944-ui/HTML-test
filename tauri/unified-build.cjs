@@ -52,8 +52,12 @@ function buildUnified(source){
  periodTitle=type=>type==='year'?'Год':original.periodTitle(type);
  periodScale=type=>type==='year'?'годы':original.periodScale(type);
  periodUnit=(type,count)=>type==='year'?ruPlural(count,'год','года','лет'):original.periodUnit(type,count);
- plotPeriodLabel=period=>period.type==='year'?period.start.slice(0,4):original.plotPeriodLabel(period);
- displayPeriod=period=>period.type==='year'?period.start.slice(0,4):original.displayPeriod(period);
+ function partialLabel(period,compact){
+   const label=day=>compact?displayDay(day).slice(0,5):displayDay(day);
+   return label(period.actualStart)+(period.end===period.actualStart?'':(compact?'–':' — ')+label(period.end));
+ }
+ plotPeriodLabel=period=>period.partial?partialLabel(period,true):period.type==='year'?period.start.slice(0,4):original.plotPeriodLabel(period);
+ displayPeriod=period=>period.partial?partialLabel(period,false):period.type==='year'?period.start.slice(0,4):original.displayPeriod(period);
  shiftPeriod=(type,start,steps)=>type==='year'?String(Number(start.slice(0,4))+steps).padStart(4,'0')+'-01-01':original.shiftPeriod(type,start,steps);
 })();
 `;
@@ -67,7 +71,7 @@ function buildUnified(source){
  // Never allow a paged UI to reach an old whole-database writer by accident.
  script+='\nmain=wire=loadData=saveSettings=storeReports=storeAllData=saveImport=saveGroup=moveWork=saveOrganizations=importGroupFile=importBackupFile=()=>{throw Error("Полная загрузка истории и старые обработчики отключены.");};\n';
  script+='notice=(message,error)=>window.showDesktopNotice(message,error);\n';
- script+='window.unifiedOriginal=Object.freeze({state,$,el:elem,notice,fmt:formatMetric,fmtNumber,drawChart,drawDepartments:drawDepartmentMultiChart,makeTable,tableCsvButton,initTheme,initChartTooltip,redrawCharts,renderMultiFilter,periodEnd,shiftPeriod,displayDay,displayPeriod,metricTitle,departmentChartTitle,chartRenders});\n';
+ script+='window.unifiedOriginal=Object.freeze({state,$,el:elem,notice,fmt:formatMetric,fmtNumber,chartNiceScale,chartTickLabel,drawChart,drawDepartments:drawDepartmentMultiChart,makeTable,tableCsvButton,initTheme,initChartTooltip,redrawCharts,renderMultiFilter,periodEnd,shiftPeriod,displayDay,displayPeriod,metricTitle,departmentChartTitle,chartRenders});\n';
  let html=source.replace(/<script>[\s\S]*?<\/script>/g,'');
  const metricMarkup="<details id=\"additionalMetrics\" class=\"panel group-section\"><summary>Другие показатели — трудозатраты и план / факт</summary>\n<p class=\"muted small\">Независимые виды отчётов со своими полями и единицами измерения. Их показатели не прибавляются к суммам выполненных работ.</p>\n<div class=\"metric-controls\">\n<label>Вид отчёта<select id=\"metricKindSelect\"></select></label>\n<label>С<input id=\"metricKindFrom\" type=\"date\"></label>\n<label>По<input id=\"metricKindTo\" type=\"date\"></label>\n<button type=\"button\" id=\"metricKindCalculate\" class=\"button secondary\">Рассчитать</button></div>\n<p id=\"metricKindCount\" class=\"muted small\">Пустые даты при расчёте означают всю историю.</p>\n<div id=\"metricKindTotals\" class=\"metric-results\"></div>\n<div class=\"metric-controls\">\n<label>Шаблон XLSX<select id=\"metricXlsxProfile\"></select></label>\n<button type=\"button\" id=\"metricKindChooseXlsx\" class=\"button secondary\">Импорт XLSX</button>\n<button type=\"button\" id=\"metricKindChoose\" class=\"button secondary\">Импорт JSON</button>\n<button type=\"button\" id=\"metricKindApply\" class=\"button primary\" disabled>Подтвердить импорт</button></div>\n<p class=\"muted small\">Для XLSX сначала укажите обе даты и шаблон. Перед записью проверьте значения: импорт не заменяет существующие отчёты. Лимит XLSX — 30 МиБ, JSON — 8 МиБ, не более 10 000 строк в отчёте.</p>\n<p id=\"metricKindFile\" class=\"muted small\">Файл ещё не выбран.</p>\n<div id=\"metricKindPreview\" class=\"metric-results\"></div>\n<p id=\"metricKindStatus\" class=\"status muted\" role=\"status\" aria-live=\"polite\">Загрузка видов отчётов…</p></details>";
  if(!html.includes('<section id="upload" class="view">'))throw Error('Original Excel upload panel changed');

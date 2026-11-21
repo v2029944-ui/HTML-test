@@ -284,28 +284,19 @@ impl Stage<'_> {
                 })
                 .optional()?;
             let custom = format.is_some_and(|value| {
-                let (mut quoted, mut escaped) = (false, false);
-                let mut clean = String::new();
-                for c in value.chars() {
-                    if escaped {
-                        escaped = false;
-                        continue;
-                    }
-                    if c == '\\' {
-                        escaped = true;
-                        continue;
-                    }
-                    if c == '"' {
-                        quoted = !quoted;
-                        continue;
-                    }
-                    if !quoted {
-                        clean.push(c);
+                let mut chars = value.chars();
+                while let Some(ch) = chars.next() {
+                    match ch {
+                        '"' => { chars.by_ref().take_while(|c| *c != '"').count(); }
+                        '[' => { chars.by_ref().take_while(|c| *c != ']').count(); }
+                        '\\' | '_' | '*' => { chars.next(); }
+                        'd' | 'D' | 'y' | 'Y' => return true,
+                        _ => {}
                     }
                 }
-                clean.contains(['d', 'D', 'y', 'Y'])
+                false
             });
-            if (14..=22).contains(&id) || custom {
+            if (14..=17).contains(&id) || id == 22 || custom {
                 self.db
                     .execute("INSERT INTO date_styles VALUES(?1)", [index])?;
             }
@@ -405,6 +396,9 @@ impl Stage<'_> {
                 || m.total_amount_col.is_some_and(|c| c == 0 || c > 2048)
             {
                 return Err(fail("invalid manual daily mapping"));
+            }
+            if m.total_amount_col.is_some() && m.total_count_col.is_none() {
+                return Err(fail("Укажите столбец итогового количества вместе с итоговой суммой."));
             }
             let end = m.total_count_col.unwrap_or(width + 1);
             let pairs = (m.first_day_col..end.saturating_sub(1))
@@ -709,6 +703,9 @@ impl Stage<'_> {
             } else {
                 cfg.sheets.clone()
             };
+            if let Some(name) = cfg.mappings.keys().find(|name| !names.contains(name)) {
+                return Err(fail(&format!("Лист «{name}» из ручной настройки отсутствует среди листов для загрузки. Проверьте книгу и правило.")));
+            }
             if names.is_empty() {
                 return Err(fail("no shared-work daily sheets found"));
             }

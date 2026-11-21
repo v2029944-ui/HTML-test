@@ -9,8 +9,9 @@ async function fixture() {
   const elements = new Map();
   const lists = new Map();
   function element() {
-    return {options: [], style: {setProperty() {}}, classList: {toggle() {}},
-      append(child) { this.options.push(child); }, replaceChildren() { this.options = []; },
+    return {value:'',dataset:{}, options: [], style: {setProperty() {}}, classList: {toggle() {}},
+      append(...children) { this.options.push(...children); }, replaceChildren(...children) { this.options = children; },
+      isConnected: true, focus() {}, closest() {return {close(){}};},
       setAttribute() {}, removeAttribute() {}, getBoundingClientRect() { return {height: 40}; },
     };
   }
@@ -22,7 +23,7 @@ async function fixture() {
   panel.querySelector = selector => selector === '#referenceSource' ? one('.filter-periods').options[0].options[0] : one(selector);
   panel.querySelectorAll = selector => {
     const n = {'[data-filter="type"] button':4, '[data-filter="mode"] button':2,
-      '[data-filter=type] button':4, '[data-filter=mode] button':2, '[data-date]':2}[selector] || 0;
+      '[data-filter=type] button':4, '[data-filter=mode] button':2, '[data-date]':2, '[data-shift]':2}[selector] || 0;
     if (!lists.has(selector)) lists.set(selector, Array.from({length:n}, element));
     return lists.get(selector);
   };
@@ -30,10 +31,25 @@ async function fixture() {
   const calls = [], seen = [];
   const weeks = ['2026-11-04','2026-11-06','2026-11-16'];
   const window = {referenceResults: {beginScopeChange() {},failScopeChange() {},refresh(scope) {seen.push(scope);}}};
+  const choices=[{key:'group:1',kind:'group',name:'Ремонт'},{key:'work:p',kind:'work',name:'Покраска'}];
+  let dialog;
+  window.referenceDesktop={dialog(){dialog=element();return dialog;}};
+  window.sqlRowScroll={attach(){},reset(){}};
+  function checkboxInDialog(text) {
+    const visit=node=>node.options.some(child=>child.textContent===text)?node.options[0]:node.options.map(visit).find(Boolean);
+    return visit(dialog);
+  }
+  function findInDialog(text) {
+    const visit=node=>node.textContent===text?node:node.options.map(visit).find(Boolean);
+    return visit(dialog);
+  }
   const ui = window.unifiedUI = {revision:1, notice() {}, onSnapshot(fn) {this.configure = fn;}, api:{
-    async unifiedNameOptions() { calls.push('catalog');return {total_rows:1}; },
+    async unifiedNameOptions() { calls.push('catalog');return {total_rows:choices.length}; },
+    async unifiedNameOptionsAtPage(){return {total_rows:choices.length,rows:choices};},
+    async unifiedSelectedNameOptions(rev,keys){return {total_rows:choices.length,rows:choices.filter(row=>keys.includes(row.key))};},
     async unifiedPeriodOptions(revision,kind,group,after,limit,day) {
       calls.push([kind,day]);
+      if(kind==='week'&&ui.hold)await ui.hold;
       if (kind === 'week' && ui.fail) throw Error('fixture');
       if (day) return {rows:weeks.filter(start=>start<=window.referenceCalendar.period(day,'month')[1] && day<=window.referenceCalendar.day(start,6))
         .map(start=>({start,end:window.referenceCalendar.day(start,6)}))};
@@ -48,9 +64,10 @@ async function fixture() {
   run('reference-filters');
   const controls = window.referenceFilters;
   const date = panel.querySelectorAll('[data-date]')[0];date.dataset={date:'start'};
+  panel.querySelectorAll('[data-shift]')[1].dataset.shift='1';
   controls.init();await ui.configure({revision:1,org_names:['A']});
   const source = async val=>{const n=panel.querySelector('#referenceSource');n.value=val;n.onchange();await new Promise(r=>setImmediate(r));};
-  return {controls, calls, ui, source, seen, one, panel, draft:()=>draft, open:()=>{date.onclick();return draft;}};
+  return {controls, calls, ui, source, seen, one, panel, choices, window, findInDialog, checkboxInDialog, draft:()=>draft, open:()=>{date.onclick();return draft;}};
 }
 
 test('an imported week and its comparison base can use different saved weekdays', async () => {
@@ -90,4 +107,86 @@ test('a failed bounds read retries before publishing; catalog reads stay tied to
   assert.equal(calls.filter(v=>v==='catalog').length,1);
   await ui.configure({revision:1,org_names:['B']});
   assert.equal(calls.filter(v=>v==='catalog').length,2);
+});
+
+test('a pending or failed source read cannot shift dates from the previous source', async () => {
+  const {controls,panel,source,ui,one} = await fixture();
+  let release;
+  ui.hold=new Promise(resolve=>{release=resolve;});
+  await source('imported');
+  const next=panel.querySelectorAll('[data-shift]')[1];
+  assert.equal(next.disabled,true);
+  release();await new Promise(r=>setImmediate(r));
+  assert.equal(controls.scope.from,'2026-11-16');
+  assert.equal(next.disabled,false);
+  await source('daily');ui.fail=true;await source('imported');
+  assert.equal(next.disabled,true);
+  ui.fail=false;await one('[data-retry-periods]').onclick();
+  assert.equal(controls.scope.from,'2026-11-16');
+  next.onclick();assert.equal(controls.scope.from,'2026-11-23');
+});
+
+test('a daily calendar draft cannot change a new snapshot with the same revision', async () => {
+  const {controls,open,ui}=await fixture();
+  const draft=open();
+  await ui.configure({revision:1,org_names:['B']});
+  const current=controls.scope;
+  draft.apply('2026-11-05','week');
+  assert.equal(controls.scope,current);
+});
+
+test('the all-works label does not undercount groups with names also used by works', async () => {
+  const {one}=await fixture();
+  assert.equal(one('[data-pick=works]').textContent,'Все работы и группы');
+});
+
+test('an open work or organization picker cannot apply its draft to a replacement snapshot', async () => {
+  const {controls,ui,one,findInDialog}=await fixture();
+  for (const type of ['works','orgs']) {
+    one('[data-pick='+type+']').onclick();
+    await new Promise(r=>setImmediate(r));
+    findInDialog('Снять выбор').onclick();
+    await ui.configure({revision:1,org_names:['Новое подразделение']});
+    const current=controls.scope;
+    findInDialog('Применить').onclick();
+    assert.equal(controls.scope,current);
+  }
+});
+
+test('selected group keys survive refresh in the same shared folder and reset when changing databases', async () => {
+  const {controls,ui,one,findInDialog,checkboxInDialog,window,choices}=await fixture();
+  window.sharedWorkspace={state:{mode:'shared',folder:'A',workspace_token:'A:1'}};
+  await ui.configure({revision:1,org_names:['Первое','Второе']});
+  one('[data-pick=works]').onclick();
+  await new Promise(r=>setImmediate(r));
+  findInDialog('Снять выбор').onclick();
+  const check=checkboxInDialog('Ремонт (группа)');
+  check.checked=true;check.onchange();
+  findInDialog('Применить').onclick();
+  await controls.setOrganizations(['Первое']);
+  window.sharedWorkspace.state.workspace_token='A:2';
+  ui.revision=2;
+  await ui.configure({revision:2,org_names:['Первое','Второе']});
+  assert.deepEqual([...controls.scope.selectedKeys],['group:1']);
+  assert.deepEqual([...controls.scope.organizations],['Первое']);
+  window.sharedWorkspace.state={mode:'shared',folder:'B',workspace_token:'B:2'};
+  choices[0]={key:'group:1',kind:'group',name:'Монтаж'};
+  await ui.configure({revision:2,org_names:['Первое','Другое']});
+  assert.equal(controls.scope.allNames,true);
+  assert.deepEqual([...controls.scope.selectedKeys],[]);
+  assert.deepEqual([...controls.scope.organizations],['Первое','Другое']);
+});
+
+test('all works can be restored when no names are eligible for individual selection', async () => {
+  const {controls,choices,ui,one,findInDialog}=await fixture();
+  choices.length=0;
+  await ui.configure({revision:1,org_names:['A']});
+  one('[data-pick=works]').onclick();
+  await new Promise(r=>setImmediate(r));
+  findInDialog('Снять выбор').onclick();
+  const all=findInDialog('Выбрать все');
+  assert.equal(all.disabled,false);
+  all.onclick();
+  findInDialog('Применить').onclick();
+  assert.equal(controls.scope.allNames,true);
 });

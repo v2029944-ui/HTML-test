@@ -35,3 +35,16 @@ test('header work and result lists stay bounded and advertise truncation',()=>{
  const e=infer(matrix);
  assert.equal(e.truncated,true);assert.ok(e.candidates.length<=16);
 });
+test('ordinary date evidence spans a reordered first column block and stops before another block',()=>{
+ const first={col:2,countCol:0,amountCol:1,headerRow:1},second={col:3,countCol:5,amountCol:4,headerRow:1};
+ const evidence=infer([['Начало периода','2026-11-09','','Начало периода','2026-11-16'],[]],'week',[first,second]);
+ assert.deepEqual(evidence.candidates.map(c=>[c.date,c.dateCell]),[['2026-11-09','B1']]);
+});
+test('interleaved manual blocks keep their own labels and never borrow adjacent dates from another block',()=>{
+ const first={col:4,countCol:0,amountCol:5,headerRow:2},second={col:1,countCol:2,amountCol:3,headerRow:2};
+ const evidence=infer([
+  ['Начало периода','2026-11-02','Начало периода: 2026-11-16','','Начало периода','2026-11-09'],
+  ['','','','Начало периода','2026-11-23'],[]
+ ],'week',[first,second]);
+ assert.deepEqual(evidence.candidates.map(c=>[c.labelCell,c.dateCell,c.date]),[['E1','F1','2026-11-09']]);
+});

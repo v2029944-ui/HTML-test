@@ -1943,3 +1943,30 @@ fn imported_week_does_not_fill_a_missing_daily_report_or_duplicate_daily_totals(
     assert!(imported.complete);
     assert_eq!((imported.available_reports, imported.total.amount), (1, Some(95.)));
 }
+
+#[test]
+fn selectable_ranking_filters_names_before_the_limit() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    let rows = data["reports"][0]["rows"].as_array_mut().unwrap();
+    for i in 0..13 {
+        let work = format!("{}{i}", "К".repeat(300));
+        rows.push(json!({"organization":"A","work":work,"count":1.,"amount":100000+i}));
+    }
+    rows.push(json!({"organization":"A","work":"Group","count":1.,"amount":120000.}));
+    for i in 0..9 {
+        rows.push(json!({"organization":"A","work":format!("Work{i}"),"count":1.,"amount":1000+i}));
+    }
+    let revision = prepare(&store, &data);
+    let selected = scope(&store, revision, "day", &["A"], None);
+    let day = query("2024-02-28","2024-02-28");
+    for org in [None, Some("A")] {
+        let all = store.analysis_ranking(revision,&selected,&day,org,"amount","all").unwrap();
+        assert!(all.rows.iter().all(|row| row.name == "Group" || row.name.len() > 512));
+        let eligible = store.analysis_ranking(revision,&selected,&day,org,"amount","selectable").unwrap();
+        let first_eight: Vec<_> = eligible.rows.iter().take(8).map(|row| row.name.clone()).collect();
+        assert_eq!(first_eight, (1..=8).rev().map(|i| format!("Work{i}")).collect::<Vec<_>>());
+        assert!(eligible.rows.iter().all(|row| row.name != "Group" && row.name.len() <= 512));
+    }
+}

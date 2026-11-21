@@ -171,6 +171,38 @@ fn duplicate_dates_manual_mapping_and_atomic_cancellation() {
     assert_eq!(s.report_page(0, 100).unwrap().len(), 2);
 }
 #[test]
+fn daily_mappings_cannot_silently_drop_a_worksheet_or_an_amount_total() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("days.xlsx");
+    book(&path, &rows(), MERGES, "xl/worksheets/sheet1.xml");
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut stage = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+    let mut options = WideOptions::default();
+    stage.convert_wide(&options, cancel.clone(), |_| {}).unwrap();
+    let reports = |stage: &analiz_import_core::Stage<'_>| {
+        stage.report_page(0, 10).unwrap().into_iter()
+            .map(|r| (r.start, r.count, r.amount)).collect::<Vec<_>>()
+    };
+    let prior = reports(&stage);
+    assert_eq!(prior.len(), 2);
+    let mut mapping = WideMapping {
+        header_row: 2, work_col: 1, first_day_col: 2,
+        total_count_col: Some(6), total_amount_col: Some(7),
+    };
+    options.mappings.insert("Старое имя".into(), mapping.clone());
+    let error = stage.convert_wide(&options, cancel.clone(), |_| {}).unwrap_err().to_string();
+    assert!(error.contains("Старое имя"), "{error}");
+    assert_eq!(reports(&stage), prior);
+    options.mappings.clear();
+    mapping.total_count_col = None;
+    options.mappings.insert("Data".into(), mapping);
+    let error = stage.convert_wide(&options, cancel, |_| {}).unwrap_err().to_string();
+    assert!(error.contains("итогового количества"), "{error}");
+    assert_eq!(reports(&stage), prior);
+}
+
+#[test]
 fn ambiguous_short_year_and_conflicting_pair_reject() {
     for (first, second) in [
         ("28.02", "29.02"),

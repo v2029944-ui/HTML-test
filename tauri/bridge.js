@@ -176,6 +176,7 @@
     unifiedPatternPage:(request,mode,windowSize,options,after=null)=>tracked('unified_pattern_page',{request,mode,windowSize,options,after},'reads'),
     unifiedPatternPageAtPage:(request,mode,windowSize,options,pageIndex=0)=>tracked('unified_pattern_page',{request,mode,windowSize,options,after:null,pageIndex},'reads'),
     unifiedComparisonPage:(request,before,organization=null,after=null,limit=50)=>tracked('unified_comparison_page',{request,before,organization,after,limit},'reads'),
+    unifiedOrganizationWorkWindow:(request,pageIndex=0,limit=50)=>tracked('unified_organization_work_window',{request,pageIndex,limit},'reads'),
     unifiedComparisonWindow:(request,before,organization=null,pageIndex=0,limit=50)=>tracked('unified_comparison_window',{request,before,organization,pageIndex,limit},'reads'),
     unifiedGroupAuditPage:(request,mode,search='',offset=0,limit=50)=>tracked('unified_group_audit_page',{request,mode,search,offset,limit},'reads'),
     unifiedManagementPage:(revision,kind,query='',group=null,offset=0,limit=50)=>tracked('unified_management_page',{revision,kind,query,group,offset,limit},'reads'),

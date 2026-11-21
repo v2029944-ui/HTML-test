@@ -9,14 +9,7 @@ let kind='significant',page=0,percent=30,minCount=5,minAmount=1000;
 const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined&&text!==null)n.textContent=String(text);if(cls)n.className=cls;return n;};
 const button=(text,run,cls='btn')=>{const n=el('button',text,cls);n.type='button';n.addEventListener('click',run);return n;};
 const fmt=(n,metric='amount')=>Number.isFinite(n)?new Intl.NumberFormat('ru-RU',{minimumFractionDigits:metric==='count'?3:2,maximumFractionDigits:metric==='count'?3:2}).format(n===0?0:n):'—';
-function displayedChange(delta,metric){
- if(!Number.isFinite(delta))return {value:'—',label:'—',direction:'neutral'};
- const value=fmt(Math.abs(delta),metric);
- if(Math.abs(delta)<1e-9)return {value,label:'Без изменений',direction:'neutral'};
- if(!/[1-9]/.test(value))return {value,label:'≈ без изменений',direction:'neutral'};
- const signed=(delta>0?'+':'−')+value;
- return {value:signed,label:(delta>0?'▲ ':'▼ ')+signed,direction:delta>0?'up':'down'};
-}
+const displayedChange=(delta,metric)=>window.analysisSummary.displayedChange(delta,metric,fmt);
 function pct(n,summary=false){
  if(!Number.isFinite(n))return '—';
  if(Math.abs(n)<0.05)return summary?'< 0,1%':Math.abs(n)<1e-9?'0,0%':'≈ 0,0%';
@@ -80,7 +73,7 @@ function appendTableRow(body,values){
  body.append(tr);
 }
 function writeTable(table,headers,rows){if(!table)return;let head=table.querySelector('thead'),body=table.querySelector('tbody');if(!head){head=el('thead');table.append(head);}if(!body){body=el('tbody');table.append(body);}const tr=el('tr');for(const h of headers){const th=el('th',h);th.setAttribute('scope','col');tr.append(th);}head.replaceChildren(tr);body.replaceChildren();for(const row of rows)appendTableRow(body,row);return body;}
-function summaryLeaders(result,metric){const root=$('#s1 .insight-card');if(!root)return;const rows=result?.['top_'+metric]||[],valid=rows.filter(r=>Number.isFinite(r[metric]?.delta)&&r[metric].delta!==0).sort((a,b)=>Math.abs(b[metric].delta)-Math.abs(a[metric].delta)).slice(0,2);const body=root.querySelector('div');if(!body)return;body.replaceChildren(el('p',titles[metric]+' · сопоставимые подразделения','mut'));for(const row of valid){const line=el('div',null,'insight-row'),change=displayedChange(row[metric].delta,metric);line.append(el('span',row.name),el('strong',change.label,change.direction));body.append(line);}if(!valid.length)body.append(el('p','Нет сопоставимых ненулевых изменений.','mut'));}
+function summaryLeaders(result,metric){const root=$('#s1 .insight-card');if(!root)return;const rows=result?.['top_'+metric]||[],valid=rows.filter(r=>Number.isFinite(r[metric]?.delta)&&r[metric].delta!==0).sort((a,b)=>Math.abs(b[metric].delta)-Math.abs(a[metric].delta)).slice(0,2);const body=root.querySelector('div');if(!body)return;body.replaceChildren(el('p',titles[metric]+' · сопоставимые подразделения','mut'));for(const row of valid){const line=el('div',null,'insight-row'),change=displayedChange(row[metric].delta,metric);line.append(el('span',window.analysisSummary.itemLabel(row)),el('strong',change.label,change.direction));body.append(line);}if(!valid.length)body.append(el('p','Нет сопоставимых ненулевых изменений.','mut'));}
 async function refreshSummary(s,ticket){
  const current=()=>ticket===generation&&scope===s;
  try{

@@ -339,14 +339,16 @@ function init(){
  for(const id of ['importWeek','importMonth','sheetSelect'])$(id).addEventListener('change',periodLayoutChanged);
  $('dailyYear').addEventListener('change',changed);
  function updateWideSheetSummary(){
-  $('unifiedWideSheets').value=wideSheetRows.filter(row=>row.box.checked).map(row=>row.name).join('; ');
+  const explicit=$('unifiedWideSheetMode').value==='selected',chosen=wideSheetRows.filter(row=>row.box.checked);
+  const summary=$('unifiedWideSheets');summary.value=explicit?chosen.map(row=>row.name).join('; '):'';summary.hidden=!explicit;
+  $('unifiedSequentialHint').hidden=!explicit||!chosen.some(row=>row.period.value!=='dates');
  }
  function renderWideSheetChoices(found){
   const root=$('dailySheetChoices');root.replaceChildren();wideSheetRows=[];
   root.append(el('p','Можно загрузить несколько листов за одну проверку, например четыре квартала с дневными значениями. Пропуски не считаются нулями.','muted small'));
   const label=el('label','Листы для загрузки'),mode=el('select');mode.id='unifiedWideSheetMode';
   for(const [value,text] of [['auto','Все подходящие дневные листы'],['selected','Только отмеченные листы']]){const option=el('option',text);option.value=value;mode.append(option);}mode.value='auto';label.append(mode);root.append(label);
-  mode.addEventListener('change',changed);
+  mode.addEventListener('change',()=>{updateWideSheetSummary();changed();});
   const summary=el('input');summary.id='unifiedWideSheets';summary.readOnly=true;summary.setAttribute('aria-label','Отмеченные листы');root.append(summary);
   for(const [i,sheet] of found.entries()){
    const row=el('div',undefined,'daily-sheet-option'),checkLabel=el('label',undefined,'checkline'),box=el('input');box.type='checkbox';box.id='unifiedWideSheet'+i;
@@ -357,7 +359,7 @@ function init(){
    box.addEventListener('change',()=>{mode.value='selected';updateWideSheetSummary();changed();});
    period.addEventListener('change',()=>{if(period.value!=='dates')yearDetails.open=true;box.checked=true;mode.value='selected';updateWideSheetSummary();changed();});root.append(row);
   }
-  root.append(el('p','Для последовательных колонок укажите год выше и квартал каждого отмеченного листа. Требуется ровно одна пара «Количество / Сумма» на каждый день; итог квартала по дням не распределяется. Даты и количество отчётов проверьте до сохранения.','muted small'));
+  const hint=el('p','Для последовательных колонок укажите год выше и квартал каждого отмеченного листа. Требуется ровно одна пара «Количество / Сумма» на каждый день; итог квартала по дням не распределяется. Даты и количество отчётов проверьте до сохранения.','muted small');hint.id='unifiedSequentialHint';root.append(hint);
   const wideMap=el('textarea');wideMap.id='unifiedWideMapping';wideMap.rows=3;wideMap.maxLength=8192;wideMap.placeholder='Ручные столбцы по листам: Имя листа; строка заголовка; работа; первый день; итог количества; итог суммы';wideMap.addEventListener('input',changed);wideManual.replaceChildren(el('summary','Указать столбцы дневного листа вручную'),wideMap);
   for(const sheet of found.filter(sheet=>mappingSheetLabel(sheet.name)!==sheet.name)){
    wideManual.append(button('Добавить строку для «'+sheet.name+'»',()=>{
@@ -445,13 +447,20 @@ function init(){
   if($('importFormat').value==='daily-wide'){
    const value=$('dailyYear').value.trim(),year=value?Number(value):null;if(year!==null&&(!Number.isInteger(year)||year<1900||year>9999))throw Error('Укажите год от 1900 до 9999.');
    const explicit=$('unifiedWideSheetMode').value==='selected',chosen=explicit?wideSheetRows.filter(row=>row.box.checked).map(row=>row.name):[],map=Object.create(null),sequential_periods=Object.create(null);if(explicit&&!chosen.length)throw Error('Отметьте хотя бы один лист.');if(chosen.length>12)throw Error('Не более 12 листов за импорт.');
-   for(const row of wideSheetRows)if(row.box.checked&&row.period.value!=='dates'){
-    if(!explicit)throw Error('Для ручного квартала выберите только отмеченные листы.');
+   for(const row of wideSheetRows)if(explicit&&row.box.checked&&row.period.value!=='dates'){
     if(year===null)throw Error('Подтвердите год для последовательных дневных колонок.');
     if(!['q1','q2','q3','q4','year'].includes(row.period.value))throw Error('Укажите корректный квартал.');
     sequential_periods[row.name]={year,quarter:row.period.value==='year'?null:Number(row.period.value.slice(1))};
    }
-   for(const line of ($('unifiedWideMapping')?.value||'').split(/\r?\n/).filter(s=>s.trim())){const [name,header,work,day,totalCount,totalAmount]=wideMappingFields(line);if(!header||!work||!day)throw Error('Неполная ручная настройка листа.');const n=Number(header);if(!Number.isInteger(n)||n<1||n>100000)throw Error('Укажите номер заголовка листа.');map[name]={header_row:n,work_col:column(work),first_day_col:column(day),total_count_col:totalCount?column(totalCount):null,total_amount_col:totalAmount?column(totalAmount):null};}
+   for(const line of ($('unifiedWideMapping')?.value||'').split(/\r?\n/).filter(s=>s.trim())){
+    const [name,header,work,day,totalCount,totalAmount]=wideMappingFields(line);
+    if(Object.hasOwn(map,name))throw Error('Лист «'+name+'» указан в ручной настройке дважды. Оставьте одну строку для этого листа.');
+    if(explicit&&!chosen.includes(name))throw Error('Отметьте лист «'+name+'» или удалите его строку из ручной настройки.');
+    if(totalAmount&&!totalCount)throw Error('Для листа «'+name+'» укажите столбец итогового количества вместе с итоговой суммой.');
+    if(!header||!work||!day)throw Error('Неполная ручная настройка листа.');
+    const n=Number(header);if(!Number.isInteger(n)||n<1||n>100000)throw Error('Укажите номер заголовка листа.');
+    map[name]={header_row:n,work_col:column(work),first_day_col:column(day),total_count_col:totalCount?column(totalCount):null,total_amount_col:totalAmount?column(totalAmount):null};
+   }
    return {year,sheets:chosen,mappings:map,organizations:orgs.slice(),sequential_periods};
   }
   const kind=$('importType').value,start=kind==='month'?$('importMonth').value+'-01':$('importWeek').value;if(!validDate(start))throw Error('Укажите первую дату отчётного периода.');
