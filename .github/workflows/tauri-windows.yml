@@ -111,12 +111,13 @@ jobs:
           Copy-Item $setups[0].FullName "tauri/test-artifacts/setup.exe"
           Copy-Item ($setups[0].FullName + ".sig") "tauri/test-artifacts/setup.exe.sig"
       - name: Build non-distributable GUI test installer with WebView2 CDP
+        id: gui_smoke_build
         if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         shell: pwsh
         run: |
           Push-Location tauri
           try {
-            npx tauri build --config tests/ci-webview2.json
+            npx tauri build --config tests/ci-webview2.json --features ci-webview2
             if ($LASTEXITCODE -ne 0) { throw 'WebView2 smoke build failed' }
           }
           finally { Pop-Location }
@@ -141,6 +142,13 @@ jobs:
           python tauri/tests/windows_smoke.py
           if ($LASTEXITCODE -ne 0) { throw 'WebView2 smoke test failed' }
           if ($dialogTestExit -ne 0) { throw 'Native dialog identification tests failed' }
+      - name: Test two installed clients through a real temporary SMB share
+        if: ${{ !cancelled() && steps.gui_smoke_build.outcome == 'success' }}
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python tauri/tests/windows_shared_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw 'Installed independent SMB clients failed' }
       - name: Upload preview EXE and Windows verification
         if: always() && github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         uses: actions/upload-artifact@v4
@@ -174,6 +182,9 @@ jobs:
             tauri/test-artifacts/reference-*.json
             tauri/test-artifacts/native-file-*.png
             tauri/test-artifacts/native-file-dialogs*.json
+            tauri/test-artifacts/shared-smb-*.png
+            tauri/test-artifacts/shared-smb-*.json
+            tauri/test-artifacts/shared-smb-error.txt
           if-no-files-found: warn
           retention-days: 14
       - name: Upload installed interface gallery

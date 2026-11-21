@@ -194,11 +194,12 @@ jobs:
           Copy-Item $exe 'tauri/test-artifacts/setup.exe'
           Copy-Item "$exe.sig" 'tauri/test-artifacts/setup.exe.sig'
       - name: Build isolated non-distributable WebView2 test installer
+        id: gui_smoke_build
         shell: pwsh
         run: |
           Push-Location tauri
           try {
-            npx tauri build --config tests/ci-webview2.json
+            npx tauri build --config tests/ci-webview2.json --features ci-webview2
             if ($LASTEXITCODE -ne 0) { throw 'WebView2 test build failed' }
           } finally { Pop-Location }
       - name: Test installed app through real WebView2
@@ -211,6 +212,28 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Playwright install failed' }
           python tauri/tests/windows_smoke.py
           if ($LASTEXITCODE -ne 0) { throw 'Installed GUI test failed' }
+      - name: Test two installed clients through a real temporary SMB share
+        if: ${{ !cancelled() && steps.gui_smoke_build.outcome == 'success' }}
+        env:
+          PYTHONIOENCODING: utf-8
+        shell: pwsh
+        run: |
+          python -m unittest discover -s tauri/tests -p test_reference_shared_smoke.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Shared client identification tests failed' }
+          python tauri/tests/windows_shared_smoke.py
+          if ($LASTEXITCODE -ne 0) { throw 'Installed independent SMB clients failed' }
+      - name: Retain installed shared-workspace diagnostics
+        if: ${{ always() && steps.gui_smoke_build.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Tauri-signed-shared-workspace-tests
+          path: |
+            tauri/test-artifacts/shared-smb-*.png
+            tauri/test-artifacts/shared-smb-*.json
+            tauri/test-artifacts/shared-smb-error.txt
+            tauri/test-artifacts/native-file-dialogs-inventory-shared-smb-*.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Retain signed artifacts
         uses: actions/upload-artifact@v4
         with:

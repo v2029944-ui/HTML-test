@@ -312,8 +312,14 @@ def api(page, method, *args):
 
 
 def invoke(page, command, args=None):
+    # Raw fixture commands still need the identity enforced by Rust. Preserve an
+    # explicit stale/invalid token so rejection tests cannot silently refresh it.
+    payload=dict(args or {})
+    if not command.startswith('shared_workspace_') and 'workspaceToken' not in payload:
+        status=page.evaluate("window.__TAURI__.core.invoke('shared_workspace_status')")
+        payload['workspaceToken']=status['workspace_token']
     return page.evaluate('({command,args}) => window.__TAURI__.core.invoke(command,args)',
-                         {'command':command,'args':args or {}})
+                         {'command':command,'args':payload})
 
 
 def assert_rejected(action, description, *messages):
@@ -332,7 +338,7 @@ def wait_for_text(page, selector, text, timeout_ms=30_000):
         f'{selector} contains {text}',timeout_ms)
 
 
-def ready(page, count):
+def ready(page, count, *, shared=False):
     wait_for_app_state(page,'Boolean(window.appReady)', 'Unified SQLite startup',90_000)
     assert page.evaluate('window.appReady') is True
     assert page.evaluate('''() => {
@@ -347,7 +353,8 @@ def ready(page, count):
     expect(page.locator('#s1')).to_be_visible()
     assert page.locator('#dashboard').evaluate("el=>el.classList.contains('active')")
     assert api(page,'nativeSettingsBootstrap')['reports']==count
-    wait_for_text(page,'#unifiedIndexStatus',f'Локальная база SQLite. Отчётов: {count}',90_000)
+    mode='Общая' if shared else 'Локальная'
+    wait_for_text(page,'#unifiedIndexStatus',f'{mode} база SQLite. Отчётов: {count}',90_000)
 
 
 def check_runtime(page):
