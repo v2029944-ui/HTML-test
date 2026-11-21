@@ -4,6 +4,7 @@ Only the separately compiled ci-webview2 installer accepts the root/port hooks.
 No bridge, dialog, storage command, polling timer or network share is replaced.
 """
 import ctypes
+import errno
 import hashlib
 import json
 import ntpath
@@ -125,6 +126,20 @@ def smb_workspace(root):
             action()
 
 
+
+def wait_for_webview_shutdown(port, timeout=60):
+    """Windows may keep the owned WebView2 listener alive briefly after WM_CLOSE."""
+    deadline = time.monotonic() + timeout
+    while True:
+        with socket.socket() as probe:
+            probe.settimeout(.5)
+            if probe.connect_ex(('127.0.0.1', port)) in (errno.ECONNREFUSED, 10061):
+                return
+        if time.monotonic() >= deadline:
+            raise RuntimeError('WebView2 listener did not close after application exit: ' + str(port))
+        time.sleep(.25)
+
+
 class InstalledClient:
     def __init__(self, playwright, executable, root, name, port, output):
         self.playwright, self.executable = playwright, Path(executable)
@@ -211,6 +226,7 @@ class InstalledClient:
                        check=True, capture_output=True, timeout=15)
         assert self.process.wait(timeout=30) == 0, self.name + ' did not exit normally'
         self._disconnect()
+        wait_for_webview_shutdown(self.port)
 
     def force_stop(self):
         if self.process is not None and self.process.poll() is None:

@@ -12,8 +12,27 @@ from unittest.mock import Mock, patch
 
 from windows_shared_smoke import (INSTALLER_AUTOSTART_CLEANUP, InstalledClient, generations,
                                   native_select, require_private_database, smb_workspace,
-                                  stop_installer_autostart, windows_path)
+                                  stop_installer_autostart, wait_for_webview_shutdown, windows_path)
 from windows_smoke import ROOT, invoke
+
+
+class WebViewShutdownTests(unittest.TestCase):
+    def test_restart_waits_for_the_old_listener_to_stop_accepting_connections(self):
+        probe = Mock()
+        probe.connect_ex.side_effect = [0, 0, 10061]
+        with patch('windows_shared_smoke.socket.socket') as factory, patch('windows_shared_smoke.time.sleep') as pause:
+            factory.return_value.__enter__.return_value = probe
+            wait_for_webview_shutdown(9231)
+        self.assertEqual(probe.connect_ex.call_count, 3)
+        self.assertEqual(pause.call_count, 2)
+
+    def test_an_active_listener_is_never_reused(self):
+        probe = Mock()
+        probe.connect_ex.return_value = 0
+        with patch('windows_shared_smoke.socket.socket') as factory:
+            factory.return_value.__enter__.return_value = probe
+            with self.assertRaisesRegex(RuntimeError, 'did not close'):
+                wait_for_webview_shutdown(9231, timeout=0)
 
 
 class InstallerCleanupTests(unittest.TestCase):
