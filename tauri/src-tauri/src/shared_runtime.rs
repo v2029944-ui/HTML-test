@@ -70,7 +70,7 @@ fn token() -> String {
     );
     format!("{:x}", Sha256::digest(entropy.as_bytes()))
 }
-fn check_local_cache(root: &Path) -> Result<(), String> {
+pub(crate) fn check_local_cache(root: &Path) -> Result<(), String> {
     let _canonical = fs::canonicalize(root).map_err(err)?;
     #[cfg(windows)]
     {

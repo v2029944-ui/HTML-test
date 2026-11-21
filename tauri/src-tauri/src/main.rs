@@ -1592,6 +1592,12 @@ fn smoke_configuration() -> Result<Option<(std::path::PathBuf, u16)>, String> {
     {
         return Err("Smoke data root must be an absolute local fixture directory".into());
     }
+    #[cfg(windows)]
+    if !matches!(root.components().next(), Some(std::path::Component::Prefix(prefix))
+        if matches!(prefix.kind(), std::path::Prefix::Disk(_) | std::path::Prefix::VerbatimDisk(_)))
+    {
+        return Err("Smoke data root must use a local disk path, not UNC".into());
+    }
     let port = std::env::var("ANALIZ_SMOKE_CDP_PORT")
         .unwrap_or_else(|_| "9227".into())
         .parse::<u16>()
@@ -1632,6 +1638,11 @@ fn main() {
             let root = app.path().document_dir()?.join("Анализ работ");
             #[cfg(feature = "ci-webview2")]
             let root = smoke.as_ref().map(|(root, _)| root.clone()).unwrap_or(root);
+            #[cfg(feature = "ci-webview2")]
+            if smoke.is_some() {
+                std::fs::create_dir_all(&root)?;
+                storage::shared_runtime::check_local_cache(&root).map_err(std::io::Error::other)?;
+            }
             // Hold one exclusive lock for the entire application lifetime.
             // Offline recovery runs before ANY native SQLite connection opens.
             let lease = storage::AppRestoreLock::acquire(&root).map_err(std::io::Error::other)?;
