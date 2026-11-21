@@ -1146,9 +1146,10 @@ def check_groups(page, confirmations):
     page.locator('#groupRenameName').fill('Переименованная группа CI')
     page.locator('#groupRenameName').press('Enter')
     group=page.locator('#groupList details').filter(has_text='Переименованная группа CI')
-    expect(group.locator('summary')).to_be_visible(timeout=90_000)
-    if not group.evaluate('node=>node.open'):
-        group.locator('summary').click()
+    # Rename reloads the list, opens the replacement row, then restores focus.
+    # Clicking its summary while that restoration is in flight can close the row.
+    expect(group.get_by_role('button',name='Переименовать',exact=True)).to_be_focused(timeout=90_000)
+    expect(group).to_have_js_property('open',True)
     assert confirmations.revision()>initial_revision
     member=group.locator('.group-member').filter(has_text='Альфа')
     member.locator('select').select_option('',timeout=90_000)
