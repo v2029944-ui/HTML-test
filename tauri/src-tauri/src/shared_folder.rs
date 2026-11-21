@@ -2,7 +2,7 @@
 use super::{err, Storage};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use tempfile::{NamedTempFile, TempDir};
 
@@ -37,7 +37,7 @@ fn head(folder: &Path) -> Result<u64, String> {
     Ok(latest)
 }
 
-fn transfer(source: &mut File, output: &mut File) -> Result<[u8; 32], String> {
+fn transfer(source: &mut File, output: &mut impl Write) -> Result<[u8; 32], String> {
     let mut hash = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
     loop {
@@ -92,39 +92,81 @@ impl Checkout {
         })
     }
 
-    pub fn commit(self) -> Result<u64, String> {
-        let conflict = "Общая база изменилась. Обновите данные и повторите предпросмотр.";
-        if head(&self.folder)? != self.generation {
-            return Err(conflict.into());
-        }
+    pub fn prepare_publication(self) -> Result<Publication, String> {
         let next = self
             .generation
             .checked_add(1)
             .ok_or("Исчерпаны номера поколений.")?;
         let backup = self.local.path().join("publish.sqlite3");
         self.storage.backup_sqlite_verified(&backup)?;
-        let mut input = File::open(backup).map_err(err)?;
+        let digest = transfer(&mut File::open(&backup).map_err(err)?, &mut std::io::sink())?;
+        Ok(Publication {
+            local: self.local,
+            folder: self.folder,
+            next,
+            digest,
+        })
+    }
+
+    pub fn commit(self) -> Result<u64, String> {
+        self.prepare_publication()?.publish()
+    }
+}
+
+/// Retain this verified local payload until the network acknowledges the write.
+/// Retrying the same publication never applies the Excel import a second time.
+pub struct Publication {
+    local: TempDir,
+    folder: PathBuf,
+    next: u64,
+    digest: [u8; 32],
+}
+
+impl Publication {
+    fn confirmed(&self, target: &Path) -> Result<bool, String> {
+        let mut file = match File::open(target) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => return Err(err(e)),
+        };
+        let mut magic = [0; 8];
+        let mut expected = [0; 32];
+        file.read_exact(&mut magic).map_err(err)?;
+        file.read_exact(&mut expected).map_err(err)?;
+        if &magic != MAGIC || expected != self.digest {
+            return Err("Общая база изменилась. Обновите данные и повторите предпросмотр.".into());
+        }
+        if transfer(&mut file, &mut std::io::sink())? != expected {
+            return Err("Контрольная сумма опубликованной базы не совпадает.".into());
+        }
+        Ok(true)
+    }
+
+    pub fn publish(&self) -> Result<u64, String> {
+        let target = path(&self.folder, self.next);
+        if self.confirmed(&target)? {
+            return Ok(self.next);
+        }
+        if head(&self.folder)? != self.next - 1 {
+            if self.confirmed(&target)? {
+                return Ok(self.next);
+            }
+            return Err("Нарушена последовательность версий общей базы.".into());
+        }
+        let mut input = File::open(self.local.path().join("publish.sqlite3")).map_err(err)?;
         let mut staged = NamedTempFile::new_in(&self.folder).map_err(err)?;
         staged.write_all(MAGIC).map_err(err)?;
-        staged.write_all(&[0; 32]).map_err(err)?;
-        let digest = transfer(&mut input, staged.as_file_mut())?;
-        staged.seek(SeekFrom::Start(8)).map_err(err)?;
-        staged.write_all(&digest).map_err(err)?;
+        staged.write_all(&self.digest).map_err(err)?;
+        if transfer(&mut input, staged.as_file_mut())? != self.digest {
+            return Err("Подготовленная копия изменилась. Повторите предпросмотр.".into());
+        }
         staged.as_file().sync_all().map_err(err)?;
-        // On both NTFS/SMB and local test filesystems this must be a single
-        // no-replace operation. Never fall back to a copying or replacing move.
-        let staged = staged.into_temp_path();
-        staged
-            .persist_noclobber(path(&self.folder, next))
-            .map_err(|failure| {
-                let error = failure.error;
-                if error.kind() == std::io::ErrorKind::AlreadyExists {
-                    conflict.to_owned()
-                } else {
-                    format!("Не удалось подтвердить публикацию. Проверьте общую папку: {error}")
-                }
-            })?;
-        Ok(next)
+        if let Err(failure) = staged.into_temp_path().persist_noclobber(&target) {
+            if !self.confirmed(&target)? {
+                return Err(format!("Не удалось подтвердить публикацию. Повторите отправку подготовленной копии: {}", failure.error));
+            }
+        }
+        Ok(self.next)
     }
 }
 
@@ -212,6 +254,34 @@ mod tests {
         assert_eq!(fresh.storage.load().unwrap(), confirmed);
         assert_eq!(confirmed["reports"][0]["start"], "2026-11-01");
         assert_eq!(confirmed["reports"][0]["rows"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn retry_after_lost_acknowledgement_keeps_later_imports_and_checks_actual_bytes() {
+        let folder = exchange_folder();
+        let client = tempfile::tempdir().unwrap();
+        let publication = Checkout::open(folder.path(), client.path())
+            .unwrap()
+            .prepare_publication()
+            .unwrap();
+        assert_eq!(publication.publish().unwrap(), 1);
+        // Another writer advances the shared state before this caller retries.
+        assert_eq!(
+            Checkout::open(folder.path(), client.path())
+                .unwrap()
+                .commit()
+                .unwrap(),
+            2
+        );
+        assert_eq!(publication.publish().unwrap(), 1);
+        assert_eq!(head(folder.path()).unwrap(), 2);
+        OpenOptions::new()
+            .append(true)
+            .open(path(folder.path(), 1))
+            .unwrap()
+            .write_all(b"damage")
+            .unwrap();
+        assert!(publication.publish().is_err());
     }
 
     #[test]
