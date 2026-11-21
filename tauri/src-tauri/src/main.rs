@@ -1663,7 +1663,7 @@ fn main() {
             if let Some((_, port)) = &smoke {
                 for config in app.config().app.windows.clone() {
                     tauri::WebviewWindowBuilder::from_config(app, &config)?
-                        .data_directory(root.join("webview-profile"))
+                        .data_directory(root.join(format!("webview-profile-{port}")))
                         .additional_browser_args(&format!(
                             "--remote-debugging-address=127.0.0.1 --remote-debugging-port={port}"
                         ))

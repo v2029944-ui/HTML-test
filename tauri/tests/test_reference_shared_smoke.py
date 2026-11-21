@@ -17,6 +17,20 @@ from windows_smoke import ROOT, invoke
 
 
 class WebViewShutdownTests(unittest.TestCase):
+    def test_restart_reopens_the_same_database_with_an_independent_renderer(self):
+        client = InstalledClient(None, Path('app.exe'), Path('client-a'), 'a', 9231, Path('artifacts'))
+        root = client.env['ANALIZ_SMOKE_DATA_ROOT']
+        profile = client.env['WEBVIEW2_USER_DATA_FOLDER']
+        with patch.object(client, 'start') as start, patch.object(client, 'stop') as stop:
+            client.restart(366, 9234)
+        stop.assert_called_once()
+        start.assert_called_once_with(366, shared=True)
+        self.assertEqual(client.env['ANALIZ_SMOKE_DATA_ROOT'], root)
+        self.assertNotEqual(client.env['WEBVIEW2_USER_DATA_FOLDER'], profile)
+        self.assertEqual(client.env['ANALIZ_SMOKE_CDP_PORT'], '9234')
+        with self.assertRaises(ValueError):
+            client.restart(366, 9234)
+
     def test_restart_waits_for_the_old_listener_to_stop_accepting_connections(self):
         probe = Mock()
         probe.connect_ex.side_effect = [0, 0, 10061]

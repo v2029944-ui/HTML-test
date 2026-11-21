@@ -128,11 +128,11 @@ def smb_workspace(root):
 
 
 def wait_for_webview_shutdown(port, timeout=60):
-    """Windows may keep the owned WebView2 listener alive briefly after WM_CLOSE."""
+    """Verify the disposable worker cleanup released each diagnostic endpoint."""
     deadline = time.monotonic() + timeout
     while True:
         with socket.socket() as probe:
-            probe.settimeout(.5)
+            probe.settimeout(4)
             if probe.connect_ex(('127.0.0.1', port)) in (errno.ECONNREFUSED, 10061):
                 return
         if time.monotonic() >= deadline:
@@ -147,7 +147,7 @@ class InstalledClient:
         self.data = self.root / 'data'
         self.env = dict(os.environ, ANALIZ_SMOKE_DATA_ROOT=str(self.data),
                         ANALIZ_SMOKE_CDP_PORT=str(port),
-                        WEBVIEW2_USER_DATA_FOLDER=str(self.root / 'webview'))
+                        WEBVIEW2_USER_DATA_FOLDER=str(self.root / f'webview-{port}'))
         self.env.pop('WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS', None)
         self.env['NO_PROXY'] = self.env.get('NO_PROXY', '') + ',127.0.0.1,localhost'
         self.process = self.browser = self.page = None
@@ -226,7 +226,6 @@ class InstalledClient:
                        check=True, capture_output=True, timeout=15)
         assert self.process.wait(timeout=30) == 0, self.name + ' did not exit normally'
         self._disconnect()
-        wait_for_webview_shutdown(self.port)
 
     def force_stop(self):
         if self.process is not None and self.process.poll() is None:
@@ -243,8 +242,14 @@ class InstalledClient:
             self.browser.close()
         self.browser = self.page = self.process = None
 
-    def restart(self, reports):
+    def restart(self, reports, port):
+        # Only the WebView diagnostics are fresh. Runtime reopens its original data directory.
+        if port == self.port:
+            raise ValueError('A restarted client requires a fresh diagnostic endpoint')
         self.stop()
+        self.port = port
+        self.env['ANALIZ_SMOKE_CDP_PORT'] = str(port)
+        self.env['WEBVIEW2_USER_DATA_FOLDER'] = str(self.root / f'webview-{port}')
         self.start(reports, shared=True)
 
     def state(self):
@@ -425,8 +430,8 @@ def run():
                 assert generations(folder) == committed
                 assert summary(a) == summary(b)
                 note('repeat-source-is-replacement-not-duplicate', reader=b.state(), totals=summary(b))
-                a.restart(366)
-                b.restart(366)
+                a.restart(366, 9234)
+                b.restart(366, 9235)
                 for client in (a, b):
                     state = client.state()
                     assert state['mode'] == 'shared' and state['available'] and not state['pending'], state
@@ -439,8 +444,11 @@ def run():
                     client.page.screenshot(path=str(output / ('shared-smb-' + client.name + '-reopened.png')))
                 assert generations(folder) == committed, 'Reopen modified an immutable shared generation'
                 note('both-clients-reopened-in-persisted-shared-workspace', writer=a.state(), reader=b.state())
-                proof['status'] = 'passed'
-                record.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding='utf-8')
+        # windows_test_workspace has now released its profile-specific workers.
+        for port in (9231, 9232, 9234, 9235):
+            wait_for_webview_shutdown(port)
+        proof['status'] = 'passed'
+        record.write_text(json.dumps(proof, ensure_ascii=False, indent=2), encoding='utf-8')
     except BaseException as error:
         proof['status'] = 'failed'
         proof['error'] = type(error).__name__ + ': ' + str(error)
