@@ -11,6 +11,7 @@ build = "build.rs"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+tempfile = "3"
 fs2 = "0.4"
 analiz-import-core = { path = "../import-core" }
 tauri = { version = "2", features = [] }
@@ -30,5 +31,4 @@ sha2 = "0.10"
 
 [dev-dependencies]
 zip = { version = "=2.4.2", default-features = false, features = ["deflate"] }
-tempfile = "3"
 

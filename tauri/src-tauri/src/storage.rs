@@ -30,6 +30,9 @@ pub use report_quality::{QualityScope, ReportQualityPage};
 mod unified_reports;
 pub use unified_reports::{UnifiedQualityFilter, UnifiedQualityPage, UnifiedCalendar};
 
+#[path = "shared_folder.rs"]
+pub mod shared_folder;
+
 #[path = "backup.rs"]
 mod backup;
 #[path = "recovery.rs"]

@@ -67,6 +67,22 @@ jobs:
         run: cargo test --locked --manifest-path tauri/import-core/Cargo.toml
       - name: Test bounded SQLite read model
         run: cargo test --locked --manifest-path tauri/storage-core/Cargo.toml
+      - name: Test independent clients through a disposable Windows SMB share
+        shell: pwsh
+        run: |
+          $shareName = 'AnalizTest' + [guid]::NewGuid().ToString('N')
+          $directory = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP $shareName)
+          $account = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+          New-SmbShare -Name $shareName -Path $directory.FullName -FullAccess $account -ErrorAction Stop | Out-Null
+          try {
+            $env:ANALIZ_TEST_SMB_PARENT = '\\localhost\' + $shareName
+            cargo test --locked --manifest-path tauri/storage-core/Cargo.toml storage::shared_folder::tests
+            if ($LASTEXITCODE -ne 0) { throw "Shared-folder tests failed" }
+          } finally {
+            Remove-SmbShare -Name $shareName -Force
+            Remove-Item -LiteralPath $directory.FullName -Recurse -Force
+          }
+
       - name: Build Windows installer
         if: github.ref != 'refs/heads/work/tauri-dropdown-updates-20261117'
         run: npm --prefix tauri run build:windows
