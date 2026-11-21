@@ -24,12 +24,9 @@ function buildUnified(source){
  const rankingColor="fill.style.setProperty('--rank-color',seriesColor(row.name));";
  if(!script.includes(rankingColor))throw Error('Original ranking color marker changed');
  script=script.replace(rankingColor,"fill.style.setProperty('--rank-color','var(--accent)');");
- const rankingRows=".filter(item=>Number.isFinite(item.value))";
+ const rankingRows='const defaultHideZeroRankingRows=false;';
  if(!script.includes(rankingRows))throw Error('Original ranking filter marker changed');
- script=script.replace(rankingRows,".filter(item=>Number.isFinite(item.value)&&item.value!==0)");
- const noZero="Нет сопоставимых значений за выбранный период.";
- if(!script.includes(noZero))throw Error('Original empty ranking marker changed');
- script=script.replace(noZero,"Нет ненулевых значений за выбранный период. Нулевые строки рейтинга скрыты.");
+ script=script.replace(rankingRows,'const defaultHideZeroRankingRows=true;');
  const chartValues="return value===null?[]:[value||0];";
  if(!script.includes(chartValues))throw Error('Original chart value marker changed');
  script=script.replace(chartValues,"return Number.isFinite(value)?[value]:[];");
@@ -47,7 +44,7 @@ function buildUnified(source){
  script=script.replace("  const restoreSeriesFocus=root.contains(document.activeElement)&&document.activeElement?.matches('.chart-series-control select');\n",'');
  const horizontalMarker="  const data=options.data||periods.map(p=>reportHasOrganizations(p,orgs)?summary(p,orgs).by:null);\n  if(periods.length===1){";
  if(!script.includes(horizontalMarker))throw Error('Original chart geometry changed');
- script=script.replace(horizontalMarker,"  const data=options.data||periods.map(p=>reportHasOrganizations(p,orgs)?summary(p,orgs).by:null);\n  if(bar&&options.orientation==='horizontal'){\n    if(typeof window.unifiedHorizontalBars!=='function')throw Error('Не загружена горизонтальная диаграмма.');\n    window.unifiedHorizontalBars(periods,shown,data,metric,root,options,seriesColor,()=>drawChart(periods,orgs,metric,root,options));\n    return;\n  }\n  if(periods.length===1){");
+ script=script.replace(horizontalMarker,"  const data=options.data||periods.map(p=>reportHasOrganizations(p,orgs)?summary(p,orgs).by:null);\n  if(bar&&options.orientation==='horizontal'){\n    if(typeof window.unifiedHorizontalBars!=='function')throw Error('Не загружена горизонтальная диаграмма.');\n    window.unifiedHorizontalBars(periods,shown,data,metric,root,options,seriesColor,()=>drawChart(periods,orgs,metric,root,options),seriesNumbers);\n    return;\n  }\n  if(periods.length===1){");
  script+=`
 (function(){
  const original={periodEnd,periodTitle,periodScale,periodUnit,plotPeriodLabel,displayPeriod,shiftPeriod};

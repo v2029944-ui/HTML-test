@@ -19,7 +19,7 @@ function chartPager(plot,key,options){
  plot.append(host);
  window.sqlRowScroll.attach(host,{...options,footer:host,controlsOnly:true});
 }
-function horizontalBars(periods,shown,data,metric,root,options,color,redraw){
+function horizontalBars(periods,shown,data,metric,root,options,color,redraw,seriesNumbers){
  if(!periods.length||!shown.length)return;
  const pageSize=12,pageCount=Math.ceil(periods.length/pageSize);
  const page=Math.max(0,Math.min(pageCount-1,Number.isSafeInteger(options.periodPage)?options.periodPage:0));
@@ -49,6 +49,7 @@ function horizontalBars(periods,shown,data,metric,root,options,color,redraw){
   svg.append(make('text',{x,y:16,'text-anchor':'middle',fill:'var(--plot-label)','font-size':11},presentation.fmt(v,metric)));
  }
  const zero=px(0);svg.append(make('line',{x1:zero,y1:top-14,x2:zero,y2:height-bottom+6,stroke:'var(--axis)'}));
+ const numbered=new Set();
  visible.forEach((period,index)=>{
   const originalIndex=start+index,y=top+index*groupHeight,point=data[originalIndex];
   const caption=presentation.displayPeriod(period);
@@ -66,6 +67,10 @@ function horizontalBars(periods,shown,data,metric,root,options,color,redraw){
     svg.append(make('text',{x:left+8,y:ybar+11,fill:'var(--warning)','font-size':11},'— нет данных'));
     return;
    }
+   if(seriesNumbers&&!numbered.has(name)){
+    svg.append(make('text',{x:left-8,y:ybar+11,'text-anchor':'end',fill:'var(--text)','font-size':11,'aria-hidden':'true'},seriesNumbers.get(name)));
+    numbered.add(name);
+   }
    const x=px(v);
    const mark=make('rect',{x:Math.min(x,zero),y:ybar,width:Math.max(1,Math.abs(x-zero)),height:13,rx:2,fill:color(name),tabindex:0});
    const accessible=(options.label?options.label(name):name)+' · '+caption+': '+presentation.fmt(v,metric);
@@ -75,7 +80,8 @@ function horizontalBars(periods,shown,data,metric,root,options,color,redraw){
  const wrap=document.createElement('div');wrap.className='horizontal-bar-scroll';wrap.append(svg);root.append(wrap);
  const legend=document.createElement('div');legend.className='chart-legend';
  for(const name of shown){
-  const item=document.createElement('span');item.textContent=options.label?options.label(name):name;item.title=item.textContent;
+  const label=options.label?options.label(name):name,item=document.createElement('span');
+  item.textContent=seriesNumbers?seriesNumbers.get(name)+' · '+label:label;item.title=label;
   item.style.setProperty('--series',color(name));legend.append(item);
  }
  root.append(legend);

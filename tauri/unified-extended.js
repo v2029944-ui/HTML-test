@@ -58,6 +58,18 @@ function setDate(id,kind,date,force=false){const node=$(id);if(node&&(!node.data
 function copyScope(next){return {...next,organizations:[...next.organizations],selectedNames:[...(next.selectedNames||[])],selectedKeys:[...(next.selectedKeys||[])]};}
 function scopeFor(range,overrides={}){return {...copyScope(scope),...range,...overrides};}
 function request(s,overrides={}){return UI.request(s,overrides);}
+// Composition compares the sums of two exact ranges and never needs calendar buckets.
+function compositionRequest(s,overrides){
+ return request(s.source==='daily'?{...s,displayType:'day'}:s,overrides);
+}
+function historyGrouping(s){
+ if(s.source!=='daily')return null;
+ const kind=s.displayType;
+ if(kind==='week' && new Date(s.from+'T00:00:00Z').getUTCDay()===1 && new Date(s.to+'T00:00:00Z').getUTCDay()===0)return kind;
+ if(kind==='month' && s.from.endsWith('-01') && s.to===periodEnd(s.to.slice(0,7)+'-01',kind))return kind;
+ if(kind==='year' && s.from.endsWith('-01-01') && s.to.endsWith('-12-31'))return kind;
+ return 'day';
+}
 function fullExport(task,req,section,metric,fields={}){
  const spec={request:req,section,metric,...fields},panel=window.referenceDetail?.active;
  if(!panel)return null;
@@ -101,7 +113,7 @@ async function history(entry,s,organization,target,trigger){
  panel.hidden=false;title.textContent=entry.name+(organization?' · '+organization:'');
  title.focus({preventScroll:true});panel.scrollIntoView?.({block:'nearest'});
  const task=loading(prefix+'History',[content.id]);
- try{const result=await api.nativeWorkTimeline(s.revision,s.type,s.from,s.to,s.organizations,organization,entry.key,null,s.source==='daily'?s.displayType:null,s.selectedNames||[]);if(!task.valid())return;content.replaceChildren();content.append(UI.el('p','Динамика за '+caption(s)+'. Пропуски не считаются нулём. Данные представлены по периодам.','muted small'));plotTimeline(result,entry,s,content,target==='change'?[...changeMetrics]:metrics());}
+ try{const grouping=historyGrouping(s);const result=await api.nativeWorkTimeline(s.revision,s.type,s.from,s.to,s.organizations,organization,entry.key,null,grouping,s.selectedNames||[]);if(!task.valid())return;content.replaceChildren();content.append(UI.el('p','Динамика за '+caption(s)+'. Пропуски не считаются нулём. Данные представлены по периодам.','muted small'));plotTimeline(result,entry,grouping?{...s,displayType:grouping}:s,content,target==='change'?[...changeMetrics]:metrics());}
  catch(error){task.error(error);}finally{task.done();}
 }
 
@@ -349,7 +361,7 @@ async function contributions(index=0,paging=false){
    s.organizations=sample.included;
   }
   if(index===0)task.s.metricTotals={};const metricTotals=task.s.metricTotals||{};
-  const result=await Promise.all(chosen.map(metric=>index>0&&Number.isSafeInteger(metricTotals[metric])&&index*50>=metricTotals[metric]?null:api.nativeCompositionPageAtPage(request(s,{percent:0,min_count:0,min_amount:0}),{from:before.from,to:before.to},'contributions',metric,index)));
+  const result=await Promise.all(chosen.map(metric=>index>0&&Number.isSafeInteger(metricTotals[metric])&&index*50>=metricTotals[metric]?null:api.nativeCompositionPageAtPage(compositionRequest(s,{percent:0,min_count:0,min_amount:0}),{from:before.from,to:before.to},'contributions',metric,index)));
   if(!task.valid())return;clear('contributionResults','',false);clear('contributionCheck','',false);
   result.forEach((page,i)=>{const metric=chosen[i];if(!page)return;metricTotals[metric]=page.total_rows;if(!page.baseComplete||!page.currentComplete){$('contributionCheck').append(UI.el('p','Нет полного набора отчётов для обоих интервалов. Вклад не рассчитывается.','warn small'));return;}
    const check=page.check;$('contributionCheck').append(UI.el('p',titles[metric]+': сумма вкладов '+fmt(check.sum,metric)+'; общее изменение '+fmt(check.delta,metric)+' — '+(check.reconciled?'совпадает':'расхождение '+fmt(check.residual,metric)),check.reconciled?'positive small':'negative small'));
@@ -363,7 +375,7 @@ async function contributions(index=0,paging=false){
      'Изменение значения / модуль прежнего значения × 100%. При нулевой базе процент недоступен.',
      'Изменение работы / изменение общего итога × 100%. Вклад может быть отрицательным или больше 100%, если изменения других работ его компенсируют. При нулевом общем изменении доля недоступна.'
     ],
-    csvContext:fullExport(task,request(s),'contributions',metric,{before:{from:before.from,to:before.to}}),
+    csvContext:fullExport(task,compositionRequest(s),'contributions',metric,{before:{from:before.from,to:before.to}}),
     csvRows:page.rows.map(r=>[r.name,r.base,r.current,r.delta,r.percent,r.contribution])});
   });
   task.s.metricTotals=metricTotals;const total=Math.max(0,...chosen.map(metric=>metricTotals[metric]||0));pager('contribution',{total_rows:total,count:Math.max(0,...result.filter(Boolean).map(p=>p.rows.length))},index);
@@ -382,7 +394,7 @@ async function structure(){
    if(!sample.included.length){clear('structureResults');sampleNote($('structureResults'),sample);return;}
    s.organizations=sample.included;
   }
-  const page=await api.nativeCompositionPage(request(s,{percent:0,min_count:0,min_amount:0}),{from:before.from,to:before.to},'structure',metric,null,Number(value('structureLimit')));
+  const page=await api.nativeCompositionPage(compositionRequest(s,{percent:0,min_count:0,min_amount:0}),{from:before.from,to:before.to},'structure',metric,null,Number(value('structureLimit')));
   if(!task.valid())return;clear('structureResults');const root=$('structureResults');sampleNote(root,sample);
   if(!page.currentComplete){clear('structureResults','Нет полного отчёта анализируемого периода. Доли не рассчитываются.');return;}
   root.append(UI.el('p','Итог: '+fmt(page.total,metric),'small'));if(!page.sharesValid)root.append(UI.el('p','Есть отрицательные значения или неположительный итог: доли не рассчитываются.','warn small'));if(!page.baseComplete)root.append(UI.el('p','Базовый период неполон: изменение долей недоступно.','warn small'));
@@ -410,7 +422,7 @@ async function structure(){
     'Накопленная доля':'Сумма текущих долей от первой строки до этой включительно. Строка «Остальные услуги» учитывает оставшиеся работы.',
     'Изменение доли':'Доля сейчас минус доля раньше, в процентных пунктах.'
    })[header]),
-   csvContext:fullExport(task,request(s),'structure',metric,{before:{from:before.from,to:before.to},limit:selectedLimit})});
+   csvContext:fullExport(task,compositionRequest(s),'structure',metric,{before:{from:before.from,to:before.to},limit:selectedLimit})});
   const plot=UI.el('div',null,'metric-plot');root.append(plot);
   const key=row=>row.other?'others':row.key;
   UI.drawChart([{type:s.displayType,start:after.from,end:visibleEnd(after)}],new Set(s.organizations),metric,plot,
@@ -556,7 +568,11 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
  bind(['structureBase','structureCurrent','structureMetric','structureLimit','structureScope'],'change',structure);bind(['usualPeriod','usualWindow'],'change',()=>patterns('usual'));bind(['usualPercent'],'input',()=>schedule('usual',()=>patterns('usual')));bind(['regularityGap','regularityStatus'],'change',()=>patterns('regularity'));bind(['regularitySearch'],'input',()=>schedule('regularity',()=>patterns('regularity')));
  for(const [id,run] of [['advancedAnalytics',comparison],['contributions',contributions],['structurePanel',structure],['usualPanel',()=>patterns('usual')],['regularityPanel',()=>patterns('regularity')]])$(id).addEventListener('toggle',()=>{if($(id).open&&scope)run();});
  $('closeAnalyticsDetails').addEventListener('click',()=>closeHistory('analytics'));$('closeChangeDetails').addEventListener('click',()=>closeHistory('change'));
- $('overviewShowComparison').addEventListener('click',()=>{$('advancedAnalytics').open=true;$('comparisonMode').value='periods';comparison();$('comparison').scrollIntoView?.({block:'start'});});
+ $('overviewShowComparison').addEventListener('click',()=>{
+  $('comparisonMode').value='periods';
+  if(referencePanel('overviewPanel'))return window.referenceDesktop.openPanel('comparison',$('overviewShowComparison'));
+  $('advancedAnalytics').open=true;comparison();$('comparison').scrollIntoView?.({block:'start'});
+ });
  UI.onScope(resetScope);UI.onSnapshot(snapshot=>{if(!snapshot){scope=null;clearExtended();}});
  UI.onView('changes',()=>{activeView='changes';if(scope)changes();});UI.onView('dashboard',()=>{activeView='dashboard';if(scope?.revision===UI.revision&&$('advancedAnalytics').open)comparison();});for(const view of ['upload','groups','storage'])UI.onView(view,()=>{activeView=view;});
 }

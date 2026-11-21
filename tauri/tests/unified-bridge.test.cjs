@@ -46,3 +46,11 @@ test('worksheet auto-rule metadata forwards only the selected native rule',async
  await m.api.nativeImportSheets('C:/Excel/two.xlsx',rule);
  assert.deepEqual(JSON.parse(JSON.stringify(m.calls[0])),{command:'native_import_sheets',args:{source:'C:/Excel/two.xlsx',rule}});
 });
+
+test('all-work series paging distinguishes keyed rows from selectable names',async()=>{
+ const m=mount();
+ await m.api.unifiedNameOptionsAtPage(7,'',1,8,true);
+ await m.api.unifiedNameOptionsAtPage(7,'',1,8);
+ assert.equal(m.calls[0].args.allSeries,true);
+ assert.equal(m.calls[1].args.allSeries,undefined);
+});

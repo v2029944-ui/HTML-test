@@ -1397,37 +1397,8 @@ fn range_rows(
     }
     Ok(out)
 }
-impl Storage {
-    /// Bounded data for the graphical timeline, with missing periods as nulls.
-    /// Up to 120 source periods remain individual; longer selections are
-    /// grouped by calendar month (at most 121 months in a 10-year UI range).
-    pub fn analysis_timeline(
-        &self,
-        expected: i64,
-        s: &AnalysisScope,
-        q: &RangeQuery,
-    ) -> Result<TimelineSummary, String> {
-        self.analysis_timeline_grouped(expected, s, q, None)
-    }
-    pub fn analysis_timeline_grouped(
-        &self,
-        expected: i64,
-        s: &AnalysisScope,
-        q: &RangeQuery,
-        grouping: Option<&str>,
-    ) -> Result<TimelineSummary, String> {
-        let mut c = self.connect()?;
-        let tx = c.transaction().map_err(err)?;
-        workspace(&tx, expected, s)?;
-        fill_range(&tx, s, q, 1)?;
-        let period_count: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM temp.an_periods WHERE slot=1",
-            [], |r| r.get(0),
-        ).map_err(err)?;
-        let (mode, granularity) = timeline_grouping(s,q,grouping,period_count)?;
-        // Aggregate data and missing evidence in independent subqueries:
-        // joining both to detail rows would multiply amounts.
-        let sql = r#"
+// Aggregate missing evidence separately to avoid multiplying amounts by detail rows.
+const TIMELINE_BUCKET_TOTALS: &str = r#"
             WITH buckets AS (
                 SELECT CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
                        COUNT(*) AS periods
@@ -1456,7 +1427,36 @@ impl Storage {
             LEFT JOIN values_by_bucket v ON v.label=b.label
             ORDER BY b.label
         "#;
-        let mut stmt = tx.prepare(sql).map_err(err)?;
+
+impl Storage {
+    /// Bounded data for the graphical timeline, with missing periods as nulls.
+    /// Up to 120 source periods remain individual; longer selections are
+    /// grouped by calendar month (at most 121 months in a 10-year UI range).
+    pub fn analysis_timeline(
+        &self,
+        expected: i64,
+        s: &AnalysisScope,
+        q: &RangeQuery,
+    ) -> Result<TimelineSummary, String> {
+        self.analysis_timeline_grouped(expected, s, q, None)
+    }
+    pub fn analysis_timeline_grouped(
+        &self,
+        expected: i64,
+        s: &AnalysisScope,
+        q: &RangeQuery,
+        grouping: Option<&str>,
+    ) -> Result<TimelineSummary, String> {
+        let mut c = self.connect()?;
+        let tx = c.transaction().map_err(err)?;
+        workspace(&tx, expected, s)?;
+        fill_range(&tx, s, q, 1)?;
+        let period_count: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM temp.an_periods WHERE slot=1",
+            [], |r| r.get(0),
+        ).map_err(err)?;
+        let (mode, granularity) = timeline_grouping(s,q,grouping,period_count)?;
+        let mut stmt = tx.prepare(TIMELINE_BUCKET_TOTALS).map_err(err)?;
         let mut rows = stmt.query(params![mode, &s.organizations, &s.names]).map_err(err)?;
         let mut points = Vec::new();
         while let Some(row) = rows.next().map_err(err)? {

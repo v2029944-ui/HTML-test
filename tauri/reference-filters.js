@@ -17,7 +17,7 @@ const today=()=>{const d=new Date();return C.dateAt(d.getFullYear(),d.getMonth()
 let initialized=false,scope=null,revision=null,snapshot=null,latestDay=null,lastTicket=0,latestType=null,userDates=false,syncFields=null;
 let orgs=new Set(),orgNames=[],allOrgs=true,allNames=true,nameRows=new Map(),nameCount=0,metric='amount';
 let kind='week',source='daily',mode='range',rule='prev',custom=null,from,to;
-let importedWeekday=1,boundsPending=false;
+let importedWeekday=1,boundsPending=false,boundsFailed=false,nameMetadata=null;
 const detailPanels=['chartPanel','structurePanel','comparison','usualPanel','regularityPanel','overviewPanel','changes'];
 function previousYear(value){
  const d=C.dateOf(value),y=d.getUTCFullYear()-1,m=d.getUTCMonth();
@@ -27,7 +27,10 @@ function filterPeriod(value,unit=kind){return C.period(value,unit,source==='impo
 function importedBound(value){return filterPeriod(value)[0];}
 function baseRange(){
  const n=size(from,to);
- if(rule==='year')return [previousYear(from),previousYear(to)];
+ if(rule==='year'){
+  const end=previousYear(to);
+  return [previousYear(from),source==='imported'&&kind==='month'?C.period(end,'month')[1]:end];
+ }
  if(rule==='prevWeek'||rule==='prevMonth'){
   const unit=rule==='prevWeek'?'week':'month';
   return filterPeriod(C.day(filterPeriod(from,unit)[0],-1),unit);
@@ -75,8 +78,35 @@ function shift(direction){
  if(C.valid(lo)&&C.valid(hi)&&dates(lo,hi)){userDates=true;publish();}
 }
 function chooseDate(target,anchor){
+ const opened=snapshot,weekly=Boolean(opened&&source==='imported'&&kind==='week');
+ // The grid can ask about many days of the same month. One bounded read also covers
+ // weeks which began in the previous month, including concurrent clicks before it returns.
+ let monthLoaded=null,monthRequest=null;
+ const weeksForDay=weekly?async day=>{
+  const month=C.period(day,'month')[0];
+  if(monthLoaded!==month){
+   monthLoaded=month;
+   const request=UI.api.unifiedPeriodOptions(opened.revision,'week',null,null,37,month);
+   monthRequest=request;
+   Promise.resolve(request).catch(()=>{if(monthRequest===request)monthLoaded=null;});
+  }
+  const page=await monthRequest;
+  if(snapshot!==opened||source!=='imported'||kind!=='week')throw Error('Изменились фильтры.');
+  return page.rows.filter(row=>row.start<=day&&day<=row.end);
+ }:undefined;
  const current=target==='base'?baseRange()[0]:target==='end'?to:from;
- C.open({anchor,title:target==='base'?'Базовый период':mode==='single'?'Период':target==='start'?'Начало диапазона':'Конец диапазона',unit:kind,initial:current,spanFor:filterPeriod,apply(value){
+ C.open({anchor,title:target==='base'?'Базовый период':mode==='single'?'Период':target==='start'?'Начало диапазона':'Конец диапазона',unit:kind,initial:current,spanFor:target==='base'&&weekly?(v,k)=>C.period(v,k,C.dateOf(current).getUTCDay()):filterPeriod,weeksForDay,apply(value,unit,weekStart){
+  if(weekly){
+   if(snapshot!==opened||source!=='imported'||kind!=='week'){UI.notice('Периоды изменились. Откройте календарь повторно.',true);return;}
+   if(target==='base'){rule='custom';custom=weekStart||C.period(value,'week',C.dateOf(current).getUTCDay())[0];publish();return;}
+   if(weekStart){
+    const weekday=C.dateOf(weekStart).getUTCDay();
+    if(mode==='range'&&weekday!==importedWeekday&&size(from,to)>7)
+     UI.notice('У выбранной недели другой день начала. Выберите вторую границу диапазона на том же расписании.');
+    if(weekday!==importedWeekday){from=weekStart;to=C.day(weekStart,6);}
+    importedWeekday=weekday;value=weekStart;
+   }
+  }
   if(target==='base'){rule='custom';custom=filterPeriod(value)[0];}
   else {userDates=true;if(target==='end')dates(value<from?value:from,value);else dates(value,value>to?value:to);}
   publish();
@@ -116,13 +146,14 @@ function syncDetails(){
 }
 function publish(){
  if(boundsPending)return;
+ if(boundsFailed&&snapshot)return readBounds(snapshot);
  const [baseFrom,baseTo]=baseRange();
  if(![from,to,baseFrom,baseTo].every(C.valid)){
   UI.notice('Период за пределами поддерживаемого календаря.',true);scope=null;window.referenceResults.refresh(null);return;
  }
  paint(baseFrom,baseTo);
  scope=revision===null?null:{revision,type:source==='daily'?'day':kind,displayType:kind,source,overviewMode:mode,
-  from,to:source==='daily'?to:importedBound(to),baseFrom:source==='daily'?baseFrom:importedBound(baseFrom),baseTo:source==='daily'?baseTo:importedBound(baseTo),
+  from,to:source==='daily'?to:importedBound(to),baseFrom:source==='daily'||kind==='week'?baseFrom:importedBound(baseFrom),baseTo:source==='daily'?baseTo:kind==='week'?C.day(baseTo,-6):importedBound(baseTo),
   displayFrom:from,displayTo:to,displayBaseFrom:baseFrom,displayBaseTo:baseTo,organizations:[...orgs],metric,
   allNames,nameRows:[...nameRows.values()],selectedNames:allNames?[]:[...nameRows.values()].map(row=>row.name),selectedKeys:allNames?[]:[...nameRows.keys()]};
  const result=window.referenceResults.refresh(scope);
@@ -230,7 +261,13 @@ async function readBounds(snap){
  try{
   const daily=UI.api.unifiedPeriodOptions(snap.revision,'day',null,null,1);
   const selectedKeys=allNames?[]:[...nameRows.keys()];
-  const metadata=selectedKeys.length?UI.api.unifiedSelectedNameOptions(snap.revision,selectedKeys):UI.api.unifiedNameOptions(snap.revision,'',null,1);
+  const selection=JSON.stringify(selectedKeys);
+  if(nameMetadata?.selection!==selection){
+   const request=selectedKeys.length?UI.api.unifiedSelectedNameOptions(snap.revision,selectedKeys):UI.api.unifiedNameOptions(snap.revision,'',null,1);
+   const cached={selection,request};nameMetadata=cached;
+   Promise.resolve(request).catch(()=>{if(nameMetadata===cached)nameMetadata=null;});
+  }
+  const metadata=nameMetadata.request;
   const [last,selected,names]=await Promise.all([daily,reportType==='day'?daily:UI.api.unifiedPeriodOptions(snap.revision,reportType,null,null,1),metadata]);
   if(mine!==lastTicket||UI.revision!==snap.revision)return;
   latestDay=last.max;latestType=selected.max;nameCount=names.total_rows;
@@ -245,10 +282,10 @@ async function readBounds(snap){
    if(source==='imported'&&kind==='week')importedWeekday=latestType?C.dateOf(latestType).getUTCDay():1;
    dates(latestType||today());
   }
-  setBoundsPending(false);return publish();
+  boundsFailed=false;setBoundsPending(false);return publish();
  }catch(error){
   if(mine!==lastTicket||UI.revision!==snap.revision)return;
-  setBoundsPending(false);scope=null;
+  boundsFailed=true;setBoundsPending(false);scope=null;
   if(detailPanels.includes(window.referenceDetail?.active))void syncDetails();
   const message='Не удалось прочитать периоды. '+(window.analizUserError?.(error)||error.message);
   window.referenceResults.failScopeChange(message);UI.notice(message,true);
@@ -261,7 +298,7 @@ function setBoundsPending(busy){
  }
 }
 function configure(snap){
- ++lastTicket;
+ ++lastTicket;nameMetadata=null;boundsFailed=false;
  if(!snap){setBoundsPending(false);snapshot=null;revision=null;scope=null;window.referenceResults.refresh(null);return;}
  snapshot=snap;revision=snap.revision;
  orgNames=snap.org_names.slice();orgs=new Set(allOrgs?orgNames:[...orgs].filter(x=>orgNames.includes(x)));

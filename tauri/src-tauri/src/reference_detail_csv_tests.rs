@@ -130,3 +130,42 @@ fn unavailable_interval_preserves_only_the_complete_sides_values_on_screen_and_i
     assert!(data.lines().any(|line| line == "\"Работа 00\";\"-10\""));
     assert!(!data.contains("Разница"));
 }
+
+#[test]
+fn imported_detail_csv_labels_the_inclusive_end_of_each_source_period() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().join("periods")).unwrap();
+    let sources = [
+        ("week","2026-11-04","2026-11-10","2026-11-11","2026-11-17"),
+        ("month","2024-02-01","2024-02-29","2025-02-01","2025-02-28"),
+    ];
+    let mut reports = Vec::new();
+    for (kind,previous,previous_end,current,current_end) in sources {
+        for (start,end,amount) in [(previous,previous_end,10),(current,current_end,20)] {
+            reports.push(json!({"id":start,"type":kind,"start":start,"end":end,"organizations":["A"],
+                "rows":[{"organization":"A","work":"Work","count":1,"amount":amount}]}));
+        }
+    }
+    store.save(json!({"reports":reports,"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}})).unwrap();
+    let rev = store.revision().unwrap();
+    for (_,previous,_,current,_) in sources {
+        for id in [previous,current] { store.analysis_index_report(id,rev).unwrap(); }
+    }
+    store.analysis_index_settings(rev).unwrap();
+    let orgs = store.analysis_filter_create(rev,"organizations").unwrap();
+    store.analysis_filter_append(rev,&orgs,&["A".into()]).unwrap();
+    store.analysis_filter_seal(rev,&orgs).unwrap();
+    for (kind,previous,previous_end,current,current_end) in sources {
+        let scope = AnalysisScope {report_type:kind.into(),organizations:orgs.clone(),names:None};
+        let mut q = query();
+        q.from=current.into();
+        q.to=current.into();
+        let table: DetailCsvOptions = serde_json::from_value(json!({"section":"contributions","metric":"amount",
+            "before":{"from":previous,"to":previous}})).unwrap();
+        let file=dir.path().join(format!("{kind}.csv"));
+        store.reference_detail_csv(rev,&scope,&q,None,&table,&file).unwrap();
+        let csv=std::fs::read_to_string(file).unwrap();
+        assert!(csv.contains(&format!(r#""Анализируемый период";"{current}";"{current_end}""#)),"{csv}");
+        assert!(csv.contains(&format!(r#""Базовый период";"{previous}";"{previous_end}""#)),"{csv}");
+    }
+}

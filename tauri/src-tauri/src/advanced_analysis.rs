@@ -601,7 +601,7 @@ impl Storage {
             let offset=match page_index {Some(index)=>crate::storage::direct_page_offset(index,50,total_rows)?,None=>cursor_offset};
             let order=if term.is_empty(){"key"}else{"(instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key"};
             if let Some((path,table))=csv {
-                super::reference_detail_csv::export_patterns(&tx,path,table,s,q,&term,order,used,previous,&baseline_from.to_string(),&baseline_to.to_string())?;
+                super::reference_detail_csv::export_patterns(&tx,path,table,s,q,&term,order,used,previous,&calendar.kind,&baseline_from.to_string(),&baseline_to.to_string())?;
             } else {
             let mut query=tx.prepare(&format!("SELECT data FROM unified_patterns WHERE ?1 IS NOT NULL ORDER BY {order} LIMIT 51 OFFSET ?2")).map_err(err)?;
             let mut result=query.query(params![term,offset]).map_err(err)?;

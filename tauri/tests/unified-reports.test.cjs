@@ -530,3 +530,48 @@ test('explicitly reopening a workbook reapplies its saved folder rule after an u
   assert.equal(ui.nodes.replaceExisting.checked,false);
  }
 });
+
+test('manual blocks cannot reuse any column from a preceding set',async()=>{
+ const seen=[];
+ const ui=mount({chooseWideXlsx:async()=>'/xls/pay.xlsx',nativeLegacyImportPreview:async(_,o)=>{seen.push(o);return importReview;}});
+ await ui.nodes.excelFile.click();await changeImportField(ui,'importMappingMode','manual');
+ await ui.nodes.addImportMapping.click();
+ const [first,second]=ui.nodes.importColumnMappings.children;
+ for(const row of [first,second])for(const [field,value] of Object.entries({header_row:'1',work_col:'A',count_col:'B',amount_col:'C'}))
+  row.querySelector('[data-field="'+field+'"]').value=value;
+ await ui.nodes.inspectFile.click();assert.equal(seen.length,0);assert.match(ui.nodes.unifiedImportStatus.textContent,/Столбец A.*нескольких наборах/);
+ second.querySelector('[data-field="work_col"]').value='D';second.querySelector('[data-field="count_col"]').value='E';
+ await ui.nodes.inspectFile.click();assert.equal(seen.length,0);assert.match(ui.nodes.unifiedImportStatus.textContent,/Столбец C/);
+ second.querySelector('[data-field="amount_col"]').value='F';await ui.nodes.inspectFile.click();assert.equal(seen.length,1);
+});
+
+test('refreshing a rule after an unrelated write preserves edits and rejects changes to the same source',async()=>{
+ const rule={type:'day',format:'daily-wide',sheets:['Дни'],year:2025};
+ const context={folder:'/excel',name:'book.xlsx',nativeSignature:'sig',revision:1,rule};
+ const writes=[];
+ const ui=mount({chooseWideXlsx:async()=>'/excel/book.xlsx',nativeImportFolderContext:async()=>structuredClone(context),
+  nativeWideImportPreview:async()=>importReview,nativeSetRuleChecked:async(name,next,rev)=>{
+   assert.equal(rev,context.revision);context.rule=next;writes.push(next);return ++context.revision;
+  }});
+ await ui.nodes.excelFile.click();await changeImportField(ui,'dailyYear','2026');
+ ui.UI.revision=context.revision=2;
+ await ui.nodes.inspectFile.click();await ui.nodes.saveDailyFolderRule.click();
+ assert.equal(writes.length,1);assert.equal(writes[0].year,2026);
+ context.rule={...context.rule,year:2027};ui.UI.revision=context.revision=4;
+ await ui.nodes.inspectFile.click();await ui.nodes.saveDailyFolderRule.click();assert.equal(writes.length,1);
+ assert.match(ui.nodes.unifiedImportStatus.textContent,/правило изменились.*Выберите файл заново/);
+});
+
+test('a newline in a worksheet name round-trips in the ordinary text editor for wide mappings',async()=>{
+ const name='Апрель\nМай', mapping={headerRow:17,workCol:0,firstDayCol:1};
+ const rule={type:'day',format:'daily-wide',sheets:[name],mappings:{[name]:mapping}};
+ let preview,saved;
+ const ui=mount({chooseWideXlsx:async()=>'/excel/book.xlsx',nativeImportSheets:async()=>[{name,component:'sheet.xml'}],
+  nativeImportFolderContext:async()=>({folder:'/excel',name:'book.xlsx',nativeSignature:'sig',revision:1,rule}),
+  nativeWideImportPreview:async(_,opt)=>{preview=opt;return importReview;},nativeSetRuleChecked:async(_,next)=>{saved=next;return 2;}});
+ await ui.nodes.excelFile.click();
+ assert.equal(ui.nodes.unifiedWideMapping.value.split('\n').length,1);
+ await ui.nodes.inspectFile.click();await ui.nodes.saveDailyFolderRule.click();
+ assert.equal(preview.mappings[name].header_row,18);
+ assert.deepEqual(JSON.parse(JSON.stringify(saved.mappings)),{[name]:mapping});
+});

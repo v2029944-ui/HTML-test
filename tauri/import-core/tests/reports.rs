@@ -302,7 +302,13 @@ fn unknown_dates_and_cancellation_cannot_publish_partial_reports() {
 fn failed_or_cancelled_reconversion_preserves_last_complete_preview() {
     let temp = tempfile::tempdir().unwrap();
     let source = temp.path().join("data.xlsx");
-    fixture(&source, false);
+    fixture_rows(&source, &[
+        vec!["Работа","Количество","Сумма","Работа","Количество","Сумма"],
+        vec!["СМУ16","3","12.30","АВТО","3","12.30"],
+        vec!["Альфа","1.2","5.30","Альфа","1.2","5.30"],
+        vec!["Бета","1.8","7","Бета","1.8","7"],
+        vec!["Итого","3","12.30","Итого","3","12.30"],
+    ]);
     let area = StageArea::open(temp.path().join("stage")).unwrap();
     let no = AtomicBool::new(false);
     let mut stage = area
@@ -323,7 +329,7 @@ fn failed_or_cancelled_reconversion_preserves_last_complete_preview() {
         count_col: 2,
         amount_col: 3,
     };
-    cfg.mappings = Some(vec![mapping.clone(), mapping]);
+    cfg.mappings = Some(vec![mapping, TripleMapping {header_row:1, work_col:4, count_col:5, amount_col:6}]);
     let cancel = AtomicBool::new(false);
     assert!(stage
         .convert_legacy(&cfg, &cancel, |summary| {
@@ -332,6 +338,7 @@ fn failed_or_cancelled_reconversion_preserves_last_complete_preview() {
             }
         })
         .is_err());
+    assert!(cancel.load(std::sync::atomic::Ordering::Acquire), "Cancel was requested after the first converted report");
     let after = stage.report_page(0, 100).unwrap();
     assert_eq!(before.len(), after.len());
     assert_eq!(before[0].start, after[0].start);
@@ -479,11 +486,11 @@ fn control_apis_expose_mapping_exact_cells_and_first_seen_organizations() {
     fixture_rows(
         &source,
         &[
-            vec!["", "", "", "Работа", "Количество", "", "", "Сумма"],
+            vec!["Работа", "Количество", "Сумма", "Работа", "Количество", "", "", "Сумма"],
             vec!["", "", "", "ТРАК", "0", "", "", "0"],
-            vec!["", "", "", "СМУ16", "1", "", "", "2"],
-            vec!["", "", "", "Работа1", "1", "", "", "2"],
-            vec!["", "", "", "Итого", "1", "", "", "2"],
+            vec!["СМУ16", "1", "2", "СМУ16", "1", "", "", "2"],
+            vec!["Работа1", "1", "2", "Работа1", "1", "", "", "2"],
+            vec!["Итого", "1", "2", "Итого", "1", "", "", "2"],
         ],
     );
     let area = StageArea::open(temp.path().join("stage")).unwrap();
@@ -500,8 +507,8 @@ fn control_apis_expose_mapping_exact_cells_and_first_seen_organizations() {
             work_col: 4,
             count_col: 5,
             amount_col: 8
-        };
-        2
+        },
+        TripleMapping { header_row: 1, work_col: 1, count_col: 2, amount_col: 3 }
     ]);
     stage.convert_legacy(&cfg, &cancel, |_| {}).unwrap();
     let report = stage.report_page(0, 1).unwrap().remove(0);
@@ -625,4 +632,46 @@ fn omitted_detail_tag_does_not_mark_invalid_controls_or_included_unnamed_rows() 
     let document:serde_json::Value=serde_json::from_reader(prepared.open_document(&saved).unwrap()).unwrap();
     let persisted=document["issues"].as_array().unwrap();assert_eq!(persisted.iter().filter(|i|i["skipped"]==true).count(),2);
     assert_eq!(document["rows"].as_array().unwrap().len(),2);assert_eq!(document["count"],3.);assert_eq!(document["amount"],8.);
+}
+
+#[test]
+fn only_verified_header_dates_create_a_manual_quality_notice() {
+    for (label, adjacent, early_1904, kind, start, expected_address) in [
+        ("Начало периода", r#"<c r="B1" s="1"><v>60</v></c>"#, false, "day", "2026-11-09", None),
+        ("Начало периода", r#"<c r="B1" s="1"><v>60</v></c>"#, true, "day", "2026-11-09", Some("B1")),
+        ("Начало периода", r#"<c r="B1"><v>46000</v></c>"#, false, "day", "2026-11-09", None),
+        ("Начало периода", r#"<c r="B1" t="d"><v>2026-11-09T00:00:00</v></c>"#, false, "week", "2026-10-19", Some("B1")),
+        ("Дата печати: 09.11.2026", "", false, "week", "2026-10-19", None),
+        ("Период с 2024-02 по 29.02.2024", "", false, "month", "2024-03-01", None),
+        ("Период с 01.02.2024 по 29.02.2024", "", false, "month", "2024-03-01", Some("A1")),
+        ("Начало месяца: 2024-02", "", false, "month", "2024-02-01", None),
+        ("Начало месяца: 2024-02", "", false, "month", "2024-03-01", Some("A1")),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("dates.xlsx");
+        let mut workbook = ZipWriter::new(fs::File::create(&file).unwrap());
+        workbook.start_file("xl/workbook.xml", SimpleFileOptions::default()).unwrap();
+        write!(workbook, r#"<workbook><workbookPr date1904="{}"/></workbook>"#, early_1904 as u8).unwrap();
+        workbook.start_file("xl/styles.xml", SimpleFileOptions::default()).unwrap();
+        write!(workbook, r#"<styleSheet><cellXfs><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>"#).unwrap();
+        workbook.start_file("xl/worksheets/sheet1.xml", SimpleFileOptions::default()).unwrap();
+        write!(workbook, r#"<worksheet><sheetData>
+        <row r="1"><c r="A1" t="inlineStr"><is><t>{label}</t></is></c>{adjacent}</row>
+        <row r="2"><c r="A2" t="inlineStr"><is><t>Работа</t></is></c><c r="B2" t="inlineStr"><is><t>Количество</t></is></c><c r="C2" t="inlineStr"><is><t>Сумма</t></is></c></row>
+        <row r="3"><c r="A3" t="inlineStr"><is><t>СМУ16</t></is></c><c r="B3"><v>1</v></c><c r="C3"><v>125</v></c></row>
+        <row r="4"><c r="A4" t="inlineStr"><is><t>Работа А</t></is></c><c r="B4"><v>1</v></c><c r="C4"><v>125</v></c></row>
+        </sheetData></worksheet>"#).unwrap();
+        workbook.finish().unwrap();
+        let area = StageArea::open(temp.path().join("stage")).unwrap();
+        let cancel = AtomicBool::new(false);
+        let mut stage = area.ingest(&file, Limits::default(), &cancel, |_| {}).unwrap();
+        let summary = stage.convert_legacy(&options(kind, start), &cancel, |_| {}).unwrap();
+        assert_eq!(summary.issues, if expected_address.is_some() {1} else {0}, "{label} {adjacent}");
+        let report = stage.report_page(0, 1).unwrap().remove(0);
+        assert_eq!(report.amount, 125.);
+        if let Some(address) = expected_address {
+            let issue = stage.report_issues(&report.id, 0, 1).unwrap().remove(0);
+            assert_eq!(issue.work_cell.as_deref(), Some(address));
+        }
+    }
 }

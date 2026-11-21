@@ -1200,6 +1200,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 .chart-legend--departments span{display:flex;max-width:none;gap:9px;white-space:normal;overflow:visible;overflow-wrap:anywhere;color:var(--text);font-size:12px}
 .chart-legend--departments span:before{display:none}
 .chart-legend--departments svg{width:38px!important;height:16px!important;min-height:0!important;max-height:none!important;flex:0 0 38px;overflow:visible}
+.chart-legend--departments svg[width="60"]{width:60px!important;flex-basis:60px}
 @media(max-width:740px){.chart-legend--departments{grid-template-columns:minmax(0,1fr);max-height:240px}}
 .chart-view-controls select{display:block;box-sizing:border-box;min-width:0;width:100%;height:var(--control-height);margin-top:var(--field-gap)}
 .chart-mode-controls{display:flex;flex-wrap:wrap;width:fit-content;max-width:100%;margin-bottom:14px}
@@ -1678,7 +1679,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <p class="muted small">Выберите отчётные листы. Итоги квартала или года проверяются отдельно и не становятся дополнительным днём. При неоднозначной шапке укажите год и ручные столбцы; пустые дни не заменяются нулями.</p>
           <div id="dailySheetChoices"></div><button type="button" id="saveDailyFolderRule" class="button secondary" hidden>Запомнить настройки файла для автоимпорта</button>
         </section>
-        <p class="muted small">Для обычных недельных и дневных отчётов укажите первую дату по данным вашего Excel: название файла не определяет начало периода. Даты последующих наборов рассчитываются последовательно, при пропусках их можно скорректировать вручную. Недельные суммы автоматически по дням не распределяются. HTML работает без интернета.</p>
+        <p id="ordinaryImportHint" class="muted small">Для обычных недельных и дневных отчётов укажите первую дату по данным вашего Excel: название файла не определяет начало периода. Даты последующих наборов рассчитываются последовательно, при пропусках их можно скорректировать вручную. Недельные суммы автоматически по дням не распределяются. HTML работает без интернета.</p>
         <details class="quick-help import-advanced" id="importAdvanced">
           <summary>Столбцы и даты каждого набора</summary>
           <p>Обычно столбцы распознаются автоматически, а периоды идут подряд. Для другого формата Excel включите ручную настройку: укажите буквы столбцов работы, количества и суммы и номер строки заголовка для каждого набора. Даты ниже можно изменить по отдельности без изменения первого периода.</p>
@@ -3048,6 +3049,7 @@ function dailyImportOptions(){
 function syncImportFormat(){
   const wide=$('importFormat').value==='daily-wide';
   $('dailyWideOptions').hidden=!wide;
+  $('ordinaryImportHint').hidden=wide;
   $('importType').closest('label').hidden=wide;
   $('weekStartLabel').hidden=wide||$('importType').value==='month';
   $('monthStartLabel').hidden=wide||$('importType').value!=='month';
@@ -3486,14 +3488,25 @@ function chartTickLabel(value,step){
   return new Intl.NumberFormat('ru-RU',{maximumFractionDigits:digits}).format(value);
 }
 // Один период — это сравнение величин, а не динамика: показываем рейтинг.
+const defaultHideZeroRankingRows=false;
 function renderSinglePeriodRanking(root,period,shown,data,metric,options,seriesColor){
   if(!data){empty(root,'Нет полного отчёта за выбранный период. Отсутствующие данные не считаются нулём.');return;}
-  const rows=shown.map(name=>{
+  const available=shown.map(name=>{
     const item=data.get(name),value=item?item[metric]:0;
     return {name,label:options.label?options.label(name):name,value};
-  }).filter(item=>Number.isFinite(item.value))
-    .sort((a,b)=>b.value-a.value||a.label.localeCompare(b.label,'ru'));
-  if(!rows.length){empty(root,'Нет сопоставимых значений за выбранный период.');return;}
+  }).filter(item=>Number.isFinite(item.value));
+  if(!available.length){
+    const reason=options.pointNotice?.(0);
+    empty(root,'Нет доступных значений за выбранный период.'+(reason?' '+reason:''));
+    return;
+  }
+  const hideZero=options.hideZeroRankingRows??defaultHideZeroRankingRows;
+  const rows=available.filter(row=>!hideZero||row.value!==0).sort((a,b)=>b.value-a.value||a.label.localeCompare(b.label,'ru'));
+  if(!rows.length){
+    const missing=available.length<shown.length?' Остальные значения недоступны.':'';
+    empty(root,'Нет ненулевых значений за выбранный период. Нулевые строки рейтинга скрыты.'+missing);
+    return;
+  }
   const actualStart=period.actualStart||period.start;
   const interval=period.end&&period.end!==actualStart?displayDay(actualStart)+' — '+displayDay(period.end):displayDay(actualStart);
   root.append(elem('p','Рейтинг за '+interval+' ('+metricTitle(metric)+'). Для динамики выберите несколько периодов.','muted small'));
@@ -3533,7 +3546,9 @@ function drawChart(periods,orgs,metric,root,options={}) {
     select.value=String(page);select.addEventListener('change',()=>{options.seriesPage=Number(select.value);drawChart(periods,orgs,metric,root,options);root.querySelector('select')?.focus();});
     control.append(select);root.append(control);if(restoreSeriesFocus)select.focus({preventScroll:true});
   }
-  const seriesColor=options.seriesType==='organizations'?name=>departmentSeriesColor(name,groups.indexOf(name)):visibleWorkColors(shown);
+  const seriesColor=options.seriesType==='organizations'?visibleDepartmentColors(shown):visibleWorkColors(shown);
+  const seriesNumbers=options.seriesType==='organizations'&&groups.length>COLORS.length?
+    new Map(shown.map((name,i)=>[name,page*limit+i+1])):null;
   const data=options.data||periods.map(p=>reportHasOrganizations(p,orgs)?summary(p,orgs).by:null);
   if(periods.length===1){
     renderSinglePeriodRanking(root,periods[0],shown,data[0],metric,options,seriesColor);
@@ -3591,8 +3606,9 @@ function drawChart(periods,orgs,metric,root,options={}) {
       note.append(svgEl('title',{},message+'. Общий итог не построен: нужны отчёты всех выбранных подразделений.'));svg.append(note);
     }
   });
+  const numberMarks=[];
   shown.forEach((name,index)=>{
-    let segment=[];
+    let segment=[],number=seriesNumbers?.get(name);
     const flush=()=>{if(segment.length>1)svg.append(svgEl('polyline',{points:segment.map(p=>p.join(',')).join(' '),fill:'none',stroke:seriesColor(name),'stroke-width':2.5,'class':'chart-series'}));segment=[];};
     periods.forEach((p,i)=>{
       if(gapStarts.has(i))flush();
@@ -3605,13 +3621,26 @@ function drawChart(periods,orgs,metric,root,options={}) {
       }else{
         segment.push([px(i),y]);mark=svgEl('circle',{cx:px(i),cy:y,r:4,fill:seriesColor(name)});
       }
-      mark.dataset.chartTooltip=(options.label?options.label(name):name)+' · '+displayPeriod(p)+': '+fmtNumber(value,metric);
+      if(number){
+        const x=bar?px(i)-step*.4+(index+.5)*step*.8/shown.length:px(i);
+        numberMarks.push(departmentNumber(number,x,Math.max(12,y-7)));number=null;
+      }
+      const samePoint=bar?[name]:shown.filter(other=>{
+        const point=data[i].get(other);
+        return (point?point[metric]:0)===value;
+      });
+      const labels=samePoint.map(key=>options.label?options.label(key):key);
+      mark.dataset.chartTooltip=labels.join(', ')+' · '+displayPeriod(p)+': '+fmtNumber(value,metric);
       mark.setAttribute('tabindex','0');mark.setAttribute('aria-label',mark.dataset.chartTooltip);mark.setAttribute('aria-describedby','chartTooltip');svg.append(mark);
     });flush();
   });
-  root.append(svg);
+  svg.append(...numberMarks);root.append(svg);
   const legend=elem('div',null,'chart-legend');
-  shown.forEach((x,i)=>{const label=options.label?options.label(x):x;const tag=elem('span',label);tag.title=label;tag.style.setProperty('--series',seriesColor(x));legend.append(tag);});root.append(legend);
+  shown.forEach(name=>{
+    const label=options.label?options.label(name):name;
+    const tag=elem('span',seriesNumbers?seriesNumbers.get(name)+' · '+label:label);
+    tag.title=label;tag.style.setProperty('--series',seriesColor(name));legend.append(tag);
+  });root.append(legend);
   if(missingRanges.length){
     root.append(elem('p','Между показанными точками нет отчётов за: '+missingRanges.slice(0,3).join('; ')+
       (missingRanges.length>3?'; и ещё '+(missingRanges.length-3)+' промежутков':'')+
@@ -4322,9 +4351,20 @@ function departmentChartTitle(organizations,metrics){
   return chartCount(organizations,'подразделение','подразделения','подразделений')+' · '+
     chartCount(metrics,'показатель','показателя','показателей')+' (% от максимума каждого показателя)';
 }
-function departmentSeriesColor(organization,orgIndex=0){
-  const position=state.settings.orgNames.indexOf(organization);
-  return COLORS[(position<0?orgIndex:position)%COLORS.length];
+function visibleDepartmentColors(organizations){
+  const assigned=new Map(),used=new Set(),catalog=state.settings.orgNames;
+  const position=name=>{const index=catalog.indexOf(name);return index<0?catalog.length+organizations.indexOf(name):index;};
+  for(const name of [...organizations].sort((a,b)=>position(a)-position(b))){
+    if(used.size===COLORS.length)used.clear();
+    let index=position(name)%COLORS.length;
+    while(used.has(index))index=(index+1)%COLORS.length;
+    used.add(index);assigned.set(name,COLORS[index]);
+  }
+  return name=>assigned.get(name);
+}
+function departmentNumber(number,x,y){
+  return svgEl('text',{x,y,'text-anchor':'middle',fill:'var(--text)',stroke:'var(--surface)','stroke-width':3,
+    'paint-order':'stroke','pointer-events':'none','font-size':11,'font-weight':700},String(number));
 }
 let metricPatternId=0;
 function metricMarker(metric,x,y,color){
@@ -4339,15 +4379,17 @@ function metricBarFill(svg,metric,color){
   pattern.append(metric==='count'?svgEl('path',{d:'M-1 1L1 -1M0 6L6 0M5 7L7 5',stroke:color,'stroke-width':2}):svgEl('circle',{cx:3,cy:3,r:1.8,fill:color}));
   defs.append(pattern);svg.append(defs);return 'url(#'+id+')';
 }
-function departmentLegendSample(metric,color,bar,fill){
+function departmentLegendSample(metric,color,bar,fill,number){
   const style=departmentMetricStyle(metric);
-  const svg=svgEl('svg',{viewBox:'0 0 38 16',width:38,height:16,'aria-hidden':'true',focusable:'false'});
+  const width=number?60:38;
+  const svg=svgEl('svg',{viewBox:'0 0 '+width+' 16',width,height:16,'aria-hidden':'true',focusable:'false'});
   if(bar)svg.append(svgEl('rect',{x:3,y:2,width:30,height:12,fill:fill||color,stroke:color,'stroke-width':1}));
   else{
     const attrs={x1:1,y1:8,x2:37,y2:8,stroke:color,'stroke-width':3,'stroke-linecap':'butt'};
     if(style.dash)attrs['stroke-dasharray']=style.dash;
     svg.append(svgEl('line',attrs),metricMarker(metric,19,8,color));
   }
+  if(number)svg.append(departmentNumber(number,49,12));
   return svg;
 }
 function departmentScaleMax(series){
@@ -4399,12 +4441,13 @@ function drawDepartmentMultiChart(periods,organizations,metrics,data,root,option
     if(series.every(entry=>entry.values[start+i]===null))
       svg.append(svgEl('text',{x:horizontal?left+5:px(i),y:horizontal?top+i*rowHeight+14:top+18,fill:'var(--warning)','font-size':11},'Нет данных'));
   });
-  const fills=[],gaps=new Set(chartTimelineGaps(periods).map(gap=>gap.nextIndex));
+  const seriesColor=visibleDepartmentColors(organizations),numbered=organizations.length>COLORS.length;
+  const numbers=[],fills=[],gaps=new Set(chartTimelineGaps(periods).map(gap=>gap.nextIndex));
   series.forEach((entry,index)=>{
-    const color=departmentSeriesColor(entry.organization,entry.orgIndex),maximum=scales.get(entry.metric)||0;
+    const color=seriesColor(entry.organization),maximum=scales.get(entry.metric)||0;
     const style=departmentMetricStyle(entry.metric),dash=style.dash;
     const fill=bar?metricBarFill(svg,entry.metric,color):color;fills.push(fill);
-    let segment=[];
+    let segment=[],needsNumber=numbered;
     const flush=()=>{
       if(segment.length>1){
         const attrs={points:segment.map(point=>point.join(',')).join(' '),fill:'none',stroke:color,'stroke-width':2.5,'class':'chart-series'};
@@ -4427,6 +4470,12 @@ function drawDepartmentMultiChart(periods,organizations,metrics,data,root,option
         const x=px(i)+(index-(series.length-1)/2)*Math.min(10,step*.7/series.length);
         segment.push([x,y]);mark=metricMarker(entry.metric,x,y,color);
       }
+      if(needsNumber){
+        // Match each series to the numbered legend on its first available mark.
+        const x=bar?(horizontal?hx(normalized):px(i)-step*.42+(index+.5)*step*.84/series.length):segment.at(-1)[0];
+        const tagY=horizontal?top+i*rowHeight+index*18+14:Math.max(12,y-7);
+        numbers.push(departmentNumber(entry.orgIndex+1,x,tagY));needsNumber=false;
+      }
       mark.dataset.chartTooltip=entry.label+' · '+displayPeriod(period)+': '+fmtNumber(value,entry.metric)+
         ' (шкала: '+fmtNumber(normalized,'count')+'% от максимума показателя)';
       mark.setAttribute('tabindex','0');mark.setAttribute('aria-label',mark.dataset.chartTooltip);
@@ -4434,14 +4483,14 @@ function drawDepartmentMultiChart(periods,organizations,metrics,data,root,option
     });
     flush();
   });
-  root.append(svg);
+  svg.append(...numbers);root.append(svg);
   const legend=elem('div',null,'chart-legend chart-legend--departments');
   legend.setAttribute('role','list');
   legend.setAttribute('aria-label','Обозначения подразделений и показателей');
   series.forEach((entry,index)=>{
     const label=entry.label,tag=elem('span');
     tag.title=label;tag.setAttribute('role','listitem');
-    tag.append(departmentLegendSample(entry.metric,departmentSeriesColor(entry.organization,entry.orgIndex),bar,fills[index]),elem('span',label));
+    tag.append(departmentLegendSample(entry.metric,seriesColor(entry.organization),bar,fills[index],numbered?entry.orgIndex+1:null),elem('span',label));
     legend.append(tag);
   });
   root.append(legend);

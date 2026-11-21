@@ -33,6 +33,15 @@ fn value(t: &AnalysisTotals, m: &str) -> Option<f64> {
         _ => None,
     }
 }
+fn period_header(w: &mut impl Write, label: &str, kind: &str, from: &str, last: &str) -> Result<(), String> {
+    let start = date(last)?;
+    let through = if kind == "year" {
+        NaiveDate::from_ymd_opt(start.year(), 12, 31).ok_or("Invalid year")?
+    } else {
+        end(kind, start)?
+    };
+    headers(w, &[label, from, &through.to_string()])
+}
 fn context(
     w: &mut impl Write,
     tx: &Connection,
@@ -42,9 +51,9 @@ fn context(
 ) -> Result<(), String> {
     headers(w, &["Показатель", measure_label(&table.metric)?])?;
     headers(w, &["Тип исходных отчётов", &s.report_type])?;
-    headers(w, &["Анализируемый период", &q.from, &q.to])?;
+    period_header(w, "Анализируемый период", &s.report_type, &q.from, &q.to)?;
     if let Some(base) = &table.before {
-        headers(w, &["Базовый период", &base.from, &base.to])?;
+        period_header(w, "Базовый период", &s.report_type, &base.from, &base.to)?;
     }
     for (label, filter) in [
         ("Подразделения", Some(&s.organizations)),
@@ -89,12 +98,13 @@ pub(super) fn export_patterns(
     order: &str,
     used: i64,
     previous: i64,
+    base_kind: &str,
     base_from: &str,
     base_to: &str,
 ) -> Result<(), String> {
     export(path, |w| {
         context(w, tx, s, q, table)?;
-        headers(w, &["Базовый период", base_from, base_to])?;
+        period_header(w, "Базовый период", base_kind, base_from, base_to)?;
         let opts = table.options.as_ref().ok_or("Missing pattern options")?;
         headers(w, &["Поиск", &opts.search])?;
         headers(w, &["Фильтр признака", &opts.status])?;
@@ -504,7 +514,7 @@ fn write_organizations(
     };
     emit("Итого по выбранным работам", &summary)?;
     unified_analytics::presentation_functions(tx)?;
-    unified_analytics::create_name_catalog(tx)?;
+    unified_analytics::create_name_catalog(tx,false)?;
     // The explicit subset keeps its selection order. All names use the same
     // catalog, collation and tie-break as the paginated organization table.
     let names_sql = if s.names.is_some() {

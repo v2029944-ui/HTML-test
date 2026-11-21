@@ -30,7 +30,7 @@ function fixture(overrides={}){
  const methods={...defaults,...overrides};methods.unifiedNameOptionsAtPage??=(revision,term,index,limit)=>methods.unifiedNameOptions(revision,term,null,limit);
  const api=new Proxy(methods,{get(target,key){if(key==='load'||key==='save')throw Error('Forbidden full history');if(!(key in target))throw Error('Unexpected API '+key);return (...args)=>{calls.push({key,args});return target[key](...args);};}});
  const originalHelpers={displayDay:date=>date,departmentChartTitle:(n,m)=>n+' / '+m,periodEnd:(start,kind)=>{const d=new Date(start+'T00:00:00Z');if(kind==='week')d.setUTCDate(d.getUTCDate()+6);else if(kind==='month'){d.setUTCMonth(d.getUTCMonth()+1);d.setUTCDate(0);}return d.toISOString().slice(0,10);},displayPeriod:p=>p.start,renderMultiFilter:(id,items,selected,callback)=>multi.set(id,{items,selected,callback})};
- const UI={api,revision:1,snapshot:{revision:1,org_names:['A','B','C','D']},state:{selectedOrganizations:new Set(['A']),selectedMetrics:new Set(['amount','count']),chartMetrics:new Set(['amount','count']),chart:'bar'},$:id=>nodes.get(id),el:(tag,text,cls)=>{const n=new Element(tag,text);n.className=cls;return n;},fmt:n=>Number.isFinite(n)?String(n):'—',notice:(...args)=>notices.push(args),table:(root,metric,caption,headers,rows,options)=>{tables.push({root:root.id,metric,rows,options});root.append(new Element('table',rows.map(r=>r.join('|')).join('\n')));},drawChart:(...args)=>draws.push(args),drawDepartments:(...args)=>draws.push(args),setPeriodInput:(id,kind,date)=>{const node=nodes.get(id);node.dataset.periodType=kind;if(date!==undefined)node.value=date;},range:(kind,from,to,source)=>from&&from<=to?{type:source==='daily'?'day':kind,displayType:kind,source,from,to}:null,publishScope:s=>published.push(s),onSnapshot:fn=>snapshotHook=fn,onView:(view,fn)=>viewHook=fn};
+ const UI={api,revision:1,snapshot:{revision:1,org_names:['A','B','C','D']},state:{selectedOrganizations:new Set(['A']),selectedMetrics:new Set(['amount','count']),chartMetrics:new Set(['amount','count']),chart:'bar'},$:id=>nodes.get(id),el:(tag,text,cls)=>{const n=new Element(tag,text);n.className=cls;return n;},fmt:n=>Number.isFinite(n)?String(n):'—',notice:(...args)=>notices.push(args),table:(root,metric,caption,headers,rows,options)=>{tables.push({root:root.id,metric,caption,rows,options});root.append(new Element('table',rows.map(r=>r.join('|')).join('\n')));},drawChart:(...args)=>draws.push(args),drawDepartments:(...args)=>draws.push(args),setPeriodInput:(id,kind,date)=>{const node=nodes.get(id);node.dataset.periodType=kind;if(date!==undefined)node.value=date;},range:(kind,from,to,source)=>from&&from<=to?{type:source==='daily'?'day':kind,displayType:kind,source,from,to}:null,publishScope:s=>published.push(s),onSnapshot:fn=>snapshotHook=fn,onView:(view,fn)=>viewHook=fn};
  const window={unifiedUI:UI,unifiedOriginal:originalHelpers,nativePeriodSelection:{fromIsoDate:date=>date,normalize:(_kind,date)=>date},print:()=>prints++};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../analysis-summary.js'),'utf8'),{window});
  vm.runInNewContext(coverageScript,{window,Date,Map,Set});
@@ -500,4 +500,46 @@ test('overview scope, period label and KPIs follow the same completed SQL respon
  const apr=apply('04');pending[3].reject(Error('current error'));await apr;
  assert.equal(presented(),null);assert.equal(period.textContent,'');assert.equal(kpis.textContent,'');
  assert.match(f.nodes.get('overviewAlerts').textContent,/current error/);
+});
+
+test('all three imported trend table captions use the full calendar interval',async()=>{
+ const totals={amount:2,count:1,average:2},point=start=>({start,total:totals,missing:0});
+ for(const [kind,first,last] of [['week','2026-11-11','2026-11-17'],['month','2026-11-01','2026-11-30']]){
+  const f=fixture({nativeOrganizationTrends:async()=>({granularity:'period',series:[{organization:'A',points:[point(first)]}]})});
+  await f.bootstrap();f.window.referenceDetail={active:'chartPanel'};f.UI.request=s=>s;
+  const shared={...f.published.at(-1),source:'imported',displayType:kind,type:kind,from:first,to:first,baseFrom:first,baseTo:first,metric:'amount',overviewMode:'single'};
+  f.nodes.get('advancedAnalytics').open=true;
+  await f.window.unifiedAnalytics.applyReferenceScope(shared);
+  f.buttons.find(b=>b.dataset.chart==='table').dispatch('click');await settle();
+  const works=f.tables.findLast(t=>t.root==='dataTable');
+  f.nodes.get('chartBreakdown').value='organizations';f.nodes.get('chartBreakdown').dispatch('change');await settle();
+  for(const table of [works,f.tables.findLast(t=>t.root==='dataTable'),f.tables.findLast(t=>t.root==='chartOrgTotals')]){
+   assert.ok(table.caption.includes(last),table.caption);assert.ok(table.caption.includes(first),table.caption);
+  }
+ }
+});
+
+test('all-work dynamics requests identities for both namesakes and itemizes the full amount',async()=>{
+ const series=[
+  {key:'group:g',name:'Ремонт (группа)',kind:'group',amount:100},
+  {key:'work:Ремонт',name:'Ремонт (работа)',kind:'work',amount:40},
+  {key:'work:Уборка',name:'Уборка',kind:'work',amount:10},
+ ];
+ const seriesFor=amount=>({granularity:'period',points:[{start:'2024-01-02',missing:0,has_activity:true,total:{amount,count:1,average:amount}}]});
+ const f=fixture({
+  unifiedNameOptionsAtPage:async(_revision,_query,_index,_limit,allSeries)=>{
+   const rows=allSeries?series:series.slice(2);
+   return {rows,next:null,total_rows:rows.length};
+  },
+  nativeAnalysisTimeline:async()=>seriesFor(150),
+  nativeWorkTimeline:async(_r,_t,_a,_b,_orgs,_org,key)=>seriesFor(series.find(row=>row.key===key)?.amount??0),
+ });
+ await f.bootstrap();
+ await f.window.unifiedAnalytics.applyReferenceScope({...f.published.at(-1),allNames:true,nameRows:[],metric:'amount',overviewMode:'single'});
+ f.buttons.find(button=>button.dataset.chart==='table').dispatch('click');
+ await settle();
+ const table=f.tables.findLast(entry=>entry.root==='dataTable'&&entry.metric==='amount');
+ assert.deepEqual(Array.from(table.rows,row=>Array.from(row)),[
+  ['Итого по выбранным работам','150'],['Ремонт (группа)','100'],['Ремонт (работа)','40'],['Уборка','10'],
+ ]);
 });

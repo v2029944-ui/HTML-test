@@ -418,3 +418,33 @@ test('contribution CSV becomes unavailable as soon as the local baseline changes
  await f.tables.findLast(t=>t.root===results.id).options.csvContext.export();
  assert.equal(saved.length,1);assert.deepEqual({...saved[0].before},{from:'2024-01-05',to:'2024-01-09'});
 });
+
+test('month scope with equal-length October baseline uses exact daily intervals for composition and row history',async()=>{
+ const period={complete:true,periods:30,missing:0,total:{amount:20,count:1,average:20}};
+ const item={key:'work:Work',name:'Work',kind:'work',amount:{base:1,current:2,delta:1,percent:100}};
+ const reads=[],history=[],f=fixture({
+  nativeAnalysisOrganizations:async()=>[{org:'A',...period}],
+  nativeAnalysisCompare:async()=>({summary:{before:period,after:period}}),
+  unifiedComparisonWindow:async()=>({rows:[item],total_rows:1}),
+  nativeWorkTimeline:async(...args)=>{history.push(args);return {granularity:'period',points:[]};},
+  nativeCompositionPage:async(req,before,mode)=>{reads.push([mode,req,before]);return {baseComplete:true,currentComplete:true,sharesValid:true,total_rows:0,rows:[],check:{reconciled:true}};}
+ });
+ f.UI.state.selectedMetrics=new Set(['amount']);f.window.referenceDetail={active:'structurePanel'};
+ f.publish({displayType:'month',from:'2026-11-01',to:'2026-11-30',baseFrom:'2026-10-02',baseTo:'2026-10-31'});
+ f.nodes.get('structurePanel').open=true;f.nodes.get('structurePanel').dispatch('toggle');await settle();
+ f.window.referenceDetail.active='comparison';f.nodes.get('contributions').open=true;
+ await f.window.unifiedExtended.openComparison();await settle();
+ for(const [mode,req,before] of reads){
+  assert.equal(req.displayType,'day',mode);
+  assert.deepEqual([req.query.from,req.query.to,before.from,before.to],['2026-11-01','2026-11-30','2026-10-02','2026-10-31']);
+ }
+ assert.deepEqual(reads.map(r=>r[0]),['structure','contributions']);
+ const link=f.tables.find(t=>t.root==='comparisonTable').rows[1][0];link.dispatch('click');await settle();
+ assert.deepEqual([history[0][2],history[0][3],history[0][8]],['2026-10-02','2026-11-30','day']);
+});
+test('overview comparison shortcut uses the same section router as the comparison tab',()=>{
+ const calls=[],f=fixture();f.window.referenceDetail={active:'overviewPanel'};
+ f.window.referenceDesktop={openPanel:(...args)=>calls.push(args)};
+ const shortcut=f.nodes.get('overviewShowComparison');shortcut.dispatch('click');
+ assert.deepEqual(calls,[['comparison',shortcut]]);
+});

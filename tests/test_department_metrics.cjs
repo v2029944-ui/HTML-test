@@ -19,6 +19,7 @@ class MockNode {
   append(...nodes){this.children.push(...nodes);}
   replaceChildren(...nodes){this.children=[...nodes];}
   setAttribute(name,value){this.attributes[name]=value;}
+  addEventListener(){}
   contains(){return false;}
   querySelector(){return null;}
   focus(){}
@@ -464,5 +465,69 @@ test('ranking includes actual day and multi-month endpoints and metric',()=>{
   const one=[{type:'month',start:'2025-01-01',end}],root=new MockNode('div'),input=[new Map([['A',{amount:1}]])];
   run("drawChart(one,new Set(['A']),'amount',root,{categories:['A'],data:input,chart:'line'})",{one,root,input});
   assert.ok(nodes(root).some(n=>n.textContent?.includes('Рейтинг за '+expected+' (Сумма).')));
+ }
+});
+
+test('all coincident works have one accessible tooltip at their true value',()=>{
+  for(const count of [2,8]){
+    const names=Array.from({length:count},(_,i)=>'Работа '+i),root=new MockNode('div');
+    const values=periods.map(()=>new Map(names.map(name=>[name,{amount:2.5}])));
+    run("drawChart(periods,new Set(['A']),'amount',root,{categories:names,data:values,chart:'line'})",{periods,root,names,values});
+    const marks=nodes(root).filter(n=>n.dataset.chartTooltip);
+    assert.ok(marks.length);
+    for(const mark of marks){
+      for(const name of names)assert.ok(mark.dataset.chartTooltip.includes(name),mark.dataset.chartTooltip);
+      assert.equal(mark.attributes['aria-label'],mark.dataset.chartTooltip);
+      assert.match(mark.dataset.chartTooltip,/2,50/);
+    }
+  }
+});
+
+test('department symbols distinguish colliding catalog positions and identify overflow in the plot and legend',()=>{
+  const configured=Array.from({length:9},(_,i)=>'Отдел '+(i+1));
+  const old=run('state.settings.orgNames');run('state.settings.orgNames=configured',{configured});
+  try{
+    for(const mode of ['line','bar']){
+      for(const orgs of [[configured[0],configured[8]],configured]){
+        const root=new MockNode('div'),values=periods.map(()=>new Map(orgs.map(name=>[name,{amount:3}])));
+        run("state.chart=mode;drawDepartmentMultiChart(periods,orgs,['amount'],values,root)",{root,mode,periods,orgs,values});
+        const marks=nodes(root).filter(n=>n.dataset.chartTooltip),tags=nodes(root).filter(n=>n.attributes.role==='listitem');
+        const colors=tags.map(n=>{const mark=n.children[0].children[0];return mark.attributes.stroke;});
+        assert.equal(new Set(colors).size,Math.min(8,orgs.length));
+        for(let i=0;i<orgs.length;i++)assert.equal(marks[i*2].attributes.fill,colors[i]);
+        if(orgs.length>8){
+          const chart=nodes(root).find(n=>n.attributes.role==='img');
+          assert.ok(nodes(chart).some(n=>n.tag==='text'&&n.textContent==='9'));
+          assert.ok(nodes(tags[8]).some(n=>n.tag==='text'&&n.textContent==='9'));
+        }
+      }
+    }
+  }finally{run('state.settings.orgNames=old',{old});}
+});
+
+test('paged department charts keep the ninth department number on its marks and in the legend',()=>{
+ const orgs=Array.from({length:9},(_,i)=>'Отдел '+(i+1));
+ const values=periods.map(()=>new Map(orgs.map(org=>[org,{amount:3}])));
+ for(const mode of ['line','bar']){
+  const root=new MockNode('div');
+  run("drawChart(periods,new Set(orgs),'amount',root,{chart:mode,seriesType:'organizations',seriesPage:1,categories:orgs,data:values})",{periods,root,mode,orgs,values});
+  const chart=nodes(root).find(n=>n.attributes.role==='img'),legend=nodes(root).find(n=>n.className==='chart-legend');
+  assert.ok(nodes(chart).some(n=>n.tag==='text'&&n.textContent==='9'));
+  assert.equal(legend.children[0].textContent,'9 · Отдел 9');
+ }
+});
+
+test('one-period ranking separately explains unavailable, zero and mixed values',()=>{
+ const names=['A','B'];
+ for(const [amounts,expected,forbidden] of [
+  [[null,null],/нет доступных значений/i,/нулевые строки/i],
+  [[0,0],/нулевые строки/i,/недоступны/i],
+  [[0,null],/недоступны/i,null]
+ ]){
+  const root=new MockNode('div'),values=[new Map(names.map((name,i)=>[name,{amount:amounts[i]}]))];
+  run("drawChart([periods[0]],new Set(names),'amount',root,{categories:names,data:values,chart:'line',hideZeroRankingRows:true})",{root,names,values,periods});
+  const text=nodes(root).map(n=>n.textContent||'').join(' ');
+  assert.match(text,expected);if(forbidden)assert.doesNotMatch(text,forbidden);
+  if(amounts.includes(0))assert.match(text,/нулевые строки/i);
  }
 });

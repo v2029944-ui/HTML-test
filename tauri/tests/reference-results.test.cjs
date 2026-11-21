@@ -242,3 +242,23 @@ test('bounds transition invalidates reads, choosers and controls through screen 
  await r.refresh(f.scope);assert.equal(reads,2);assert.match(f.s1.querySelector('.metric-value').textContent,/100/);
  r.beginScopeChange(2);assert.equal(f.s1.querySelector('.metric-value').textContent,'—');
 });
+
+test('summary and changes print historical quality counts once, separately from each interval',async()=>{
+ const f=fixture();
+ f.full.invalid_reports=1;
+ f.full.import_warning_reports=1;
+ const printed=[];
+ f.window.print=()=>printed.push(f.document.getElementById('referencePrintDocument').querySelectorAll('p').map(row=>row.textContent));
+ f.window.referenceResults.init();
+ await f.window.referenceResults.refresh(f.scope);
+ for(const [id,screen] of [['s1',f.s1],['s2',f.s2]]){
+  await f.window.referenceResults.setScreen(id);
+  const banner=screen.querySelector('.quality-notice span').textContent;
+  assert.match(banner,/За всю историю отчётов этого типа: ошибочных отчётов по всем подразделениям — 1/);
+  await screen.querySelectorAll('button').find(node=>node.textContent.includes('Печать')).click();
+  const paragraphs=printed.at(-1);
+  assert.deepEqual(paragraphs.filter(line=>/^(База|Анализ): пропусков отчётов/.test(line)),
+   ['База: пропусков отчётов — 0.','Анализ: пропусков отчётов — 0.']);
+  assert.equal(paragraphs.filter(line=>line.includes('отчётов с замечаниями в выбранных подразделениях — 1')).length,1);
+ }
+});

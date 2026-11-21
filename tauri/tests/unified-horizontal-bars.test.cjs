@@ -44,3 +44,12 @@ test('horizontal chart paginates long periods and keeps the renderer bounded',()
  host.scrollWindow.go(0);
  assert.equal(options.periodPage,0);
 });
+
+test('department number matches the horizontal bar and legend after a missing first period',()=>{
+ const {window,root}=fixture(),periods=[{start:'2026-10-12'},{start:'2026-10-13'}];
+ const data=[new Map([['Отдел',{count:null}]]),new Map([['Отдел',{count:3}]])];
+ window.unifiedHorizontalBars(periods,['Отдел'],data,'count',root,{},()=> 'var(--plot-0)',()=>{},new Map([['Отдел',9]]));
+ assert.equal(all(root).filter(node=>node.tagName==='TEXT'&&node.textContent==='9').length,1);
+ assert.ok(all(root).some(node=>node.tagName==='SPAN'&&node.textContent==='9 · Отдел'));
+ assert.equal(all(root).filter(node=>node.dataset.chartTooltip).length,1);
+});

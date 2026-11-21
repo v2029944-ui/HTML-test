@@ -1,6 +1,8 @@
 //! Sequential conversion of ordinary triples into disk-backed reports.
 //! Financial rows and diagnostics are never collected into a report-sized Vec.
 use crate::{check_cancel, fail, Result, Stage};
+#[path = "ordinary_date.rs"]
+mod ordinary_date;
 use chrono::{Datelike, Duration, Months, NaiveDate};
 use rusqlite::{params, Connection};
 use serde::Serialize;
@@ -419,6 +421,7 @@ impl Stage<'_> {
                 "Не найдены тройки столбцов «Работа / Количество / Сумма».",
             ));
         }
+        let mut used_columns = HashSet::new();
         for m in &mappings {
             if m.header_row == 0
                 || m.header_row > self.limits.rows
@@ -431,8 +434,12 @@ impl Stage<'_> {
             {
                 return Err(fail("Некорректное сопоставление столбцов."));
             }
+            if cfg.mappings.is_some() && [m.work_col,m.count_col,m.amount_col].iter().any(|&col| !used_columns.insert(col)) {
+                return Err(fail("Один столбец указан в нескольких наборах Excel."));
+            }
         }
         let periods = legacy_periods(cfg, start, mappings.len())?;
+        let date_notices = ordinary_date::check(self, cfg, &mappings, periods[0].0, cancel)?;
         self.db.execute_batch(SCHEMA)?;
         self.db.execute_batch("BEGIN IMMEDIATE;DELETE FROM converted_reports;DELETE FROM converted_rows;DELETE FROM converted_issues;DELETE FROM converted_totals;DELETE FROM converted_organizations;DELETE FROM manifest WHERE name='conversion_complete';")?;
         let result = (|| {
@@ -473,6 +480,12 @@ impl Stage<'_> {
                     overall: false,
                     daily: false,
                 };
+                if i == 0 {
+                    for notice in &date_notices {
+                        context.issue("warning", &notice.reason, notice.row, None,
+                            (notice.address.clone(),None,None), None,None,false)?;
+                    }
+                }
                 let mut stmt=self.db.prepare("SELECT c.row_num,c.col_num,CASE WHEN c.kind='s' THEN s.value WHEN c.kind='b' THEN CASE c.value WHEN '1' THEN 'true' ELSE 'false' END ELSE c.value END FROM cells c LEFT JOIN strings s ON c.kind='s' AND s.id=CAST(c.value AS INTEGER) WHERE c.sheet=?1 AND c.row_num>?2 AND c.col_num IN (?3,?4,?5) ORDER BY c.row_num,c.col_num")?;
                 let mut rows = stmt.query(params![
                     cfg.sheet,

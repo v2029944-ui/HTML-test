@@ -12,6 +12,7 @@ pub async fn unified_period_options(
     grouping: Option<String>,
     after: Option<String>,
     limit: usize,
+    week_calendar_month: Option<String>,
     workspace_token: Option<String>,
 ) -> Result<UnifiedPeriodOptions, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -26,6 +27,7 @@ pub async fn unified_period_options(
                     grouping.as_deref(),
                     after.as_deref(),
                     limit,
+                    week_calendar_month.as_deref(),
                 )
             },
         )
@@ -43,6 +45,7 @@ pub async fn unified_name_options(
     limit: usize,
     page_index: Option<usize>,
     selected_keys: Option<Vec<String>>,
+    all_series: Option<bool>,
     workspace_token: Option<String>,
 ) -> Result<UnifiedNameOptions, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -52,6 +55,13 @@ pub async fn unified_name_options(
             crate::storage::shared_runtime::Access::Read,
             |routed_storage| {
                 let store = routed_storage;
+                if all_series == Some(true) {
+                    let index = page_index.ok_or("Work series requires a page index")?;
+                    if !search.is_empty() || after.is_some() || selected_keys.is_some() {
+                        return Err("Work series cannot be combined with a name filter".into());
+                    }
+                    return store.unified_work_series_at_page(revision, index, limit);
+                }
                 if let Some(keys) = &selected_keys {
                     if !search.is_empty() || page_index.is_some() || after.is_some() || limit != 50 {
                         return Err("Selected name lookup cannot be combined with search or paging".into());

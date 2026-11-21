@@ -278,12 +278,23 @@ fn top(c: &Connection, q: &ChangeQuery, m: &str) -> Result<Option<ChangeValue>, 
         .map(|r| change_value(r, q))
         .transpose()
 }
-pub(super) fn create_name_catalog(tx: &Connection) -> Result<(), String> {
-    tx.execute_batch("CREATE TEMP TABLE unified_names AS WITH candidates AS (
+pub(super) fn create_name_catalog(tx: &Connection, all_series: bool) -> Result<(), String> {
+    // Name-based selection must be unambiguous. The all-work chart uses identity
+    // keys and can safely display both members of a matching work/group pair.
+    let labels = if all_series {
+        "SELECT key,name,kind,
+                CASE WHEN count(*) OVER(PARTITION BY name)>1
+                     THEN name || CASE kind WHEN 'group' THEN ' (группа)' ELSE ' (работа)' END
+                     ELSE name END label FROM candidates WHERE name<>''"
+    } else {
+        "SELECT key,name,min(kind) kind,name label FROM candidates
+         WHERE name<>'' AND length(CAST(name AS BLOB))<=512 GROUP BY name HAVING count(*)=1"
+    };
+    tx.execute_batch(&format!("CREATE TEMP TABLE unified_names AS WITH candidates AS (
             SELECT g.key,g.name,'group' kind FROM analysis_groups g GROUP BY g.key,g.name
             UNION ALL SELECT 'work:'||x.work,x.work,'work' FROM report_rows x
             WHERE NOT EXISTS(SELECT 1 FROM analysis_groups g WHERE g.work=x.work) GROUP BY x.work
-        ) SELECT key,name,min(kind) kind FROM candidates WHERE name<>'' AND length(CAST(name AS BLOB))<=512 GROUP BY name HAVING count(*)=1").map_err(err)
+        ) {labels}")).map_err(err)
 }
 impl Storage {
     /// Metadata only; each response is bounded even for very large history.
@@ -294,10 +305,13 @@ impl Storage {
         after: Option<&str>,
         limit: usize,
     ) -> Result<UnifiedNameOptions, String> {
-        self.name_options_window(revision, search, after, limit, None, None)
+        self.name_options_window(revision, search, after, limit, None, None, false)
     }
     pub fn unified_name_options_at_page(&self, revision:i64, search:&str, page_index:usize, limit:usize) -> Result<UnifiedNameOptions,String> {
-        self.name_options_window(revision,search,None,limit,Some(page_index),None)
+        self.name_options_window(revision,search,None,limit,Some(page_index),None,false)
+    }
+    pub fn unified_work_series_at_page(&self, revision:i64, page_index:usize, limit:usize) -> Result<UnifiedNameOptions,String> {
+        self.name_options_window(revision,"",None,limit,Some(page_index),None,true)
     }
     /// One revision-consistent read returns the catalog total and the surviving selection.
     pub fn unified_selected_name_options(&self, revision: i64, keys: &[String]) -> Result<UnifiedNameOptions, String> {
@@ -305,9 +319,9 @@ impl Storage {
             return Err("Invalid selected name keys".into());
         }
         for key in keys { key_bound(key)?; }
-        self.name_options_window(revision, "", None, 50, None, Some(keys))
+        self.name_options_window(revision, "", None, 50, None, Some(keys), false)
     }
-    fn name_options_window(&self, revision:i64, search:&str, after:Option<&str>, limit:usize, page_index:Option<usize>, selected_keys:Option<&[String]>) -> Result<UnifiedNameOptions,String> {
+    fn name_options_window(&self, revision:i64, search:&str, after:Option<&str>, limit:usize, page_index:Option<usize>, selected_keys:Option<&[String]>, all_series:bool) -> Result<UnifiedNameOptions,String> {
         if !(1..=50).contains(&limit) || search.len() > 512 {
             return Err("Invalid name option query".into());
         }
@@ -327,11 +341,11 @@ impl Storage {
         let fingerprint = format!(
             "{:x}",
             Sha256::digest(
-                serde_json::to_vec(&json!(["names", revision, search, limit])).map_err(err)?
+                serde_json::to_vec(&json!(["names", revision, search, limit, all_series])).map_err(err)?
             )
         );
         let cursor_offset = page_offset(after, &fingerprint)?;
-        create_name_catalog(&tx)?;
+        create_name_catalog(&tx,all_series)?;
         let term = normalized(search);
         tx.execute(
             "DELETE FROM unified_names WHERE instr(classic_normalized(name),?1)=0",
@@ -344,7 +358,7 @@ impl Storage {
                 [serde_json::to_string(keys).map_err(err)?]).map_err(err)?;
         }
         let offset=match page_index {Some(index)=>crate::storage::direct_page_offset(index,limit,total_rows)?,None=>cursor_offset};
-        let mut stmt=tx.prepare("SELECT key,name,kind FROM unified_names ORDER BY (instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key LIMIT ?2 OFFSET ?3").map_err(err)?;
+        let mut stmt=tx.prepare("SELECT key,label,kind FROM unified_names ORDER BY (instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key LIMIT ?2 OFFSET ?3").map_err(err)?;
         let mut result = stmt
             .query(params![term, (limit + 1) as i64, offset])
             .map_err(err)?;
@@ -378,9 +392,11 @@ impl Storage {
         grouping: Option<&str>,
         after: Option<&str>,
         limit: usize,
+        week_calendar_month: Option<&str>,
     ) -> Result<UnifiedPeriodOptions, String> {
         if !matches!(report_type, "day" | "week" | "month")
             || !(1..=500).contains(&limit)
+            || week_calendar_month.is_some_and(|day| report_type != "week" || !valid_date(day) || !day.ends_with("-01"))
             || grouping.is_some_and(|g| {
                 report_type != "day" || !matches!(g, "day" | "week" | "month" | "year")
             })
@@ -407,18 +423,26 @@ impl Storage {
         let fingerprint = format!(
             "{:x}",
             Sha256::digest(
-                serde_json::to_vec(&json!(["periods", revision, report_type, grouping, limit]))
+                serde_json::to_vec(&json!(["periods", revision, report_type, grouping, limit, week_calendar_month]))
                     .map_err(err)?
             )
         );
         let offset = page_offset(after, &fingerprint)?;
+        // For a calendar month, index validation and lookup share the reports_by_period window.
+        // At most 37 different starts can touch the month.
+        let window = if week_calendar_month.is_some() {
+            " AND r.period_start BETWEEN date(?2,'-6 days') AND date(?2,'+1 month','-1 day')"
+        } else {
+            " AND ?2 IS NULL"
+        };
         let incomplete: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM reports r LEFT JOIN analysis_reports a ON a.report_id=r.id WHERE r.report_type=?1 AND a.report_id IS NULL)",
-            [report_type], |r|r.get(0)).map_err(err)?;
+            &format!("SELECT EXISTS(SELECT 1 FROM reports r LEFT JOIN analysis_reports a ON a.report_id=r.id WHERE r.report_type=?1 AND a.report_id IS NULL{window})"),
+            params![report_type,week_calendar_month], |r|r.get(0)).map_err(err)?;
         if incomplete {
             return Err("Report analysis index is incomplete".into());
         }
-        tx.execute(&format!("CREATE TEMP TABLE unified_periods AS SELECT DISTINCT {start} start FROM reports r JOIN analysis_reports a ON a.report_id=r.id WHERE a.valid=1 AND r.report_type=?1"),[report_type]).map_err(err)?;
+        tx.execute(&format!("CREATE TEMP TABLE unified_periods AS SELECT DISTINCT {start} start FROM reports r JOIN analysis_reports a ON a.report_id=r.id WHERE a.valid=1 AND r.report_type=?1{window}"),
+            params![report_type,week_calendar_month]).map_err(err)?;
         let (min, max, total_rows) = tx
             .query_row(
                 "SELECT min(start),max(start),count(*) FROM unified_periods",

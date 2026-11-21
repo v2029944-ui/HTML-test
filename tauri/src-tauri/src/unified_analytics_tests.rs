@@ -49,13 +49,13 @@ fn unified_metadata_and_pattern_filters_are_paged() {
     assert!(s
         .unified_name_options(r, "other", names.next.as_deref(), 50)
         .is_err());
-    let periods = s.unified_period_options(r, "day", None, None, 1).unwrap();
+    let periods = s.unified_period_options(r, "day", None, None, 1, None).unwrap();
     assert_eq!(periods.total_rows, 2);
     assert_eq!(periods.min.as_deref(), Some("2024-01-01"));
     assert_eq!(periods.max.as_deref(), Some("2024-01-02"));
     assert!(periods.next.is_some());
     let month = s
-        .unified_period_options(r, "day", Some("month"), None, 10)
+        .unified_period_options(r, "day", Some("month"), None, 10, None)
         .unwrap();
     assert_eq!(month.rows[0].end, "2024-01-31");
     let options = UnifiedPatternOptions {
@@ -486,4 +486,23 @@ fn a_refresh_resolves_selected_keys_beyond_the_first_catalog_page() {
     assert!(names.next.is_none());
     assert!(store.unified_selected_name_options(revision + 1, &selected).is_err());
     assert!(store.unified_selected_name_options(revision, &vec!["work:a".into(); 51]).is_err());
+}
+
+#[test]
+fn calendar_finds_all_saved_weeks_covering_a_day_on_mixed_schedules() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().join("weeks")).unwrap();
+    let weeks = [("2026-10-29","2026-11-04"), ("2026-11-04","2026-11-10"), ("2026-11-06","2026-11-12"), ("2026-11-16","2026-11-22")];
+    let reports: Vec<_> = weeks.iter().map(|(start,end)| json!({
+        "id":start, "type":"week", "start":start, "end":end, "organizations":["A"],
+        "rows":[{"organization":"A","work":"W","count":1,"amount":2}]
+    })).collect();
+    store.save(json!({"reports":reports,"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}})).unwrap();
+    let rev = store.revision().unwrap();
+    for (id,_) in weeks { store.analysis_index_report(id,rev).unwrap(); }
+    let lookup = |month| store.unified_period_options(rev,"week",None,None,37,Some(month)).unwrap();
+    let november = lookup("2026-11-01");
+    assert_eq!(november.rows.iter().map(|r| r.start.as_str()).collect::<Vec<_>>(),vec!["2026-10-29","2026-11-04","2026-11-06","2026-11-16"]);
+    assert_eq!(november.rows[3].end,"2026-11-22");
+    assert!(lookup("2026-12-01").rows.is_empty());
 }

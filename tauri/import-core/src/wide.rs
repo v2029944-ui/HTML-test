@@ -171,7 +171,6 @@ struct Patterns {
     annual: Regex,
     strip_prefix: Regex,
     strip_suffix: Regex,
-    date_style: Regex,
 }
 fn js_regex(pattern: &str) -> Regex {
     let ws = r"\x09-\x0d\x20\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
@@ -228,7 +227,6 @@ impl Patterns {
             annual: r(r"(?i)годов|за\s+\d{4}\s*год|year|annual"),
             strip_prefix: r(r"^(?:количество|кол[.-]?во|сумма)\s*[:;,·—-]?\s*"),
             strip_suffix: r(r"[\s,:;·—-]*(?:количество|кол[.-]?во|сумма)$"),
-            date_style: r(r"(?i)[dy]"),
         }
     }
 }
@@ -252,9 +250,13 @@ impl Stage<'_> {
     fn unhook(&self) {
         self.db.progress_handler(0, None::<fn() -> bool>);
     }
-    fn wide_setup(&self, p: &Patterns, cancel: &AtomicBool) -> Result<()> {
+    fn wide_setup(&self, cancel: &AtomicBool) -> Result<()> {
         self.db.execute_batch(WIDE_SCHEMA)?;
-        self.db.execute_batch("CREATE INDEX IF NOT EXISTS cells_by_column ON cells(sheet,col_num,row_num); CREATE TABLE IF NOT EXISTS custom_formats(id INTEGER PRIMARY KEY,format TEXT); DELETE FROM date_styles; DELETE FROM custom_formats;")?;
+        self.db.execute_batch("CREATE INDEX IF NOT EXISTS cells_by_column ON cells(sheet,col_num,row_num)")?;
+        self.setup_date_styles(cancel)
+    }
+    pub(crate) fn setup_date_styles(&self, cancel: &AtomicBool) -> Result<()> {
+        self.db.execute_batch("CREATE TABLE IF NOT EXISTS date_styles(style INTEGER PRIMARY KEY) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS custom_formats(id INTEGER PRIMARY KEY,format TEXT); DELETE FROM date_styles; DELETE FROM custom_formats;")?;
         let mut formats=self.db.prepare("SELECT i.value,coalesce(f.value,'') FROM nodes n JOIN attributes i ON i.component=n.component AND i.seq=n.seq AND i.key='numFmtId' LEFT JOIN attributes f ON f.component=n.component AND f.seq=n.seq AND f.key='formatCode' WHERE n.component='xl/styles.xml' AND n.tag='numFmt' ORDER BY n.seq")?;
         let mut rows = formats.query([])?;
         while let Some(row) = rows.next()? {
@@ -301,7 +303,7 @@ impl Stage<'_> {
                         clean.push(c);
                     }
                 }
-                p.date_style.is_match(&clean)
+                clean.contains(['d', 'D', 'y', 'Y'])
             });
             if (14..=22).contains(&id) || custom {
                 self.db
@@ -541,7 +543,7 @@ impl Stage<'_> {
         self.hook(cancel.clone());
         let result = (|| {
             let p = Patterns::new();
-            self.wide_setup(&p, &cancel)?;
+            self.wide_setup(&cancel)?;
             let mut found = Vec::new();
             for (name, path) in self.sheet_names()? {
                 if !cfg.sheets.is_empty() && !cfg.sheets.contains(&name) {
@@ -679,7 +681,7 @@ impl Stage<'_> {
         self.hook(cancel.clone());
         let result = (|| {
             let p = Patterns::new();
-            self.wide_setup(&p, &cancel)?;
+            self.wide_setup(&cancel)?;
             self.db.execute_batch(report_stage::SCHEMA)?;
             self.db.execute_batch("BEGIN IMMEDIATE;DELETE FROM converted_reports;DELETE FROM converted_rows;DELETE FROM converted_issues;DELETE FROM converted_totals;DELETE FROM converted_organizations;DELETE FROM wide_provenance;DELETE FROM wide_source_issues;DELETE FROM wide_days;DELETE FROM manifest WHERE name='conversion_complete';")?;
             let book = self.sheet_names()?;
@@ -1433,6 +1435,23 @@ fn relationship_target(target: &str) -> Result<String> {
     }
     Ok(parts.join("/"))
 }
+pub(crate) fn excel_serial_date(n: f64, date1904: bool) -> Result<NaiveDate> {
+    let n = n.floor() as i64;
+    if !date1904 && n == 60 {
+        return Err(fail("nonexistent Excel date 1900-02-29"));
+    }
+    let base = if date1904 {
+        NaiveDate::from_ymd_opt(1904, 1, 1)
+    } else if n < 60 {
+        NaiveDate::from_ymd_opt(1899, 12, 31)
+    } else {
+        NaiveDate::from_ymd_opt(1899, 12, 30)
+    }
+    .unwrap();
+    base
+        .checked_add_signed(Duration::days(n))
+        .ok_or_else(|| fail("Excel date out of range"))
+}
 fn date_parts(
     value: &str,
     kind: &str,
@@ -1443,21 +1462,7 @@ fn date_parts(
     if !["s", "str", "inlineStr", "d"].contains(&kind) {
         if let Ok(n) = value.parse::<f64>() {
             if n >= if date1904 { 0. } else { 1. } && n < 2958466. && (styled || n >= 20000.) {
-                let n = n.floor() as i64;
-                if !date1904 && n == 60 {
-                    return Err(fail("nonexistent Excel date 1900-02-29"));
-                }
-                let base = if date1904 {
-                    NaiveDate::from_ymd_opt(1904, 1, 1)
-                } else if n < 60 {
-                    NaiveDate::from_ymd_opt(1899, 12, 31)
-                } else {
-                    NaiveDate::from_ymd_opt(1899, 12, 30)
-                }
-                .unwrap();
-                let d = base
-                    .checked_add_signed(Duration::days(n))
-                    .ok_or_else(|| fail("Excel date out of range"))?;
+                let d = excel_serial_date(n,date1904)?;
                 return Ok(Some(Parts {
                     year: Some(d.year()),
                     suffix: None,

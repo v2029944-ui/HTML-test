@@ -56,14 +56,23 @@ function summaryCards(values,comparison,comparable,totalOrganizations){
   if(comparison&&totalOrganizations>0)delta.append(button('по '+comparable+' из '+totalOrganizations,e=>openSample(e.target),'metric-sample sample-link'));
  }
 }
+function historicalQuality(period){
+ if(!period)return '';
+ const parts=[];
+ if(period.invalid_reports>0)parts.push('ошибочных отчётов по всем подразделениям — '+period.invalid_reports);
+ if(period.import_warning_reports>0)parts.push('отчётов с замечаниями в выбранных подразделениях — '+period.import_warning_reports);
+ if(period.duplicate_issues>0)parts.push('признаков дублирования в выбранных подразделениях — '+period.duplicate_issues);
+ if(period.overlap_issues>0)parts.push('признаков пересечения в выбранных подразделениях — '+period.overlap_issues);
+ return parts.length?'За всю историю отчётов этого типа: '+parts.join(', ')+'.':'';
+}
 function notice(root,s,comparable,summary){
  const current=summary?.after,baseline=summary?.before;
  const n=$(root+' .quality-notice');if(!n)return;const span=n.querySelector('span');const excluded=s.organizations.filter(org=>!comparable.includes(org));
- const warnings=(current?.invalid_reports||0)+(current?.duplicate_issues||0)+(current?.overlap_issues||0)+(current?.import_warning_reports||0);
+ const warnings=historicalQuality(current);
  const gap=current?.missing===1&&baseline?.missing===0?current.single_missing:baseline?.missing===1&&current?.missing===0?baseline.single_missing:null;
  const detail=excluded.length===1&&gap?.org===excluded[0]&&date(gap.start)!=='—'?' · '+date(gap.start)+': нет пригодного отчёта':'';
  n.hidden=!excluded.length&&current?.complete===true&&!warnings;
- span.textContent=(current?.available_reports===0?'Нет пригодных данных за анализируемый интервал. ':current?.complete===false?'Итоги частичные. ':'')+'Сравнение по '+comparable.length+' из '+s.organizations.length+' подразделений.'+(excluded.length?' Исключены из сравнения: '+excluded.join(', ')+detail+'.':'')+(warnings?' В исходных отчётах есть замечания: '+warnings+'.':'')+' Пропуски не считаются нулём. Наличие отчётов не подтверждает полноту источника.';
+ span.textContent=(current?.available_reports===0?'Нет пригодных данных за анализируемый интервал. ':current?.complete===false?'Итоги частичные. ':'')+'Сравнение по '+comparable.length+' из '+s.organizations.length+' подразделений.'+(excluded.length?' Исключены из сравнения: '+excluded.join(', ')+detail+'.':'')+(warnings?' '+warnings:'')+' Пропуски не считаются нулём. Наличие отчётов не подтверждает полноту источника.';
 }
 function appendTableRow(body,values){
  const tr=el('tr');
@@ -195,7 +204,11 @@ function printContext(root,s,comparable,comparison,overview){
   root.append(el('p','Исключены из сравнения: '+excluded.join(', ')+'.'));
   for(const org of excluded){const row=overview?.divisions?.find(value=>value.organization===org),before=Number.isFinite(row?.before?.amount)&&Number.isFinite(row?.before?.count),after=Number.isFinite(row?.after?.amount)&&Number.isFinite(row?.after?.count);root.append(el('p',org+': '+(row?!before&&!after?'неполные базовый и анализируемый интервалы':!before?'неполный базовый интервал':'неполный анализируемый интервал':'нет пригодных отчётов за весь базовый или анализируемый интервал')+'.'));}
  }
- for(const [label,period]of [['База',overview?.summary?.before],['Анализ',overview?.summary?.after]]){if(period){const count=value=>Number.isSafeInteger(value)?String(value):'—';root.append(el('p',label+': пропусков отчётов — '+count(period.missing)+'; ошибочных отчётов — '+count(period.invalid_reports)+'; отчётов с замечаниями — '+count(period.import_warning_reports)+'.'));}}
+ for(const [label,period]of [['База',overview?.summary?.before],['Анализ',overview?.summary?.after]]){
+  if(period)root.append(el('p',label+': пропусков отчётов — '+(Number.isSafeInteger(period.missing)?period.missing:'—')+'.'));
+ }
+ const history=historicalQuality(overview?.summary?.after);
+ if(history)root.append(el('p',history));
  if(comparable.length&&comparison){
   root.append(el('h2','Итоги сопоставимых подразделений'));
   printTable(root,['Показатель','Было','Стало','Изменение','Изменение, %'],['amount','count','average'].map(metric=>[titles[metric],fmt(comparison.before?.total?.[metric],metric),fmt(comparison.after?.total?.[metric],metric),displayedChange(comparison[metric]?.delta,metric).value,pct(comparison[metric]?.percent)]),'print-comparison');
