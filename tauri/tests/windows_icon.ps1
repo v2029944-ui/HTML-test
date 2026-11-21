@@ -80,9 +80,10 @@ $install=Join-Path $root 'app'
 $work=Join-Path $root 'profile'
 New-Item -ItemType Directory $work | Out-Null
 # Both versions are production binaries. Redirect their user data into this desktop's test profile.
-$env:APPDATA=Join-Path $work 'Roaming'
-$env:LOCALAPPDATA=Join-Path $work 'Local'
-New-Item -ItemType Directory $env:APPDATA,$env:LOCALAPPDATA | Out-Null
+$testRoaming=Join-Path $work 'Roaming'
+$testLocal=Join-Path $work 'Local'
+New-Item -ItemType Directory $testRoaming,$testLocal | Out-Null
+$programs=[Environment]::GetFolderPath('Programs')
 $shell=New-Object -ComObject WScript.Shell
 $result=[ordered]@{sha=$env:REFERENCE_HEAD_SHA;clean=@{};upgrade=@{}}
 function Save-Result { $result | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 (Join-Path $out 'reference-windows-icons.json') }
@@ -111,7 +112,16 @@ function Uninstall-Owned {
 }
 function Main-Window($path){
     $process=Get-Process -ErrorAction SilentlyContinue | Where-Object {$_.Path -eq $path} | Select-Object -First 1
-    if(!$process){$process=Start-Process $path -PassThru}
+    if(!$process){
+        # Installer and Explorer must use the same shell folders; isolate only the launched app.
+        $roaming=$env:APPDATA
+        $local=$env:LOCALAPPDATA
+        try{
+            $env:APPDATA=$testRoaming
+            $env:LOCALAPPDATA=$testLocal
+            $process=Start-Process $path -PassThru
+        }finally{$env:APPDATA=$roaming;$env:LOCALAPPDATA=$local}
+    }
     for($i=0;$i -lt 100;$i++){Start-Sleep -Milliseconds 200;$process.Refresh();if($process.MainWindowHandle -ne 0){return $process.MainWindowHandle}}
     throw 'Installed application has no main window'
 }
@@ -120,6 +130,28 @@ function Check-Bitmap($bitmap,$id){
         $bitmap.Save((Join-Path $out ("reference-icon-"+$id+".png")))
         if(![AnalizIcon]::Mark($bitmap,0,0,$bitmap.Width)){throw "Expected three white bars on blue: $id"}
     }finally{$bitmap.Dispose()}
+}
+function Check-StartMenu($name,$exe,$record){
+    $shortcut=Join-Path $programs 'Анализ работ.lnk'
+    $info=@{path=$shortcut}
+    $record.startMenu=$info
+    if(!(Test-Path -LiteralPath $shortcut)){throw "Start menu shortcut missing: $shortcut"}
+    $link=$shell.CreateShortcut($shortcut)
+    $info.target=$link.TargetPath
+    $info.icon=$link.IconLocation
+    $folder=(New-Object -ComObject Shell.Application).NameSpace($programs)
+    $info.appId=$folder.ParseName((Split-Path $shortcut -Leaf)).ExtendedProperty('System.AppUserModel.ID')
+    $icon=Join-Path (Split-Path $exe) 'analysis-bars-blue.ico'
+    if($info.target -ne $exe -or $info.appId -ne 'local.analiz.rabot.tauri'){throw 'Start menu link target or AppUserModelID differs'}
+    if(($info.icon -replace ',\s*0$','').Trim('"') -ne $icon){throw "Start menu calls a different icon: $($info.icon)"}
+    Check-Bitmap ([AnalizIcon]::FromFile($icon)) ($name+'-installed-ico')
+    Check-Bitmap ([AnalizIcon]::FromShortcut($shortcut)) ($name+'-start-menu')
+}
+function Check-Shell($name,$exe,$record){
+    # Preserve the actual taskbar screenshot even when shortcut metadata is wrong.
+    try{Check-StartMenu $name $exe $record}catch{$record.startMenuError=$_.Exception.Message}
+    Capture-Taskbar $name $record
+    if($record.startMenuError){throw $record.startMenuError}
 }
 function Taskbar-Button{
     $hwnd=[AnalizIcon]::FindWindow('Shell_TrayWnd',$null)
@@ -205,7 +237,7 @@ try{
         Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,0)) 'clean-window'
         Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,1)) 'clean-taskbar-hwnd'
         $result.clean.hwnd='verified small and large'
-        Capture-Taskbar 'clean' $result.clean
+        Check-Shell 'clean' $exe $result.clean
     }catch{$result.clean.error=$_.Exception.Message}
     Save-Result
     if($exe){Stop-Owned $exe}
@@ -234,7 +266,7 @@ try{
     Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,0)) 'upgrade-window'
     Check-Bitmap ([AnalizIcon]::FromWindow($hwnd,1)) 'upgrade-taskbar-hwnd'
     $result.upgrade.hwnd='verified small and large'
-    Capture-Taskbar 'upgrade' $result.upgrade
+    Check-Shell 'upgrade' $exe $result.upgrade
     if($result.clean.error){throw $result.clean.error}
 }catch{$result.error=$_.Exception.Message;throw}
 finally{

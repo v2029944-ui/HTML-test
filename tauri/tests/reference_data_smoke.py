@@ -252,6 +252,7 @@ def check_reference_data(page, output):
         # Change-table printing prepares all filtered SQL pages asynchronously.
         title = ('Сводка выполненных работ' if screen == '#s1' else
                  page.locator('#s2 .changes-heading h2').inner_text())
+        periods = page.locator(screen + ' .report-range span').all_text_contents()
         source = '#s1 .data-card table tbody tr' if screen == '#s1' else '#s2 .changes-table tbody tr'
         expected_rows = page.locator(source).evaluate_all(
             '(rows) => rows.map(row => [...row.cells].slice(0, row.closest("#s1") ? 4 : 6).map(cell => cell.textContent))')
@@ -283,6 +284,8 @@ def check_reference_data(page, output):
             frame = frames[0]
             assert frame['visible'] == {key: key == '#referencePrintDocument' for key in frame['visible']}, frame
             assert frame['title'] == title, frame
+            assert len(periods) >= 2 and 'Анализируемый период: ' + periods[0] in frame['context'], frame
+            assert 'Базовый период: ' + periods[1].removeprefix('Сравнение с ') in frame['context'], frame
             rows = frame['organizations' if screen == '#s1' else 'changes']
             assert len(rows) == total_rows and rows[first_row:first_row + len(expected_rows)] == expected_rows, frame
             assert len({tuple(row[:2]) for row in rows}) == len(rows), frame
