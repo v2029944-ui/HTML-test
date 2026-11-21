@@ -1564,7 +1564,11 @@ def run():
                 page.locator('#unifiedUploadQuality').click()
                 wait_for_text(page,'#qualitySummary','Найдено:',90_000)
                 assert page.locator('#qualityTable tbody tr').count()<=50
-                assert page.locator('#uploadedReports > summary').is_visible()
+                expect(page.locator('#qualitySummary')).to_be_visible()
+                expect(page.locator('#uploadedReports > summary')).to_be_hidden()
+                page.locator('#unifiedUploadList').click()
+                expect(page.locator('#uploadedReports > summary')).to_be_visible()
+                expect(page.locator('#qualitySummary')).to_be_hidden()
                 assert page.url==entry_url
                 page.screenshot(path=str(output/'windows-webview2.png'))
                 page.evaluate("localStorage.setItem('work-reports-view-v1','upload'); localStorage.setItem('analiz-sql-startup-v1','classic')")

@@ -248,31 +248,57 @@ def check_reference_data(page, output):
         settled('#s2')
 
     def print_view(screen):
-        # The handler clears its print flag immediately after window.print
-        # returns. Capture real computed print styles synchronously inside it.
+        # Capture the dedicated print document synchronously while it exists.
+        # Change-table printing prepares all filtered SQL pages asynchronously.
+        title = ('Сводка выполненных работ' if screen == '#s1' else
+                 page.locator('#s2 .changes-heading h2').inner_text())
+        source = '#s1 .data-card table tbody tr' if screen == '#s1' else '#s2 .changes-table tbody tr'
+        expected_rows = page.locator(source).evaluate_all(
+            '(rows) => rows.map(row => [...row.cells].slice(0, row.closest("#s1") ? 4 : 6).map(cell => cell.textContent))')
+        expected_values = page.locator('#s1 .metric-value').all_text_contents() if screen == '#s1' else None
+        positions = re.search(r'Позиции\s+(\d+)[–—-](\d+)\s+из\s+(\d+)', page.locator('#s2 .pager-footer').inner_text()) if screen == '#s2' else None
+        first_row, total_rows = (int(positions[1]) - 1, int(positions[3])) if positions else (0, len(expected_rows))
         page.emulate_media(media='print')
-        page.evaluate('''() => {window.__referenceSmokePrint=window.print;
+        page.evaluate("""() => {window.__referenceSmokePrint=window.print;
             window.__referenceSmokePrintFrames=[];window.print=()=>{
               const visible=id=>{const node=document.querySelector(id);return Boolean(node &&
                 node.getClientRects().length && getComputedStyle(node).visibility!=='hidden');};
+              const root=document.getElementById('referencePrintDocument');
+              const rows=selector=>Array.from(root?.querySelectorAll(selector)||[],row=>
+                Array.from(row.cells,cell=>cell.textContent));
               window.__referenceSmokePrintFrames.push({screen:document.body.dataset.referencePrint,
-                visible:Object.fromEntries(['#s1','#s2','#reportShell','#sharedHeader','#toolsPage']
-                  .map(id=>[id,visible(id)]))});
-            };}''')
+                visible:Object.fromEntries(['#s1','#s2','#reportShell','#sharedHeader','#toolsPage','#referencePrintDocument']
+                  .map(id=>[id,visible(id)])),title:root?.querySelector('h1')?.textContent,
+                organizations:rows('.print-organizations tbody tr'),changes:rows('.print-changes tbody tr'),
+                observed:rows('.print-observed tbody tr'),comparison:rows('.print-comparison tbody tr'),
+                context:root?.textContent});
+            };}""")
         try:
-            # Printing intentionally hides the button itself; invoke its actual
-            # DOM click handler without inventing a second print entrypoint.
+            # Print CSS hides the trigger itself. Invoke that production element's
+            # actual handler, then await its bounded native SQL reads before capture.
             page.locator(screen).get_by_role('button', name='Печать / PDF', exact=True, include_hidden=True).first.evaluate('(node) => node.click()')
+            page.wait_for_function('() => window.__referenceSmokePrintFrames.length === 1', timeout=TIMEOUT)
             frames = page.evaluate('window.__referenceSmokePrintFrames')
-            assert len(frames) == 1 and frames[0]['screen'] == screen[1:], frames
-            assert frames[0]['visible'] == {key: key == screen for key in frames[0]['visible']}, frames
-            assert page.locator('body').get_attribute('data-reference-print') is None
+            assert len(frames) == 1 and frames[0]['screen'] == 'document', frames
+            frame = frames[0]
+            assert frame['visible'] == {key: key == '#referencePrintDocument' for key in frame['visible']}, frame
+            assert frame['title'] == title, frame
+            rows = frame['organizations' if screen == '#s1' else 'changes']
+            assert len(rows) == total_rows and rows[first_row:first_row + len(expected_rows)] == expected_rows, frame
+            assert len({tuple(row[:2]) for row in rows}) == len(rows), frame
+            if screen == '#s2':
+                assert 'Строк: ' + str(total_rows) + ' ·' in frame['context'], frame
+            assert len(frame['comparison']) == 3, frame
+            assert 'Область работ: Все работы' in frame['context'], frame
+            if expected_values is not None:
+                assert [row[1] for row in frame['observed']] == expected_values, frame
+            page.wait_for_function("() => !document.body.hasAttribute('data-reference-print') && !document.getElementById('referencePrintDocument')", timeout=TIMEOUT)
             evidence['checks'].append('print-media-' + screen[1:])
-            evidence.setdefault('print', {})[screen] = frames[0]
+            evidence.setdefault('print', {})[screen] = frame
         finally:
             page.emulate_media(media='screen')
-            page.evaluate('''() => {window.print=window.__referenceSmokePrint;
-                delete window.__referenceSmokePrint;delete window.__referenceSmokePrintFrames;}''')
+            page.evaluate("""() => {window.print=window.__referenceSmokePrint;
+                delete window.__referenceSmokePrint;delete window.__referenceSmokePrintFrames;}""")
 
     def open_quality(trigger):
         trigger.click()

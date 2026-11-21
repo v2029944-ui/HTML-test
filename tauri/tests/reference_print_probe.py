@@ -486,6 +486,25 @@ _CANCEL_CONTROL = r"""() => {
 }"""
 
 
+def _wait_for_print_target(capture, attribute, before, source_id, label, timeout=15):
+    """Wait for the same attributed preview after asynchronous SQL preparation.
+
+    Discovery only: no click, key or other input is retried during this wait.
+    """
+    deadline = time.monotonic() + timeout
+    index = 0
+    while True:
+        snapshot = capture(label + '-' + str(index))
+        target = attribute(snapshot, before, source_id)
+        if target is not None:
+            return target
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return None
+        time.sleep(min(.5, remaining))
+        index += 1
+
+
 def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227', *, screen='#s1'):
     """Return evidence; unsupported/error are diagnostic statuses, never Cancel passes."""
     output = Path(output)
@@ -647,13 +666,7 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
             report['status'] = 'unavailable-before-click'
             return report
         source_click('open-for-cancel')
-        target = None
-        for index in range(3):
-            time.sleep(.5)
-            opened = capture('opened-' + str(index))
-            target = target_for(opened, before, source['targetId'])
-            if target:
-                break
+        target = _wait_for_print_target(capture, target_for, before, source['targetId'], 'opened')
         if not target:
             report['status'] = 'unavailable-unattributed-preview'
             return report
@@ -664,8 +677,7 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
             if action == 'escape':
                 baseline = capture('before-reopen')
                 source_click('reopen-for-escape')
-                reopened = capture('reopened')
-                target = target_for(reopened, baseline, source['targetId'])
+                target = _wait_for_print_target(capture, target_for, baseline, source['targetId'], 'reopened')
                 if not target:
                     report['status'] = 'unavailable-reopened-target'
                     return report
