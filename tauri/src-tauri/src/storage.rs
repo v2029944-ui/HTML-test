@@ -30,6 +30,9 @@ pub use report_quality::{QualityScope, ReportQualityPage};
 mod unified_reports;
 pub use unified_reports::{UnifiedQualityFilter, UnifiedQualityPage, UnifiedCalendar};
 
+#[path = "shared_runtime.rs"]
+pub mod shared_runtime;
+
 #[path = "shared_folder.rs"]
 pub mod shared_folder;
 
@@ -194,7 +197,7 @@ impl Drop for FolderImportOperation<'_> {
 }
 
 pub struct Storage {
-    folder_import: Mutex<Option<FolderImportSession>>,
+    folder_import: Arc<Mutex<Option<FolderImportSession>>>,
     folder_import_serial: AtomicU64,
     root: PathBuf,
     gate: Mutex<()>,
@@ -511,7 +514,7 @@ impl Storage {
             root,
             gate: Mutex::new(()),
             analysis_filter_gate,
-            folder_import: Mutex::new(None),
+            folder_import: Arc::new(Mutex::new(None)),
             folder_import_serial: AtomicU64::new(0),
         })
     }

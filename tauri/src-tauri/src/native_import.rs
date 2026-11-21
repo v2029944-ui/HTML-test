@@ -163,29 +163,52 @@ fn review<T: serde::Serialize>(
 #[tauri::command]
 pub async fn native_wide_import_preview(
     app: tauri::AppHandle,
-    source:String,
-    options:WideOptions,
-) -> Result<NativeWideReview,String> {
+    source: String,
+    options: WideOptions,
+    workspace_token: Option<String>,
+) -> Result<NativeWideReview, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let storage=app.state::<Storage>();
-        with_prepared(&storage,"native-import-stages",&source,options,|prepared,preview,options| {
-            review(prepared,preview,options,b"wide-manual-review-v1\0",&options.organizations)
-        })
-    }).await.map_err(|e|e.to_string())?
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |routed_storage| {
+                let storage = routed_storage;
+                with_prepared(
+                    &storage,
+                    "native-import-stages",
+                    &source,
+                    options,
+                    |prepared, preview, options| {
+                        review(
+                            prepared,
+                            preview,
+                            options,
+                            b"wide-manual-review-v1\0",
+                            &options.organizations,
+                        )
+                    },
+                )
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
 pub async fn native_wide_import_apply(
     app: tauri::AppHandle,
-    source:String,
-    options:WideOptions,
-    review_token:String,
-    confirmation:NativeWideConfirmation,
-) -> Result<ImportReceipt,String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    source: String,
+    options: WideOptions,
+    review_token: String,
+    confirmation: NativeWideConfirmation,
+    workspace_token: Option<String>,
+) -> Result<ImportReceipt, String> {
+    tauri::async_runtime::spawn_blocking(move || { crate::native_shared_runtime::execute(&app, workspace_token.as_deref(), crate::storage::shared_runtime::Access::Write, |routed_storage| {
         if review_token.len()!=64||!review_token.bytes().all(|b|b.is_ascii_hexdigit()) {
             return Err("Invalid import review token".into());
         }
-        let storage=app.state::<Storage>();
+        let storage=routed_storage;
         with_prepared(&storage,"native-import-stages",&source,options,|prepared,preview,options| {
             let current=review(prepared,preview,options,b"wide-manual-review-v1\0",&options.organizations)?;
             if current.review_token!=review_token {
@@ -222,7 +245,7 @@ pub async fn native_wide_import_apply(
             let job=ImportJob::new();
             storage.apply_import(prepared,preview,flags,&job,|_|{})
         })
-    }).await.map_err(|e|e.to_string())?
+     }) }).await.map_err(|e|e.to_string())?
 }
 
 
@@ -258,27 +281,54 @@ fn with_legacy_prepared<T>(
 pub async fn native_import_sheets(
     app: tauri::AppHandle,
     source: String,
-) -> Result<Vec<NativeWorksheet>,String> {
+    workspace_token: Option<String>,
+) -> Result<Vec<NativeWorksheet>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if source.len()>32767 {return Err("Excel path too long".into());}
-        let path=Path::new(&source);
-        if !path.is_absolute() || !path.extension().and_then(|e|e.to_str())
-            .is_some_and(|e|e.eq_ignore_ascii_case("xlsx"))
-        {return Err("Choose an absolute .xlsx file".into());}
-        let storage=app.state::<Storage>();storage.revision()?;
-        let area=StageArea::open(storage.root().join("native-import-stages")).map_err(|e|e.to_string())?;
-        let cancel=AtomicBool::new(false);
-        let stage=area.ingest(path,Limits::default(),&cancel,|_|{}).map_err(|e|e.to_string())?;
-        let sheets=stage.sheet_names().map_err(|e|e.to_string())?;
-        if sheets.len()>64 {return Err("Too many Excel worksheets for native review".into());}
-        let mut result=Vec::new();
-        for (name,component) in sheets {
-            if !stage.page(&component,0,1).map_err(|e|e.to_string())?.is_empty() {
-                result.push(NativeWorksheet{name,component});
-            }
-        }
-        Ok(result)
-    }).await.map_err(|e|e.to_string())?
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |routed_storage| {
+                if source.len() > 32767 {
+                    return Err("Excel path too long".into());
+                }
+                let path = Path::new(&source);
+                if !path.is_absolute()
+                    || !path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| e.eq_ignore_ascii_case("xlsx"))
+                {
+                    return Err("Choose an absolute .xlsx file".into());
+                }
+                let storage = routed_storage;
+                storage.revision()?;
+                let area = StageArea::open(storage.root().join("native-import-stages"))
+                    .map_err(|e| e.to_string())?;
+                let cancel = AtomicBool::new(false);
+                let stage = area
+                    .ingest(path, Limits::default(), &cancel, |_| {})
+                    .map_err(|e| e.to_string())?;
+                let sheets = stage.sheet_names().map_err(|e| e.to_string())?;
+                if sheets.len() > 64 {
+                    return Err("Too many Excel worksheets for native review".into());
+                }
+                let mut result = Vec::new();
+                for (name, component) in sheets {
+                    if !stage
+                        .page(&component, 0, 1)
+                        .map_err(|e| e.to_string())?
+                        .is_empty()
+                    {
+                        result.push(NativeWorksheet { name, component });
+                    }
+                }
+                Ok(result)
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[derive(Serialize)]
@@ -291,26 +341,40 @@ pub struct NativeWorksheet {
 pub async fn native_legacy_import_sheets(
     app: tauri::AppHandle,
     source: String,
-) -> Result<Vec<String>,String> {
+    workspace_token: Option<String>,
+) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if source.len()>32767 {
-            return Err("Excel path too long".into());
-        }
-        let path=Path::new(&source);
-        if !path.is_absolute() || !path.extension().and_then(|e|e.to_str())
-            .is_some_and(|e|e.eq_ignore_ascii_case("xlsx"))
-        {
-            return Err("Choose an absolute .xlsx file".into());
-        }
-        let storage=app.state::<Storage>();
-        storage.revision()?;
-        let area=StageArea::open(storage.root().join("native-import-stages"))
-            .map_err(|e|e.to_string())?;
-        let cancel=AtomicBool::new(false);
-        let stage=area.ingest(path,Limits::default(),&cancel,|_|{})
-            .map_err(|e|e.to_string())?;
-        stage.worksheet_components().map_err(|e|e.to_string())
-    }).await.map_err(|e|e.to_string())?
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |routed_storage| {
+                if source.len() > 32767 {
+                    return Err("Excel path too long".into());
+                }
+                let path = Path::new(&source);
+                if !path.is_absolute()
+                    || !path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| e.eq_ignore_ascii_case("xlsx"))
+                {
+                    return Err("Choose an absolute .xlsx file".into());
+                }
+                let storage = routed_storage;
+                storage.revision()?;
+                let area = StageArea::open(storage.root().join("native-import-stages"))
+                    .map_err(|e| e.to_string())?;
+                let cancel = AtomicBool::new(false);
+                let stage = area
+                    .ingest(path, Limits::default(), &cancel, |_| {})
+                    .map_err(|e| e.to_string())?;
+                stage.worksheet_components().map_err(|e| e.to_string())
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -318,13 +382,35 @@ pub async fn native_legacy_import_preview(
     app: tauri::AppHandle,
     source: String,
     options: LegacyOptions,
-) -> Result<NativeWideReview,String> {
+    workspace_token: Option<String>,
+) -> Result<NativeWideReview, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let storage=app.state::<Storage>();
-        with_legacy_prepared(&storage,"native-import-stages",&source,options,|prepared,preview,options| {
-            review(prepared,preview,options,b"legacy-manual-review-v1\0",&options.organizations)
-        })
-    }).await.map_err(|e|e.to_string())?
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |routed_storage| {
+                let storage = routed_storage;
+                with_legacy_prepared(
+                    &storage,
+                    "native-import-stages",
+                    &source,
+                    options,
+                    |prepared, preview, options| {
+                        review(
+                            prepared,
+                            preview,
+                            options,
+                            b"legacy-manual-review-v1\0",
+                            &options.organizations,
+                        )
+                    },
+                )
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -334,12 +420,13 @@ pub async fn native_legacy_import_apply(
     options: LegacyOptions,
     review_token: String,
     confirmation: NativeWideConfirmation,
-) -> Result<ImportReceipt,String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    workspace_token: Option<String>,
+) -> Result<ImportReceipt, String> {
+    tauri::async_runtime::spawn_blocking(move || { crate::native_shared_runtime::execute(&app, workspace_token.as_deref(), crate::storage::shared_runtime::Access::Write, |routed_storage| {
         if review_token.len()!=64 || !review_token.bytes().all(|b|b.is_ascii_hexdigit()) {
             return Err("Invalid import review token".into());
         }
-        let storage=app.state::<Storage>();
+        let storage=routed_storage;
         with_legacy_prepared(&storage,"native-import-stages",&source,options,|prepared,preview,options| {
             let current=review(prepared,preview,options,b"legacy-manual-review-v1\0",&options.organizations)?;
             if current.review_token!=review_token {
@@ -374,7 +461,7 @@ pub async fn native_legacy_import_apply(
             let job=ImportJob::new();
             storage.apply_import(prepared,preview,flags,&job,|_|{})
         })
-    }).await.map_err(|e|e.to_string())?
+     }) }).await.map_err(|e|e.to_string())?
 }
 
 /// A lease belongs to the window that opted in and expires on stop or process exit.
@@ -382,16 +469,38 @@ pub async fn native_legacy_import_apply(
 pub async fn native_folder_import_session(
     window: tauri::WebviewWindow,
     enabled: bool,
+    workspace_token: Option<String>,
 ) -> Result<Option<String>, String> {
+    if !enabled {
+        window
+            .state::<crate::storage::shared_runtime::Runtime>()
+            .close_window(window.label());
+        return Ok(None);
+    }
+
     tauri::async_runtime::spawn_blocking(move || {
-        let store = window.state::<Storage>();
-        let lease = store.set_folder_import_session(window.label(), enabled)?;
-        if enabled && window.app_handle().get_webview_window(window.label()).is_none() {
-            store.set_folder_import_session(window.label(), false)?;
-            return Err("Окно автоимпорта закрыто.".into());
-        }
-        Ok(lease)
-    }).await.map_err(|e|e.to_string())?
+        crate::native_shared_runtime::execute(
+            &window,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Local,
+            |routed_storage| {
+                let store = routed_storage;
+                let lease = store.set_folder_import_session(window.label(), enabled)?;
+                if enabled
+                    && window
+                        .app_handle()
+                        .get_webview_window(window.label())
+                        .is_none()
+                {
+                    store.set_folder_import_session(window.label(), false)?;
+                    return Err("Окно автоимпорта закрыто.".into());
+                }
+                Ok(lease)
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn with_folder_prepared<T>(
@@ -443,13 +552,34 @@ fn is_clean_new_folder_review(review: &NativeWideReview) -> bool {
 pub async fn native_folder_import_preview(
     window: tauri::WebviewWindow,
     request: crate::storage::FolderImportRequest,
+    workspace_token: Option<String>,
 ) -> Result<NativeWideReview, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let store = window.state::<Storage>();
-        with_folder_prepared(&store, window.label(), &request, |prepared, preview, _, rule| {
-            review(prepared, preview, &(&request, rule), b"folder-auto-review-v1\0", &store.folder_import_organizations(request.revision)?)
-        })
-    }).await.map_err(|e|e.to_string())?
+        crate::native_shared_runtime::execute(
+            &window,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |routed_storage| {
+                let store = routed_storage;
+                with_folder_prepared(
+                    &store,
+                    window.label(),
+                    &request,
+                    |prepared, preview, _, rule| {
+                        review(
+                            prepared,
+                            preview,
+                            &(&request, rule),
+                            b"folder-auto-review-v1\0",
+                            &store.folder_import_organizations(request.revision)?,
+                        )
+                    },
+                )
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -457,12 +587,13 @@ pub async fn native_folder_import_apply(
     window: tauri::WebviewWindow,
     request: crate::storage::FolderImportRequest,
     review_token: String,
+    workspace_token: Option<String>,
 ) -> Result<ImportReceipt, String> {
     if review_token.len() != 64 || !review_token.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Invalid import review token.".into());
     }
-    tauri::async_runtime::spawn_blocking(move || {
-        let store = window.state::<Storage>();
+    tauri::async_runtime::spawn_blocking(move || { crate::native_shared_runtime::execute(&window, workspace_token.as_deref(), crate::storage::shared_runtime::Access::Write, |routed_storage| {
+        let store = routed_storage;
         with_folder_prepared(&store, window.label(), &request, |prepared, preview, job, rule| {
             let current = review(prepared, preview, &(&request, rule), b"folder-auto-review-v1\0", &store.folder_import_organizations(request.revision)?)?;
             if current.review_token != review_token || !is_clean_new_folder_review(&current) {
@@ -470,7 +601,7 @@ pub async fn native_folder_import_apply(
             }
             store.apply_import(prepared, preview, ImportConfirmation::default(), job, |_|{})
         })
-    }).await.map_err(|e|e.to_string())?
+     }) }).await.map_err(|e|e.to_string())?
 }
 
 /// Every paged read or export reopens the source and verifies the original
@@ -509,18 +640,50 @@ impl ReviewedQualityQuery {
     }
 }
 #[tauri::command]
-pub async fn native_preview_quality_page(app:tauri::AppHandle,query:ReviewedQualityQuery,offset:u32)->Result<crate::storage::UnifiedQualityPage,String>{
-    tauri::async_runtime::spawn_blocking(move||{
-        let store=app.state::<Storage>();
-        query.read(&store,|prepared,revision,filter|store.prepared_quality_page(revision,prepared,filter,offset))
-    }).await.map_err(|e|e.to_string())?
+pub async fn native_preview_quality_page(
+    app: tauri::AppHandle,
+    query: ReviewedQualityQuery,
+    offset: u32,
+    workspace_token: Option<String>,
+) -> Result<crate::storage::UnifiedQualityPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |routed_storage| {
+                let store = routed_storage;
+                query.read(&store, |prepared, revision, filter| {
+                    store.prepared_quality_page(revision, prepared, filter, offset)
+                })
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 #[tauri::command]
-pub async fn native_preview_quality_csv(app:tauri::AppHandle,query:ReviewedQualityQuery,destination:String)->Result<(),String>{
-    tauri::async_runtime::spawn_blocking(move||{
-        let store=app.state::<Storage>();
-        query.read(&store,|prepared,revision,filter|store.prepared_quality_csv(revision,prepared,filter,Path::new(&destination)))
-    }).await.map_err(|e|e.to_string())?
+pub async fn native_preview_quality_csv(
+    app: tauri::AppHandle,
+    query: ReviewedQualityQuery,
+    destination: String,
+    workspace_token: Option<String>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |routed_storage| {
+                let store = routed_storage;
+                query.read(&store, |prepared, revision, filter| {
+                    store.prepared_quality_csv(revision, prepared, filter, Path::new(&destination))
+                })
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]

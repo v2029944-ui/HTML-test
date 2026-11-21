@@ -7,6 +7,9 @@ edition = "2021"
 rust-version = "1.82"
 build = "build.rs"
 
+[features]
+ci-webview2 = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
