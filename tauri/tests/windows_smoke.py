@@ -1103,8 +1103,11 @@ def check_extended(page):
     slider.press('Home')
     expect(page.locator('#changesSensitivityValue')).to_have_text('0%')
     page.locator('#changesSummary .kpi-action').first.click()
-    expect(page.locator('#changesActiveFilter')).to_contain_text('рост')
-    expect(page.locator('#changesDirection')).to_have_value('up')
+    expect(page.locator('#changesActiveFilter')).to_contain_text('значительный рост')
+    expect(page.locator('#changesDirection')).to_have_value('significant-up')
+    page.locator('#changesSummary .kpi-action').filter(has_text='Значительно снизилось').click()
+    expect(page.locator('#changesActiveFilter')).to_contain_text('значительное снижение')
+    expect(page.locator('#changesDirection')).to_have_value('significant-down')
 
 
 def check_groups(page, confirmations):
