@@ -12,7 +12,8 @@ using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Text;
 public static class AnalizIcon {
- [DllImport("shell32", CharSet=CharSet.Unicode)] static extern uint ExtractIconEx(string file,int idx,out IntPtr big,out IntPtr small,uint count);
+ [DllImport("shell32.dll", EntryPoint="ExtractIconExW", CharSet=CharSet.Unicode, ExactSpelling=true, SetLastError=true)]
+ static extern uint ExtractIconEx(string file,int idx,out IntPtr big,IntPtr small,uint count);
  [DllImport("user32")] static extern bool DestroyIcon(IntPtr icon);
  [StructLayout(LayoutKind.Sequential,CharSet=CharSet.Unicode)]
  struct ShellFileInfo {
@@ -37,12 +38,19 @@ public static class AnalizIcon {
  public static void PhysicalPixels(){SetThreadDpiAwarenessContext(new IntPtr(-4));}
  static Bitmap Copy(IntPtr h){using(var icon=Icon.FromHandle(h)){return icon.ToBitmap();}}
  public static Bitmap FromFile(string path){
-   IntPtr big,small;if(ExtractIconEx(path,0,out big,out small,1)!=1||big==IntPtr.Zero)throw new Exception("Missing PE icon: "+path);
-   try{return Copy(big);}finally{if(big!=IntPtr.Zero)DestroyIcon(big);if(small!=IntPtr.Zero)DestroyIcon(small);}
+   // ExtractIconEx counts handles. Request only the large icon at the default PE index.
+   IntPtr icon;
+   uint count=ExtractIconEx(path,0,out icon,IntPtr.Zero,1);
+   int error=Marshal.GetLastWin32Error();
+   try{
+     if(count==UInt32.MaxValue)throw new InvalidOperationException("ExtractIconExW failed for "+path+" (Win32 "+error+")");
+     if(count==0||icon==IntPtr.Zero)throw new Exception("No default PE icon in "+path+" (count="+count+", handle="+icon+")");
+     return Copy(icon);
+   }finally{if(icon!=IntPtr.Zero)DestroyIcon(icon);}
  }
  public static Bitmap FromWindow(IntPtr hwnd){
-   foreach(int kind in new[]{1,0,2}){IntPtr icon;SendMessageTimeout(hwnd,127,new IntPtr(kind),IntPtr.Zero,2,3000,out icon);
-     if(icon!=IntPtr.Zero)return Copy(icon);}
+   foreach(int kind in new[]{1,0,2}){IntPtr icon;
+     if(SendMessageTimeout(hwnd,127,new IntPtr(kind),IntPtr.Zero,2,3000,out icon)!=IntPtr.Zero && icon!=IntPtr.Zero)return Copy(icon);}
    foreach(int index in new[]{-14,-34}){IntPtr icon=ClassIcon(hwnd,index);if(icon!=IntPtr.Zero)return Copy(icon);}
    throw new Exception("No HWND or window class icon");
  }
@@ -156,8 +164,10 @@ function Taskbar-Verb($names){
                 $condition=New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::NameProperty),$name
                 $item=[System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition)
                 if($item -and !$item.Current.IsOffscreen){
-                    $pattern=$item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-                    $pattern.Invoke();return $true
+                    $pattern=$null
+                    if($item.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$pattern)){
+                        $pattern.Invoke();return $true
+                    }
                 }
             }
         }

@@ -111,6 +111,8 @@ jobs:
           Copy-Item $setups[0].FullName "tauri/test-artifacts/setup.exe"
           Copy-Item ($setups[0].FullName + ".sig") "tauri/test-artifacts/setup.exe.sig"
       - name: Verify Windows icons on a clean install and an in-place upgrade
+        id: windows_icons
+        continue-on-error: true
         shell: powershell
         env:
           REFERENCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -178,6 +180,10 @@ jobs:
           $env:REFERENCE_HEAD_SHA = "${{ github.event.pull_request.head.sha || github.sha }}"
           python tauri/tests/windows_smoke.py
           if ($LASTEXITCODE -ne 0) { throw 'WebView2 smoke test failed' }
+      - name: Require Windows icon verification
+        if: always() && steps.windows_icons.outcome == 'failure'
+        shell: pwsh
+        run: throw 'Windows icon verification failed. See the icon probe and diagnostics.'
       - name: Upload preview EXE and Windows verification
         if: always() && github.ref == 'refs/heads/work/tauri-dropdown-updates-20261117'
         uses: actions/upload-artifact@v4
