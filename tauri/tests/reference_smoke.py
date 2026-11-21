@@ -426,8 +426,12 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                     local_dates.locator('[data-reset-base]').click()
             if target == 'chartPanel':
                 chart = page.locator('#chartPanel')
+                mode_row = chart.locator('.chart-mode-line')
+                orientation = chart.get_by_role('combobox', name='Расположение столбцов')
                 chart.locator('[data-chart="bar"]').click()
                 expect(chart.locator('[data-chart="bar"]')).to_have_attribute('aria-pressed', 'true')
+                expect(orientation).to_be_visible()
+                bar_height = mode_row.bounding_box()['height']
                 page.locator('#chartOrientation').select_option('horizontal')
                 record('08-horizontal-chart', chart)
                 # The work chart has a scroll wrapper inside the plot. Check it
@@ -442,8 +446,12 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                 page.locator('#chartOrientation').select_option('vertical')
                 chart.locator('[data-chart="table"]').click()
                 expect(chart.locator('[data-chart="table"]')).to_have_attribute('aria-pressed', 'true')
+                expect(orientation).to_have_count(0)
+                assert abs(mode_row.bounding_box()['height'] - bar_height) <= 1
                 chart.locator('[data-reference-line]').click()
                 expect(chart.locator('[data-reference-line]')).to_have_attribute('aria-pressed', 'true')
+                expect(orientation).to_have_count(0)
+                assert abs(mode_row.bounding_box()['height'] - bar_height) <= 1
             if target == 'usualPanel' and has_reports:
                 work = page.locator('#usualResults .service-link').first
                 expect(work).to_be_visible(timeout=TIMEOUT)

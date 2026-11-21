@@ -42,8 +42,9 @@
   #refNative[data-panel] .change-pagination {max-width:100%;height:auto}
 }
 #refNative:not([data-panel="chartPanel"]) [data-reference-line],
-#refNative[data-panel="chartPanel"] .ref-hide-orientation,
 #refNative:not([data-panel]) .detail-date-scope {display:none!important}
+/* Keep the plot in place when the orientation field wraps onto its own row. */
+#refNative[data-panel="chartPanel"] .ref-hide-orientation {visibility:hidden}
 #refNative:not([data-panel="comparison"]) #refComparisonDates,
 #refComparisonDates[hidden] {display:none!important}
 #refNative[data-panel="overviewPanel"] .dashboard-filter-panel :is(.period-toolbar,label:has(> #periodType),label:has(> #unifiedSource)),
