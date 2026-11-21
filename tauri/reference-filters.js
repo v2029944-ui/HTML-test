@@ -134,7 +134,7 @@ function syncDetails(){
  appliedDetailScope=current;
  return window.unifiedAnalytics.applyReferenceScope(current);
 }
-function publish(){
+function publish(appliedInOverview=false){
  if(boundsPending)return;
  if(boundsFailed&&snapshot)return readBounds(snapshot);
  const [baseFrom,baseTo]=baseRange();
@@ -147,7 +147,9 @@ function publish(){
   displayFrom:from,displayTo:to,displayBaseFrom:baseFrom,displayBaseTo:baseTo,organizations:[...orgs],metric,
   allNames,nameRows:[...nameRows.values()],selectedNames:allNames?[]:[...nameRows.values()].map(row=>row.name),selectedKeys:allNames?[]:[...nameRows.keys()]};
  const result=window.referenceResults.refresh(scope);
- if(detailPanels.includes(window.referenceDetail?.active))void syncDetails();
+ // The overview can publish its own work selection without replaying every shared control.
+ if(appliedInOverview===true&&window.referenceDetail?.active==='overviewPanel')appliedDetailScope=scope;
+ else if(detailPanels.includes(window.referenceDetail?.active))void syncDetails();
  return result;
 }
 function setMetric(value){if(value!=='amount'&&value!=='count')return;metric=value;return publish();}
@@ -166,7 +168,7 @@ function openImportedPeriod(range){
  }
  return boundsPending&&snapshot?readBounds(snapshot):publish();
 }
-function setWorks(everything,selection){allNames=everything;nameRows=new Map(selection);return publish();}
+function setWorks(everything,selection,appliedInOverview=false){allNames=everything;nameRows=new Map(selection);return publish(appliedInOverview);}
 function setOrganizations(values){orgs=new Set(values.filter(x=>orgNames.includes(x)));allOrgs=orgs.size===orgNames.length;return publish();}
 function close(box){box.closest('dialog')?.close();}
 function listShell(title,anchor,described){

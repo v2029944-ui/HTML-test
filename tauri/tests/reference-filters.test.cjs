@@ -222,3 +222,17 @@ test('deselecting a visible work cannot silently discard an unlisted work and gr
   individually.checked=true;individually.onchange();findInDialog('Применить').onclick();
   assert.deepEqual([...controls.scope.selectedNames],['Уборка']);
 });
+
+test('reflecting works already applied in overview preserves its local metric choices',async()=>{
+  const {controls,window}=await fixture();
+  const updates=[];
+  window.referenceDetail={active:'overviewPanel'};
+  window.unifiedAnalytics={applyReferenceScope:scope=>updates.push(scope)};
+  await controls.setWorks(false,new Map(),true);
+  assert.equal(controls.scope.allNames,false);
+  await controls.syncDetails();
+  assert.equal(updates.length,0);
+  await controls.setWorks(true,new Map());
+  assert.equal(updates.length,1);
+  assert.equal(updates[0].allNames,true);
+});

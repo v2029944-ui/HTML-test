@@ -5,7 +5,7 @@
 const UI=window.unifiedUI,O=window.unifiedOriginal,api=UI.api,$=UI.$;
 const titles=window.analysisSummary.titles;
 let initialized=false,scope=null,ticket=0,nameTicket=0,selectionTicket=0,chartTicket=0,selectionReady=false,allNames=false,totalNames=0;
-let displayedOverviewScope=null,displayedChart=null;
+let displayedOverviewScope=null,displayedChart=null,lastReferenceMetric=null;
 const overviewResults=['overviewKpis','overviewInsights','overviewOrganizations','overviewAlerts'];
 const chartResults=['chartsContainer','dataTable','chartOrgTotals'];
 let selectedRows=new Map(),namePage=null,nameIndex=0,seriesIndex=0,printCapture=null,lastRevision=null,searchTimer=null;
@@ -76,10 +76,10 @@ function publish(){if(!scope)return;scope={...scope,organizations:orgs(),allName
 function selectionCount(){state.selectedCategories=new Set([...selectedRows.values()].map(r=>r.name));$('categoryCount').textContent=allNames?'Все работы и группы':selectedRows.size+' из '+totalNames;}
 function changeWorks(refreshNames=false){
  ++selectionTicket;selectionReady=true;seriesIndex=0;selectionCount();
- if(window.referenceDetail?.active==='overviewPanel'&&window.referenceFilters?.setWorks){
-  return window.referenceFilters.setWorks(allNames,selectedRows);
- }
- publish();if(refreshNames)void names(nameIndex);return renderCharts();
+ publish();
+ if(window.referenceDetail?.active==='overviewPanel')window.referenceFilters?.setWorks(allNames,selectedRows,true);
+ if(refreshNames)void names(nameIndex);
+ return renderCharts();
 }
 function pager(root,index,run,options){
  const pages=Math.max(1,Math.ceil(options.total/options.size));
@@ -348,13 +348,14 @@ function init(){if(initialized)return;initialized=true;state.selectedMetrics=sta
 // Apply the shared shell filters in one revision. Dispatching several native change
 // events here would publish transient mixtures of old and new date boundaries.
 function applyReferenceScope(shared){
- if(!shared||shared.revision!==UI.revision){++ticket;invalidateScope();return;}
+ if(!shared||shared.revision!==UI.revision){lastReferenceMetric=null;++ticket;invalidateScope();return;}
  const kind=shared.displayType;
  $('periodType').value=kind;$('unifiedSource').value=shared.source;$('overviewMode').value=shared.overviewMode;
  for(const [id,date] of [['rangeStart',shared.from],['rangeEnd',shared.to],['overviewPeriod',shared.from],['analysisBasePeriod',shared.baseFrom]])UI.setPeriodInput(id,kind,date);
  $('analysisBasePeriod').dataset.userSelected='true';
  state.selectedOrganizations=new Set(shared.organizations);
- state.selectedMetrics=new Set([shared.metric]);
+ if(window.referenceDetail?.active!=='overviewPanel'||lastReferenceMetric!==shared.metric)state.selectedMetrics=new Set([shared.metric]);
+ lastReferenceMetric=shared.metric;
  selectedRows=new Map(shared.nameRows.map(row=>[row.key,row]));
  allNames=shared.allNames;selectionReady=true;seriesIndex=0;nameIndex=0;
  filters();selectionCount();return calculate(shared);

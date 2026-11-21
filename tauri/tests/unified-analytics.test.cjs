@@ -589,3 +589,14 @@ test('work choices made in overview update the shared scope used by other detail
  fx.nodes.get('selectAll').dispatch('click');await settle();
  assert.deepEqual(sent,[[false,[]],[false,['work:W']],[true,[]]]);
 });
+
+test('overview keeps its extra metrics across a new interval until the shared metric itself changes',async()=>{
+ const f=fixture();await f.bootstrap();f.window.referenceDetail={active:'overviewPanel'};
+ const scope={...f.published.at(-1),metric:'amount',overviewMode:'range',baseFrom:'2023-12-30',baseTo:'2023-12-31'};
+ await f.window.unifiedAnalytics.applyReferenceScope(scope);
+ f.UI.state.selectedMetrics.add('count');
+ await f.window.unifiedAnalytics.applyReferenceScope({...scope,from:'2024-01-03',to:'2024-01-04'});
+ assert.deepEqual([...f.UI.state.selectedMetrics],['amount','count']);
+ await f.window.unifiedAnalytics.applyReferenceScope({...scope,metric:'count'});
+ assert.deepEqual([...f.UI.state.selectedMetrics],['count']);
+});
