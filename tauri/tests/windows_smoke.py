@@ -742,6 +742,58 @@ def omitted_detail_xlsx():
         ['Unknown organization',4,9],['Итого',3,8]])
 
 
+def trend_zero_workbook(organizations):
+    dates=['2019-01-01','2019-01-02','2019-01-03']
+    rows=[['Работа',*[date for date in dates for _ in range(2)],'Итого за период','Итого за период'],
+          ['',*(['Количество','Сумма']*4)]]
+    for index,org in enumerate(organizations):
+        values=[10,10,0,0,20,20,30,30] if index==0 else [0]*8
+        rows.append([org,*values])
+        if index==0:
+            rows.append(['000 Проверка нуля',*values])
+    rows.append(['Итого',10,10,0,0,20,20,30,30])
+    return quality_evidence_xlsx(rows)
+
+
+def check_filtered_zero_chart(page, temporary, output):
+    snapshot=api(page,'nativeSettingsBootstrap')
+    source=temporary/'trend-zero.xlsx'
+    source.write_bytes(trend_zero_workbook(snapshot['org_names']))
+    options={'year':2019,'sheets':[],'mappings':{},'organizations':snapshot['org_names']}
+    preview=api(page,'nativeWideImportPreview',str(source),options)
+    assert preview['reportCount']==3 and preview['conflicts']['new_reports']==3,preview
+    saved=api(page,'nativeWideImportApply',str(source),options,preview['reviewToken'],
+              {'replaceExact':False,'acceptCrossType':False,'acceptQuality':False})
+    assert saved['reports']==3,saved
+    page.evaluate('window.unifiedUI.refresh()')
+    open_daily_overview(page,'2019-01-01')
+    page.locator('#sharedHeader .main-nav').get_by_role('button',name='Сводка',exact=True).click()
+    filters=page.locator('#reportShell .filter-fold')
+    if not filters.evaluate('n=>n.open'):
+        filters.locator(':scope > summary').click()
+    filters.locator('[data-filter="mode"]').get_by_role('button',name='Диапазон',exact=True).click()
+    choose_calendar_date(page,filters.locator('[data-date="start"]'),'2019-01-01')
+    choose_calendar_date(page,filters.locator('[data-date="end"]'),'2019-01-03')
+    navigate(page,'chartPanel')
+    page.locator('#chartBreakdown').select_option('works')
+    page.locator('[data-reference-line]').click()
+    toggle=page.locator('#hideEmptyPeriods')
+    toggle.uncheck()
+    chart=page.locator('#chartsContainer')
+    expect(chart.locator('svg [data-chart-tooltip*="000 Проверка нуля"]').first).to_be_visible()
+    expect(chart.locator('svg [data-chart-tooltip*="02.01.2019"]').first).to_be_visible()
+    toggle.check()
+    expect(chart.locator('svg text').filter(has_text='Скрыт ноль').first).to_be_visible()
+    expect(chart).not_to_contain_text('нет отчётов за')
+    expect(chart.locator('svg [data-chart-tooltip*="02.01.2019"]')).to_have_count(0)
+    chart.screenshot(path=str(output/'windows-sql-filtered-zero.png'))
+    page.locator('#chartPanel [data-chart="table"]').click()
+    table=page.locator('#dataTable table').first
+    expect(table).to_contain_text('01.01.2019')
+    expect(table).to_contain_text('03.01.2019')
+    expect(table).not_to_contain_text('02.01.2019')
+
+
 def check_omitted_detail_evidence(page, temporary, output):
     source=temporary/'omitted-detail.xlsx';original=omitted_detail_xlsx();source.write_bytes(original)
     snapshot=api(page,'nativeSettingsBootstrap');before=snapshot['reports']
@@ -1546,6 +1598,8 @@ def run():
                 report['checks'].append('Installed restart restores exactly the SQLite backup, retains the replaced data and displays confirmation')
                 check_source_evidence(page,tmp,output)
                 report['checks'].append('Saved source evidence distinguishes zero provenance, source-day gaps, unknown organization and acknowledgment without changing source XLSX or read-only revision')
+                check_filtered_zero_chart(page,tmp,output)
+                report['checks'].append('Imported 10, 0, 20 into SQLite and verified hidden zero in the installed chart and table')
                 check_omitted_detail_evidence(page,tmp,output)
                 report['checks'].append('Native omitted-detail tags distinguish invalid data, unknown organizations, invalid controls and included unnamed rows; persisted totals remain 3 and 8 with explicit acknowledgment')
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
