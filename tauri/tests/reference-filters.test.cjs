@@ -45,7 +45,7 @@ async function fixture() {
   }
   const ui = window.unifiedUI = {revision:1, notice() {}, onSnapshot(fn) {this.configure = fn;}, api:{
     async unifiedNameOptions() { calls.push('catalog');return {total_rows:choices.length}; },
-    async unifiedNameOptionsAtPage(){return {total_rows:choices.length,rows:choices};},
+    async unifiedNameOptionsAtPage(){return {total_rows:choices.length,rows:choices,has_omitted_names:ui.hiddenNames===true};},
     async unifiedSelectedNameOptions(rev,keys){return {total_rows:choices.length,rows:choices.filter(row=>keys.includes(row.key))};},
     async unifiedPeriodOptions(revision,kind,group,after,limit,day) {
       calls.push([kind,day]);
@@ -189,4 +189,36 @@ test('all works can be restored when no names are eligible for individual select
   all.onclick();
   findInDialog('Применить').onclick();
   assert.equal(controls.scope.allNames,true);
+});
+
+test('calendar-month comparisons from daily reports include the leap day in the comparison month', async () => {
+  const {controls,panel,open,one}=await fixture();
+  panel.querySelectorAll('[data-filter=mode] button')[0].onclick();
+  panel.querySelectorAll('[data-filter=type] button')[2].onclick();
+  open().apply('2025-02-01','month');
+  const compare=one('[data-compare]');compare.value='year';compare.onchange();
+  assert.equal(controls.scope.from,'2025-02-01');
+  assert.equal(controls.scope.to,'2025-02-28');
+  assert.equal(controls.scope.baseFrom,'2024-02-01');
+  assert.equal(controls.scope.baseTo,'2024-02-29');
+  panel.querySelectorAll('[data-filter=type] button')[0].onclick();
+  open().apply('2025-02-28','day');
+  assert.equal(controls.scope.baseTo,'2024-02-28');
+});
+
+test('deselecting a visible work cannot silently discard an unlisted work and group with the same name', async()=>{
+  const {controls,ui,choices,one,checkboxInDialog,findInDialog}=await fixture();
+  choices.splice(0,choices.length,{key:'work:Уборка',kind:'work',name:'Уборка'});
+  ui.hiddenNames=true;
+  one('[data-pick=works]').onclick();await new Promise(r=>setImmediate(r));
+  const work=checkboxInDialog('Уборка');
+  assert.equal(work.disabled,true);
+  findInDialog('Применить').onclick();
+  assert.equal(controls.scope.allNames,true);
+  one('[data-pick=works]').onclick();await new Promise(r=>setImmediate(r));
+  findInDialog('Снять выбор').onclick();
+  const individually=checkboxInDialog('Уборка');
+  assert.notEqual(individually.disabled,true);
+  individually.checked=true;individually.onchange();findInDialog('Применить').onclick();
+  assert.deepEqual([...controls.scope.selectedNames],['Уборка']);
 });

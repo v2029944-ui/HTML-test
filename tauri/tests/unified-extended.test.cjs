@@ -113,9 +113,10 @@ test('clicking a change KPI filters the SQL rows by the selected category',async
  const selected=[];const f=fixture({unifiedChangesPage:async(_request,options)=>{selected.push(options.direction);return page();}});
  f.publish();f.view('changes');await settle();
  const cards=f.nodes.get('changesSummary').children;
+ f.nodes.get('changesMode').value='strong';
  assert.equal(cards[1].tagName,'BUTTON');assert.match(cards[1].attributes['aria-label'],/Значительно снизилось/);
  cards[1].dispatch('click');await settle();
- assert.equal(f.nodes.get('changesDirection').value,'down');assert.equal(selected.at(-1),'down');
+ assert.equal(f.nodes.get('changesDirection').value,'significant-down');assert.equal(selected.at(-1),'significant-down');assert.equal(f.nodes.get('changesMode').value,'all');
 });
 
 test('shared baseline seeds comparison and structure, local overrides stay flagged until reset',async()=>{
@@ -173,8 +174,8 @@ test('hidden advanced controls advertise an active KPI direction filter',async()
  const f=fixture({unifiedChangesPage:async()=>page()});f.publish();f.view('changes');await settle();
  const category=f.nodes.get('changesSummary').children[1];
  category.dispatch('click');await settle();
- assert.equal(f.nodes.get('changesDirection').value,'down');
- assert.match(f.nodes.get('changesActiveFilter').textContent,/^фильтр: снижение/);
+ assert.equal(f.nodes.get('changesDirection').value,'significant-down');
+ assert.match(f.nodes.get('changesActiveFilter').textContent,/^фильтр: значительное снижение/);
  f.nodes.get('changesDirection').value='all';f.nodes.get('changesDirection').dispatch('change');await settle();
  assert.doesNotMatch(f.nodes.get('changesActiveFilter').textContent,/снижение/);
 });
@@ -498,4 +499,58 @@ test('opening a group uses the same qualified label in the history title and cha
  assert.equal(button.textContent,'Ремонт (группа)');button.dispatch('click');await settle();
  assert.equal(f.nodes.get('analyticsDetailTitle').textContent,button.textContent);
  assert.ok(labels.length);assert.ok(labels.every(label=>label===button.textContent));
+});
+
+test('composition chart distinguishes a work and matching group just like its table',async()=>{
+ const rows=['work','group'].map((kind,i)=>({key:kind+':r',name:'Ремонт',kind,base:5,current:i+1}));
+ const f=fixture({nativeCompositionPage:async()=>({rows,total:3,currentComplete:true,baseComplete:true,sharesValid:true})});
+ let labels;
+ f.UI.drawChart=(_p,_o,_m,_root,options)=>{labels=options.categories.map(options.label);};
+ f.publish({allNames:true});f.nodes.get('structurePanel').open=true;f.nodes.get('structurePanel').dispatch('toggle');await settle();
+ const names=f.tables.find(t=>t.root==='structureResults').rows.map(row=>row[0].textContent);
+ assert.deepEqual(Array.from(labels),Array.from(names));assert.equal(new Set(labels).size,2);
+});
+
+test('drilldown on the available side of a partial comparison opens the range printed above it',async()=>{
+ const history=[];
+ const full={complete:true,periods:1,missing:0,total:{count:5,amount:10,average:2}},missing={...full,complete:false,missing:1,total:{count:null,amount:null,average:null}};
+ const fx=fixture({
+  nativeAnalysisOrganizations:async(_rev,_type,from)=>[{org:'A',...(from==='2024-01-01'?full:missing)}],
+  nativeAnalysisCompare:async()=>({summary:{before:full,after:missing}}),
+  unifiedComparisonWindow:async()=>({total_rows:1,rows:[{key:'work:W',name:'W',kind:'work',available:{amount:10,count:5}}]}),
+  nativeWorkTimeline:async(...a)=>{history.push(a);return {granularity:'period',points:[]};}
+ });
+ fx.window.referenceDetail={active:'comparison'};fx.publish({from:'2024-01-10',to:'2024-01-10',baseFrom:'2024-01-01',baseTo:'2024-01-01',allNames:true});
+ await fx.window.unifiedExtended.openComparison();
+ const table=fx.tables.find(t=>t.root==='comparisonTable');assert.equal(table.caption,'01.01.2024');
+ table.rows[1][0].dispatch('click');await settle();
+ assert.deepEqual(history[0].slice(2,4),['2024-01-01','2024-01-01']);
+});
+
+test('detailed comparison displays rounded changes neutrally while CSV retains their original precision',async()=>{
+ const total=amount=>({complete:true,total:{count:1,amount,average:amount}});
+ const delta=-0.002,measure={base:10,current:10+delta,delta,percent:-0.02};
+ const f=fixture({
+  nativeAnalysisCompare:async()=>({summary:{before:total(10),after:total(10+delta)}}),
+  unifiedComparisonWindow:async()=>({rows:[{key:'work:r',name:'Ремонт',kind:'work',amount:measure}],total_rows:1})
+ });
+ f.UI.fmt=(n,m)=>Number.isFinite(n)?n.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'—';
+ f.publish();await f.window.unifiedExtended.openComparison();
+ const table=f.tables.find(t=>t.root==='comparisonTable'&&t.metric==='amount');
+ assert.equal(table.rows[1][3],'0,00');assert.equal(table.rows[1][4],'≈ 0%');
+ assert.equal(table.options.csvRows[1][3],delta);assert.equal(table.options.csvRows[1][4],-0.02);
+});
+
+test('adjacent change table and leader keep a rounded-zero change neutral and identify its group',async()=>{
+ const data=page('Ремонт'),row=data.rows[0];
+ row.kind='group';row.status='existing';row.amount={base:10,current:10.003,delta:.003,percent:.03};
+ data.summary.top_amount=row;
+ const f=fixture({unifiedChangesPage:async()=>data});
+ f.UI.fmt=(n,metric)=>Number.isFinite(n)?n.toFixed(metric==='amount'?2:3).replace('.',','):'—';
+ f.publish();f.view('changes');await settle();
+ const table=f.tables.find(item=>item.root==='changesResults');
+ const direction=table.rows[1].at(-1);
+ assert.equal(direction.textContent,'≈ без изменений');assert.equal(direction.className,'');
+ const leader=f.nodes.get('changesSummary').children.at(-1);
+ assert.match(leader.textContent,/Ремонт \(группа\)/);assert.equal(leader.children[1].className,'');
 });

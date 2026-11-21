@@ -645,6 +645,9 @@ fn only_verified_header_dates_create_a_manual_quality_notice() {
         ("Начало периода", r#"<c r="B1" s="4"><v>46000</v></c>"#, false, "week", "2026-11-09", None),
         ("Начало периода", r#"<c r="B1" s="5"><v>46000</v></c>"#, false, "week", "2026-11-09", Some("B1")),
         ("Начало периода", r#"<c r="B1" t="d"><v>2026-11-09T00:00:00</v></c>"#, false, "week", "2026-10-19", Some("B1")),
+        ("Начало периода", r#"<c r="B1" t="d"><v>2024-02-29T23:43:21.125-05:00</v></c>"#, false, "day", "2024-02-29", None),
+        ("Начало периода", r#"<c r="B1" t="d"><v>2024-02-29T23:43:21.125-05:00</v></c>"#, false, "day", "2024-03-01", Some("B1")),
+        ("Начало периода", r#"<c r="B1" t="d"><v>2024-02-29Tinvalid</v></c>"#, false, "day", "2024-03-01", None),
         ("Дата печати: 09.11.2026", "", false, "week", "2026-10-19", None),
         ("Период с 2024-02 по 29.02.2024", "", false, "month", "2024-03-01", None),
         ("Период с 01.02.2024 по 29.02.2024", "", false, "month", "2024-03-01", Some("A1")),
@@ -732,4 +735,30 @@ fn interleaved_manual_columns_only_accept_the_first_blocks_own_label_and_date() 
     assert_eq!((reports[0].amount, reports[1].amount), (125., 60.));
     let issue = stage.report_issues(&reports[0].id, 0, 1).unwrap().remove(0);
     assert_eq!(issue.work_cell.as_deref(), Some("F1"));
+}
+
+#[test]
+fn repeated_department_controls_are_checked_per_section() {
+    let t = tempfile::tempdir().unwrap();
+    let area = StageArea::open(t.path().join("stage")).unwrap();
+    let file = t.path().join("repeat.xlsx");
+    let cancel = AtomicBool::new(false);
+    for (count, amount, valid) in [("2", "20", true), ("3", "30", false)] {
+        fixture_rows(&file, &[
+            vec!["Работа", "Количество", "Сумма"],
+            vec!["СМУ16", "1", "10"], vec!["А", "1", "10"],
+            vec!["СМУ16", count, amount], vec!["Б", "2", "20"], vec!["Итого", "3", "30"],
+        ]);
+        let mut stage = area.ingest(&file, Limits::default(), &cancel, |_| {}).unwrap();
+        let s = stage.convert_legacy(&options("day", "2024-02-29"), &cancel, |_| {}).unwrap();
+        let orgs = stage.report_organizations("legacy-1").unwrap();
+        assert_eq!((orgs.len(), orgs[0].count, orgs[0].amount), (1, 3., 30.));
+        assert_eq!(s.issues, if valid { 0 } else { 1 });
+        if !valid {
+            let issue = stage.report_issues("legacy-1", 0, 1).unwrap().remove(0);
+            assert_eq!(issue.source_row, Some(4));
+            assert_eq!(issue.expected_amount, Some(30.));
+            assert_eq!(issue.actual_amount, Some(20.));
+        }
+    }
 }

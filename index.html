@@ -1637,7 +1637,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <div class="changes-filters change-toolbar">
           <label>Режим<select id="changesMode"><option value="strong">Сильные изменения</option><option value="all">Все работы</option></select></label>
           <label>Поиск работы или группы<input id="changesSearch" type="search" placeholder="Название услуги или группы"></label>
-          <label>Показать<select id="changesDirection"><option value="all">Все направления</option><option value="up">Рост</option><option value="down">Снижение</option><option value="new">Новые</option><option value="gone">Нет выполнений</option><option value="small">Малая база</option><option value="negative">Отрицательные значения</option><option value="unchanged">Без изменений</option></select></label>
+          <label>Показать<select id="changesDirection"><option value="all">Все направления</option><option value="up">Рост</option><option value="down">Снижение</option><option value="significant-up">Значительный рост</option><option value="significant-down">Значительное снижение</option><option value="new">Новые</option><option value="gone">Нет выполнений</option><option value="small">Малая база</option><option value="negative">Отрицательные значения</option><option value="unchanged">Без изменений</option></select></label>
           <label>Сортировка<select id="changesSort"><option value="significance-count">Значимость по количеству</option><option value="significance-amount">Значимость по сумме</option><option value="absolute-count">Абс. изменение количества</option><option value="absolute-amount">Абс. изменение суммы</option><option value="percent-count">Процент количества</option><option value="percent-amount">Процент суммы</option><option value="current-count">Количество: больше сначала</option><option value="current-amount">Сумма: больше сначала</option><option value="name">Название</option></select></label>
         </div>
         <p class="muted small">Сначала обычная база, затем малая. Значимость: выполнение порогов, затем абсолютная разница выбранного показателя. Каждая строка указывает конкретную пару соседних периодов. <span class="numeric-rise">Синий — рост</span>, <span class="numeric-fall">фиолетовый — снижение</span>; это направление числа, а не оценка эффективности.</p>
@@ -2267,7 +2267,7 @@ length_base[28] = 258;
     if(!v)return null;
     const raw=v.textContent||'';
     if(kind==='s')return strings[Number(raw)]??'';
-    if(kind==='str')return raw;
+    if(kind==='str'||kind==='d')return raw;
     if(kind==='e')return v?.textContent||'#ERROR!';
     if(kind==='b')return raw==='1';
     if(raw.trim()==='')return null;
@@ -2511,7 +2511,7 @@ function parseSheet(sheet,manualMappings=null,options={}) {
   const triples=manualMappings===null?readTripleColumns(matrix):manualMappings;
   if(!triples.length) throw Error('Не найдены тройки столбцов «Работа / Количество / Сумма». Проверьте второй ряд заголовков.');
   return triples.map((triple,index)=>{
-    const rows=[],warnings=[],totals=[],issues=[],byOrg=new Map();
+    const rows=[],warnings=[],totals=[],issues=[],organizations=new Set();
     let active=null, skipped=0, hasMismatch=false,overallRow=null;
     const sourceColumn=offset=>offset===0?triple.col:offset===1?(triple.countCol??triple.col+1):(triple.amountCol??triple.col+2);
     const cellsAt=(row,offsets)=>offsets.map(offset=>excelCellRef(sourceColumn(offset),row)).filter(Boolean);
@@ -2522,12 +2522,12 @@ function parseSheet(sheet,manualMappings=null,options={}) {
     };
     function addWork(work,q,a) {
       rows.push({organization:active.name,work,count:q,amount:a});
-      if(!byOrg.has(active.name))byOrg.set(active.name,{count:0,amount:0});
-      const sum=byOrg.get(active.name);sum.count+=q;sum.amount+=a;
+      organizations.add(active.name);
+      active.actual.count+=q;active.actual.amount+=a;
     }
     function checkBlock() {
       if(!active||active.expectedCount===null||active.expectedAmount===null) return;
-      const actual=byOrg.get(active.name)||{count:0,amount:0};
+      const actual=active.actual;
       if(Math.abs(actual.count-active.expectedCount)>0.001 || Math.abs(actual.amount-active.expectedAmount)>0.03) {
         hasMismatch=true;
         warnings.push('Не сошлись контрольные значения '+active.name+': количество '+fmtNumber(actual.count,'count')+' / '+fmtNumber(active.expectedCount,'count')+', сумма '+fmtNumber(actual.amount,'amount')+' / '+fmtNumber(active.expectedAmount,'amount'));
@@ -2559,9 +2559,9 @@ function parseSheet(sheet,manualMappings=null,options={}) {
         continue;
       }
       if(/^(итого|всего)(\s|:|$)/i.test(work)) {
-        checkBlock();
         if(options.dailyWide&&blankPair){if(rows.length)break;continue;}
         if(rows.length||options.dailyWide) {
+          checkBlock();
           overallRow=ri+1;
           if(q===null||a===null){warnings.push('Общий итог (строка '+(ri+1)+') содержит некорректное количество или сумму.');issue('invalid',warnings.at(-1),ri+1,null,raw,{cells:numberCells(ri+1,q,a)});}
           totals.push({type:'all',count:number(values[sourceColumn(1)]),amount:number(values[sourceColumn(2)]),row:ri+1});
@@ -2572,11 +2572,11 @@ function parseSheet(sheet,manualMappings=null,options={}) {
       const known=orgName(work);
       if(known) {
         checkBlock();
-        if(options.dailyWide&&blankPair){active={name:known,expectedCount:null,expectedAmount:null,sourceRow:ri+1};continue;}
+        if(options.dailyWide&&blankPair){active={name:known,actual:{count:0,amount:0},expectedCount:null,expectedAmount:null,sourceRow:ri+1};continue;}
         if(q===null||a===null){warnings.push('Итог подразделения '+known+' (строка '+(ri+1)+') не содержит оба числа');issue('invalid',warnings.at(-1),ri+1,known,raw,{cells:numberCells(ri+1,q,a)});active=null;continue;}
-        active={name:known,expectedCount:q,expectedAmount:a,sourceRow:ri+1};
+        active={name:known,actual:{count:0,amount:0},expectedCount:q,expectedAmount:a,sourceRow:ri+1};
         totals.push({type:'org',name:known,count:q,amount:a,row:ri+1});
-        if(!byOrg.has(known))byOrg.set(known,{count:0,amount:0});
+        organizations.add(known);
         continue;
       }
       if(options.dailyWide&&blankPair)continue;
@@ -2596,7 +2596,7 @@ function parseSheet(sheet,manualMappings=null,options={}) {
     const explicitZero=!!options.dailyWide&&!rows.length&&totals.some(t=>t.type==='org')&&totals.every(t=>t.count===0&&t.amount===0);
     if(!rows.length&&!explicitZero)warnings.push('Нет распознанных работ');
     return {index:index+1,col:triple.col,countCol:sourceColumn(1),amountCol:sourceColumn(2),headerRow:triple.headerRow,rows,warnings,issues,hasMismatch,totals,...(explicitZero?{explicitZero:true}:{}),
-      count:round(byCount,6),amount:round(byAmount,2),organizations:[...byOrg.keys()]};
+      count:round(byCount,6),amount:round(byAmount,2),organizations:[...organizations]};
   });
 }
 
@@ -2622,9 +2622,16 @@ function dailyHeaderInfo(sheet,mapping=null){
     if(![workCol,headerRow,firstDayCol].every(Number.isInteger)||workCol<0||firstDayCol<0||workCol>=2048||firstDayCol>=2048||headerRow<0||headerRow>=sheet.length)
       throw Error('Проверьте ручные столбцы и строку заголовков.');
     if(mapping.totalAmountCol!=null&&mapping.totalCountCol==null)throw Error('Укажите столбец итогового количества вместе с итоговой суммой.');
+    if([mapping.totalCountCol,mapping.totalAmountCol].some(col=>col!=null&&(!Number.isInteger(col)||col<0||col>=2048)))
+      throw Error('Итоговые столбцы должны быть в пределах листа Excel.');
     const width=sheet.reduce((n,row)=>Math.max(n,row?.length||0),0),end=mapping.totalCountCol??width;
     const pairs=[];for(let c=firstDayCol;c+1<end;c+=2)pairs.push({countCol:c,amountCol:c+1});
-    return {workCol,headerRow,pairs,totals:mapping.totalCountCol!==undefined&&mapping.totalCountCol!==null?{countCol:mapping.totalCountCol,amountCol:mapping.totalAmountCol??mapping.totalCountCol+1}:null};
+    const totals=mapping.totalCountCol==null?null:{countCol:mapping.totalCountCol,amountCol:mapping.totalAmountCol??mapping.totalCountCol+1};
+    const columns=[workCol,...pairs.flatMap(pair=>[pair.countCol,pair.amountCol])];
+    if(totals)columns.push(totals.countCol,totals.amountCol);
+    if(!pairs.length||pairs.length>1024||columns.some(col=>!Number.isInteger(col)||col<0||col>=2048)||new Set(columns).size!==columns.length)
+      throw Error('Проверьте столбцы ручной разметки: работа, дневные значения и итоги должны занимать разные столбцы.');
+    return {workCol,headerRow,pairs,totals};
   }
   for(let r=0;r<sheet.length;r++){
     const row=sheet[r]||[],pairs=[];
@@ -2649,6 +2656,11 @@ function dailyHeaderInfo(sheet,mapping=null){
   return null;
 }
 function findDailySheets(workbook){return workbook.SheetNames.filter(name=>!!dailyHeaderInfo(workbook.Sheets[name]));}
+function typedExcelDate(value){
+  // Excel dates belong to the workbook calendar, including when its timestamp carries an offset.
+  const match=/^(\d{4}-\d{2}-\d{2})(?:T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?)?$/.exec(value);
+  return match&&validReportDate(match[1])?match[1]:null;
+}
 function dailyDateParts(value,date1904=false,forceSerial=false){
   if(value instanceof Date&&!Number.isNaN(value.getTime()))return {year:value.getUTCFullYear(),month:value.getUTCMonth()+1,day:value.getUTCDate()};
   if(typeof value==='number'&&value>=(date1904?0:1)&&value<2958466&&(forceSerial||value>=20000)){
@@ -2657,6 +2669,10 @@ function dailyDateParts(value,date1904=false,forceSerial=false){
     const date=new Date(base+n*86400000);return {year:date.getUTCFullYear(),month:date.getUTCMonth()+1,day:date.getUTCDate()};
   }
   if(typeof value!=='string')return null;
+  if(forceSerial){
+    const date=typedExcelDate(value);if(!date)return null;
+    return {year:+date.slice(0,4),month:+date.slice(5,7),day:+date.slice(8)};
+  }
   const text=value.trim().toLowerCase().replace(/^(?:количество|кол[.-]?во|сумма)\s*[:;,·—-]?\s*/,'').replace(/[\s,:;·—-]*(?:количество|кол[.-]?во|сумма)$/,'').replace(/\s+г\.?$/,'');
   let m=/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[t ]00:00(?::00)?)?$/.exec(text);
   if(m)return {year:+m[1],month:+m[2],day:+m[3]};
@@ -2693,7 +2709,8 @@ function dailyHeaderDate(sheet,info,pair){
       (a.year&&b.yearSuffix!=null&&a.year%100!==b.yearSuffix)||(b.year&&a.yearSuffix!=null&&b.year%100!==a.yearSuffix)||
       (a.yearSuffix!=null&&b.yearSuffix!=null&&a.yearSuffix!==b.yearSuffix))
       throw Error('Даты количества и суммы различаются: '+excelCellRef(first.col,first.row+1)+' / '+excelCellRef(next.col,next.row+1)+'. Проверьте шапку.');
-    if(!first.parts.year&&b.year)first.parts.year=b.year;
+    if(!a.year&&b.year)a.year=b.year;
+    if(a.yearSuffix==null&&b.yearSuffix!=null)a.yearSuffix=b.yearSuffix;
   }
   return first;
 }
@@ -2862,9 +2879,7 @@ function ordinaryDateEvidence(matrix,mappings,type){
         const date1904=!!matrix['!date1904'];if(!date1904&&Math.floor(raw)===60)return;
         const parts=dailyDateParts(raw,date1904,true);if(!parts)return;
         raw=String(parts.year)+'-'+String(parts.month).padStart(2,'0')+'-'+String(parts.day).padStart(2,'0');
-      }else if(typeof raw==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw)&&Number.isFinite(Date.parse(raw))){
-        raw=raw.slice(0,10);
-      }
+      }else if(typeof raw==='string')raw=typedExcelDate(raw);
     }
     const date=ordinaryDateToken(raw,type);if(!date)return;
     if(result.candidates.length===16){result.truncated=true;return;}
@@ -3506,27 +3521,46 @@ function chartTickLabel(value,step){
 }
 // Один период — это сравнение величин, а не динамика: показываем рейтинг.
 const defaultHideZeroRankingRows=false;
+function averageQuantityReason(count) {
+  return count===0?'количество равно нулю':Number.isFinite(count)&&count<0?'отрицательное количество':'';
+}
+function chartPointNotice(point,shown,metric,options,index) {
+  const supplied=options.pointNotice?.(index,shown);
+  const notices=typeof supplied==='string'&&supplied.trim()?[supplied]:[];
+  if(point&&metric==='average'){
+    const unavailable=new Map();
+    for(const key of shown){
+      const item=point.get(key),reason=averageQuantityReason(item?.count);
+      if(!reason||Number.isFinite(item.average))continue;
+      if(!unavailable.has(reason))unavailable.set(reason,[]);
+      unavailable.get(reason).push(options.label?options.label(key):key);
+    }
+    for(const [reason,labels] of unavailable)notices.push('Средняя недоступна ('+reason+'): '+labels.join(', ')+'.');
+  }
+  return notices.join(' ');
+}
 function renderSinglePeriodRanking(root,period,shown,data,metric,options,seriesColor){
   if(!data){empty(root,'Нет полного отчёта за выбранный период. Отсутствующие данные не считаются нулём.');return;}
   const available=shown.map(name=>{
     const item=data.get(name),value=item?item[metric]:0;
     return {name,label:options.label?options.label(name):name,value};
   }).filter(item=>Number.isFinite(item.value));
+  const reason=chartPointNotice(data,shown,metric,options,0);
   if(!available.length){
-    const reason=options.pointNotice?.(0);
     empty(root,'Нет доступных значений за выбранный период.'+(reason?' '+reason:''));
     return;
   }
   const hideZero=options.hideZeroRankingRows??defaultHideZeroRankingRows;
   const rows=available.filter(row=>!hideZero||row.value!==0).sort((a,b)=>b.value-a.value||a.label.localeCompare(b.label,'ru'));
   if(!rows.length){
-    const missing=available.length<shown.length?' Остальные значения недоступны.':'';
+    const missing=reason?' '+reason:available.length<shown.length?' Остальные значения недоступны.':'';
     empty(root,'Нет ненулевых значений за выбранный период. Нулевые строки рейтинга скрыты.'+missing);
     return;
   }
   const actualStart=period.actualStart||period.start;
   const interval=period.end&&period.end!==actualStart?displayDay(actualStart)+' — '+displayDay(period.end):displayDay(actualStart);
   root.append(elem('p','Рейтинг за '+interval+' ('+metricTitle(metric)+'). Для динамики выберите несколько периодов.','muted small'));
+  if(reason)root.append(elem('p',reason,'muted small'));
   if(rows.some(row=>row.value<0))
     root.append(elem('p','Длина столбца показывает модуль значения; знак указан рядом с числом.','muted small'));
   const largest=Math.max(0,...rows.map(row=>Math.abs(row.value)));
@@ -3613,14 +3647,18 @@ function drawChart(periods,orgs,metric,root,options={}) {
       plotPeriodLabel(p));
     label.append(svgEl('title',{},displayPeriod(p)));svg.append(label);
     svg.append(svgEl('text',{x:px(i),y:height-32,'text-anchor':'middle',fill:'var(--plot-label)','font-size':10},p.start.slice(0,4)));
-    if(!data[i]){
+    const customNotice=chartPointNotice(data[i],shown,metric,options,i);
+    if(!data[i]||customNotice){
       const present=new Set(p.organizations||p.rows?.map(row=>row.organization)||[]);
       const available=[...orgs].filter(org=>present.has(org)).length;
-      const message=available?'Неполные данные: '+available+' из '+orgs.size+' подразделений':'Нет отчёта';
+      const message=customNotice||(available?'Неполные данные: '+available+' из '+orgs.size+' подразделений':'Нет отчёта');
       const note=svgEl('text',{x:px(i),y:top+20,'text-anchor':'middle',fill:'var(--warning)','font-size':10});
-      if(available){note.append(svgEl('tspan',{x:px(i)},'Неполные данные: '),svgEl('tspan',{x:px(i),dy:13},available+' из '+orgs.size+' подразделений'));}
-      else note.textContent=message;
-      note.append(svgEl('title',{},message+'. Общий итог не построен: нужны отчёты всех выбранных подразделений.'));svg.append(note);
+      if(!customNotice&&available){note.append(svgEl('tspan',{x:px(i)},'Неполные данные: '),svgEl('tspan',{x:px(i),dy:13},available+' из '+orgs.size+' подразделений'));}
+      else note.textContent=data[i]&&message.length>25?'Есть недоступные значения':message;
+      if(customNotice&&data[i]){
+        note.dataset.chartTooltip=message;note.setAttribute('tabindex','0');note.setAttribute('aria-label',message);note.setAttribute('aria-describedby','chartTooltip');
+      }
+      note.append(svgEl('title',{},customNotice||message+'. Общий итог не построен: нужны отчёты всех выбранных подразделений.'));svg.append(note);
     }
   });
   const numberMarks=[];
@@ -5399,6 +5437,8 @@ function changeMatches(row,metrics,filter) {
   if(filter==='small')return metrics.some(m=>row[m].smallBase&&row[m].delta!==0);
   if(filter==='negative')return metrics.some(m=>row[m].negative);
   if(filter==='unchanged')return metrics.every(m=>row[m].delta===0);
+  if(filter==='significant-up'||filter==='significant-down')
+    return metrics.some(m=>row[m].significant&&!row[m].smallBase&&!row[m].negative&&(filter==='significant-up'?row[m].delta>0:row[m].delta<0));
   if(filter==='up'||filter==='down')return metrics.some(m=>!row[m].negative&&(filter==='up'?row[m].delta>0:row[m].delta<0));
   return true;
 }

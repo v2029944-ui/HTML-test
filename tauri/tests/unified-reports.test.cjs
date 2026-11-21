@@ -612,3 +612,44 @@ test('daily mappings must use a selected sheet and cannot silently ignore an amo
  ui.nodes.unifiedWideMapping.value='A; 1; A; B; E; F';await ui.nodes.unifiedWideMapping.fire('input');await ui.nodes.inspectFile.click();
  assert.equal(previews[0].mappings.A.total_amount_col,6);
 });
+
+test('manual preview of a connected ordinary workbook rechecks a changed folder rule',async()=>{
+ let revision=1,previews=0;
+ const ui=mount({chooseWideXlsx:async()=>'/excel/book.xlsx',nativeImportFolderContext:async()=>({
+  name:'book.xlsx',folder:'/excel',nativeSignature:'one',revision,
+  rule:{format:'legacy',type:'day',start:revision===1?'2024-01-01':'2024-02-01',sheet:'Дни'}}),
+  nativeLegacyImportPreview:async()=>{previews++;return importReview;}});
+ await ui.nodes.excelFile.click();
+ revision=ui.UI.revision=2;
+ await ui.nodes.inspectFile.click();
+ assert.equal(previews,0);assert.equal(ui.nodes.saveImport.disabled,true);
+ assert.match(ui.nodes.unifiedImportStatus.textContent,/Выберите файл заново/);
+ await ui.nodes.excelFile.click();await ui.nodes.inspectFile.click();
+ assert.equal(previews,1);assert.equal(ui.nodes.importWeek.value,'2024-02-01');
+});
+
+test('replacement consent belongs to the reviewed periods and is reset after a new preview',async()=>{
+ const ui=mount({chooseWideXlsx:async()=>'/tmp/book.xlsx',nativeLegacyImportPreview:async()=>({...importReview,conflicts:{replacements:1}})});
+ await ui.nodes.excelFile.click();await ui.nodes.inspectFile.click();
+ ui.nodes.replaceExisting.checked=true;
+ await changeImportField(ui,'importWeek','2024-04-21');await ui.nodes.inspectFile.click();
+ assert.equal(ui.nodes.replaceExisting.checked,false);
+});
+
+test('switching databases forgets the workbook and pending sheet selection even at an equal revision',async()=>{
+ const choose=deferred();let previews=0;
+ const ui=mount({chooseWideXlsx:async()=>'/a/book.xlsx',nativeImportSheets:()=>choose.promise,
+  nativeLegacyImportPreview:async()=>{previews++;return importReview;}});
+ const selection=ui.nodes.excelFile.click();await flush();
+ ui.window.sharedWorkspace={state:{mode:'shared',folder:'B'}};
+ ui.snapshot(null);ui.snapshot();choose.resolve([{name:'Старый лист',component:'old.xml'}]);await selection;
+ await ui.nodes.inspectFile.click();assert.equal(previews,0);assert.equal(ui.nodes.inspectFile.disabled,true);assert.equal(ui.nodes.excelFile.disabled,false);
+ assert.doesNotMatch(ui.nodes.excelFileStatus.textContent||'',/book\.xlsx/);
+});
+
+test('a pending native review cannot repopulate the form after a same-revision refresh',async()=>{
+ const preview=deferred();const ui=mount({chooseWideXlsx:async()=>'/a/book.xlsx',nativeLegacyImportPreview:()=>preview.promise});
+ await ui.nodes.excelFile.click();const pending=ui.nodes.inspectFile.click();await flush();
+ ui.snapshot(null);ui.snapshot();preview.resolve(importReview);await pending;
+ assert.equal(ui.nodes.saveImport.disabled,true);assert.match(ui.nodes.unifiedImportStatus.textContent,/изменились/);
+});

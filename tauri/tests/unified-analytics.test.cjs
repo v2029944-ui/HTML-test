@@ -561,3 +561,31 @@ test('top-eight selection publishes only names accepted by the work filter',asyn
  await f.bootstrap();f.nodes.get('selectTop').dispatch('click');await settle();
  assert.deepEqual(Array.from(f.published.at(-1).selectedKeys),[valid.key]);
 });
+
+test('clearing the work selection supersedes an in-flight top-eight ranking',async()=>{
+ const gate=deferred();let reads=0;
+ const rows=[{name:'Ремонт',key:'work:Ремонт',kind:'work'}];
+ const fx=fixture({nativeAnalysisRanking:()=>++reads===1?Promise.resolve({complete:true,rows}):gate.promise});
+ await fx.bootstrap();
+ fx.nodes.get('selectTop').dispatch('click');
+ fx.nodes.get('clearAll').dispatch('click');
+ gate.resolve({complete:true,rows});await settle();
+ assert.deepEqual(Array.from(fx.published.at(-1).selectedKeys),[]);
+});
+
+test('the local all-works control stays accurate when same-name series cannot be selected individually',async()=>{
+ const fx=fixture({unifiedNameOptionsAtPage:async()=>({rows:[],total_rows:0})});
+ await fx.bootstrap();fx.nodes.get('selectAll').dispatch('click');await settle();
+ assert.equal(fx.nodes.get('categoryCount').textContent,'Все работы и группы');
+});
+
+test('work choices made in overview update the shared scope used by other detail tabs',async()=>{
+ const fx=fixture(),sent=[];
+ await fx.bootstrap();
+ fx.window.referenceDetail={active:'overviewPanel'};
+ fx.window.referenceFilters={setWorks:(all,rows)=>sent.push([all,[...rows.keys()]])};
+ fx.nodes.get('clearAll').dispatch('click');await settle();
+ fx.nodes.get('selectTop').dispatch('click');await settle();
+ fx.nodes.get('selectAll').dispatch('click');await settle();
+ assert.deepEqual(sent,[[false,[]],[false,['work:W']],[true,[]]]);
+});

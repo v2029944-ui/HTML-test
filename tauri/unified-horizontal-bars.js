@@ -52,15 +52,15 @@ function horizontalBars(periods,shown,data,metric,root,options,color,redraw,seri
   heading.append(make('title',{},caption));svg.append(heading);
   if(!point){
    svg.append(make('text',{x:left+8,y:y+32,fill:'var(--warning)','font-size':11},
-    typeof options.pointNotice==='function'&&options.pointNotice(originalIndex)||'Нет полного отчёта'));
+    typeof options.pointNotice==='function'&&options.pointNotice(originalIndex,shown)||'Нет полного отчёта'));
    return;
   }
   shown.forEach((name,j)=>{
    const item=point.get(name),v=item?.[metric],ybar=y+21+j*19;
-   const zeroDivisor=metric==='average'&&item?.count===0;
-   if(Number.isFinite(v)||zeroDivisor)hasCompleteValue=true;
+   const reason=metric==='average'?presentation.averageQuantityReason(item?.count):'';
+   if(Number.isFinite(v)||reason)hasCompleteValue=true;
    if(!Number.isFinite(v)){
-    svg.append(make('text',{x:left+8,y:ybar+11,fill:'var(--warning)','font-size':11},zeroDivisor?'— количество равно нулю':'— нет данных'));
+    svg.append(make('text',{x:left+8,y:ybar+11,fill:'var(--warning)','font-size':11},reason?'— '+reason:'— нет данных'));
     return;
    }
    if(seriesNumbers&&!numbered.has(name)){

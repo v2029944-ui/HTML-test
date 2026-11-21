@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const script=fs.readFileSync(path.join(__dirname,'../unified-horizontal-bars.js'),'utf8');
 const page=fs.readFileSync(path.join(__dirname,'../../index.html'),'utf8');
-const axes=vm.runInNewContext(page.slice(page.indexOf('function chartNiceScale('),page.indexOf('const defaultHideZeroRankingRows'))+';({chartNiceScale,chartTickLabel})');
+const axes=vm.runInNewContext(page.slice(page.indexOf('function chartNiceScale('),page.indexOf('const defaultHideZeroRankingRows'))+page.slice(page.indexOf('function averageQuantityReason('),page.indexOf('function chartPointNotice('))+';({chartNiceScale,chartTickLabel,averageQuantityReason})');
 class Element{
  constructor(name){this.tagName=name.toUpperCase();this.children=[];this.attributes={};this.dataset={};this.listeners={};this.style={minWidth:'',setProperty(){}};this.clientWidth=800;this._text='';}
  set textContent(v){this._text=String(v);this.children=[];}
@@ -74,4 +74,12 @@ test('undefined averages in complete reports identify a zero divisor without cal
  assert.doesNotMatch(root.textContent,/Нет полных данных|Пропуски/);
  assert.match(root.textContent,/нулевом количестве|количество равно нулю/);
  assert.equal(all(root).filter(n=>n.tagName==='RECT').length,0);
+});
+
+test('negative quantities in a complete report explain the missing average',()=>{
+ const {window,root}=fixture();
+ const data=[new Map([['А',{count:-2,amount:15,average:null}]])];
+ window.unifiedHorizontalBars([{start:'2024-01-01'}],['А'],data,'average',root,{},()=>'',()=>{});
+ assert.match(root.textContent,/отрицательное количество/);
+ assert.doesNotMatch(root.textContent,/Нет полных данных|нет данных/);
 });

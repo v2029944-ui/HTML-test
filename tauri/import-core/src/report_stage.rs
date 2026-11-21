@@ -726,6 +726,7 @@ struct Active {
     amount: f64,
     row: u32,
     unchecked: bool,
+    actual: (f64, f64),
 }
 struct Context<'a> {
     db: &'a Connection,
@@ -783,7 +784,7 @@ impl Context<'_> {
             if a.unchecked {
                 return Ok(());
             }
-            let actual = self.by_org[a.org];
+            let actual = a.actual;
             if (actual.0 - a.count).abs() > 0.001 || (actual.1 - a.amount).abs() > 0.03 {
                 self.mismatch = true;
                 self.issue(
@@ -811,10 +812,11 @@ impl Context<'_> {
         }
     }
     fn add(&mut self, row: u32, work: &str, q: f64, a: f64) -> Result<()> {
-        let org = self
-            .active
-            .ok_or_else(|| fail("No active organization"))?
-            .org;
+        let active = self.active.as_mut().ok_or_else(|| fail("No active organization"))?;
+        active.actual.0 += q;
+        active.actual.1 += a;
+        let org = active.org;
+        let block = active.actual;
         self.rows += 1;
         self.sum.0 += q;
         self.sum.1 += a;
@@ -826,6 +828,8 @@ impl Context<'_> {
             self.sum.1,
             self.by_org[org].0,
             self.by_org[org].1,
+            block.0,
+            block.1,
         ]
         .iter()
         .any(|v| !v.is_finite())
@@ -918,11 +922,11 @@ impl Context<'_> {
             })
         });
         if total {
-            self.check_block()?;
             if self.daily && blank_pair {
                 return Ok(self.rows > 0);
             }
             if self.rows > 0 || self.daily {
+                self.check_block()?;
                 self.overall = true;
                 self.totals += 1;
                 self.db.execute(
@@ -977,6 +981,7 @@ impl Context<'_> {
                     amount: 0.,
                     row,
                     unchecked: true,
+                    actual: (0., 0.),
                 });
                 return Ok(false);
             }
@@ -987,6 +992,7 @@ impl Context<'_> {
                     amount: a,
                     row,
                     unchecked: false,
+                    actual: (0., 0.),
                 });
                 self.mark_present(org);
                 self.totals += 1;

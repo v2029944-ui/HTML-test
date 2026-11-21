@@ -10,7 +10,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, LazyLock,
     },
 };
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -649,6 +649,7 @@ impl Stage<'_> {
                 if a.year.is_none() {
                     a.year = b.year;
                 }
+                a.suffix = a.suffix.or(b.suffix);
                 Ok(Some((a, r, c)))
             }
         }
@@ -1449,6 +1450,13 @@ pub(crate) fn excel_serial_date(n: f64, date1904: bool) -> Result<NaiveDate> {
         .checked_add_signed(Duration::days(n))
         .ok_or_else(|| fail("Excel date out of range"))
 }
+pub(crate) fn typed_excel_date(value: &str) -> Option<NaiveDate> {
+    static ISO: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+        r"^([0-9]{4}-[0-9]{2}-[0-9]{2})(?:T(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9](?:\.[0-9]+)?)?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])?)?$"
+    ).unwrap());
+    // Preserve the calendar date written in the workbook without converting the offset to UTC.
+    NaiveDate::parse_from_str(&ISO.captures(value)?[1], "%Y-%m-%d").ok()
+}
 fn date_parts(
     value: &str,
     kind: &str,
@@ -1456,7 +1464,12 @@ fn date_parts(
     date1904: bool,
     p: &Patterns,
 ) -> Result<Option<Parts>> {
-    if !["s", "str", "inlineStr", "d"].contains(&kind) {
+    if kind == "d" {
+        return Ok(typed_excel_date(value).map(|d| Parts {
+            year: Some(d.year()), suffix: None, month: d.month(), day: d.day(),
+        }));
+    }
+    if !["s", "str", "inlineStr"].contains(&kind) {
         if let Ok(n) = value.parse::<f64>() {
             if n >= if date1904 { 0. } else { 1. } && n < 2958466. && (styled || n >= 20000.) {
                 let d = excel_serial_date(n,date1904)?;
@@ -1559,6 +1572,14 @@ mod date_tests {
         assert!(date_parts("٢٠٢٤-01-01", "inlineStr", false, false, &p)
             .unwrap()
             .is_none());
+    }
+    #[test]
+    fn typed_header_keeps_the_calendar_date_and_ignores_invalid_times() {
+        let patterns = Patterns::new();
+        let d = date_parts("2024-02-29T23:45:12.125-05:00", "d", false, false, &patterns)
+            .unwrap().unwrap();
+        assert_eq!((d.year, d.month, d.day), (Some(2024), 2, 29));
+        assert!(date_parts("2024-02-29T25:00:00", "d", false, false, &patterns).unwrap().is_none());
     }
     #[test]
     fn date_serial_epoch_is_explicit_and_fake_leap_day_rejected() {

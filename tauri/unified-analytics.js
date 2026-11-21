@@ -4,7 +4,7 @@
 'use strict';
 const UI=window.unifiedUI,O=window.unifiedOriginal,api=UI.api,$=UI.$;
 const titles=window.analysisSummary.titles;
-let initialized=false,scope=null,ticket=0,nameTicket=0,chartTicket=0,selectionReady=false,allNames=false,totalNames=0;
+let initialized=false,scope=null,ticket=0,nameTicket=0,selectionTicket=0,chartTicket=0,selectionReady=false,allNames=false,totalNames=0;
 let displayedOverviewScope=null,displayedChart=null;
 const overviewResults=['overviewKpis','overviewInsights','overviewOrganizations','overviewAlerts'];
 const chartResults=['chartsContainer','dataTable','chartOrgTotals'];
@@ -73,7 +73,14 @@ function layout(){const single=value('overviewMode')==='single';$('overviewSingl
 function filters(){O.renderMultiFilter('orgFilter',(UI.snapshot?.org_names||[]).map(n=>[n,n]),state.selectedOrganizations,()=>window.referenceDetail?.active==='overviewPanel'
  ?window.referenceFilters.setOrganizations(orgs()):calculate());O.renderMultiFilter('metric',[['amount','Сумма'],['count','Количество / объём']],state.selectedMetrics,()=>{if(printCapture?.revision===UI.revision)drawOverview(printCapture.result,printCapture.organizations,printCapture.scope,printCapture.before);publish();renderCharts();});O.renderMultiFilter('chartMetrics',[['amount','Сумма'],['count','Количество / объём'],['average','Сумма / количество (объём)']],state.chartMetrics,()=>renderCharts());}
 function publish(){if(!scope)return;scope={...scope,organizations:orgs(),allNames,selectedNames:allNames?[]:[...selectedRows.values()].map(r=>r.name),selectedKeys:allNames?[]:[...selectedRows.keys()],nameRows:[...selectedRows.values()]};state.selectedCategories=new Set(scope.selectedNames);UI.publishScope(scope);}
-function selectionCount(){state.selectedCategories=new Set([...selectedRows.values()].map(r=>r.name));$('categoryCount').textContent=allNames?'Все ('+totalNames+')':selectedRows.size+' из '+totalNames;}
+function selectionCount(){state.selectedCategories=new Set([...selectedRows.values()].map(r=>r.name));$('categoryCount').textContent=allNames?'Все работы и группы':selectedRows.size+' из '+totalNames;}
+function changeWorks(refreshNames=false){
+ ++selectionTicket;selectionReady=true;seriesIndex=0;selectionCount();
+ if(window.referenceDetail?.active==='overviewPanel'&&window.referenceFilters?.setWorks){
+  return window.referenceFilters.setWorks(allNames,selectedRows);
+ }
+ publish();if(refreshNames)void names(nameIndex);return renderCharts();
+}
 function pager(root,index,run,options){
  const pages=Math.max(1,Math.ceil(options.total/options.size));
  const go=i=>{if(options.current()&&Number.isSafeInteger(i)&&i>=0&&i<pages&&i!==index)return run(i);return false;};
@@ -84,18 +91,19 @@ async function names(index=0,paging=false){
  if(!Number.isSafeInteger(UI.revision))return;const mine=++nameTicket,revision=UI.revision;clear('categories','Загрузка названий…',!paging);
  try{const page=await api.unifiedNameOptionsAtPage(revision,value('categorySearch'),index,50);if(mine!==nameTicket||revision!==UI.revision)return;namePage=page;nameIndex=index;if(!value('categorySearch'))totalNames=page.total_rows;
   clear('categories','',false);const root=$('categories');
-  for(const row of page.rows){const label=UI.el('label',null,'category-row'),box=UI.el('input');box.type='checkbox';box.checked=allNames||selectedRows.has(row.key);box.disabled=allNames;box.addEventListener('change',()=>{if(box.checked){if(selectedRows.size>=50){box.checked=false;UI.notice('Можно отметить до 50 отдельных работ. «Выбрать все» включает все работы без ограничения.',true);return;}selectedRows.set(row.key,row);}else selectedRows.delete(row.key);selectionCount();publish();seriesIndex=0;renderCharts();});label.append(box,UI.el('span',window.analysisSummary.itemLabel(row)));root.append(label);}
+  for(const row of page.rows){const label=UI.el('label',null,'category-row'),box=UI.el('input');box.type='checkbox';box.checked=allNames||selectedRows.has(row.key);box.disabled=allNames;box.addEventListener('change',()=>{if(box.checked){if(selectedRows.size>=50){box.checked=false;UI.notice('Можно отметить до 50 отдельных работ. «Выбрать все» включает все работы без ограничения.',true);return;}selectedRows.set(row.key,row);}else selectedRows.delete(row.key);void changeWorks();});label.append(box,UI.el('span',window.analysisSummary.itemLabel(row)));root.append(label);}
   if(!page.rows.length)root.append(UI.el('p','Совпадений нет.','muted small'));
   if(allNames)root.append(UI.el('p','Выбраны все работы, включая строки, которые не отображаются сейчас. Чтобы отметить отдельные работы, нажмите «Снять всё».','muted small'));
   pager(root,index,i=>names(i,true),{size:50,total:page.total_rows,count:page.rows.length,label:'Названия работ',current:()=>mine===nameTicket&&revision===UI.revision});selectionCount();
  }catch(error){if(mine===nameTicket&&revision===UI.revision)clear('categories','Не удалось загрузить названия. '+errorText(error));}
 }
 async function top(eager=false){
- if(!scope)return false;const mine=ticket,s={...scope,organizations:orgs()};
- try{const result=await api.nativeAnalysisRanking(s.revision,s.type,s.from,s.to,s.organizations,null,chosenMetrics()[0]||'amount','selectable',null,null);if(!valid(mine,s.revision))return false;
+ if(!scope)return false;const mine=ticket,request=++selectionTicket,s={...scope,organizations:orgs()};
+ const current=()=>valid(mine,s.revision)&&request===selectionTicket;
+ try{const result=await api.nativeAnalysisRanking(s.revision,s.type,s.from,s.to,s.organizations,null,chosenMetrics()[0]||'amount','selectable',null,null);if(!current())return null;
   if(!result.complete){if(!eager)UI.notice('Для рейтинга нужны полные отчёты выбранных подразделений за весь диапазон.',true);return false;}
   selectedRows=new Map(result.rows.slice(0,8).map(row=>[row.key,{key:row.key,name:row.name,kind:row.kind}]));allNames=false;selectionReady=true;selectionCount();return true;
- }catch(error){if(!eager&&valid(mine,s.revision))UI.notice(errorText(error),true);return false;}
+ }catch(error){if(!current())return null;if(!eager)UI.notice(errorText(error),true);return false;}
 }
 function changeValue(delta,metric){return window.analysisSummary.displayedChange(delta,metric,fmt);}
 function changeClass(direction){return direction==='up'?'numeric-rise':direction==='down'?'numeric-fall':'';}
@@ -194,7 +202,14 @@ async function calculate(shared=null){
   const [overview,organizations]=await window.analysisSummary.read(api,shared||s);
   if(!valid(mine,revision))return;drawOverview(overview,organizations,s,before);
    if(!overview.summary.after.complete)void suggestWeeklyReports(s);
-  if(!selectionReady){const ranked=await top(true);if(!valid(mine,revision))return;if(!ranked){const page=await api.unifiedNameOptionsAtPage(revision,'',0,8);if(!valid(mine,revision))return;selectedRows=new Map(page.rows.map(r=>[r.key,r]));}selectionReady=true;}
+  if(!selectionReady){
+   const ranked=await top(true);if(!valid(mine,revision))return;
+   if(ranked===false){
+    const selection=selectionTicket,page=await api.unifiedNameOptionsAtPage(revision,'',0,8);
+    if(!valid(mine,revision))return;
+    if(selection===selectionTicket){selectedRows=new Map(page.rows.map(r=>[r.key,r]));selectionReady=true;}
+   }
+  }
   if(!shared)publish();
   selectionCount();void names(nameIndex);if($('advancedAnalytics').open)await renderCharts();
  }catch(error){if(valid(mine,revision)){invalidateScope();clear('overviewAlerts','Не удалось загрузить обзор. '+errorText(error));}}
@@ -251,7 +266,7 @@ async function renderCharts(index=seriesIndex,paging=false){
   if(filteredAll)clear(state.chart==='table'?'dataTable':'chartsContainer',allPeriodsHidden,false);
   for(const metric of chosenMetrics())if(state.chart==='table'){
    const raw=[['Итого по выбранным работам',...points.map(p=>p.missing===0?p.total[metric]:null)],...rows.map(row=>[row.name,...data.map(map=>map?.get(row.key)?.[metric]??null)])];
-   UI.table($('dataTable'),metric,chartInterval(s)+(metric==='average'?' · прочерк означает неполные данные или нулевое количество.':' · прочерк означает неполные данные.'),['Работа / группа',...periods.map(O.displayPeriod)],raw.map(row=>[row[0],...row.slice(1).map(n=>fmt(n,metric))]),{csvRows:raw,csvContext:chartExport(s,isCurrent,'works',[metric])});
+   UI.table($('dataTable'),metric,chartInterval(s)+(metric==='average'?' · прочерк означает неполные данные или неположительное количество.':' · прочерк означает неполные данные.'),['Работа / группа',...periods.map(O.displayPeriod)],raw.map(row=>[row[0],...row.slice(1).map(n=>fmt(n,metric))]),{csvRows:raw,csvContext:chartExport(s,isCurrent,'works',[metric])});
   }else if(!filteredAll)UI.drawChart(periods,new Set(s.organizations),metric,plotSection($('chartsContainer'),metric,titles[metric]+' · '+chartInterval(s)),{chart:state.chart,orientation:orientation(),hiddenPeriods,categories:rows.map(r=>r.key),data,label:key=>rows.find(r=>r.key===key).name,pointNotice:i=>points[i].missing?'Неполные данные: пропусков '+points[i].missing:''});
   commitView();seriesIndex=index;pager(root,index,i=>{seriesIndex=i;return renderCharts(i,true);},{size:pageSize,total:seriesTotal,count:rows.length,label:'Работы на графике',current:isCurrent});
   $('chartHelp').textContent='Выбрано подразделений: '+s.organizations.length+' из '+UI.snapshot.org_names.length+'. Данные сгруппированы '+({day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам',period:'по выбранным периодам'}[totals.granularity]||'по периодам')+'. Пропуски не считаются нулём.';
@@ -272,9 +287,9 @@ async function departmentCharts(base,isCurrent){
  const rawSeries=trends.series||[],first=rawSeries[0]?.points||[],keep=first.map((p,i)=>!$('hideEmptyPeriods').checked||!rawSeries.every(series=>confirmedZero(series.points[i]))),points=first.filter((p,i)=>keep[i]),periods=descriptors(points,trends.granularity,s);
  const hiddenPeriods=descriptors(first.filter((_,i)=>!keep[i]),trends.granularity,s);
  const data=first.map((p,i)=>new Map(rawSeries.map(series=>[series.organization,series.points[i]?.missing===0?series.points[i].total:{count:null,amount:null,average:null}]))).filter((p,i)=>keep[i]);
- function pointNotice(i){
+ function pointNotice(i,shown=s.organizations){
   const index=first.indexOf(points[i]);
-  const missing=rawSeries.filter(series=>series.points[index]?.missing>0).map(series=>series.organization);
+  const missing=rawSeries.filter(series=>shown.includes(series.organization)&&series.points[index]?.missing>0).map(series=>series.organization);
   return missing.length?'Нет полного отчёта: '+missing.join(', ')+'.':'';
  }
  const filteredAll=hiddenPeriods.length>0&&!points.length;
@@ -290,7 +305,7 @@ async function departmentCharts(base,isCurrent){
    (m==='average'?'Общая сумма / суммарное количество (объём)':'Итоговый показатель «'+titles[m]+'»')+' за весь выбранный диапазон. При пропуске отчёта значение недоступно.'),
    'Полнота отчётов этого подразделения за диапазон. При неполных данных показано число пропущенных периодов.'],
   csvContext:chartExport(s,isCurrent,'organizationTotals',chosen)});
- $('chartHelp').textContent='Подразделений: '+s.organizations.length+'. Учитываются '+(all?'все выполненные работы.':'отмеченные работы и группы.')+' Прочерк означает неполные данные. Отношение суммы к количеству также недоступно при нулевом количестве. Данные сгруппированы '+({day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам',period:'по выбранным периодам'}[trends.granularity]||'по периодам')+'.';
+ $('chartHelp').textContent='Подразделений: '+s.organizations.length+'. Учитываются '+(all?'все выполненные работы.':'отмеченные работы и группы.')+' Прочерк означает неполные данные. Отношение суммы к количеству рассчитывается при положительном количестве. Данные сгруппированы '+({day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам',period:'по выбранным периодам'}[trends.granularity]||'по периодам')+'.';
 }
 async function configure(snapshot){
  if(!snapshot){ticket++;nameTicket++;invalidateScope();clear('overviewAlerts','Подготовка данных…');clear('categories');return;}
@@ -324,9 +339,9 @@ function init(){if(initialized)return;initialized=true;state.selectedMetrics=sta
  $('workViewMode').addEventListener('change',()=>{void renderCharts();});
  document.querySelectorAll('[data-chart]').forEach(button=>button.addEventListener('click',()=>{state.chart=button.dataset.chart;seriesIndex=0;void renderCharts();}));
  $('categorySearch').addEventListener('input',()=>{nameTicket++;window.sqlRowScroll?.reset($('categories'));if(searchTimer)clearTimeout(searchTimer);searchTimer=setTimeout(()=>{searchTimer=null;void names();},160);});
- $('selectAll').addEventListener('click',()=>{allNames=true;selectedRows.clear();selectionReady=true;seriesIndex=0;selectionCount();publish();void names(nameIndex);void renderCharts();});
- $('clearAll').addEventListener('click',()=>{allNames=false;selectedRows.clear();selectionReady=true;seriesIndex=0;selectionCount();publish();void names(nameIndex);void renderCharts();});
- $('selectTop').addEventListener('click',async()=>{if(await top()){seriesIndex=0;publish();void names(nameIndex);void renderCharts();}});
+ $('selectAll').addEventListener('click',()=>{allNames=true;selectedRows.clear();void changeWorks(true);});
+ $('clearAll').addEventListener('click',()=>{allNames=false;selectedRows.clear();void changeWorks(true);});
+ $('selectTop').addEventListener('click',async()=>{if(await top())await changeWorks(true);});
  $('advancedAnalytics').addEventListener('toggle',()=>{if($('advancedAnalytics').open)void renderCharts();});$('printSummary').addEventListener('click',print);
  UI.onSnapshot(configure);UI.onView('dashboard',()=>{if(!scope&&UI.snapshot)void configure(UI.snapshot);});
 }

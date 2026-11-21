@@ -42,14 +42,29 @@
   Push $2
   Push $3
   Push $4
+  Push $5
+  Push $6
   !if "${STARTMENUFOLDER}" != ""
     !insertmacro AnalizRefreshIcon "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk"
   !else
     !insertmacro AnalizRefreshIcon "$SMPROGRAMS\${PRODUCTNAME}.lnk"
   !endif
   !insertmacro AnalizRefreshIcon "$DESKTOP\${PRODUCTNAME}.lnk"
-  !insertmacro AnalizRefreshIcon "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\${PRODUCTNAME}.lnk"
+  ; Explorer and the user can choose a different display name for a pinned link.
+  ClearErrors
+  FindFirst $5 $6 "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\*.lnk"
+  ${IfNot} ${Errors}
+    ${Do}
+      !insertmacro AnalizRefreshIcon "$APPDATA\Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\$6"
+      ClearErrors
+      FindNext $5 $6
+    ${LoopUntil} ${Errors}
+    FindClose $5
+  ${EndIf}
+  ClearErrors
   System::Call 'shell32::SHChangeNotify(i 0x2000, i 5, w "$INSTDIR\${MAINBINARYNAME}.exe", p 0)'
+  Pop $6
+  Pop $5
   Pop $4
   Pop $3
   Pop $2

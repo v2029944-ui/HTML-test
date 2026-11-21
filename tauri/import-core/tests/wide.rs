@@ -577,3 +577,45 @@ fn sequential_cancellation_and_unused_known_sheet_keep_previous_conversion() {
     assert!(stage.convert_wide(&cfg, cancel, |_| {}).is_err());
     assert_eq!(stage.report_page(100, 100).unwrap().len(), 82);
 }
+
+#[test]
+fn either_column_of_a_day_pair_can_supply_the_two_digit_year() {
+    let t = tempfile::tempdir().unwrap();
+    let file = t.path().join("years.xlsx");
+    let area = StageArea::open(t.path().join("stage")).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    for (count, amount) in [("28.02", "28.02.24"), ("28.02.24", "28.02")] {
+        let mut sheet = rows();
+        sheet[0][1] = count;
+        sheet[0][2] = amount;
+        sheet[0][3] = "29.02";
+        book(&file, &sheet, "", "xl/worksheets/sheet1.xml");
+        let mut stage = area.ingest(&file, Limits::default(), &cancel, |_| {}).unwrap();
+        let mut cfg = WideOptions { year: Some(2024), ..Default::default() };
+        let result = stage.convert_wide(&cfg, cancel.clone(), |_| {}).unwrap();
+        assert_eq!(result.reports, 2);
+        cfg.year = Some(2020);
+        let err = stage.convert_wide(&cfg, cancel.clone(), |_| {}).unwrap_err();
+        assert!(err.to_string().contains("year"), "{err}");
+        assert_eq!(stage.report_page(0, 2).unwrap()[0].start, "2024-02-28");
+    }
+}
+
+#[test]
+fn empty_grand_total_reports_the_last_daily_section_mismatch_once() {
+    let t = tempfile::tempdir().unwrap();
+    let mut sheet = rows();
+    sheet[2][1] = "4";
+    sheet[2][2] = "40";
+    sheet[4][1] = "";
+    sheet[4][2] = "";
+    let file = t.path().join("total.xlsx");
+    book(&file, &sheet, MERGES, "xl/worksheets/sheet1.xml");
+    let area = StageArea::open(t.path().join("stage")).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut stage = area.ingest(&file, Limits::default(), &cancel, |_| {}).unwrap();
+    stage.convert_wide(&WideOptions::default(), cancel, |_| {}).unwrap();
+    let report = stage.report_page(0, 1).unwrap().remove(0);
+    let issues = stage.report_issues(&report.id, 0, 100).unwrap();
+    assert_eq!(issues.iter().filter(|i| i.kind == "mismatch" && i.scope.as_deref() != Some("source-period")).count(), 1);
+}

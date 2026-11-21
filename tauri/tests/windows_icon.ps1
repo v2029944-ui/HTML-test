@@ -330,7 +330,11 @@ function Find-Pin($path){
     }
 }
 function Taskbar-Verb($names){
-    $b=Taskbar-Button
+    $ready=[Diagnostics.Stopwatch]::StartNew()
+    do{
+        $b=Taskbar-Button
+        if(!$b){Start-Sleep -Milliseconds 250}
+    }while(!$b -and $ready.Elapsed.TotalSeconds -lt 8)
     if(!$b){return $false}
     $r=$b.Current.BoundingRectangle
     [AnalizIcon]::ContextMenu([int]($r.X+$r.Width/2),[int]($r.Y+$r.Height/2))
@@ -360,10 +364,27 @@ function Try-Pin($path){
     }
     if(!(Find-Pin $path)){
         $null=Taskbar-Verb @('Pin to taskbar','Закрепить на панели задач')
-        Start-Sleep -Milliseconds 350
+        $wait=[Diagnostics.Stopwatch]::StartNew()
+        do{
+            $found=Find-Pin $path
+            if($found){return $found}
+            Start-Sleep -Milliseconds 250
+        }while($wait.Elapsed.TotalSeconds -lt 5)
     }
     return Find-Pin $path
 }
+function New-ProbeShortcut($file,$target,$icon){
+    $shell=New-Object -ComObject WScript.Shell
+    $link=$shell.CreateShortcut($file)
+    $link.TargetPath=$target
+    $link.IconLocation=$icon
+    $link.Save()
+}
+
+$fixtureId=[guid]::NewGuid().ToString('N')
+$renamed=Join-Path $pinDir ("audit-renamed-"+$fixtureId+".lnk")
+$custom=Join-Path $pinDir ("audit-custom-"+$fixtureId+".lnk")
+$other=Join-Path $pinDir ("audit-other-"+$fixtureId+".lnk")
 $exe=$null
 try{
     try{
@@ -385,9 +406,26 @@ try{
     $pin=Try-Pin $oldExe
     $result.upgrade.pinBefore=if($pin){'verified real shell shortcut'}else{'unverified: Explorer did not expose or create the pin'}
     Stop-Owned $oldExe
+    # Exercise persisted links with custom filenames even if this Explorer session cannot pin.
+    $null=New-Item -ItemType Directory -Path $pinDir -Force
+    New-ProbeShortcut $renamed $oldExe ($oldExe+',0')
+    New-ProbeShortcut $custom $oldExe (Join-Path $env:SystemRoot 'System32\shell32.dll,3')
+    New-ProbeShortcut $other (Join-Path $env:SystemRoot 'System32\notepad.exe') ($oldExe+',0')
+    $customHash=(Get-FileHash -LiteralPath $custom).Hash
+    $otherHash=(Get-FileHash -LiteralPath $other).Hash
     $exe=Run-Setup $Candidate -Update
     if($exe -ne $oldExe -or (Get-FileHash $exe -Algorithm SHA256).Hash -eq $oldExeHash){throw 'Existing executable was not replaced in place'}
     Check-Bitmap ([AnalizIcon]::FromFile($exe)) 'upgrade-exe';$result.upgrade.exe='verified in place over stable 1.10.0'
+    $resolved=[AnalizIcon]::ReadLink($renamed)
+    if($resolved.Target -ne $exe -or $resolved.Icon -ne (Join-Path $install 'analysis-bars-blue.ico') -or $resolved.IconIndex -ne 0){
+        throw 'Renamed shortcut did not receive the current default icon'
+    }
+    Check-ShortcutIcon $renamed 'renamed-shortcut'
+    if((Get-FileHash -LiteralPath $custom).Hash -ne $customHash -or (Get-FileHash -LiteralPath $other).Hash -ne $otherHash){
+        throw 'Installer changed a custom icon or a shortcut for another target'
+    }
+    $result.upgrade.renamedShortcut='verified default icon, preserved custom and unrelated links'
+    Remove-Item -LiteralPath $renamed,$custom,$other
     if($pin){
         if((Find-Pin $exe) -ne $pin){throw 'The existing pinned shortcut was lost during upgrade'}
         $link=[AnalizIcon]::ReadLink($pin)
@@ -401,6 +439,9 @@ try{
 }catch{$result.error=$_.Exception.Message;throw}
 finally{
     Save-Result
+    foreach($fixtureLink in @($renamed,$custom,$other)){
+        if(Test-Path -LiteralPath $fixtureLink){Remove-Item -LiteralPath $fixtureLink}
+    }
     if($pin){$null=Taskbar-Verb @('Unpin from taskbar','Открепить от панели задач')}
     if($exe){Stop-Owned $exe}
     Uninstall-Owned

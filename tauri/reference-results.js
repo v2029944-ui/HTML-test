@@ -178,7 +178,22 @@ function openSample(anchor){const data=summaryData,s=scope;if(!data||data.scope!
  }
  root.append(el('p','Наличие отчётов не подтверждает полноту источника. Замечания импорта не означают автоматического исключения.','mut'));if(data.comparable.length&&data.comparable.length<s.organizations.length)root.append(button('Сравнить только сопоставимые подразделения',()=>{document.getElementById('sheet')?.close();window.referenceFilters.setOrganizations(data.comparable.slice());}));root.append(button('Проверить отчёты',()=>openQuality(anchor)));}
 function openQuality(anchor){const s=scope,mine=generation,modal=++modalTicket;if(!usable(s))return;const root=resultDialog('Качество отчётов',anchor),nav=el('div',null,'seg'),content=el('div');root.append(button('← К составу сравнения',()=>openSample(anchor)),nav,content);const current=()=>scope===s&&mine===generation&&modal===modalTicket&&document.getElementById('sheet')?.open!==false;for(const [label,from,to]of [['Отчётный период',s.from,s.to],['База сравнения',s.baseFrom,s.baseTo]])nav.append(button(label,()=>draw(from,to)));function draw(from,to){if(!current())return;content.replaceChildren(el('p','Наличие отчёта не подтверждает полноту источника. Замечание импорта само по себе не исключает отчёт.','mut'));if(window.unifiedCoverage?.render)void window.unifiedCoverage.render(content,{...s,from,to},current);else content.append(el('p','Матрица качества данных недоступна.'));}draw(s.from,s.to);}
-function sensitivity(anchor){const root=resultDialog('Чувствительность анализа',anchor),range=el('input'),output=el('output',percent+'%'),label=el('label','Порог изменения ');range.type='range';range.min='0';range.max='200';range.step='1';range.value=String(percent);label.append(range,output);root.append(label);range.addEventListener('input',()=>{output.textContent=range.value+'%';});const fields=[];for(const [text,n]of [['Минимум количества / объёма',minCount],['Минимум суммы',minAmount]]){const field=el('input'),label=el('label',text+' ');field.type='number';field.min='0';field.step='any';field.value=String(n);label.append(field);root.append(label);fields.push(field);}root.append(el('p','Сильное изменение должно достигнуть процентного и абсолютного порогов. Рост числа не означает улучшение эффективности.','mut'),button('Применить',()=>{const values=[Number(range.value),...fields.map(n=>Number(n.value))];if(values.some(n=>!Number.isFinite(n)||n<0)||values[0]>200){notify('Укажите неотрицательные конечные пороги.');return;}[percent,minCount,minAmount]=values;document.getElementById('sheet')?.close();sensitivityCaption();page=0;return refreshChanges();}));}
+function sensitivity(anchor){
+ const root=resultDialog('Чувствительность анализа',anchor),slider=el('input'),output=el('output',percent+'%');
+ const label=el('label','Порог изменения ');slider.type='range';slider.min='0';slider.max='200';slider.step='1';slider.value=String(percent);
+ label.append(slider,output);root.append(label);slider.addEventListener('input',()=>{output.textContent=slider.value+'%';});
+ const fields=[];
+ for(const [text,n]of [['Минимум количества / объёма',minCount],['Минимум суммы',minAmount]]){
+  const field=el('input'),caption=el('label',text+' ');field.type='number';field.min='0';field.step='any';field.required=true;field.value=String(n);
+  caption.append(field);root.append(caption);fields.push(field);
+ }
+ root.append(el('p','Сильное изменение должно достигнуть процентного и абсолютного порогов. Рост числа не означает улучшение эффективности.','mut'),button('Применить',()=>{
+  const invalid=fields.find(field=>!field.value.trim()||!Number.isFinite(Number(field.value))||Number(field.value)<0);
+  if(invalid){invalid.focus?.();invalid.reportValidity?.();return;}
+  percent=Number(slider.value);[minCount,minAmount]=fields.map(field=>Number(field.value));
+  document.getElementById('sheet')?.close();sensitivityCaption();page=0;return refreshChanges();
+ }));
+}
 function sensitivityCaption(){const n=$('#s2 .filter-threshold');if(n)n.textContent='Чувствительность: '+percent+'% ▾';
  const minima=$('#s2 .filter-sensitivity span');
  if(minima)minima.textContent='Минимальное изменение: количество / объём — '+String(minCount).replace('.',',')+', сумма — '+String(minAmount).replace('.',',')+'.';}

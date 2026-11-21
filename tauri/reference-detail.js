@@ -102,16 +102,12 @@
   function comparisonBase(scope) {
     if (!scope?.baseFrom || !scope.baseTo) return null;
     const origin = JSON.stringify([window.sharedWorkspace?.state?.workspace_token, scope.revision,
-      scope.source, scope.displayType, scope.from, scope.to]);
+      scope.source, scope.displayType, scope.from, scope.to, scope.baseFrom, scope.baseTo]);
     if (comparisonOrigin !== origin) { localBase = null; comparisonOrigin = origin; }
     return localBase || {from:scope.baseFrom, to:scope.baseTo};
   }
-  function comparisonPeriod(scope, date, unit) {
-    const weekStartsOn = unit === 'week' && scope.source === 'imported' ? window.referenceCalendar.dateOf(scope.from).getUTCDay() : 1;
-    return window.referenceCalendar.period(date, unit, weekStartsOn);
-  }
   function visibleEnd(scope, date) {
-    return scope.source === 'daily' ? date : comparisonPeriod(scope, date, scope.displayType)[1];
+    return scope.source === 'daily' ? date : window.unifiedOriginal.periodEnd(date,scope.displayType);
   }
   function compareDates() {
     const scope = window.unifiedUI.scope, before = comparisonBase(scope);
@@ -172,12 +168,23 @@
         const scope = window.unifiedUI.scope, before = comparisonBase(scope);
         if (!before) return;
         const unit = scope.source === 'daily' ? 'day' : scope.displayType;
-        window.referenceCalendar.open({anchor:button, title:'Базовый период · '+label, unit,
-          initial:index ? before.to : before.from, spanFor:(date, kind) => comparisonPeriod(scope, date, kind), apply(value) {
-            if (scope !== window.unifiedUI.scope) return;
-            const start = comparisonPeriod(scope,value,unit)[0];
-            localBase = index ? {from:before.from < start ? before.from : start,to:start}
-              : {from:start,to:before.to > start ? before.to : start};
+        const calendar=window.referenceCalendar, weekly=unit==='week';
+        const initial=index ? before.to : before.from;
+        const weekday=calendar.dateOf(initial).getUTCDay();
+        const current=()=>scope===window.unifiedUI.scope;
+        const spanFor=(date,kind)=>calendar.period(date,kind,weekday);
+        const weeksForDay=weekly?calendar.savedWeeksForDay(window.unifiedUI.api,scope.revision,current):undefined;
+        calendar.open({anchor:button, title:'Базовый период · '+label, unit, initial, spanFor, weeksForDay,
+          apply(value,kind,weekStart) {
+            if (!current()) return;
+            const start=weekStart||spanFor(value,kind)[0];
+            if(weekly&&calendar.dateOf(start).getUTCDay()!==weekday){
+              localBase={from:start,to:start};
+              if(index?start>before.from:start<before.to)window.unifiedUI.notice('Открыта неделя с другим днём начала. Для диапазона выберите вторую неделю с тем же днём начала.');
+            }else{
+              localBase=index ? {from:before.from < start ? before.from : start,to:start}
+                : {from:start,to:before.to > start ? before.to : start};
+            }
             compareDates();scopeLine('comparison');window.unifiedExtended.openComparison();
           }});
       };

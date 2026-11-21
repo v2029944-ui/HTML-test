@@ -1,6 +1,6 @@
 //! Explicit dates in the first column block of an ordinary report.
 use super::{cell, LegacyOptions, TripleMapping};
-use crate::{check_cancel, wide::excel_serial_date, Result, Stage};
+use crate::{check_cancel, wide::{excel_serial_date, typed_excel_date}, Result, Stage};
 use chrono::{Datelike, Duration, Months, NaiveDate};
 use regex::Regex;
 use rusqlite::{params, OptionalExtension};
@@ -54,9 +54,12 @@ fn adjacent_date(
         params![cfg.sheet, row, col], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     ).optional()?;
     let Some((value, kind, style)) = adjacent else { return Ok(None) };
+    if kind == "d" {
+        return Ok(typed_excel_date(&value).filter(|date|
+            date.year() >= 1900 && (cfg.kind != "month" || date.day() == 1)));
+    }
     if !matches!(kind.as_str(), "" | "n") {
-        let date = if kind == "d" { value.split('T').next().unwrap_or("") } else { &value };
-        return Ok(text_date(date, &cfg.kind));
+        return Ok(text_date(&value, &cfg.kind));
     }
     let Some(serial) = value.parse::<f64>().ok().filter(|n| (0.0..2958466.0).contains(n))
         else { return Ok(None) };

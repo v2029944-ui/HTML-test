@@ -96,7 +96,7 @@ impl Storage {
                 SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=coalesce(g.name,x.work))
             GROUP BY {member},d.label"),[&scope.names]).map_err(err)?;
         tx.execute_batch("CREATE TEMP TABLE trend_buckets(
-            label TEXT PRIMARY KEY,periods INTEGER,missing INTEGER,qty REAL,money REAL,active INTEGER
+            label TEXT PRIMARY KEY,periods INTEGER,missing INTEGER,qty REAL,money REAL,active INTEGER,first_start TEXT,last_start TEXT
         ) WITHOUT ROWID;").map_err(err)?;
         // The screen and export must aggregate the original rows in the same order.
         // Adding per-member floating-point sums can change the last displayed cent.
@@ -111,8 +111,25 @@ impl Storage {
         // also remain visible even when both their aggregate measures equal zero.
         let visible="(?1=0 OR b.active<>0 OR b.missing<>0)";
         let hide=options.hide_empty;
-        let mut axis=tx.prepare(&format!("SELECT label FROM trend_buckets b WHERE {visible} ORDER BY label")).map_err(err)?;
-        let labels=axis.query_map([hide],|row|row.get::<_,String>(0)).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+        let mut axis = tx.prepare(&format!(
+            "SELECT label, first_start, last_start FROM trend_buckets b WHERE {visible} ORDER BY label"
+        )).map_err(err)?;
+        let mut dates = axis.query([hide]).map_err(err)?;
+        let mut labels = Vec::new();
+        while let Some(row) = dates.next().map_err(err)? {
+            let label: String = row.get(0).map_err(err)?;
+            let first: String = row.get(1).map_err(err)?;
+            let last: String = row.get(2).map_err(err)?;
+            let through = end(&scope.report_type, date(&last)?)?.to_string();
+            let heading = if first == through {
+                first
+            } else if mode == 1 && first == format!("{label}-01") && end("month", date(&first)?)?.to_string() == through {
+                label
+            } else {
+                format!("{first} — {through}")
+            };
+            labels.push(heading);
+        }
         let members=if works {"SELECT n.key,n.label FROM unified_names n
             LEFT JOIN analysis_filter_items f ON f.id=?1 AND f.item=n.name WHERE ?1 IS NULL OR f.id IS NOT NULL
             ORDER BY f.ordinal,n.name COLLATE classic_ru,n.key"}
@@ -211,6 +228,47 @@ mod tests {
         assert_eq!(store.revision().unwrap(),rev);
     }
     #[test]
+    fn monthly_chart_csv_uses_the_same_source_period_boundaries_as_all_three_timelines() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Storage::new(dir.path().join("data")).unwrap();
+        store.save(json!({"reports":[{"id":"sample","type":"day","start":"2024-01-28",
+            "end":"2024-01-28","organizations":["A"],"rows":[{"organization":"A","work":"X","count":1,"amount":10}]}],
+            "settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}})).unwrap();
+        let rev = store.revision().unwrap();
+        store.analysis_index_report("sample",rev).unwrap();
+        store.analysis_index_settings(rev).unwrap();
+        let orgs = store.analysis_filter_create(rev,"organizations").unwrap();
+        store.analysis_filter_append(rev,&orgs,&["A".into()]).unwrap();
+        store.analysis_filter_seal(rev,&orgs).unwrap();
+        for (kind,from,to,first,last,heading) in [
+            ("day","2024-01-28","2024-06-03","2024-01-28","2024-01-31","2024-01-28 — 2024-01-31"),
+            ("week","2023-12-27","2026-05-20","2023-12-27","2023-12-27","2023-12-27 — 2024-01-02"),
+        ] {
+            let scope = AnalysisScope {report_type:kind.into(),organizations:orgs.clone(),names:None};
+            let range = RangeQuery {from:from.into(),to:to.into()};
+            let timeline = store.analysis_timeline(rev,&scope,&range).unwrap();
+            let trends = store.analysis_organization_trends(rev,&scope,&range).unwrap();
+            let work = store.analysis_work_timeline(rev,&scope,&range,None,"work:X").unwrap();
+            for (start,stop) in [
+                (&timeline.points[0].first_start,&timeline.points[0].last_start),
+                (&trends.series[0].points[0].first_start,&trends.series[0].points[0].last_start),
+                (&work.points[0].first_start,&work.points[0].last_start),
+            ] { assert_eq!((start.as_str(),stop.as_str()),(first,last)); }
+            let path = dir.path().join(format!("{kind}.csv"));
+            let options = TrendCsvOptions {table:TrendTable::Organizations,metrics:vec![TrendMetric::Amount],hide_empty:false};
+            store.reference_trend_csv(rev,&scope,&range,None,&options,&path).unwrap();
+            let csv = fs::read_to_string(path).unwrap();
+            let header = csv.lines().next().unwrap();
+            assert!(header.contains(heading),"{header}");
+            if kind=="day" {
+                assert!(header.contains(r#""2024-02""#) && header.contains("2024-06-01 — 2024-06-03"),"{header}");
+            } else {
+                assert!(header.contains("2024-01-03 — 2024-02-06"),"{header}");
+            }
+        }
+    }
+
+    #[test]
     fn all_work_series_keep_namesakes_and_match_the_unrounded_screen_total() {
         let dir = tempfile::tempdir().unwrap();
         let store = Storage::new(dir.path().join("data")).unwrap();
@@ -237,6 +295,7 @@ mod tests {
         assert!(keys.contains(&("group:g","Ремонт (группа)")));
         assert!(keys.contains(&("work:Ремонт","Ремонт (работа)")));
         let selectable = store.unified_name_options_at_page(rev,"",0,50).unwrap();
+        assert!(selectable.has_omitted_names);
         assert_eq!(selectable.rows.len(),1);
         assert_eq!(selectable.rows[0].name,"Уборка");
         let options = TrendCsvOptions {table:TrendTable::Works,metrics:vec![TrendMetric::Amount],hide_empty:false};

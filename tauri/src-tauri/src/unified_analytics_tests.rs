@@ -187,6 +187,38 @@ fn unified_search_before_limit_unicode_and_stable_cursor() {
     );
 }
 #[test]
+fn significant_change_filter_matches_the_indicator_and_csv_respects_metric_order() {
+    let (dir,store,rev,scope) = fixture();
+    let mut q = query();
+    q.min_amount=10.;
+    let mut o = options();
+    o.metrics=vec!["amount".into()]; o.sort="name".into(); o.mode="all".into();
+    let summary=store.unified_changes_page(rev,&scope,&q,None,&o,None).unwrap().summary;
+    assert_eq!(summary.grown,22);
+    o.direction="up".into();
+    assert_eq!(store.unified_changes_page(rev,&scope,&q,None,&o,None).unwrap().total_rows,73);
+    o.direction="significant-up".into();
+    let selected=store.unified_changes_page(rev,&scope,&q,None,&o,None).unwrap();
+    assert_eq!(selected.total_rows,summary.grown);
+    assert!(selected.rows.iter().all(|r|r.amount.significant && !r.amount.small_base && r.amount.delta>0.));
+    let dest=dir.path().join("amount.csv");
+    store.unified_changes_csv(rev,&scope,&q,None,&o,&dest).unwrap();
+    let csv=std::fs::read_to_string(dest).unwrap();
+    let rows:Vec<_>=csv.lines().skip(1).collect();
+    assert_eq!(rows.len(),23);
+    assert!(rows[0].ends_with(r#""amount.base";"amount.current";"amount.delta";"amount.percent""#));
+    assert!(rows.iter().all(|r|r.split(';').count()==11));
+    assert!(rows[1].starts_with(r#""work:Работа 02";"Работа 02""#) && rows[1].contains(r#""12";"22";"10""#));
+    o.metrics=vec!["average".into(),"count".into()];o.direction="all".into();
+    let dest=dir.path().join("two.csv");
+    store.unified_changes_csv(rev,&scope,&q,None,&o,&dest).unwrap();
+    let text=std::fs::read_to_string(dest).unwrap();
+    let header=text.lines().nth(1).unwrap();
+    assert!(header.find("average.base").unwrap()<header.find("count.base").unwrap());
+    assert!(!header.contains("amount."));
+}
+
+#[test]
 fn unified_mode_summary_csv_and_validation() {
     let (dir, s, r, scope) = fixture();
     let q = query();

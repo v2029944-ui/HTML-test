@@ -262,3 +262,21 @@ test('summary and changes print historical quality counts once, separately from 
   assert.equal(paragraphs.filter(line=>line.includes('отчётов с замечаниями в выбранных подразделениях — 1')).length,1);
  }
 });
+
+test('a blank sensitivity threshold keeps the dialog open and explicit zero remains valid',async()=>{
+ const requests=[];
+ const f=fixture({referenceChanges:async q=>{
+  requests.push(q);return {rows:[],total:0,searched:0,significant:0,counts:{up:0,down:0,new:0,gone:0},comparable:['A']};
+ }});
+ f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);
+ await f.window.referenceResults.setScreen('s2');
+ await f.s2.querySelector('.filter-threshold').click();
+ const sheet=f.document.getElementById('sheet');
+ const [slider,quantity,amount]=sheet.querySelectorAll('input');
+ const apply=sheet.querySelectorAll('button').find(b=>b.textContent==='Применить');
+ const before=requests.length;
+ amount.value='';await apply.click();
+ assert.equal(sheet.open,true);assert.equal(requests.length,before);
+ slider.value='30';quantity.value='5';amount.value='0';await apply.click();
+ assert.equal(sheet.open,false);assert.equal(requests.at(-1).minAmount,0);
+});

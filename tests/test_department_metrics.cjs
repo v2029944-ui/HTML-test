@@ -531,3 +531,14 @@ test('one-period ranking separately explains unavailable, zero and mixed values'
   if(amounts.includes(0))assert.match(text,/нулевые строки/i);
  }
 });
+
+test('average charts describe nonpositive quantities separately from missing reports',()=>{
+ const root=new MockNode('div'),dates=periods.slice(0,2);
+ const days=[new Map([['А',{count:-2,amount:-30,average:null}]]),new Map([['А',{count:null,amount:null,average:null}]])];
+ const display=()=>nodes(root).map(n=>n.textContent||'').join(' ');
+ run("drawChart(dates,new Set(['А']),'average',root,{chart:'line',categories:['А'],data:days,pointNotice:i=>i===1?'Нет полного отчёта: А.':''})",{root,days,dates});
+ assert.match(display(),/отрицательное количество/);assert.match(display(),/Нет полного отчёта: А/);
+ const zero=new Map([['А',{count:0,amount:30,average:null}]]);
+ run("drawChart(dates.slice(0,1),new Set(['А']),'average',root,{chart:'bar',categories:['А'],data:[zero]})",{zero});
+ assert.match(display(),/количество равно нулю/);assert.doesNotMatch(display(),/отчёт.*непол|пропуск/i);
+});

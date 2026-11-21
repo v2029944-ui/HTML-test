@@ -152,3 +152,14 @@ test('partial monthly chart and table headings show the actual dates but keep ca
  assert.match(O.displayPeriod(periods[1]),/февраль/);
  context.period=periods[0];assert.equal(vm.runInNewContext('plotPeriodLabel(period)',context),'28.01–31.01');
 });
+
+test('a monthly bucket of imported weeks spans the actual reports across month and year boundaries',()=>{
+ const context={window:{}};vm.runInNewContext(require('../unified-build.cjs').buildUnified(original).script,context);
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../analysis-summary.js'),'utf8'),context);
+ const O=context.window.unifiedOriginal,scope={source:'imported',displayType:'week',from:'2023-12-27',to:'2026-05-20'};
+ const points=[{start:'2023-12',first_start:'2023-12-27',last_start:'2023-12-27'},
+               {start:'2024-01',first_start:'2024-01-03',last_start:'2024-01-31'}];
+ const periods=context.window.analysisSummary.timelinePeriods(points,'month',scope,O.periodEnd);
+ assert.equal(periods[0].start,'2023-12-01');assert.equal(O.displayPeriod(periods[0]),'27.12.2023 — 02.01.2024');
+ assert.equal(periods[1].start,'2024-01-01');assert.equal(O.displayPeriod(periods[1]),'03.01.2024 — 06.02.2024');
+});

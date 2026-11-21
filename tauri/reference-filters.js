@@ -30,7 +30,7 @@ function baseRange(){
  const n=size(from,to);
  if(rule==='year'){
   const end=previousYear(to);
-  return [previousYear(from),source==='imported'&&kind==='month'?C.period(end,'month')[1]:end];
+  return [previousYear(from),kind==='month'?C.period(end,'month')[1]:end];
  }
  if(rule==='prevWeek'||rule==='prevMonth'){
   const unit=rule==='prevWeek'?'week':'month';
@@ -83,21 +83,7 @@ function shift(direction){
 function chooseDate(target,anchor){
  if(!snapshot||boundsPending||boundsFailed)return;
  const opened=snapshot,openedKind=kind,openedSource=source,weekly=source==='imported'&&kind==='week';
- // The grid can ask about many days of the same month. One bounded read also covers
- // weeks which began in the previous month, including concurrent clicks before it returns.
- let monthLoaded=null,monthRequest=null;
- const weeksForDay=weekly?async day=>{
-  const month=C.period(day,'month')[0];
-  if(monthLoaded!==month){
-   monthLoaded=month;
-   const request=UI.api.unifiedPeriodOptions(opened.revision,'week',null,null,37,month);
-   monthRequest=request;
-   Promise.resolve(request).catch(()=>{if(monthRequest===request)monthLoaded=null;});
-  }
-  const page=await monthRequest;
-  if(snapshot!==opened||source!=='imported'||kind!=='week')throw Error('Изменились фильтры.');
-  return page.rows.filter(row=>row.start<=day&&day<=row.end);
- }:undefined;
+ const weeksForDay=weekly?C.savedWeeksForDay(UI.api,opened.revision,()=>snapshot===opened&&source===openedSource&&kind===openedKind):undefined;
  const current=target==='base'?baseRange()[0]:target==='end'?to:from;
  C.open({anchor,title:target==='base'?'Базовый период':mode==='single'?'Период':target==='start'?'Начало диапазона':'Конец диапазона',unit:kind,initial:current,spanFor:target==='base'&&weekly?(v,k)=>C.period(v,k,C.dateOf(current).getUTCDay()):filterPeriod,weeksForDay,apply(value,unit,weekStart){
   if(snapshot!==opened||kind!==openedKind||source!==openedSource||boundsPending||boundsFailed){UI.notice('Периоды изменились. Откройте календарь повторно.',true);return;}
@@ -180,6 +166,7 @@ function openImportedPeriod(range){
  }
  return boundsPending&&snapshot?readBounds(snapshot):publish();
 }
+function setWorks(everything,selection){allNames=everything;nameRows=new Map(selection);return publish();}
 function setOrganizations(values){orgs=new Set(values.filter(x=>orgNames.includes(x)));allOrgs=orgs.size===orgNames.length;return publish();}
 function close(box){box.closest('dialog')?.close();}
 function listShell(title,anchor,described){
@@ -215,7 +202,7 @@ function chooseWorks(anchor){
  const {box,query,actions,list,count,pages}=listShell('Работы в подробной аналитике',anchor,'Выбор применяется к подробной аналитике. В сводке учитываются все работы.');
  query.placeholder='Найти работу';list.dataset.sqlScrollHost='reference-work-options';
  const opened=snapshot,selected=new Map(nameRows);
- let everything=allNames,rows=[],index=0,ticket=0,matchingTotal=0;
+ let everything=allNames,rows=[],index=0,ticket=0,matchingTotal=0,hasUnselectable=false;
  const limit=50;
  const update=()=>{count.textContent=everything?'Выбраны все работы и группы':'Выбрано '+selected.size+' из '+nameCount;};
  const all=button('Выбрать все',()=>{
@@ -225,21 +212,25 @@ function chooseWorks(anchor){
  });
  const clear=button('Снять выбор',()=>{if(query.value.trim()&&!everything){for(const row of rows)selected.delete(row.key);}else{everything=false;selected.clear();}draw();});
  actions.append(all,clear,count);
- const apply=button('Применить',()=>{if(!opened||opened!==snapshot){UI.notice('Данные изменились. Откройте выбор повторно.',true);close(box);return;}allNames=everything;nameRows=new Map(selected);close(box);publish();});apply.className='filter-apply';box.append(apply);
+ const apply=button('Применить',()=>{if(!opened||opened!==snapshot){UI.notice('Данные изменились. Откройте выбор повторно.',true);close(box);return;}close(box);setWorks(everything,selected);});apply.className='filter-apply';box.append(apply);
  function draw(){
   list.replaceChildren();update();
   const search=Boolean(query.value.trim());all.textContent=search?(matchingTotal>limit?'Выбрать показанные':'Выбрать найденные'):'Выбрать все';
   clear.textContent=search&&!everything?'Снять выбор с показанных':'Снять выбор';all.disabled=search&&!rows.length;
+  if(hasUnselectable)list.append(make('p',everything
+   ?'В общий итог входят также работы и группы с совпадающими или слишком длинными названиями. Для индивидуального выбора нажмите «Снять выбор».'
+   :'Для индивидуального выбора доступны только работы и группы с уникальными названиями допустимой длины.'));
+  const explicitOnly=search||nameCount>limit||hasUnselectable;
   for(const row of rows){
    const input=checkbox(list,row.name+(row.kind==='group'?' (группа)':''),everything||selected.has(row.key),field=>{
     if(everything){
-     if(nameCount>limit||search){field.checked=true;UI.notice('Для индивидуального выбора нажмите «Снять выбор».',true);return;}
+     if(explicitOnly){field.checked=true;UI.notice('Для индивидуального выбора нажмите «Снять выбор».',true);return;}
      everything=false;for(const item of rows)selected.set(item.key,item);
     }
     if(field.checked&&selected.size===limit&&!selected.has(row.key)){field.checked=false;UI.notice('Можно выбрать до 50 отдельных работ или все работы.',true);return;}
     if(field.checked)selected.set(row.key,row);else selected.delete(row.key);update();
    });
-   if(everything&&(search||nameCount>limit))input.disabled=true;
+   if(everything&&explicitOnly)input.disabled=true;
   }
   if(!rows.length)list.append(make('p',search?'Совпадений нет.':'Нет позиций для индивидуального выбора.'));
   window.sqlRowScroll.attach(list,{index,size:limit,count:rows.length,total:matchingTotal,footer:pages,label:'Страницы списка работ',go:i=>{
@@ -252,7 +243,7 @@ function chooseWorks(anchor){
   try{
    const page=!opened?{rows:[],total_rows:0}:await UI.api.unifiedNameOptionsAtPage(opened.revision,query.value.trim(),requested,limit);
    if(mine!==ticket||!box.isConnected||opened!==snapshot)return;
-   rows=page.rows;matchingTotal=page.total_rows;index=requested;clear.disabled=false;draw();
+   rows=page.rows;matchingTotal=page.total_rows;hasUnselectable=page.has_omitted_names===true;index=requested;clear.disabled=false;draw();
   }catch(error){if(mine===ticket&&box.isConnected&&opened===snapshot){window.sqlRowScroll.reset(list);list.replaceChildren(make('p','Не удалось открыть список. '+(window.analizUserError?.(error)||error.message)));}}
  }
  query.oninput=()=>{window.sqlRowScroll.reset(list);list.replaceChildren(make('p','Загрузка…'));return load(0);};void load(0);query.focus();
@@ -367,5 +358,5 @@ function init(){
  if(UI.snapshot)void configure(UI.snapshot);
 }
 function refresh(){syncFields?.();return publish();}
-window.referenceFilters=Object.freeze({init,refresh,setMetric,setOrganizations,openImportedPeriod,syncDetails,get scope(){return scope;}});
+window.referenceFilters=Object.freeze({init,refresh,setMetric,setOrganizations,setWorks,openImportedPeriod,syncDetails,get scope(){return scope;}});
 })();

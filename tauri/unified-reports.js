@@ -11,7 +11,8 @@ function init(){
  let year=null,calendarData=null,monthPoints=[],dayPoints=new Map(),selectedMonth=null;
  let sourcePath=null,sheets=[],review=null,options=null,importBusy=false,sourceTicket=0,parameterTicket=0;
  const button=(text,fn)=>{const b=el('button',text,'button secondary');b.type='button';b.addEventListener('click',fn);return b;};
- let wideSheetRows=[],sourceFolderContext=null;
+ const activeWorkspace=()=>window.sharedWorkspace?.state?.mode==='shared'?window.sharedWorkspace.state.folder:null;
+ let wideSheetRows=[],sourceFolderContext=null,workspaceFolder=activeWorkspace();
  let uploadMode='import';
  const uploadPanels={import:$('excelFile').closest?.('.panel'),calendar:$('reportPeriods'),quality:$('qualityHeading').closest?.('.panel')};
  const listPanel=el('section',undefined,'panel');listPanel.id='unifiedSavedReports';
@@ -295,6 +296,7 @@ function init(){
  function syncAcknowledgements(result){
   const c=result?.conflicts||{},q=result?.quality||{},overlap=$('unifiedAcceptOverlap'),quality=$('unifiedAcceptQuality');
   const reasons=[['замечаний в отчётах',q.issues],['отчётов с расхождениями',q.mismatch_reports],['значимых замечаний источника',q.relevant_source_issues]].filter(([,count])=>count>0);
+  const replace=$('replaceExisting');replace.checked=false;replace.parentElement.hidden=!(c.replacements>0);
   overlap.checked=quality.checked=false;overlap.parentElement.hidden=!(c.cross_type_overlaps>0);quality.parentElement.hidden=!reasons.length;
   overlap.parentElement.children[1].textContent='Подтверждаю пересечения типов отчётов: '+show(c.cross_type_overlaps)+'. Периоды пересекаются с отчётами другого типа. Проверьте даты и типы перед сохранением.';
   quality.parentElement.children[1].textContent='Подтверждаю найденные замечания качества: '+reasons.map(([name,count])=>name+' — '+show(count)).join('; ')+'. Просмотрите замечания в предварительном просмотре перед сохранением.';
@@ -423,8 +425,8 @@ function init(){
    if(rule?.format==='auto'&&found.some(sheet=>typeof sheet.dailyWide!=='boolean'))throw Error('Нативное распознавание формата правила недоступно. Проверьте файл заново.');
    if(rule)applyFolderRule(rule,found,wideMap);
 
-  }catch(error){if(retargeting){clearSourceOverrides();sourcePath=null;sourceFolderContext=null;sheets=[];$('sheetSelect').replaceChildren();status('excelFileStatus','Выберите файл');}status('unifiedImportStatus','Не удалось выбрать Excel: '+String(error.message||error));}
-  finally{if(ticket===sourceTicket){importBusy=false;importLock();}}
+  }catch(error){if(ticket!==sourceTicket)return;if(retargeting){clearSourceOverrides();sourcePath=null;sourceFolderContext=null;sheets=[];$('sheetSelect').replaceChildren();status('excelFileStatus','Выберите файл');}status('unifiedImportStatus','Не удалось выбрать Excel: '+String(error.message||error));}
+  finally{importBusy=false;importLock();}
  }
  $('excelFile').addEventListener('click',chooseSource);
  function validDate(text){return /^\d{4}-\d{2}-\d{2}$/.test(text)&&Number.isFinite(Date.parse(text+'T00:00:00Z'))&&new Date(text+'T00:00:00Z').toISOString().slice(0,10)===text;}
@@ -498,15 +500,16 @@ function init(){
   const previous=sourceFolderContext;
   if(!previous||rev<=previous.revision)return;
   const fresh=await api.nativeImportFolderContext(source);
-  if(!fresh||fresh.revision!==rev||fresh.folder!==previous.folder||fresh.name!==previous.name||
+  if(previous!==sourceFolderContext||!fresh||fresh.revision!==rev||fresh.folder!==previous.folder||fresh.name!==previous.name||
      fresh.nativeSignature!==previous.nativeSignature||!sameFolderRule(previous.rule??null,fresh.rule??null)){
    throw Error('Файл, папка или его правило изменились. Выберите файл заново.');
   }
   sourceFolderContext=fresh;
  }
  $('inspectFile').addEventListener('click',async()=>{
-  if(importBusy||!sourcePath)return;importBusy=true;resetReview();importLock();const rev=UI.revision,ticket=sourceTicket,parameters=parameterTicket;
-  try{const wide=$('importFormat').value==='daily-wide';if(wide)await refreshRuleContext(sourcePath,rev);options=getOptions();const result=await (wide?api.nativeWideImportPreview(sourcePath,options):api.nativeLegacyImportPreview(sourcePath,options));if(ticket!==sourceTicket||UI.revision!==rev||parameters!==parameterTicket)throw Error('Данные или файл изменились; проверьте Excel заново.');if(!result||typeof result.reviewToken!=='string'||!/^[a-f0-9]{64}$/.test(result.reviewToken))throw Error('Некорректный токен проверки импорта.');review=result;renderReview(result);if(uploadMode==='quality'&&$('qualitySource').value==='pending'){syncQualityPeriods();void loadQuality();}}
+  if(importBusy||!sourcePath)return;importBusy=true;resetReview();importLock();const rev=UI.revision,ticket=sourceTicket,parameters=parameterTicket,epoch=generation;
+  const assertCurrent=()=>{if(epoch!==generation||ticket!==sourceTicket||UI.revision!==rev||parameters!==parameterTicket)throw Error('Данные или файл изменились. Проверьте Excel заново.');};
+  try{const wide=$('importFormat').value==='daily-wide';await refreshRuleContext(sourcePath,rev);assertCurrent();options=getOptions();const result=await (wide?api.nativeWideImportPreview(sourcePath,options):api.nativeLegacyImportPreview(sourcePath,options));assertCurrent();if(!result||typeof result.reviewToken!=='string'||!/^[a-f0-9]{64}$/.test(result.reviewToken))throw Error('Некорректный токен проверки импорта.');review=result;renderReview(result);if(uploadMode==='quality'&&$('qualitySource').value==='pending'){syncQualityPeriods();void loadQuality();}}
   catch(error){resetReview();if($('importFormat').value==='daily-wide'){if(/year|год/i.test(String(error.message||error)))yearDetails.open=true;else wideManual.open=true;}else if($('importAdvanced'))$('importAdvanced').open=true;status('unifiedImportStatus','Не удалось проверить Excel: '+String(error.message||error));$('importPreview').replaceChildren();}
   finally{importBusy=false;importLock();}
  });
@@ -569,6 +572,11 @@ function init(){
  }
  window.nativeWorkspaceRefresh=async()=>{await UI.refresh();return true;};
  UI.onSnapshot(snapshot=>{
+  const folder=activeWorkspace();
+  if(folder!==workspaceFolder){
+   workspaceFolder=folder;++sourceTicket;sourcePath=null;sourceFolderContext=null;sheets=[];wideSheetRows=[];
+   clearSourceOverrides();$('sheetSelect').replaceChildren();$('dailySheetChoices').replaceChildren();status('excelFileStatus','Выберите файл');importLock();
+  }
   ++generation;++reportTicket;++calendarTicket;++qualityTicket;++detailTicket;savedQualityPeriods.clear();syncQualityPeriods();if(!snapshot){window.sqlRowScroll?.reset($('reports'));window.sqlRowScroll?.reset($('qualityTable'));qualityActions.replaceChildren();reportPageStatus.textContent='Данные обновляются';resetReview('Обновление данных. Проверьте Excel заново.');$('reports').replaceChildren();$('reportCalendar').replaceChildren();$('calendarDetails').replaceChildren();$('qualityTable').replaceChildren();$('qualityPrev').disabled=$('qualityNext').disabled=true;return;}reportIndex=0;qualityOffset=0;resetReview('Данные обновлены. Перед импортом выполните новую проверку.');
   const selected=$('qualityOrg').value;$('qualityOrg').replaceChildren();for(const [value,label]of [['all','Все подразделения'],...(snapshot.org_names||[]).map(v=>[v,v])]){const o=el('option',label);o.value=value;$('qualityOrg').append(o);}$('qualityOrg').value=(snapshot.org_names||[]).includes(selected)?selected:'all';
   void refreshUpload();

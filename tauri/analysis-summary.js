@@ -30,8 +30,9 @@
     return points.map(point => {
       const start = point.start.length === 7 ? point.start + '-01' : point.start;
       const calendarEnd = periodEnd(start,type);
-      const actualStart = scope.source === 'daily' && scope.from > start ? scope.from : start;
-      const end = scope.source === 'daily' && scope.to < calendarEnd ? scope.to : calendarEnd;
+      const actualStart = point.first_start || (scope.source === 'daily' && scope.from > start ? scope.from : start);
+      const end = point.last_start ? periodEnd(point.last_start,scope.source === 'daily' ? 'day' : scope.displayType) :
+        scope.source === 'daily' && scope.to < calendarEnd ? scope.to : calendarEnd;
       return {type,start,actualStart,end,partial:actualStart !== start || end !== calendarEnd};
     });
   }

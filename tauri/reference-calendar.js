@@ -23,6 +23,22 @@ const short=value=>value.slice(8)+'.'+value.slice(5,7);
 const stamp=value=>short(value)+'.'+value.slice(0,4);
 const valid=value=>/^\d{4}-\d{2}-\d{2}$/.test(value)&&value.slice(0,4)!=='0000'&&!isNaN(dateOf(value))&&serial(dateOf(value))===value;
 const btn=(text,run)=>{const button=make('button',text);button.type='button';button.addEventListener('click',run);return button;};
+// Fetch a bounded month once per open calendar, including overlapping report weeks.
+function savedWeeksForDay(api, revision, current) {
+ let month, request;
+ return async value => {
+  const start=period(value,'month')[0];
+  if(month!==start){
+   month=start;
+   const pending=api.unifiedPeriodOptions(revision,'week',null,null,37,start);
+   request=pending;
+   Promise.resolve(pending).catch(()=>{if(request===pending)month=null;});
+  }
+  const page=await request;
+  if(!current())throw Error('Изменились фильтры.');
+  return page.rows.filter(row=>row.start<=value&&value<=row.end);
+ };
+}
 function openCalendar({anchor, title, initial, unit='day', allowed, variants, allLabel, allSelected=false, spanFor=period, weeksForDay, apply}){
  const dialog=make('dialog');dialog.className='period-calendar';dialog.setAttribute('aria-label',title);
  const heading=make('div',title);heading.className='cal-title';
@@ -218,5 +234,5 @@ function openField(field,anchor){
  openCalendar({anchor,title,initial,unit,allowed,allLabel:optional?(field.id==='dailyYear'?'Определить по Excel':'Очистить дату'):null,allSelected:optional&&!field.value,
   apply:value=>commit(value?selection.fromIsoDate(value,unit):'')});
 }
-window.referenceCalendar=Object.freeze({open:openCalendar,enhance,syncField,period,day,dateAt,dateOf,stamp,valid});
+window.referenceCalendar=Object.freeze({open:openCalendar,savedWeeksForDay,enhance,syncField,period,day,dateAt,dateOf,stamp,valid});
 })();
