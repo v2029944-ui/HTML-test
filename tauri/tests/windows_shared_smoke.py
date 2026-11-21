@@ -22,7 +22,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from reference_file_dialogs import OwnedFileDialogs
 from windows_smoke import (ROOT, NativeConfirmations, api, navigate, ready,
-                           record_secondary_failure, wait_for_text,
+                           record_secondary_failure, set_calendar_field, wait_for_text,
                            wait_for_webview_page, wide_xlsx, windows_test_workspace)
 
 
@@ -305,8 +305,9 @@ def preview_xlsx(client, workbook):
     page.locator('#refImport').click()
     page.locator('#excelFile').click()
     native_select(client, workbook, 'xlsx', 'xlsx-' + client.name)
+    wait_for_text(page, '#excelFileStatus', workbook.name)
     page.locator('#importFormat').select_option('daily-wide')
-    page.locator('#dailyYear').fill('2024')
+    set_calendar_field(page, 'dailyYear', '2024')
     page.locator('#inspectFile').click()
     wait_for_text(page, '#unifiedImportStatus', 'Проверка завершена', 120_000)
     assert page.locator('#importPreview .kpi').first.locator('strong').inner_text() == '366'
