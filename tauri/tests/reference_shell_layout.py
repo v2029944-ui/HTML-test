@@ -1,4 +1,7 @@
 """Visual acceptance measurements shared by Chromium and the installed WebView2."""
+from playwright.sync_api import expect
+
+
 SHELL_METRICS = """() => {
   const rect = el => el.getBoundingClientRect(), visible = el => el && rect(el).width && rect(el).height;
   const luminance = color => {
@@ -67,7 +70,13 @@ def check_filter_placement(page, record):
     trigger = fold.locator(':scope > summary')
     previous_size, previous_placement = size.input_value(), placement.input_value()
     previous_open = fold.evaluate('el => el.open')
-    selector = '#reportShell .filter-content'
+    content = fold.locator('.filter-content')
+    sidebar = page.locator('#reportShell')
+    settings = page.locator('#storage')
+    settings_already_open = settings.is_visible()
+    # Like the other CDP geometry checks, wait for layout directly. Chromium's
+    # wait_for_function polling can require page-side eval, disallowed by Tauri.
+    settle = '() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))'
     try:
         page.set_viewport_size({'width':1440,'height':650})
         placement.select_option('top',force=True)
@@ -78,13 +87,14 @@ def check_filter_placement(page, record):
             trigger.click()
         page.locator('#sharedHeader .main-nav button').first.focus()
         page.evaluate('window.scrollTo(0,Math.min(560,document.documentElement.scrollHeight-innerHeight))')
-        page.wait_for_function("!!document.querySelector('#reportShell[data-auto-folded]')")
+        expect(sidebar).to_have_attribute('data-auto-folded','')
         y = page.evaluate('scrollY')
         assert y > 150
         trigger.press('Enter')
-        page.wait_for_function("document.querySelector('.filter-fold').open")
+        expect(fold).to_have_js_property('open', True)
+        page.evaluate(settle)
         assert abs(page.evaluate('scrollY') - y) <= 2
-        report_body = page.locator(selector).bounding_box()
+        report_body = content.bounding_box()
         assert 0 <= report_body['y'] < 160, report_body
         assert (report_body['y'] + report_body['height']) <= 650, report_body
         record('18-filter-top-open', fold, scroll=False)
@@ -92,31 +102,56 @@ def check_filter_placement(page, record):
         assert not fold.evaluate('el => el.open')
         assert abs(page.evaluate('scrollY') - y) <= 2
 
-        placement.select_option('side',force=True)
+        # On a short overview at 80% the header can remain in view even at the
+        # bottom. Use the actual Settings page (where the user changes scale)
+        # so that there is also a long document in which to test pinning.
+        if not settings_already_open:
+            page.locator('#refSettings').click()
+        expect(settings).to_be_visible()
+        placement.select_option('side')
         scope = page.evaluate('JSON.stringify(window.referenceFilters.scope)')
         for scale in ('80','90','standard','xlarge'):
-            size.select_option(scale,force=True)
-            page.wait_for_function('window.referenceFilters.atSide()')
-            page.evaluate('window.scrollTo(0,Math.min(560,document.documentElement.scrollHeight-innerHeight))')
-            page.wait_for_function("document.querySelector('#reportShell').getBoundingClientRect().top < 2")
-            sidebar = page.locator('#reportShell').bounding_box()
-            report = page.locator('#s1').bounding_box()
-            assert sidebar['x'] + sidebar['width'] <= report['x'] + 2, (scale,sidebar,report)
+            size.select_option(scale)
+            expect(page.locator('#refRoot')).to_have_attribute('data-ui-size',scale)
+            expect(sidebar).to_have_css('--filter-at-side','1')
+            page.evaluate("scrollTo({top:0,behavior:'instant'})")
+            page.evaluate(settle)
+            origin = sidebar.bounding_box()['y']
+            # Measure against the real scroll position; a short document cannot
+            # scroll past its available content even when a larger Y is requested.
+            page.evaluate("y => scrollTo({top:y,behavior:'instant'})", max(560,origin+40))
+            page.evaluate(settle)
+            scrolled_y = page.evaluate('scrollY')
+            expected_top = max(0, origin - scrolled_y)
+            sidebar_box = sidebar.bounding_box()
+            report_box = page.locator('#s1').bounding_box()
+            assert abs(sidebar_box['y']-expected_top) <= 2, (scale,origin,scrolled_y,expected_top,sidebar_box)
+            assert sidebar_box['x'] + sidebar_box['width'] <= report_box['x'] + 2, (scale,sidebar_box,report_box)
+            assert scrolled_y > origin + 2, ('Settings should scroll past the header', scale,origin,scrolled_y)
             if scale == 'standard':
                 record('18-filter-side', fold, scroll=False)
+            # Reach the last action without moving the document. Focus scrolls
+            # the internal filter body when the panel is longer than the window.
             reset = fold.locator('.filter-reset')
-            # Keyboard focus near the end scrolls the panel to its last action.
             reset.focus()
+            expect(reset).to_be_focused()
+            page.evaluate(settle)
             bounds = reset.bounding_box()
-            assert 0 <= bounds['y'] < bounds['y'] + bounds['height'] <= 651, (scale,bounds)
+            body = content.bounding_box()
+            visible_bottom = min(page.evaluate('innerHeight'), body['y']+body['height'])
+            assert bounds['y'] >= body['y'] - 2 and bounds['y']+bounds['height'] <= visible_bottom + 2, (scale,bounds,body,visible_bottom)
+            assert abs(page.evaluate('scrollY')-scrolled_y) <= 2, (scale,scrolled_y,page.evaluate('scrollY'))
             assert page.evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1')
         page.set_viewport_size({'width':720,'height':650})
-        page.wait_for_function('!window.referenceFilters.atSide()')
+        page.evaluate(settle)
+        assert not page.evaluate('window.referenceFilters.atSide()')
         assert placement.input_value() == 'side'
         assert page.evaluate('JSON.stringify(window.referenceFilters.scope)') == scope
     finally:
         size.select_option(previous_size,force=True)
         placement.select_option(previous_placement,force=True)
+        if not settings_already_open and settings.is_visible():
+            page.locator('#backBtn').click()
         page.evaluate('window.scrollTo(0,0)')
         if fold.evaluate('el => el.open') != previous_open:
             trigger.click()
