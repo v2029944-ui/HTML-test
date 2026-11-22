@@ -20,6 +20,7 @@ pub struct NativeWideReview {
     pub report_count: u64,
     pub period_range: Option<NativePeriodRange>,
     pub row_count: u64,
+    pub processed_cell_count: u64,
     pub catalog_entries: u64,
     pub conflicts: ImportCounts,
     pub quality: QualityCounts,
@@ -181,6 +182,7 @@ fn review<T: serde::Serialize>(
         source_hash:prepared.source_hash().to_string(),
         revision:preview.revision(),
         report_count:reports,period_range,row_count:rows,catalog_entries,
+        processed_cell_count: prepared.processed_cell_count(),
         conflicts:preview.counts().clone(),
         quality:prepared.quality().clone(),
         diagnostics:prepared.source_diagnostics().clone(),
@@ -736,6 +738,8 @@ mod reviewed_quality_tests {
         let mut writer = ZipWriter::new(std::fs::File::create(path).unwrap());
         writer.start_file("xl/worksheets/sheet1.xml", SimpleFileOptions::default()).unwrap();
         write!(writer,r#"<worksheet><sheetData><row r="2"><c r="A2" t="inlineStr"><is><t>СМУ16</t></is></c><c r="B2"><v>1</v></c><c r="C2"><v>2</v></c></row><row r="3"><c r="A3" t="inlineStr"><is><t>{name}</t></is></c><c r="B3"><v>1</v></c><c r="C3"><v>2</v></c></row></sheetData></worksheet>"#).unwrap();
+        writer.start_file("xl/worksheets/sheet2.xml", SimpleFileOptions::default()).unwrap();
+        write!(writer, r#"<worksheet><sheetData><row r="20"><c r="C20"/></row></sheetData></worksheet>"#).unwrap();
         writer.finish().unwrap();
     }
 
@@ -763,6 +767,8 @@ mod reviewed_quality_tests {
             mappings:Some(vec![analiz_import_core::TripleMapping{header_row:1,work_col:1,count_col:2,amount_col:3}]),
         };
         let reviewed=with_legacy_prepared(&store,"native-import-stages",source,options(),|p,v,o|review(p,v,o,b"legacy-manual-review-v1\0",&o.organizations)).unwrap();
+        // Six cells on the selected sheet plus the explicit empty cell on the unused sheet.
+        assert_eq!(reviewed.processed_cell_count, 7);
         assert_eq!(reviewed.quality_period_months.get("day:2024-01"),Some(&1));
         assert!(!reviewed.quality_periods_partial);
         let range=reviewed.period_range.as_ref().unwrap();

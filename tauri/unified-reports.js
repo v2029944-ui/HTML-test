@@ -474,7 +474,19 @@ function init(){
  function renderReview(result){
   syncAcknowledgements(result);
   const c=result.conflicts||{},q=result.quality||{},root=$('importPreview');root.replaceChildren();const summary=el('div',undefined,'kpi-grid');
-  for(const [title,value] of [['Отчётов',result.reportCount],['Строк работ',result.rowCount],['Новых отчётов',c.new_reports],['Замен',c.replacements],['Пересечений',c.cross_type_overlaps],['Ошибок',q.issues],['Замечаний источника',q.relevant_source_issues]]){const box=el('div',undefined,'kpi');box.append(el('strong',show(value)),el('span',title));summary.append(box);}root.append(summary);
+  const cells=result.processedCellCount;
+  const metrics=[
+   ['Отчётов',result.reportCount], ['Строк работ',result.rowCount],
+   ['Обработано ячеек в книге',Number.isSafeInteger(cells)&&cells>=0?cells.toLocaleString('ru-RU'):null],
+   ['Новых отчётов',c.new_reports], ['Замен',c.replacements], ['Пересечений',c.cross_type_overlaps],
+   ['Ошибок',q.issues], ['Замечаний источника',q.relevant_source_issues]
+  ];
+  for(const [title,value] of metrics){
+   const box=el('div',undefined,'kpi');
+   box.append(el('strong',show(value)),el('span',title));
+   summary.append(box);
+  }
+  root.append(summary);
   const rows=el('div');page(rows,'Найденные периоды — ограниченная выборка',['Период','До','Тип','Строк','Замечаний'],(result.sampleReports||[]).map(r=>[r.start,r.end,kinds[r.kind]||r.kind,r.rows,r.issues]));root.append(rows);if(result.periodRange)root.prepend(el('p','Распознаны периоды: '+result.periodRange.from+' — '+result.periodRange.to+' · '+(kinds[result.periodRange.kind]||result.periodRange.kind)));
   root.append(button('Просмотреть все замечания',()=>{ $('qualitySource').value='pending';syncQualityPeriods();return openUploadView('quality');}));
   for(const issue of [...(result.sampleReportIssues||[]),...(result.sampleSourceIssues||[])])root.append(el('p',(issue.reason||issue.type||'Замечание')+' · '+[issue.sheet,...(issue.cells||[]),issue.work_cell,issue.count_cell,issue.amount_cell].filter(Boolean).join(' · ')));
