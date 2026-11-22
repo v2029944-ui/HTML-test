@@ -110,8 +110,13 @@ def check_filter_placement(page, record):
         expect(settings).to_be_visible()
         placement.select_option('side')
         scope = page.evaluate('JSON.stringify(window.referenceFilters.scope)')
-        for scale in ('80','90','standard','xlarge'):
+        reset = fold.locator('.filter-reset')
+        for scale in ('80','90','standard','large','xlarge'):
+            # select_option dispatches input/change without focusing the select.
+            # Move focus to Settings just as when the user chooses the scale.
+            size.focus()
             size.select_option(scale)
+            expect(size).to_be_focused()
             expect(page.locator('#refRoot')).to_have_attribute('data-ui-size',scale)
             expect(sidebar).to_have_css('--filter-at-side','1')
             page.evaluate("scrollTo({top:0,behavior:'instant'})")
@@ -130,16 +135,21 @@ def check_filter_placement(page, record):
             assert scrolled_y > origin + 2, ('Settings should scroll past the header', scale,origin,scrolled_y)
             if scale == 'standard':
                 record('18-filter-side', fold, scroll=False)
-            # Reach the last action without moving the document. Focus scrolls
-            # the internal filter body when the panel is longer than the window.
-            reset = fold.locator('.filter-reset')
-            reset.focus()
+            # Enter the final action by keyboard from its preceding available
+            # control. Both focus transitions must leave the document pinned.
+            previous_button = content.locator('button:enabled:visible').nth(-2)
+            previous_button.focus()
+            expect(previous_button).to_be_focused()
+            page.keyboard.press('Tab')
             expect(reset).to_be_focused()
             page.evaluate(settle)
             bounds = reset.bounding_box()
             body = content.bounding_box()
             visible_bottom = min(page.evaluate('innerHeight'), body['y']+body['height'])
-            assert bounds['y'] >= body['y'] - 2 and bounds['y']+bounds['height'] <= visible_bottom + 2, (scale,bounds,body,visible_bottom)
+            assert bounds['y'] >= body['y'] - 2 and bounds['y']+bounds['height'] <= visible_bottom + 2, (
+                scale,bounds,body,visible_bottom,
+                content.evaluate('el => ({scrollTop:el.scrollTop,scrollHeight:el.scrollHeight,clientHeight:el.clientHeight})')
+            )
             assert abs(page.evaluate('scrollY')-scrolled_y) <= 2, (scale,scrolled_y,page.evaluate('scrollY'))
             assert page.evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1')
         page.set_viewport_size({'width':720,'height':650})
