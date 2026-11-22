@@ -135,19 +135,24 @@ public static class AnalizIcon {
    }
    throw new Exception("WM_GETICON returned no "+(kind==1?"large taskbar":"small window")+" icon");
  }
- static bool Pixel(Bitmap b,int x,int y,int size,double u,double v,bool white){
+ static bool Pixel(Bitmap b,int x,int y,int size,double u,double v,bool dark){
    Color p=b.GetPixel(x+(int)(size*u),y+(int)(size*v));
-   return white ? p.R>214&&p.G>214&&p.B>214 : p.B>p.R+65&&p.B>p.G+25;
+   return p.A>128 && (dark ? p.R<95&&p.G<95&&p.B<100 : p.R>110&&p.G>95&&p.R-p.B>75&&p.G-p.B>40);
  }
  public static bool Mark(Bitmap b,int x,int y,int s){
-   return Pixel(b,x,y,s,.5,.18,false)&&Pixel(b,x,y,s,.255,.7,true)&&Pixel(b,x,y,s,.5,.57,true)&&
-          Pixel(b,x,y,s,.74,.38,true)&&Pixel(b,x,y,s,.37,.70,false)&&Pixel(b,x,y,s,.255,.43,false);
+   return Pixel(b,x,y,s,.50,.18,false)&&Pixel(b,x,y,s,.255,.70,true)&&Pixel(b,x,y,s,.50,.57,true)&&
+          Pixel(b,x,y,s,.74,.55,true)&&Pixel(b,x,y,s,.39,.70,false)&&Pixel(b,x,y,s,.255,.43,false);
+ }
+ public static bool NativeDetail(Bitmap b){
+   // The 16px frame omits the check. Larger native frames cut a yellow check into the last bar.
+   int s=b.Width;
+   return (s!=16&&s<32)||Pixel(b,0,0,s,.72,.35,s==16);
  }
  public static bool ShortcutMark(Bitmap b){
    // Sample the tops of all three bars, above the lower-left shortcut overlay.
    int s=b.Width;
-   return Pixel(b,0,0,s,.5,.18,false)&&Pixel(b,0,0,s,.255,.58,true)&&Pixel(b,0,0,s,.5,.57,true)&&
-          Pixel(b,0,0,s,.74,.38,true)&&Pixel(b,0,0,s,.37,.58,false)&&Pixel(b,0,0,s,.255,.43,false);
+   return Pixel(b,0,0,s,.50,.18,false)&&Pixel(b,0,0,s,.255,.58,true)&&Pixel(b,0,0,s,.50,.57,true)&&
+          Pixel(b,0,0,s,.74,.55,true)&&Pixel(b,0,0,s,.39,.58,false)&&Pixel(b,0,0,s,.255,.43,false);
  }
  public static bool TaskbarMark(Bitmap b){
    for(int s=15;s<=Math.Min(80,Math.Min(b.Width,b.Height));s++)
@@ -228,7 +233,9 @@ function Main-Window($path,[switch]$StartMenu){
 function Check-Bitmap($bitmap,$id){
     try{
         $bitmap.Save((Join-Path $out ("reference-icon-"+$id+".png")))
-        if(![AnalizIcon]::Mark($bitmap,0,0,$bitmap.Width)){throw "Expected three white bars on blue: $id"}
+        if(![AnalizIcon]::Mark($bitmap,0,0,$bitmap.Width) -or ![AnalizIcon]::NativeDetail($bitmap)){
+            throw "Expected yellow report icon with the correct artwork for $($bitmap.Width)px: $id"
+        }
     }finally{$bitmap.Dispose()}
 }
 function Check-ShortcutIcon($shortcut,$id){
@@ -251,9 +258,16 @@ function Check-StartMenu($name,$exe,$record){
     $info.iconIndex=$link.IconIndex
     $folder=(New-Object -ComObject Shell.Application).NameSpace($programs)
     $info.appId=$folder.ParseName((Split-Path $shortcut -Leaf)).ExtendedProperty('System.AppUserModel.ID')
-    $icon=Join-Path (Split-Path $exe) 'analysis-bars-blue.ico'
+    $icon=Join-Path (Split-Path $exe) 'analysis-reports.ico'
     if($info.target -ne $exe -or $info.appId -ne 'local.analiz.rabot.tauri'){throw 'Start menu link target or AppUserModelID differs'}
     if($info.icon -ne $icon -or $info.iconIndex -ne 0){throw "Start menu calls a different icon: $($info.icon),$($info.iconIndex)"}
+    foreach($size in @(16,32,48,64,128,256)){
+        $frame=[Drawing.Icon]::new($icon,$size,$size)
+        try{
+            if($frame.Width -ne $size -or $frame.Height -ne $size){throw "Missing ${size}px ICO frame"}
+            Check-Bitmap ($frame.ToBitmap()) ($name+"-installed-"+$size)
+        }finally{$frame.Dispose()}
+    }
     Check-Bitmap ([AnalizIcon]::FromFile($icon)) ($name+'-installed-ico')
     Check-ShortcutIcon $shortcut ($name+'-start-menu')
 }
@@ -269,7 +283,7 @@ function Check-WindowAndShell($name,$exe,$record){
         $record.hwnd='verified small and large'
         $group=[AnalizIcon]::GroupMetadata($hwnd)
         $record.group=@{command=$group[0];icon=$group[1];display=$group[2];appId=$group[3];name=$group[4]}
-        $ico=Join-Path (Split-Path $exe) 'analysis-bars-blue.ico'
+        $ico=Join-Path (Split-Path $exe) 'analysis-reports.ico'
         if($group[0] -ne ('"'+$exe+'"') -or $group[1] -ne ($ico+',0') -or $group[2] -ne ('@'+$exe+',-101') -or
            $group[3] -ne 'local.analiz.rabot.tauri' -or $group[4] -ne 'Анализ работ'){
             throw 'Window relaunch metadata differs from the installed product'
@@ -383,6 +397,7 @@ function New-ProbeShortcut($file,$target,$icon){
 
 $fixtureId=[guid]::NewGuid().ToString('N')
 $renamed=Join-Path $pinDir ("audit-renamed-"+$fixtureId+".lnk")
+$previous=Join-Path $pinDir ("audit-previous-"+$fixtureId+".lnk")
 $custom=Join-Path $pinDir ("audit-custom-"+$fixtureId+".lnk")
 $other=Join-Path $pinDir ("audit-other-"+$fixtureId+".lnk")
 $exe=$null
@@ -409,6 +424,7 @@ try{
     # Exercise persisted links with custom filenames even if this Explorer session cannot pin.
     $null=New-Item -ItemType Directory -Path $pinDir -Force
     New-ProbeShortcut $renamed $oldExe ($oldExe+',0')
+    New-ProbeShortcut $previous $oldExe (Join-Path $install 'analysis-bars-blue.ico,0')
     New-ProbeShortcut $custom $oldExe (Join-Path $env:SystemRoot 'System32\shell32.dll,3')
     New-ProbeShortcut $other (Join-Path $env:SystemRoot 'System32\notepad.exe') ($oldExe+',0')
     $customHash=(Get-FileHash -LiteralPath $custom).Hash
@@ -416,16 +432,18 @@ try{
     $exe=Run-Setup $Candidate -Update
     if($exe -ne $oldExe -or (Get-FileHash $exe -Algorithm SHA256).Hash -eq $oldExeHash){throw 'Existing executable was not replaced in place'}
     Check-Bitmap ([AnalizIcon]::FromFile($exe)) 'upgrade-exe';$result.upgrade.exe='verified in place over stable 1.10.0'
-    $resolved=[AnalizIcon]::ReadLink($renamed)
-    if($resolved.Target -ne $exe -or $resolved.Icon -ne (Join-Path $install 'analysis-bars-blue.ico') -or $resolved.IconIndex -ne 0){
-        throw 'Renamed shortcut did not receive the current default icon'
+    foreach($linkPath in @($renamed,$previous)){
+        $resolved=[AnalizIcon]::ReadLink($linkPath)
+        if($resolved.Target -ne $exe -or $resolved.Icon -ne (Join-Path $install 'analysis-reports.ico') -or $resolved.IconIndex -ne 0){
+            throw "Shortcut did not receive the current default icon: $linkPath"
+        }
+        Check-ShortcutIcon $linkPath (Split-Path $linkPath -Leaf)
     }
-    Check-ShortcutIcon $renamed 'renamed-shortcut'
     if((Get-FileHash -LiteralPath $custom).Hash -ne $customHash -or (Get-FileHash -LiteralPath $other).Hash -ne $otherHash){
         throw 'Installer changed a custom icon or a shortcut for another target'
     }
     $result.upgrade.renamedShortcut='verified default icon, preserved custom and unrelated links'
-    Remove-Item -LiteralPath $renamed,$custom,$other
+    Remove-Item -LiteralPath $renamed,$previous,$custom,$other
     if($pin){
         if((Find-Pin $exe) -ne $pin){throw 'The existing pinned shortcut was lost during upgrade'}
         $link=[AnalizIcon]::ReadLink($pin)
@@ -439,7 +457,7 @@ try{
 }catch{$result.error=$_.Exception.Message;throw}
 finally{
     Save-Result
-    foreach($fixtureLink in @($renamed,$custom,$other)){
+    foreach($fixtureLink in @($renamed,$previous,$custom,$other)){
         if(Test-Path -LiteralPath $fixtureLink){Remove-Item -LiteralPath $fixtureLink}
     }
     if($pin){$null=Taskbar-Verb @('Unpin from taskbar','Открепить от панели задач')}
