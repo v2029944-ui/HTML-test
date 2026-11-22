@@ -60,6 +60,8 @@ function invalidate(message='Выберите файл из списка, что
 }
 function openEditor(file,rule){
   if(busy||changing)return;
+  const editor=$('sourceRuleEditor');
+  if(editor){editor.open=true;editor.querySelector('summary')?.focus();}
   if(!file.nativeSignature||(file.nativeTooLarge??file.tooLarge)){
     invalidate();
     ruleMessage('Невозможно настроить правило: файл недоступен или слишком велик.',true);
@@ -69,10 +71,9 @@ function openEditor(file,rule){
     rule.mappings&&typeof rule.mappings==='object'&&Object.keys(rule.mappings).length>0);
   if(advanced){
     invalidate();
-    ruleMessage('Этот файл использует расширенную настройку листов и столбцов. Откройте файл для проверки в форме «Импорт Excel», измените настройки и нажмите «Запомнить настройки файла для автоимпорта».',true);
+    ruleMessage('Этот файл использует расширенную настройку листов и столбцов. Откройте файл для проверки в разделе «Загрузка отчётов», измените настройки и нажмите «Запомнить настройки файла для автоимпорта».',true);
     return;
   }
-  const editor=$('sourceRuleEditor');if(editor)editor.open=true;
   selected={name:file.name,signature:file.nativeSignature,folder,revision};
   fields.file.textContent='Файл: '+file.name;
   fields.format.value=['auto','legacy','daily-wide'].includes(rule?.format)?rule.format:'legacy';
@@ -110,6 +111,13 @@ function makeRule(){
   }
   return result;
 }
+function displayFolder(path){
+  const prefix='\\\\?\\';
+  if(!path.startsWith(prefix))return path;
+  const rest=path.slice(prefix.length);
+  if(rest.startsWith('UNC\\'))return '\\\\'+rest.slice(4);
+  return /^[a-z]:/i.test(rest)?rest:path;
+}
 function renderFiles(){
  rows.replaceChildren();count.textContent='Найдено XLSX: '+listedFiles.length;
 
@@ -124,8 +132,8 @@ function renderFiles(){
         make('td',Math.ceil(file.size/1024)+' КБ'),
         make('td',(file.nativeTooLarge??file.tooLarge)?'Превышен предел нативного импорта (100 МиБ)':hasRule?'Есть правило':'Правило не задано')
       );
-      const action=make('td'),button=make('button','Настроить правило'),inspect=make('button','Проверить');
-      inspect.type='button';inspect.disabled=(file.nativeTooLarge??file.tooLarge)||!file.nativeSignature;inspect.setAttribute('aria-label','Проверить '+file.name);inspect.addEventListener('click',()=>{if(busy||changing)return;const path=folder.replace(/[\\/]$/,'')+(folder.includes('\\')?'\\':'/')+file.name;void window.unifiedReports?.openSource(path);});
+      const action=make('td'),button=make('button','Настроить правило'),inspect=make('button','Открыть для проверки');
+      inspect.type='button';inspect.className=button.className='button secondary';action.className='source-file-actions';inspect.disabled=(file.nativeTooLarge??file.tooLarge)||!file.nativeSignature;inspect.setAttribute('aria-label','Открыть для проверки '+file.name);inspect.addEventListener('click',()=>{if(busy||changing)return;const path=folder.replace(/[\\/]$/,'')+(folder.includes('\\')?'\\':'/')+file.name;void window.unifiedReports?.openSource(path);});
       button.type='button';button.disabled=(file.nativeTooLarge??file.tooLarge)||!file.nativeSignature;
       button.setAttribute('aria-label','Настроить правило для '+file.name);
       button.addEventListener('click',()=>openEditor(file,hasRule?listedRules[file.name]:null));
@@ -148,7 +156,7 @@ async function load(){
     folder=result.folder;revision=result.revision;
     invalidate('Список обновлён. Выберите файл для настройки правила.');
     const files=result.files;
-    location.textContent=folder?'Выбрана папка: '+folder:'Папка Excel ещё не выбрана.';
+    location.textContent=folder?'Выбрана папка: '+displayFolder(folder):'Папка Excel ещё не выбрана.';
     listedFiles=files;listedRules=result.rules&&typeof result.rules==='object'?result.rules:{};
     pageIndex=sameFolder?Math.min(pageIndex,Math.max(0,Math.ceil(files.length/maxVisible)-1)):0;renderFiles();
     void window.nativeFolderAutoImport?.updateSnapshot(result);

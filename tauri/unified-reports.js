@@ -17,8 +17,8 @@ function init(){
  const uploadPanels={import:$('excelFile').closest?.('.panel'),calendar:$('reportPeriods'),quality:$('qualityHeading').closest?.('.panel')};
  const listPanel=el('section',undefined,'panel');listPanel.id='unifiedSavedReports';
  const uploaded=$('uploadedReports');if(uploaded){uploaded.open=true;listPanel.append(uploaded);$('upload').append(listPanel);}uploadPanels.list=listPanel;
- const uploadNav=el('div',undefined,'actions');uploadNav.id='unifiedUploadNav';
- for(const [mode,title]of [['import','Разовая загрузка'],['calendar','Календарь отчётов'],['list','Список отчётов'],['quality','Контроль качества']]){const b=button(title,()=>openUploadView(mode));b.id='unifiedUpload'+mode[0].toUpperCase()+mode.slice(1);b.dataset.uploadMode=mode;uploadNav.append(b);}
+ const uploadNav=el('div',undefined,'actions');uploadNav.id='unifiedUploadNav';uploadNav.setAttribute('role','group');uploadNav.setAttribute('aria-label','Разделы отчётов');
+ for(const [mode,title]of [['import','Загрузка отчётов'],['calendar','Календарь отчётов'],['list','Список отчётов'],['quality','Контроль качества']]){const b=button(title,()=>openUploadView(mode));b.id='unifiedUpload'+mode[0].toUpperCase()+mode.slice(1);b.dataset.uploadMode=mode;uploadNav.append(b);}
  if(uploadPanels.import&&$('additionalMetrics'))uploadPanels.import.append($('additionalMetrics'));
  const workspacePanel=$('sharedWorkspacePanel');
  if(workspacePanel)workspacePanel.after(uploadNav);else $('upload').prepend(uploadNav);
@@ -32,6 +32,11 @@ function init(){
  const show=v=>v===null||v===undefined?'—':String(v);
  const live=(rev,ticket,current)=>UI.revision===rev&&ticket===current;
  function status(id,text){$(id).textContent=text;}
+ function updateSelectedBook(){
+  const book=$('uploadSelectedBook');if(!book)return;
+  book.hidden=!sourcePath;
+  book.textContent=sourcePath?'Выбранная книга: '+sourcePath.split(/[\\/]/).pop():'';
+ }
  function page(root,caption,headers,rows,help){
   root.replaceChildren();
   const wrap=el('div',undefined,'table-scroll'),table=el('table');table.append(el('caption',caption));
@@ -427,7 +432,7 @@ function init(){
    if(rule)applyFolderRule(rule,found,wideMap);
 
   }catch(error){if(ticket!==sourceTicket)return;if(retargeting){clearSourceOverrides();sourcePath=null;sourceFolderContext=null;sheets=[];$('sheetSelect').replaceChildren();status('excelFileStatus','Выберите файл');}status('unifiedImportStatus','Не удалось выбрать Excel: '+String(error.message||error));}
-  finally{importBusy=false;importLock();}
+  finally{importBusy=false;importLock();updateSelectedBook();}
  }
  $('excelFile').addEventListener('click',chooseSource);
  function validDate(text){return /^\d{4}-\d{2}-\d{2}$/.test(text)&&Number.isFinite(Date.parse(text+'T00:00:00Z'))&&new Date(text+'T00:00:00Z').toISOString().slice(0,10)===text;}
@@ -551,20 +556,53 @@ function init(){
     catch(error){status('unifiedImportStatus','Правило файла сохранено в SQLite, но не удалось обновить отображение: '+String(error.message||error)+'. Нажмите «Обновить данные».');}
   }catch(error){status('unifiedImportStatus','Правило не сохранено: '+String(error.message||error));}finally{importBusy=false;importLock();}
  });
+ function buildUploadLayout(){
+  const panel=uploadPanels.import;
+  if(!panel)return;
+  const heading=panel.querySelector('h2'),intro=panel.querySelector('p');
+  heading.textContent='Загрузка отчётов';
+  intro.textContent='Выберите книгу Excel, проверьте периоды и сохраните отчёты в активную базу.';
+  const layout=el('div',undefined,'upload-layout'),source=el('section'),parameters=el('section'),result=el('section');
+  source.id='uploadEntryCard';parameters.id='uploadParameterCard';result.id='uploadReviewCard';
+  source.append(el('h3','Источник Excel'));parameters.append(el('h3','Параметры отчёта'));result.append(el('h3','Результат проверки'));
+  const fileField=$('excelFile').closest('.import-file-field'),fileGrid=fileField.parentElement;
+  const folder=$('desktopSource'),hint=el('p',undefined,'muted small');
+  const filePicker=el('div',undefined,'import-grid upload-file-picker');filePicker.append(fileField);
+  const modes=el('div',undefined,'actions upload-sources');
+  modes.setAttribute('role','group');modes.setAttribute('aria-label','Источник Excel');
+  const one=button('Один файл',()=>showSource(false)),many=button('Из папки',()=>showSource(true));
+  one.id='uploadSourceFile';many.id='uploadSourceFolder';modes.append(one,many);
+  function showSource(fromFolder){
+   filePicker.hidden=fromFolder;
+   if(folder)folder.hidden=!fromFolder;
+   one.setAttribute('aria-pressed',String(!fromFolder));many.setAttribute('aria-pressed',String(fromFolder));
+   hint.textContent=fromFolder?'Выберите папку и откройте нужную книгу для проверки. Для регулярных загрузок можно настроить правило файла.':'Выберите одну книгу .xlsx с компьютера.';
+  }
+  if(folder)source.append(modes);
+  source.append(hint,filePicker);
+  if(folder)source.append(folder);
+  showSource(false);
+  const book=el('p',undefined,'upload-selected-book');book.id='uploadSelectedBook';book.hidden=true;parameters.append(book);
+  const inspect=$('inspectFile'),save=$('saveImport'),actions=inspect.parentElement;
+  parameters.append(fileGrid,$('importDateEvidence'),$('dailyWideOptions'),$('ordinaryImportHint'),$('importAdvanced'),inspect,importStatus);
+  result.append($('importPreview'),$('replaceExisting').parentElement,acknowledgements,save);
+  actions.remove();layout.append(source,parameters,result);intro.after(layout);
+ }
  function folderControls(){
   if(!api.list||!api.chooseFolder)return;
-  const panel=el('details',undefined,'panel');panel.id='desktopSource';panel.append(el('summary','Папка с Excel и автоимпорт'));
-  window.unifiedReports.openSource=async path=>{await openUploadView('import');return chooseSource(null,path);};
+  const panel=el('section');panel.id='desktopSource';panel.setAttribute('aria-label','Папка Excel');
+  window.unifiedReports.openSource=async path=>{await openUploadView('import');await chooseSource(null,path);if(sourcePath===path)$('inspectFile').focus?.();};
   function text(tag,id,value){const node=el(tag,value);node.id=id;panel.append(node);return node;}
   const label=el('label',undefined,'checkline'),toggle=el('input');toggle.id='sourceAutoImport';toggle.type='checkbox';label.append(toggle,el('span','Автоматически добавлять новые проверенные отчёты в этом сеансе'));panel.append(label);
-  text('p','sourceAutoStatus','Автоимпорт включается на текущий сеанс. Для файла нужно сохранённое правило. Замены, пересечения периодов и замечания требуют ручной проверки.');
-  const actions=el('div',undefined,'actions');for(const [id,title] of [['sourceFolderChoose','Выбрать папку Excel'],['sourceFolderRefresh','Проверить файлы']]){const b=button(title,()=>{});b.id=id;actions.append(b);}panel.append(actions);
-  for(const [id,value] of [['sourceFolderLocation','Папка не выбрана.'],['sourceFolderCount',''],['sourceFolderStatus',''],['sourceRuleFile','Выберите файл для настройки правила.']])text('p',id,value);
-  const editor=el('details');editor.id='sourceRuleEditor';editor.append(el('summary','Правило выбранного файла'));panel.append(editor);const fields=el('div',undefined,'import-grid');
+  const autoStatus=text('p','sourceAutoStatus','Автоимпорт включается на текущий сеанс. Для файла нужно сохранённое правило. Замены, пересечения периодов и замечания требуют ручной проверки.');
+  const actions=el('div',undefined,'actions');for(const [id,title] of [['sourceFolderChoose','Выбрать папку Excel'],['sourceFolderRefresh','Обновить список']]){const b=button(title,()=>{});b.id=id;actions.append(b);}panel.append(actions);
+  for(const [id,value] of [['sourceFolderLocation','Папка не выбрана.'],['sourceFolderCount',''],['sourceFolderStatus','']])text('p',id,value);
+  const editor=el('details');editor.id='sourceRuleEditor';editor.append(el('summary','Правило выбранного файла'));const selectedFile=el('p','Выберите файл для настройки правила.');selectedFile.id='sourceRuleFile';editor.append(selectedFile);const fields=el('div',undefined,'import-grid');
   for(const [id,title,options] of [['sourceRuleFormat','Формат',[['legacy','Обычные периоды'],['auto','Автоматически'],['daily-wide','Дневные данные за квартал или год']]],['sourceRuleType','Тип отчёта',[['day','День'],['week','Неделя'],['month','Месяц']]]]){const label=el('label',title),s=el('select');s.id=id;for(const [v,t]of options){const o=el('option',t);o.value=v;s.append(o);}label.append(s);fields.append(label);}
   for(const [id,title,type] of [['sourceRuleStart','Первая дата','date'],['sourceRuleSheet','Лист Excel','text'],['sourceRuleYear','Год дневной таблицы','number']]){const label=el('label',title),input=el('input');input.id=id;input.type=type;label.append(input);fields.append(label);}editor.append(fields);
-  const save=button('Сохранить правило',()=>{});save.id='sourceRuleSave';editor.append(save);text('p','sourceRuleStatus','Правила сохраняются с проверкой ревизии папки и файла.');
+  const save=button('Сохранить правило',()=>{});save.id='sourceRuleSave';const ruleStatus=el('p');ruleStatus.id='sourceRuleStatus';editor.append(save,ruleStatus);
   const wrap=el('div',undefined,'table-scroll'),table=el('table'),head=el('thead'),tr=el('tr');for(const title of ['Файл','Размер','Правило импорта','Действие'])tr.append(el('th',title));head.append(tr);table.append(head);const rows=el('tbody');rows.id='sourceFolderRows';table.append(rows);wrap.append(table);panel.append(wrap);
+  panel.append(label,autoStatus,editor);
   const importFields=$('excelFile').closest?.('.import-grid');
   if(importFields)importFields.after(panel);else (uploadPanels.import||$('upload')).append(panel);
   // Reuse the audited session/lease and checked-rule controllers after their
@@ -576,15 +614,15 @@ function init(){
   const folder=activeWorkspace();
   if(folder!==workspaceFolder){
    workspaceFolder=folder;++sourceTicket;sourcePath=null;sourceFolderContext=null;sheets=[];wideSheetRows=[];
-   clearSourceOverrides();$('sheetSelect').replaceChildren();$('dailySheetChoices').replaceChildren();status('excelFileStatus','Выберите файл');importLock();
+   clearSourceOverrides();$('sheetSelect').replaceChildren();$('dailySheetChoices').replaceChildren();status('excelFileStatus','Выбрать файл Excel…');importLock();updateSelectedBook();
   }
-  ++generation;++reportTicket;++calendarTicket;++qualityTicket;++detailTicket;savedQualityPeriods.clear();syncQualityPeriods();if(!snapshot){window.sqlRowScroll?.reset($('reports'));window.sqlRowScroll?.reset($('qualityTable'));qualityActions.replaceChildren();reportPageStatus.textContent='Данные обновляются';resetReview('Обновление данных. Проверьте Excel заново.');$('reports').replaceChildren();$('reportCalendar').replaceChildren();$('calendarDetails').replaceChildren();$('qualityTable').replaceChildren();$('qualityPrev').disabled=$('qualityNext').disabled=true;return;}reportIndex=0;qualityOffset=0;resetReview('Данные обновлены. Перед импортом выполните новую проверку.');
+  ++generation;++reportTicket;++calendarTicket;++qualityTicket;++detailTicket;savedQualityPeriods.clear();syncQualityPeriods();if(!snapshot){window.sqlRowScroll?.reset($('reports'));window.sqlRowScroll?.reset($('qualityTable'));qualityActions.replaceChildren();reportPageStatus.textContent='Данные обновляются';resetReview();status('unifiedImportStatus',sourcePath?'Обновление данных. Проверьте Excel заново.':'');$('reports').replaceChildren();$('reportCalendar').replaceChildren();$('calendarDetails').replaceChildren();$('qualityTable').replaceChildren();$('qualityPrev').disabled=$('qualityNext').disabled=true;return;}reportIndex=0;qualityOffset=0;resetReview();status('unifiedImportStatus',sourcePath?'Данные обновлены. Перед импортом выполните новую проверку.':'');
   const selected=$('qualityOrg').value;$('qualityOrg').replaceChildren();for(const [value,label]of [['all','Все подразделения'],...(snapshot.org_names||[]).map(v=>[v,v])]){const o=el('option',label);o.value=value;$('qualityOrg').append(o);}$('qualityOrg').value=(snapshot.org_names||[]).includes(selected)?selected:'all';
   void refreshUpload();
  });
  async function refreshUpload(){if(uploadMode==='calendar')return loadCalendar();if(uploadMode==='list')return loadReports();if(uploadMode==='quality')return loadQuality();}
  UI.onView('upload',()=>openUploadView('import'));
- importLock();formatChanged();folderControls();void openUploadView('import');
+ importLock();formatChanged();folderControls();buildUploadLayout();status('unifiedImportStatus','');void openUploadView('import');
  window.unifiedReports.refresh=refreshUpload;window.unifiedReports.openView=openUploadView;
 }
 window.unifiedReports={init};

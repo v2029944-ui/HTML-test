@@ -394,8 +394,7 @@ def check_runtime(page):
 
 
 def set_folder(page, folder, filenames):
-    if not page.locator('#desktopSource').evaluate('node=>node.open'):
-        page.locator('#desktopSource > summary').click()
+    page.locator('#uploadSourceFolder').click()
     invoke(page,'set_folder',{'folder':str(folder)})
     page.locator('#sourceFolderRefresh').click()
     expected=json.dumps(sorted(filenames)[:100],ensure_ascii=False,separators=(',',':'))
@@ -431,7 +430,7 @@ def import_year(page, workbook, confirmations):
     expect(page.locator('#unifiedImportAcknowledgements')).not_to_be_visible()
     expect(page.locator('#unifiedAcceptOverlap')).not_to_be_visible()
     expect(page.locator('#unifiedAcceptQuality')).not_to_be_visible()
-    page.locator('#sourceFolderRows tr').filter(has_text=workbook.name).get_by_role('button',name='Проверить '+workbook.name,exact=True).click()
+    page.locator('#sourceFolderRows tr').filter(has_text=workbook.name).get_by_role('button',name='Открыть для проверки '+workbook.name,exact=True).click()
     wait_for_text(page,'#excelFileStatus',workbook.name)
     page.locator('#importFormat').select_option('daily-wide')
     set_calendar_field(page, 'dailyYear', '2024')
@@ -1275,8 +1274,7 @@ def check_backup_and_replace(page, temporary, snapshot):
 
 def check_folder_rule_and_revocation(page, workbook, confirmations):
     navigate(page,'upload')
-    if not page.locator('#desktopSource').evaluate('node=>node.open'):
-        page.locator('#desktopSource > summary').click()
+    page.locator('#uploadSourceFolder').click()
     wait_for_app_state(page,'typeof window.nativeFolderReady!=="undefined"','Native folder controller startup')
     page.evaluate('window.nativeFolderReady')
     assert not page.locator('#sourceAutoImport').is_checked()
