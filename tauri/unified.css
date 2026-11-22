@@ -81,7 +81,7 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
 .coverage-issue{padding:6px 10px;border-left:3px solid var(--border);margin:9px 0}.coverage-unassigned{margin:12px 0}
 .coverage-inspection button{margin:5px 6px 5px 0}
 
-#groupRenameDialog {
+#groupRenameDialog, #clearReportsDialog {
   box-sizing:border-box;
   width:min(28rem,calc(100vw - 2rem));
   max-height:calc(100vh - 2rem);
@@ -93,8 +93,12 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
   border:1px solid var(--border,#3a4656);
   border-radius:var(--radius-panel,14px);
 }
-#groupRenameDialog::backdrop {background:#080b10b8}
+#groupRenameDialog::backdrop, #clearReportsDialog::backdrop {background:#080b10b8}
 #groupRenameDialog form {display:grid;gap:.75rem}
-#groupRenameDialog h2 {margin:0;font-size:1.25rem}
+#groupRenameDialog h2, #clearReportsDialog h2 {margin:0;font-size:1.25rem}
 #groupRenameDialog input {min-width:0;width:100%;box-sizing:border-box}
-#groupRenameDialog .actions {display:flex;justify-content:flex-end;flex-wrap:wrap;gap:.5rem}
+#groupRenameDialog .actions, #clearReportsDialog .actions {display:flex;justify-content:flex-end;flex-wrap:wrap;gap:.5rem}
+
+#clearReportsDialog .clear-reports-header {display:flex;align-items:center;justify-content:space-between;gap:.75rem}
+#clearReportsDialog .clear-reports-header button {flex:none;min-width:2.5rem;min-height:2.5rem;padding:0}
+#clearReportsDialog p {margin:.75rem 0;overflow-wrap:anywhere}
