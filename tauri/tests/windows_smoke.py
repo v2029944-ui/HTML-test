@@ -394,8 +394,7 @@ def check_runtime(page):
 
 
 def set_folder(page, folder, filenames):
-    if not page.locator('#desktopSource').evaluate('node=>node.open'):
-        page.locator('#desktopSource > summary').click()
+    page.locator('#uploadSourceFolder').click()
     invoke(page,'set_folder',{'folder':str(folder)})
     page.locator('#sourceFolderRefresh').click()
     expected=json.dumps(sorted(filenames)[:100],ensure_ascii=False,separators=(',',':'))
@@ -431,7 +430,7 @@ def import_year(page, workbook, confirmations):
     expect(page.locator('#unifiedImportAcknowledgements')).not_to_be_visible()
     expect(page.locator('#unifiedAcceptOverlap')).not_to_be_visible()
     expect(page.locator('#unifiedAcceptQuality')).not_to_be_visible()
-    page.locator('#sourceFolderRows tr').filter(has_text=workbook.name).get_by_role('button',name='Проверить '+workbook.name,exact=True).click()
+    page.locator('#sourceFolderRows tr').filter(has_text=workbook.name).get_by_role('button',name='Открыть для проверки '+workbook.name,exact=True).click()
     wait_for_text(page,'#excelFileStatus',workbook.name)
     page.locator('#importFormat').select_option('daily-wide')
     set_calendar_field(page, 'dailyYear', '2024')
@@ -491,6 +490,7 @@ def check_dated_quarters_preview(page,temporary):
     assert all_quarters['reportCount']==365,all_quarters
     second=api(page,'nativeWideImportPreview',str(source),options|{'sheets':['Q2']})
     assert second['reportCount']==91 and second['sampleReports'][0]['start']=='2023-04-01',second
+    assert second['processedCellCount']==all_quarters['processedCellCount']>all_quarters['rowCount']
     assert api(page,'nativeRevision')==before
 
 
@@ -730,6 +730,7 @@ def check_source_evidence(page, temporary, output):
     options={'year':2020,'sheets':[],'mappings':{},'organizations':snapshot['org_names']}
     preview=api(page,'nativeWideImportPreview',str(source),options)
     assert preview['reportCount']==1 and preview['rowCount']==0 and preview['conflicts']['new_reports']==1,preview
+    assert preview['processedCellCount']==23,preview
     flags={'replaceExact':False,'acceptCrossType':False,'acceptQuality':False}
     assert_rejected(lambda:api(page,'nativeWideImportApply',str(source),options,preview['reviewToken'],flags),
                     'Source gaps bypassed explicit quality acknowledgment','quality')
@@ -1309,8 +1310,7 @@ def check_backup_and_replace(page, temporary, snapshot):
 
 def check_folder_rule_and_revocation(page, workbook, confirmations):
     navigate(page,'upload')
-    if not page.locator('#desktopSource').evaluate('node=>node.open'):
-        page.locator('#desktopSource > summary').click()
+    page.locator('#uploadSourceFolder').click()
     wait_for_app_state(page,'typeof window.nativeFolderReady!=="undefined"','Native folder controller startup')
     page.evaluate('window.nativeFolderReady')
     assert not page.locator('#sourceAutoImport').is_checked()

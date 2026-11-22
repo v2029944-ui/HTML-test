@@ -1689,11 +1689,11 @@ fn main() {
     let builder = tauri::Builder::default();
     #[cfg(windows)]
     let builder = builder.on_page_load(|webview, page| {
-        // Apply ICON_BIG to the window that actually finished loading, including cold WebView2 starts.
+        // Apply the native small and large icons to the window that actually finished loading, including cold WebView2 starts.
         if matches!(page.event(), tauri::webview::PageLoadEvent::Finished) {
             let icon = webview.window().hwnd()
                 .map_err(|error| std::io::Error::other(error.to_string()))
-                .and_then(|hwnd| windows_taskbar::set_large_icon(hwnd).map_err(std::io::Error::other));
+                .and_then(|hwnd| windows_taskbar::set_window_icons(hwnd).map_err(std::io::Error::other));
             if let Err(error) = icon {
                 eprintln!("Unable to set the Windows taskbar icon: {error}");
             }
@@ -1774,7 +1774,7 @@ fn main() {
                     {
                         match _window.hwnd() {
                             Ok(hwnd) => {
-                                if let Err(error) = windows_taskbar::set_large_icon(hwnd) {
+                                if let Err(error) = windows_taskbar::set_window_icons(hwnd) {
                                     eprintln!("Unable to set the Windows taskbar icon: {error}");
                                 }
                                 if let Err(error) = windows_taskbar::configure_relaunch(hwnd, &app.config().identifier) {

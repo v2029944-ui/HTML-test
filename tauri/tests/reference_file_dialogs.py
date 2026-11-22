@@ -515,8 +515,7 @@ def check_reference_file_dialogs(page, nativeConfirmations, output):
     exercise('report-xlsx', page.locator('#excelFile'), 'Выберите XLSX для нативного импорта')
     page.wait_for_function('typeof window.nativeFolderReady !== "undefined"', timeout=TIMEOUT)
     page.evaluate('window.nativeFolderReady')
-    if not page.locator('#desktopSource').evaluate('node=>node.open'):
-        page.locator('#desktopSource > summary').click()
+    page.locator('#uploadSourceFolder').click()
     exercise('excel-folder', page.locator('#sourceFolderChoose'), 'Папка с Excel-отчётами')
 
     section('Базы данных')
