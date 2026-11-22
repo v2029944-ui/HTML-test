@@ -48,3 +48,10 @@ test('interleaved manual blocks keep their own labels and never borrow adjacent 
  ],'week',[first,second]);
  assert.deepEqual(evidence.candidates.map(c=>[c.labelCell,c.dateCell,c.date]),[['E1','F1','2026-11-09']]);
 });
+
+test('short and padded local dates identify the same day and reject invalid dates',()=>{
+ for(const date of ['1.2.2026','01.02.2026','1/02/2026']){
+  assert.equal(ctx.ordinaryDateToken(date,'day'),'2026-02-01');
+ }
+ assert.equal(ctx.ordinaryDateToken('31.2.2026','day'),null);
+});

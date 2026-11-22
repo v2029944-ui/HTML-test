@@ -22,8 +22,15 @@ pub(super) struct Notice {
 fn text_date(text: &str, kind: &str) -> Option<NaiveDate> {
     let text = text.trim();
     let date = match text.len() {
-        10 => ["%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"].iter()
-            .find_map(|format| NaiveDate::parse_from_str(text, format).ok()),
+        10 if text.as_bytes()[4] == b'-' => NaiveDate::parse_from_str(text, "%Y-%m-%d").ok(),
+        8..=10 => {
+            let format = if text.contains('.') { "%d.%m.%Y" } else { "%d/%m/%Y" };
+            let (_, year) = text.rsplit_once(['.', '/'])?;
+            if year.len() != 4 || !text.bytes().all(|b| b.is_ascii_digit() || b == b'.' || b == b'/') {
+                return None;
+            }
+            NaiveDate::parse_from_str(text, format).ok()
+        }
         7 if kind == "month" => NaiveDate::parse_from_str(&format!("{text}-01"), "%Y-%m-%d").ok(),
         _ => None,
     }?;
