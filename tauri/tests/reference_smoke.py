@@ -10,7 +10,7 @@ from pathlib import Path
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect
 
 from reference_control_layout import check_control_layout
-from reference_shell_layout import check_shell_layout
+from reference_shell_layout import check_filter_placement, check_shell_layout
 from reference_table_help import check_table_help
 from reference_data_smoke import choose_calendar_date
 from shared_period_controls import common_period
@@ -65,6 +65,30 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
 
     def focused(locator):
         expect(locator).to_be_focused(timeout=TIMEOUT)
+
+    def switch_in_place(control, *, keyboard=False):
+        # Start with the switch already in view, as it is for a real click.
+        # Playwright's own scroll-to-element should not affect this measurement.
+        control.evaluate('''el => {
+            el.focus({preventScroll:true});
+            scrollBy({top:el.getBoundingClientRect().top - innerHeight / 2, behavior:'instant'});
+        }''')
+        settle = '() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))'
+        page.evaluate(settle)
+        position = 'el => [window.scrollY,el.getBoundingClientRect().top]'
+        before = control.evaluate(position)
+        if keyboard:
+            control.press('Enter')
+        else:
+            control.click()
+
+        def check_position():
+            page.evaluate(settle)
+            after = control.evaluate(position)
+            assert all(abs(a - b) <= 2 for a, b in zip(after, before)), (before, after)
+            focused(control)
+
+        return check_position
 
     def modal(dialog):
         expect(dialog).to_be_visible(timeout=TIMEOUT)
@@ -399,10 +423,11 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         date_trigger = page.locator('#importWeek + .ref-calendar-field')
         calendar(date_trigger, '06-import-day', 'days')
         record('07-import', page.locator('#toolsPage'))
-        page.locator('#unifiedUploadCalendar').click()
+        check_calendar_position = switch_in_place(page.locator('#unifiedUploadCalendar'), keyboard=True)
         report_year = page.locator('#referenceReportYear')
         expect(report_year).to_be_visible()
         expect(report_year).not_to_contain_text('загрузка')
+        check_calendar_position()
         calendar(report_year, '06-report-calendar-year', 'years')
         close_panel(importer)
 
@@ -414,8 +439,10 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                     ('Отклонения', 'usualPanel'), ('Частота', 'regularityPanel'),
                     ('Итоги и рейтинги', 'overviewPanel'), ('Соседние периоды', 'changes'), ('Динамика', 'chartPanel')]
         for title, target in sections:
-            page.locator('#toolsPage .tool-tabs').get_by_role('button', name=title, exact=True).click()
+            check_position = switch_in_place(page.locator('#toolsPage .tool-tabs').get_by_role('button', name=title, exact=True),
+                                             keyboard=target == 'comparison')
             panel(target)
+            check_position()
             expect(page.locator('#' + target + ' .detail-date-scope')).to_have_count(1)
             local_calendars = page.locator('#' + target).locator('.ref-calendar-field:visible:enabled, [data-compare-date]:visible:enabled')
             for index in range(local_calendars.count()):
@@ -718,6 +745,9 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                 page.locator('#appearanceTheme').select_option(initial_theme,force=True)
                 if not initially_open and fold.evaluate('el=>el.open'):
                     fold.locator('summary').click()
+
+        if has_reports:
+            check_filter_placement(page, record)
 
         # Layout checks include classic Windows scrollbars (clientWidth, not innerWidth).
         for width, height in [(1440, 1000), (768, 1024), (390, 844), (320, 568)]:

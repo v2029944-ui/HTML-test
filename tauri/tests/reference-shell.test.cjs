@@ -37,3 +37,17 @@ test('main change metric is read only and neighboring periods have a distinct he
  assert.match(html,/<h2 id="changesHeading">Изменения между соседними периодами<\/h2>/);
  assert.match(html,/<div class="changes-heading"><h2[^>]*>Значимые изменения<\/h2>/);
 });
+
+test('desktop compact scales match the picker and keep existing preference values', () => {
+  const context = {window:{}};
+  vm.runInNewContext(script, context);
+  const options = html.match(/<select id="appearanceSize">([\s\S]*?)<\/select>/)[1];
+  const values = Array.from(options.matchAll(/value="([^"]+)"/g), match => match[1]);
+  assert.deepEqual(values, ['80', '90', 'standard', 'large', 'xlarge']);
+  for (const value of values) {
+    assert.equal(vm.runInNewContext(`uiSizePreference(${JSON.stringify(value)})`, context), value);
+  }
+  assert.equal(vm.runInNewContext('uiSizePreference(null)', context), 'standard');
+  assert.equal(html.split('id="appVersion"').length - 1, 1);
+  assert.match(html, /id="onlineUpdates"[^>]*>[\s\S]*?Приложение и обновления<\/h2>\s*<span id="appVersion"/);
+});

@@ -8,7 +8,7 @@ function init(){
  const LIMIT=50,kinds={day:'День',week:'Неделя',month:'Месяц'},types={invalid:'Некорректное значение',skipped:'Пропуск строки',mismatch:'Расхождение',warning:'Предупреждение',missing:'Пропущен период',duplicate:'Повторный период',overlap:'Пересечение','empty-name':'Пустое название',import:'Импорт'};
  let generation=0,reportTicket=0,calendarTicket=0,qualityTicket=0,detailTicket=0;
  let reportIndex=0,qualityOffset=0;
- let year=null,calendarData=null,monthPoints=[],dayPoints=new Map(),selectedMonth=null;
+ let year=null,calendarData=null,monthPoints=[],dayPoints=new Map(),selectedMonth=null,calendarLoading=false;
  let sourcePath=null,sheets=[],review=null,options=null,importBusy=false,sourceTicket=0,parameterTicket=0;
  const button=(text,fn)=>{const b=el('button',text,'button secondary');b.type='button';b.addEventListener('click',fn);return b;};
  const activeWorkspace=()=>window.sharedWorkspace?.state?.mode==='shared'?window.sharedWorkspace.state.folder:null;
@@ -46,10 +46,11 @@ function init(){
   else root.append(wrap);
  }
  function reportFilter(extra={}){return {report_type:null,organization:null,from:null,to:null,...extra};}
- const reportPager=el('div',undefined,'unified-pager'),reportPageStatus=el('span','');
+ const reportPager=el('div',undefined,'reports-page-footer'),reportPageStatus=el('span','');
  reportPager.id='unifiedReportsPager';reportPageStatus.id='unifiedReportsPage';reportPageStatus.setAttribute('role','status');
  reportPager.append(reportPageStatus);$('reports').after(reportPager);
  window.sqlRowScroll.retire($('qualityPrev'),$('qualityNext'));
+ $('qualityPage').parentElement.className='reports-page-footer';
  async function reportOrgs(id,root,rev,index=0){
   const current=()=>UI.revision===rev&&root.isConnected;
   try{
@@ -67,7 +68,8 @@ function init(){
  function reportCard(r,rev){
   const card=el('section',undefined,'calendar-source');
   card.append(el('strong',(kinds[r.report_type]||r.report_type)+' · '+r.start+' — '+r.end),el('p','Excel: '+(r.source_name||'источник не сохранён')),el('p','Строк: '+show(r.rows)+' · Сумма: '+UI.fmt(r.amount,'amount')+' · Замечаний: '+show(r.warnings)));
-  const orgs=el('details'),list=el('p');orgs.append(el('summary','Подразделения ('+r.organizations+')'),list);let loaded=false;orgs.addEventListener('toggle',()=>{if(orgs.open&&!loaded){loaded=true;void reportOrgs(r.id,list,rev);}});card.append(orgs,qualityAction(r));
+  const actions=el('div',undefined,'report-card-actions');actions.append(qualityAction(r));
+  const orgs=el('details'),list=el('p');orgs.append(el('summary','Подразделения ('+r.organizations+')'),list);let loaded=false;orgs.addEventListener('toggle',()=>{if(orgs.open&&!loaded){loaded=true;void reportOrgs(r.id,list,rev);}});card.append(orgs,actions);
   if(api.nativeDeleteReport){let deleting=false;const action=button('Удалить отчёт',async()=>{
    if(deleting||UI.revision!==rev)return;deleting=true;action.disabled=true;
    try{if(await window.confirm('Удалить отчёт '+r.start+' — '+r.end+'?')!==true)return;
@@ -75,7 +77,7 @@ function init(){
     await api.nativeDeleteReport(rev,r.id);
      try{await UI.refresh();}catch(error){UI.notice?.('Отчёт удалён из SQLite, но не удалось обновить отображение: '+String(error.message||error)+'. Обновите данные.',true);}
    }catch(error){UI.notice?.('Не удалось удалить отчёт: '+String(error.message||error),true);}finally{deleting=false;action.disabled=false;}
-  });card.append(action);}
+  });actions.append(action);}
 
   if(r.shared_source_artifact)card.append(el('p','Сохранены общие замечания исходного файла; ссылка на отчёт хранения показана в таблице качества.','muted small'));
   return card;
@@ -115,7 +117,15 @@ function init(){
  }
  function monthName(n){return new Intl.DateTimeFormat('ru-RU',{month:'long',timeZone:'UTC'}).format(new Date(String(year).padStart(4,'0')+'-'+String(n+1).padStart(2,'0')+'-01T12:00:00Z'));}
  function monthBounds(n){const from=String(year).padStart(4,'0')+'-'+String(n+1).padStart(2,'0')+'-01';const end=new Date(from+'T12:00:00Z');end.setUTCMonth(end.getUTCMonth()+1,0);return [from,end.toISOString().slice(0,10)];}
- function clearDetails(focus){++detailTicket;$('calendarDetails').replaceChildren();selectedMonth=null;$('reportCalendar').querySelectorAll('button').forEach(b=>b.setAttribute('aria-expanded','false'));focus?.focus();}
+ function clearDetails(focus){++detailTicket;$('calendarDetails').replaceChildren();selectedMonth=null;$('reportCalendar').querySelectorAll('button').forEach(b=>b.setAttribute('aria-expanded','false'));focus?.focus({preventScroll:true});}
+ function setCalendarLoading(loading){
+  calendarLoading=loading;
+  $('reportCalendar').setAttribute('aria-busy',String(loading));
+  for(const [control,limit] of [[$('calendarPrev'),1],[$('calendarNext'),9998]]){
+   control.disabled=!Number.isSafeInteger(UI.revision)||year===limit;
+   control.setAttribute('aria-disabled',String(control.disabled||loading));
+  }
+ }
  async function readRollups(rev,from,to,granularity){
   const points=[];let after=null;
   do{const result=await api.nativeDailyRollup(rev,from,to,granularity,UI.snapshot.org_names,after,50);if(UI.revision!==rev)return [];if(!Array.isArray(result.points)||result.points.length>50)throw Error('Некорректная сводка календаря');points.push(...result.points);after=result.next_cursor;if(points.length>366)throw Error('Превышен размер календаря');}while(after);
@@ -123,13 +133,12 @@ function init(){
  }
  async function loadCalendar(){
   const rev=UI.revision,ticket=++calendarTicket;clearDetails();$('reportCalendar').replaceChildren();calendarData=null;dayPoints=new Map();monthPoints=[];
-  if(!Number.isSafeInteger(rev))return;
-  if(year===null)year=new Date().getUTCFullYear();calendarStatus(year+' год · загрузка…');$('calendarPrev').disabled=$('calendarNext').disabled=true;
+  if(!Number.isSafeInteger(rev)){setCalendarLoading(false);return;}
+  if(year===null)year=new Date().getUTCFullYear();calendarStatus(year+' год · загрузка…');setCalendarLoading(true);
   const from=String(year).padStart(4,'0')+'-01-01',to=String(year).padStart(4,'0')+'-12-31';
   try{const [headers,monthly,daily,annual]=await Promise.all([api.unifiedCalendar(rev,year),readRollups(rev,from,to,'month'),readRollups(rev,from,to,'day'),readRollups(rev,from,to,'year')]);
    if(!live(rev,ticket,calendarTicket))return;calendarData=headers;monthPoints=monthly;dayPoints=new Map(daily.map(p=>[p.start,p]));
    const y=annual[0];calendarStatus(year+' год'+(y?' · '+(y.complete?'Дневные итоги: ':'Дневные, доступная часть: ')+UI.fmt((y.complete?y.total:y.available_total)?.amount,'amount'):''));
-   $('calendarPrev').disabled=year<=1;$('calendarNext').disabled=year>=9998;
    for(let n=0;n<12;n++){
     const [start,end]=monthBounds(n),p=monthly.find(x=>x.start===start),days=headers.days.filter(x=>x.date>=start&&x.date<=end),warnings=days.reduce((s,d)=>s+d.warnings,0),loaded=days.filter(d=>d.day_reports>0).length;
     const complete=p?.complete===true,hasSources=days.length>0,kind=complete&&!warnings?'complete':p?.missing||warnings?'error':hasSources?'warn':'missing';
@@ -140,6 +149,7 @@ function init(){
     $('reportCalendar').append(b);
    }
   }catch(error){if(live(rev,ticket,calendarTicket)){calendarStatus(year+' год · Не удалось прочитать календарь: '+String(error.message||error));$('reportCalendar').replaceChildren();clearDetails();}}
+  finally{if(live(rev,ticket,calendarTicket))setCalendarLoading(false);}
  }
  async function sourceList(root,filter,rev,index=0){
   const token=detailTicket,current=()=>live(rev,token,detailTicket)&&root.isConnected;
@@ -161,7 +171,7 @@ function init(){
   for(let d=1;d<=Number(to.slice(8));d++){
    const date=from.slice(0,8)+String(d).padStart(2,'0'),point=dayPoints.get(date),header=calendarData.days.find(h=>h.date===date),exists=point?.available_reports>0;
    const b=button('',()=>{
-    detail.replaceChildren(el('h4',date),button('Закрыть подробности дня',()=>{detail.replaceChildren();b.focus();}));
+    detail.replaceChildren(el('h4',date),button('Закрыть подробности дня',()=>{detail.replaceChildren();b.focus({preventScroll:true});}));
     detail.append(el('p',point?.complete?'Полнота подтверждена':exists?'Доступна часть дневных данных; полнота не подтверждена.':'Дневной отчёт отсутствует. Это не нулевой показатель.'));
     if(exists)detail.append(el('p','Количество: '+UI.fmt((point.complete?point.total:point.available_total)?.count,'count')+' · Сумма: '+UI.fmt((point.complete?point.total:point.available_total)?.amount,'amount')));
     const list=el('div');detail.append(list);void sourceList(list,{from:date,to:date},rev);
@@ -171,7 +181,7 @@ function init(){
   root.append(grid,detail);
   for(const [type,title] of [['week','Недельные источники'],['month','Месячные источники']]){const group=el('details'),list=el('div');group.append(el('summary',title+' — отдельно от дневных итогов'),list);let loaded=false;group.addEventListener('toggle',()=>{if(group.open&&!loaded){loaded=true;const start=new Date(from+'T12:00:00Z');if(type==='week')start.setUTCDate(start.getUTCDate()-6);void sourceList(list,{from:start.toISOString().slice(0,10),to,report_type:type},rev);}});root.append(group);}
  }
- $('calendarPrev').addEventListener('click',()=>{if(year>1){year--;void loadCalendar();}});$('calendarNext').addEventListener('click',()=>{if(year<9998){year++;void loadCalendar();}});
+ $('calendarPrev').addEventListener('click',()=>{if(!calendarLoading&&year>1){year--;void loadCalendar();}});$('calendarNext').addEventListener('click',()=>{if(!calendarLoading&&year<9998){year++;void loadCalendar();}});
  // Canonical quality filters include native global search and source filename.
  let previewRead=Promise.resolve();
  const savedQualityPeriods=new Set();
@@ -326,8 +336,8 @@ function init(){
  function formatChanged(){
   const layout=$('importFormat').value,wide=layout==='daily-wide',kind=$('importType').value;
   const example={day:'два дня',week:'две недели',month:'два месяца'}[kind]||'два периода';
-  const separateLabel={day:'Свои показатели для каждого дня',week:'Свои показатели для каждой недели',month:'Свои показатели для каждого месяца'};
-  for(const option of $('importFormat').children)if(option.value==='legacy')option.textContent=separateLabel[kind]||'Свои показатели для каждого периода';
+  const separateLabel={day:'Свои для каждого дня',week:'Свои для каждой недели',month:'Свои для каждого месяца'};
+  for(const option of $('importFormat').children)if(option.value==='legacy')option.textContent=separateLabel[kind]||'Свои для каждого периода';
   if($('importLayoutSummary')&&!$('importLayoutSummary').hidden)layoutSummary(true);
   const hint=$('importLayoutHint');
   if(hint)hint.textContent=wide?'Названия работ указаны один раз слева. Например, за '+example+' справа идут две пары «Количество / Сумма». Если в файле один период без даты, укажите начало вручную.':layout==='legacy'?'За '+example+' в таблице два набора «Работа / Количество / Сумма». В каждом наборе могут быть свои работы.':'Посмотрите на заголовки Excel. Названия работ указаны один раз слева или повторяются для каждого периода?';

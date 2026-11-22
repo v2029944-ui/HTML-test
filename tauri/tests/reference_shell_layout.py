@@ -57,3 +57,66 @@ def check_shell_layout(page, *, headings=False, chart=False, folded=False):
         assert metrics['fields'], metrics
         assert all(f['space'] + 1 >= f['longest'] for f in metrics['fields']), metrics
     return metrics
+
+
+def check_filter_placement(page, record):
+    """Exercise the same report controls as a pinned bar and as a sidebar."""
+    placement = page.locator('#appearanceFilterPlacement')
+    size = page.locator('#appearanceSize')
+    fold = page.locator('#reportShell .filter-fold')
+    trigger = fold.locator(':scope > summary')
+    previous_size, previous_placement = size.input_value(), placement.input_value()
+    previous_open = fold.evaluate('el => el.open')
+    selector = '#reportShell .filter-content'
+    try:
+        page.set_viewport_size({'width':1440,'height':650})
+        placement.select_option('top',force=True)
+        # Leave the initially expanded controls in the document and scroll
+        # past them, just as someone reading the summary with the mouse would.
+        page.evaluate("window.scrollTo(0,0)")
+        if not fold.evaluate('el => el.open'):
+            trigger.click()
+        page.locator('#sharedHeader .main-nav button').first.focus()
+        page.evaluate('window.scrollTo(0,Math.min(560,document.documentElement.scrollHeight-innerHeight))')
+        page.wait_for_function("!!document.querySelector('#reportShell[data-auto-folded]')")
+        y = page.evaluate('scrollY')
+        assert y > 150
+        trigger.press('Enter')
+        page.wait_for_function("document.querySelector('.filter-fold').open")
+        assert abs(page.evaluate('scrollY') - y) <= 2
+        report_body = page.locator(selector).bounding_box()
+        assert 0 <= report_body['y'] < 160, report_body
+        assert (report_body['y'] + report_body['height']) <= 650, report_body
+        record('18-filter-top-open', fold, scroll=False)
+        trigger.press('Escape')
+        assert not fold.evaluate('el => el.open')
+        assert abs(page.evaluate('scrollY') - y) <= 2
+
+        placement.select_option('side',force=True)
+        scope = page.evaluate('JSON.stringify(window.referenceFilters.scope)')
+        for scale in ('80','90','standard','xlarge'):
+            size.select_option(scale,force=True)
+            page.wait_for_function('window.referenceFilters.atSide()')
+            page.evaluate('window.scrollTo(0,Math.min(560,document.documentElement.scrollHeight-innerHeight))')
+            page.wait_for_function("document.querySelector('#reportShell').getBoundingClientRect().top < 2")
+            sidebar = page.locator('#reportShell').bounding_box()
+            report = page.locator('#s1').bounding_box()
+            assert sidebar['x'] + sidebar['width'] <= report['x'] + 2, (scale,sidebar,report)
+            if scale == 'standard':
+                record('18-filter-side', fold, scroll=False)
+            reset = fold.locator('.filter-reset')
+            # Keyboard focus near the end scrolls the panel to its last action.
+            reset.focus()
+            bounds = reset.bounding_box()
+            assert 0 <= bounds['y'] < bounds['y'] + bounds['height'] <= 651, (scale,bounds)
+            assert page.evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1')
+        page.set_viewport_size({'width':720,'height':650})
+        page.wait_for_function('!window.referenceFilters.atSide()')
+        assert placement.input_value() == 'side'
+        assert page.evaluate('JSON.stringify(window.referenceFilters.scope)') == scope
+    finally:
+        size.select_option(previous_size,force=True)
+        placement.select_option(previous_placement,force=True)
+        page.evaluate('window.scrollTo(0,0)')
+        if fold.evaluate('el => el.open') != previous_open:
+            trigger.click()

@@ -189,7 +189,7 @@
 :scope {
   --ui-accent:#f5c542; --ui-accent-ink:#201b10; --ui-text:#eaf0f6; --ui-muted:#a8b5c4;
   --ui-bg:#10151b; --ui-surface:#1a212a; --ui-line:#35404d;
-  --gutter:clamp(16px,3.2vw,52px); --max:1480px;
+  --gutter:clamp(12px,2vw,32px); --max:1480px;
 }
 :scope,:scope {background:var(--ui-bg);color:var(--ui-text);font-family:Inter,system-ui,sans-serif}
 .screen {width:100%;max-width:100%;zoom:1;background:var(--ui-bg)!important;overflow:clip}
@@ -890,7 +890,7 @@
 
 
 #sharedHeader,#reportShell {width:100%;max-width:none;zoom:1}
-#reportShell {position:sticky;top:calc(-1 * var(--filter-scroll-away,0px));z-index:8;overflow:visible;background:var(--ui-bg)}
+#reportShell {position:sticky;top:0;z-index:8;overflow:visible;overflow-anchor:none;background:var(--ui-bg)}
 #reportShell>.report-filter {margin:0 auto;width:min(calc(100% - 2 * var(--gutter)),calc(var(--max) - 2 * var(--gutter)));border:1px solid var(--ui-line);border-radius:9px}
 #reportShell .filter-fold > summary {position:sticky;top:0;z-index:1;background:var(--ui-surface);border-radius:inherit}
 #reportShell .filter-fold summary {min-height:42px;padding-block:9px}
@@ -962,7 +962,55 @@
 #sheet::backdrop {background:#080b10b8}
 #refNative .ref-calendar-source {display:none!important}
 body:has(#refRoot)>footer {display:none}
-#refRoot:has(dialog:modal) #reportShell {position:static}
+/* The folded bar stays pinned. Opening it after scrolling must not change
+   the height of the report above the current reading position. */
+#reportShell:has(.filter-fold[open]):not([data-floating]):not(:has(.filter-content:focus-within)) {
+ top:calc(-1 * var(--filter-scroll-away,0px));
+}
+#reportShell[data-floating] {height:var(--filter-slot);pointer-events:none;background:transparent!important}
+#reportShell[data-floating]>.report-filter {position:absolute;inset:0 0 auto;pointer-events:auto}
+#reportShell .filter-content {
+ max-height:calc(min(46dvh, 100dvh - 64px) / var(--filter-zoom,1));
+ overflow:auto;overscroll-behavior:contain;scroll-padding-block:8px;
+}
+@media screen and (min-width:1280px) {
+ #refRoot[data-filter-placement="side"] {
+  display:grid;grid-template-columns:clamp(300px,23vw,360px) minmax(0,1fr);
+  grid-template-rows:auto auto auto auto auto;align-content:start;
+  max-width:calc(var(--max) + 360px);margin-inline:auto;
+ }
+ #refRoot[data-filter-placement="side"]>#appUpdateNotice {grid-area:1 / 1 / 2 / -1}
+ #refRoot[data-filter-placement="side"]>#sharedHeader {grid-area:2 / 1 / 3 / -1}
+ #refRoot[data-filter-placement="side"]>.desktop-notices {grid-area:3 / 1 / 4 / -1}
+ #refRoot[data-filter-placement="side"]>#reportShell {
+  --filter-at-side:1;top:0;grid-area:4 / 1 / 6 / 2;align-self:start;
+  padding:8px 0 0 var(--gutter);width:auto;min-width:0;
+ }
+ #refRoot[data-filter-placement="side"]>:is(#s1,#s2) {grid-area:4 / 2 / 5 / 3;min-width:0}
+ #refRoot[data-filter-placement="side"]>.tools-layout {grid-area:5 / 2 / 6 / 3;min-width:0}
+ #refRoot[data-filter-placement="side"] #reportShell>.report-filter {width:100%}
+ #refRoot[data-filter-placement="side"] #reportShell summary {
+  flex-wrap:wrap;gap:4px 8px;padding:9px 12px;
+ }
+ #refRoot[data-filter-placement="side"] #reportShell .filter-summary {
+  order:1;flex:0 0 100%;overflow-wrap:anywhere;
+ }
+ #refRoot[data-filter-placement="side"] #reportShell .filter-content {
+  display:flex;flex-direction:column;gap:14px;padding:12px;
+  max-height:calc((100dvh - var(--filter-top-gap,0px) - var(--filter-heading-height,48px) - 16px) / var(--filter-zoom,1));
+ }
+ #refRoot[data-filter-placement="side"] #reportShell :is(.filter-periods,.filter-options,.report-dates) {
+  display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto;gap:9px;
+ }
+ #refRoot[data-filter-placement="side"] #reportShell .filter-periods>.lbl {min-width:0}
+ #refRoot[data-filter-placement="side"] #reportShell .report-date-card {
+  grid-row:auto;display:flex;flex-direction:column;gap:5px;min-width:0;
+ }
+ #refRoot[data-filter-placement="side"] #reportShell .filter-shortcuts {
+  display:flex;flex-direction:column;align-items:stretch;gap:10px;
+ }
+ #refRoot[data-filter-placement="side"] #reportShell .filter-reset {align-self:start}
+}
 #refRoot .head-tools .source-state {white-space:normal;max-width:20ch}
 #toolsPage {scroll-margin-top:70px}
 @media print {
@@ -1007,6 +1055,16 @@ body:has(#refRoot)>footer {display:none}
 }
 #refRoot[data-ui-size="large"] :is(#sharedHeader,#reportShell,#s1,#s2) {zoom:1.12}
 #refRoot[data-ui-size="xlarge"] :is(#sharedHeader,#reportShell,#s1,#s2) {zoom:1.25}
+@media screen {
+  html[data-ui-size="80"] {--desktop-ui-scale:.8}
+  html[data-ui-size="90"] {--desktop-ui-scale:.9}
+  html:is([data-ui-size="80"],[data-ui-size="90"]) body > #chartTooltip {
+    transform:scale(var(--desktop-ui-scale));transform-origin:top left;
+  }
+  #refRoot:is([data-ui-size="80"],[data-ui-size="90"]) :is(#sharedHeader,#reportShell,#s1,#s2,.tools-layout,#sheet,.period-calendar,.update-notes,.update-notice,.desktop-notices) {
+    zoom:var(--desktop-ui-scale);
+  }
+}
 
 /* Catalog controls precede the bounded list; keep row actions compact. */
 #groupCatalog .catalog-controls {display:grid;gap:12px;margin:14px 0}

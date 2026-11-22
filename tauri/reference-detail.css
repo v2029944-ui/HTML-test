@@ -15,6 +15,9 @@
 #refNative[data-panel] #advancedAnalytics {margin:0;padding:0;border:0;background:transparent}
 #refNative[data-panel] :is(.view,.panel,.sectionbar,.chart-wrap,.extended-filters,.import-controls,.table-scroll) {min-width:0;max-width:100%}
 #refNative[data-panel] .panel {box-shadow:none;margin:0 0 14px;border:1px solid var(--border);border-radius:var(--radius-panel,14px);background:var(--surface);color:var(--text)}
+#refNative .chart-period-notices {margin-block:5px 10px;color:var(--warning)}
+#refNative .chart-period-notices summary {cursor:pointer}
+#refNative .chart-period-notices ul {margin-block:6px;padding-inline-start:22px;color:var(--text)}
 #refNative[data-panel] .view.active {display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
 #refNative[data-panel] .view.active > .panel {margin:0}
 #refNative[data-panel] :is(button,select,input,label,summary) {overflow-wrap:anywhere}
@@ -157,3 +160,64 @@
 #refNative #databases p {overflow-wrap:anywhere}
 #refNative #databases [hidden] {display:none!important}
 #refNative .database-help summary {cursor:pointer}
+
+/* WebView2's customizable select leaves the selected text at the start of a
+   block-sized field. Align its native content while retaining the option picker. */
+@supports (appearance:base-select) {
+  #refRoot select:not([multiple],[size],[hidden],.ref-calendar-source) {
+    display:inline-flex;align-items:center;padding-block:0;padding-inline-end:2.4em;
+  }
+}
+
+/* The parameter card can be half the window beside a preview. Use the width
+   of the card when arranging controls and align the caption and field rows. */
+@media (min-width:1000px) {
+  #refNative .upload-layout:not(:has(#importPreview:not(:empty))) {
+    grid-template-columns:minmax(0,1fr) minmax(0,2fr);
+  }
+}
+#refNative #uploadParameterCard {container:upload-parameters / inline-size}
+#uploadParameterCard > .import-grid {
+  grid-template-columns:minmax(0,1fr);row-gap:var(--field-gap);
+}
+#refNative #uploadParameterCard > .import-grid > label:not([hidden]),
+#uploadParameterCard .import-layout-control,
+#uploadParameterCard #importLayoutLabel:not([hidden]),
+#uploadParameterCard #importLayoutSummary:not([hidden]) {
+  display:grid;grid-template-rows:subgrid;align-items:start;row-gap:var(--field-gap);
+}
+#uploadParameterCard > .import-grid > :is(label,.import-layout-control) {grid-row:span 3}
+#uploadParameterCard :is(#importLayoutLabel,#importLayoutSummary) {grid-row:span 2}
+#uploadParameterCard #importLayoutLabel {
+  font-size:var(--label-size);font-weight:600;line-height:var(--label-leading);
+}
+#uploadParameterCard :is(label > select,label > input,#importLayoutHint) {
+  margin:0;width:100%;min-width:0;
+}
+@supports (appearance:base-select) {
+  #refNative #uploadParameterCard :is(#importFormat,#sheetSelect) {
+    white-space:normal;overflow-wrap:anywhere;height:auto;min-height:var(--control-height);
+    padding-block:.35em;
+  }
+}
+@container upload-parameters (min-width:30rem) {
+  #uploadParameterCard > .import-grid {grid-template-columns:minmax(0,1fr) minmax(0,1.25fr)}
+}
+@container upload-parameters (min-width:60rem) {
+  #uploadParameterCard > .import-grid {grid-template-columns:minmax(0,.8fr) minmax(0,1.45fr) repeat(2,minmax(0,1fr))}
+}
+
+#refNative #unifiedUploadNav {padding-inline:clamp(10px,1.25vw,18px);gap:8px}
+#refNative .calendar-source {display:grid;gap:.45rem;padding-block:.8rem}
+#refNative .calendar-source p {margin:0;font-size:.9rem;overflow-wrap:anywhere}
+#refNative .report-card-actions {display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin-top:.15rem}
+#refNative .reports-page-footer {margin-top:.65rem}
+#refNative .reports-page-footer > span:empty {display:none}
+
+#refNative #qualityTable table {width:100%;border-collapse:collapse;font-size:.875rem;line-height:1.45}
+#refNative #qualityTable caption {padding-block:.5rem;color:var(--muted);font-weight:600}
+#refNative #qualityTable :is(th,td) {padding:.5em .65em;border-bottom:1px solid var(--border)}
+#refNative #qualityTable :is(th,td:first-child) {white-space:nowrap}
+#refNative #qualityTable :is(td:nth-child(4),td:nth-child(6),td:last-child) {overflow-wrap:anywhere}
+#refNative #qualityTable td:nth-child(4) {min-width:12ch}
+#refNative #qualityTable td:last-child {min-width:18ch}

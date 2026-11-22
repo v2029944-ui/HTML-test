@@ -79,11 +79,11 @@ test('generated year helpers use calendar bounds, year labels and Russian plural
 });
 test('generated drawChart uses pointNotice at missing points as safe text and retains fallback',()=>{
  class Node{
-  constructor(tag){this.tagName=tag;this.children=[];this.textContent='';this.style={setProperty(){}};this.dataset={};this.clientWidth=500;}
+  constructor(tag){this.tagName=tag;this.children=[];this.textContent='';this.style={setProperty(){}};this.dataset={};this.attributes={};this.clientWidth=1640;}
   append(...nodes){this.children.push(...nodes);}
   replaceChildren(...nodes){this.children=nodes;}
   contains(){return false;}
-  setAttribute(){}
+  setAttribute(key,value){this.attributes[key]=String(value);}
  }
  const document={activeElement:null,createElement:tag=>new Node(tag),createElementNS:(_,tag)=>new Node(tag)};
  const {script}=require('../unified-build.cjs').buildUnified(original),context={window:{},document};vm.runInNewContext(script,context);
@@ -92,10 +92,19 @@ test('generated drawChart uses pointNotice at missing points as safe text and re
  const seen=[],message='Неполные данные: пропусков 4 <img src=x>';
  O.drawChart(periods,new Set(['А','Б']),'count',root,{categories:['work:one'],data:[null,null],pointNotice:i=>{seen.push(i);return i===0?message:null;}});
  const all=node=>[node,...node.children.flatMap(all)],nodes=all(root);
- assert.deepEqual(seen,[0,1]);assert.ok(nodes.some(n=>n.tagName==='text'&&n.textContent===message));assert.ok(nodes.some(n=>n.tagName==='text'&&n.textContent==='Нет отчёта'));assert.ok(!nodes.some(n=>n.tagName==='img'));
+ assert.deepEqual(seen,[0,1]);
+ assert.equal(nodes.find(n=>n.tagName==='svg').attributes.viewBox,'0 0 1640 280');
+ const markers=nodes.filter(n=>n.tagName==='text'&&n.dataset.chartTooltip);
+ assert.equal(markers.length,2);
+ assert.ok(markers.every(n=>n.textContent==='!'&&n.attributes.tabindex==='0'&&n.attributes['aria-label']===n.dataset.chartTooltip));
+ const notes=all(nodes.find(n=>n.tagName==='details')).filter(n=>n.tagName==='li');
+ assert.deepEqual(notes.map(n=>n.textContent),['2023 · '+message,'2024 · Нет отчёта']);
+ assert.deepEqual(markers.map(n=>n.dataset.chartTooltip),notes.map(n=>n.textContent));
+ assert.ok(!nodes.some(n=>n.tagName==='img'));
  assert.ok(!nodes.some(n=>n.tagName==='text'&&n.textContent==='Пропуск'),'adjacent years must not show a synthetic gap');
- O.drawChart(periods,new Set(['А']),'count',root,{categories:['work:one'],data:[null,null],pointNotice:()=>({unsafe:'object'})});
- assert.equal(all(root).filter(n=>n.tagName==='text'&&n.textContent==='Нет отчёта').length,2);
+ O.drawChart(periods,new Set(['А']),'count',root,{categories:['work:one'],data:[new Map([['work:one',{count:0}]]),null],pointNotice:()=>({unsafe:'object'})});
+ assert.equal(all(root).filter(n=>n.tagName==='li'&&n.textContent==='2024 · Нет отчёта').length,1);
+ assert.equal(all(root).filter(n=>n.tagName==='circle').length,1,'Only the confirmed zero has a chart point');
 });
 test('generated original presentation uses quantity/volume terminology, standalone HTML remains unchanged',()=>{
  const {html,script}=require('../unified-build.cjs').buildUnified(original);

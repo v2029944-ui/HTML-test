@@ -364,6 +364,21 @@ def check_runtime(page):
     expected_version=json.loads((ROOT/'tauri/package.json').read_text(encoding='utf-8'))['version']
     wait_for_text(page,'#appVersion','Версия '+expected_version)
     navigate(page,'storage')
+    expect(page.locator('#onlineUpdates #appVersion')).to_have_text('Версия '+expected_version)
+    scale = page.locator('#appearanceSize')
+    scale.select_option('standard')
+    targets = page.locator('#refSettings, #checkAppUpdate')
+    assert targets.count() == 2
+    heights = 'nodes => nodes.map(node => node.getBoundingClientRect().height)'
+    standard = targets.evaluate_all(heights)
+    assert min(standard) > 0
+    for percent in (90, 80):
+        scale.select_option(str(percent))
+        expect(page.locator('#refRoot')).to_have_attribute('data-ui-size', str(percent))
+        assert page.evaluate("localStorage.getItem('work-reports-ui-size-v1')") == str(percent)
+        for actual, baseline in zip(targets.evaluate_all(heights), standard):
+            assert abs(actual - baseline * percent / 100) <= 1, (percent, actual, baseline)
+    scale.select_option('standard')
     page.locator('#appearanceTheme').select_option('dark')
     page.locator('#appearancePalette').select_option('paper')
     page.locator('#appearanceDesign').select_option('compact')
