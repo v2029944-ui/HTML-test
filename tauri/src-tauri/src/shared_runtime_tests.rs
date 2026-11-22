@@ -46,7 +46,10 @@ fn personal_and_empty_team_are_independent_and_stale_tokens_cannot_cross_modes()
         })
         .unwrap();
     assert_eq!(runtime.status().unwrap().generation, Some(1));
-    let personal = runtime.disconnect().unwrap();
+    assert!(runtime.disconnect(Some(&personal.workspace_token)).is_err());
+    assert_eq!(runtime.status().unwrap().mode, "shared");
+    let current = runtime.status().unwrap();
+    let personal = runtime.disconnect(Some(&current.workspace_token)).unwrap();
     assert_eq!(
         read(&runtime, &personal.workspace_token)["reports"][0]["id"],
         "personal"
@@ -155,7 +158,7 @@ fn selected_share_offline_at_restart_never_falls_back_to_personal_and_reconnects
         .as_array()
         .unwrap()
         .is_empty());
-    let personal = restarted.disconnect().unwrap();
+    let personal = restarted.disconnect(Some(&recovered.workspace_token)).unwrap();
     assert_eq!(
         read(&restarted, &personal.workspace_token)["reports"][0]["id"],
         "personal"

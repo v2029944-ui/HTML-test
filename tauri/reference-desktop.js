@@ -6,9 +6,9 @@
     chartPanel: 'Динамика', structurePanel: 'Состав работ', comparison: 'Сравнение',
     usualPanel: 'Отклонения', regularityPanel: 'Частота',
     overviewPanel: 'Итоги и рейтинги', changes: 'Соседние периоды',
-    upload: 'Отчёты', groups: 'Группы работ', storage: 'Настройки'
+    upload: 'Отчёты', groups: 'Группы работ', databases: 'Базы данных', storage: 'Настройки'
   };
-  const management = ['upload', 'groups', 'storage'];
+  const management = ['upload', 'groups', 'databases', 'storage'];
   let active = 's1', panel = '', panelOpener = null, dialogOpener = null;
   let returnPanel = null;
   function button(text, action) {

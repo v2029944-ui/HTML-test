@@ -1298,6 +1298,9 @@ async fn native_export_range_csv(
     .map_err(|error| error.to_string())?
 }
 
+#[derive(Default)]
+struct LastBackup(std::sync::Mutex<Option<(std::path::PathBuf, std::path::PathBuf)>>);
+
 #[tauri::command]
 async fn native_backup_sqlite(
     app: tauri::AppHandle,
@@ -1313,12 +1316,42 @@ async fn native_backup_sqlite(
                 if destination.len() > 32767 {
                     return Err("Backup destination is too long".to_string());
                 }
-                routed_storage.backup_sqlite_verified(std::path::Path::new(&destination))
+                let path = std::path::PathBuf::from(destination);
+                let parent = path.parent().ok_or("У файла копии нет папки.")?
+                    .canonicalize().map_err(|error| error.to_string())?;
+                let last = app.state::<LastBackup>();
+                let mut saved = last.0.lock().map_err(|e| e.to_string())?;
+                let revision = routed_storage.backup_sqlite_verified(&path)?;
+                *saved = Some((path, parent));
+                Ok(revision)
             },
         )
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn native_open_backup_folder(app: tauri::AppHandle, destination: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let last = app.state::<LastBackup>();
+        let saved = last.0.lock().map_err(|e| e.to_string())?;
+        let (file, directory) = saved.as_ref().ok_or("Сначала сохраните копию базы.")?;
+        if file.as_path() != std::path::Path::new(&destination) ||
+            !file.symlink_metadata().is_ok_and(|meta| meta.is_file()) ||
+            file.canonicalize().map_err(|e| e.to_string())?.parent() != Some(directory.as_path()) {
+            return Err("Проверенная копия перемещена или больше недоступна.".into());
+        }
+        tauri_plugin_opener::open_path(directory.as_path(), None::<&str>).map_err(|e| e.to_string())
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn native_restore_pending(app: tauri::AppHandle, workspace_token: Option<String>) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::native_shared_runtime::execute(&app, workspace_token.as_deref(),
+            storage::shared_runtime::Access::PersonalOnly, |store| store.restore_is_pending())
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1378,6 +1411,7 @@ async fn native_restore_schedule(
     app: tauri::AppHandle,
     source: String,
     verification: String,
+    revision: Option<i64>,
     workspace_token: Option<String>,
 ) -> Result<storage::ScheduledRestore, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -1388,6 +1422,11 @@ async fn native_restore_schedule(
             |routed_storage| {
                 if source.len() > 32767 {
                     return Err("Слишком длинный путь к резервной копии.".into());
+                }
+                if let Some(expected) = revision {
+                    if routed_storage.revision()? != expected {
+                        return Err("Личная база изменилась. Проверьте копию ещё раз.".into());
+                    }
                 }
                 routed_storage.schedule_restore(std::path::Path::new(&source), &verification)
             },
@@ -1705,6 +1744,7 @@ fn main() {
                 .unwrap_or(private_root);
             let runtime = storage::shared_runtime::Runtime::with_cache(root.clone(), private_root)
                 .map_err(std::io::Error::other)?;
+            app.manage(LastBackup::default());
             app.manage(lease);
             app.manage(runtime);
             app.manage(storage::RestoreLaunchInfo(restored));
@@ -1832,6 +1872,8 @@ fn main() {
             native_analysis_range_page,
             native_export_range_csv,
             native_backup_sqlite,
+            native_open_backup_folder,
+            native_restore_pending,
             native_restore_preview,
             native_restore_copy,
             native_restore_schedule,

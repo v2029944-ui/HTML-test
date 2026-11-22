@@ -298,9 +298,8 @@ def native_select(client, path, kind, step):
 def connect_shared(client, folder, *, cancel_first=False):
     page = client.page
     navigate(page, 'upload')
-    panel = page.locator('#sharedWorkspacePanel')
-    if not panel.evaluate('element => element.open'):
-        panel.locator('summary').click()
+    page.locator('#sharedWorkspaceShortcut').click()
+    expect(page.locator('#refNative')).to_have_attribute('data-panel', 'databases')
     trigger = page.locator('#sharedWorkspaceConnect')
     if cancel_first:
         before = client.state()
@@ -447,6 +446,12 @@ def run():
                     client.page.screenshot(path=str(output / ('shared-smb-' + client.name + '-reopened.png')))
                 assert generations(folder) == committed, 'Reopen modified an immutable shared generation'
                 note('both-clients-reopened-in-persisted-shared-workspace', writer=a.state(), reader=b.state())
+                navigate(b.page, 'databases')
+                b.confirmations.cancel_then_accept(b.page.locator('#sharedWorkspaceDisconnect'),
+                    'Перейти в личную базу на этом компьютере? Отчёты останутся в своих базах. Автоимпорт из папки в этом сеансе остановится.')
+                b.page.wait_for_function("window.sharedWorkspace.state?.mode==='personal' && window.unifiedUI.snapshot?.reports===0")
+                assert a.state()['mode']=='shared' and generations(folder)==committed
+                note('reader-returned-to-original-empty-personal-base')
         # windows_test_workspace has now released its profile-specific workers.
         for port in (9231, 9232, 9234, 9235):
             wait_for_webview_shutdown(port)

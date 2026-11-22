@@ -288,6 +288,8 @@
       return nativePicker('save',{title:'Сохранить резервную копию SQLite',defaultPath,filters:[{name:'База SQLite',extensions:['sqlite3']}]});
     },
     nativeBackupSqlite:destination=>tracked('native_backup_sqlite',{destination},'saves'),
+    nativeOpenBackupFolder:destination=>tracked('native_open_backup_folder',{destination},'reads'),
+    nativeRestorePending:()=>tracked('native_restore_pending',{},'reads'),
     chooseRestoreBackupPath:async()=>{
       if(operations.updating)throw Error('Дождитесь завершения обновления программы.');
       return nativePicker('open',{multiple:false,directory:false,title:'Проверить резервную копию SQLite',filters:[{name:'База SQLite',extensions:['sqlite3']}]});
@@ -299,8 +301,8 @@
     nativeRestorePreview:source=>tracked('native_restore_preview',{source},'reads'),
     nativeRestoreCopy:(source,verification,destination)=>tracked(
       'native_restore_copy',{source,verification,destination},'saves'),
-    nativeRestoreSchedule:(source,verification)=>tracked(
-      'native_restore_schedule',{source,verification},'saves'),
+    nativeRestoreSchedule:(source,verification,revision)=>tracked(
+      'native_restore_schedule',revision===undefined?{source,verification}:{source,verification,revision},'saves'),
     nativeRestoreLaunchInfo:()=>tracked('native_restore_launch_info',{},'reads'),
     nativeRestoreCancel:()=>tracked('native_restore_cancel',{},'saves'),
     nativeMetricKinds:()=>tracked('native_metric_kinds',{},'reads'),

@@ -336,8 +336,11 @@ impl Runtime {
         state.token = token();
         Ok(Self::snapshot(&state))
     }
-    pub fn disconnect(&self) -> Result<WorkspaceStatus, String> {
+    pub fn disconnect(&self, expected: Option<&str>) -> Result<WorkspaceStatus, String> {
         let mut state = self.state.lock().map_err(err)?;
+        if Some(state.token.as_str()) != expected {
+            return Err("Выбранная база изменилась. Повторите переключение.".into());
+        }
         if state.pending.is_some() {
             return Err("Сначала подтвердите подготовленную публикацию общей базы.".into());
         }

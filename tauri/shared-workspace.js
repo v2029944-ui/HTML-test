@@ -4,7 +4,6 @@
   const raw = (name, args = {}) => window.__TAURI__.core.invoke(name, args);
   let state = null, bootstrap = null, ready = false, timer = null, busy = false;
   const statusMessage = error => window.analizUserError ? window.analizUserError(error) : error?.message || String(error);
-  const personal = 'Личная база на этом компьютере.';
 
   function accepted(result) {
     if (!result || !['personal','shared'].includes(result.mode) || typeof result.workspace_token !== 'string' ||
@@ -39,15 +38,20 @@
         !state.available ? 'Связь с общей базой отсутствует' : 'Общая база подключена';
       label = connection + ' · ' + state.folder +
         (Number.isSafeInteger(state.generation) ? ' · версия ' + state.generation : '');
-    } else label = state ? personal : 'Не удалось определить активную базу.';
+    } else label = state ? 'Общая папка не подключена.' : 'Не удалось определить активную базу.';
     const mode = node('sharedWorkspaceMode');
     const summary = state?.mode === 'personal' ? 'Личная база' :
       state?.pending ? 'Общая база · сохранение ожидает отправки' :
       state?.mode === 'shared' ? (state.available ? 'Общая база подключена' : 'Общая база недоступна') : 'База не определена';
-    if (mode.textContent !== summary) {
-      mode.textContent = summary;
-      if (!state?.available || state.pending) node('sharedWorkspacePanel').open = true;
-    }
+    mode.textContent = summary;
+    const shared = state?.mode === 'shared', local = state?.mode === 'personal';
+    node('personalDatabaseCard').dataset.selected = String(local);
+    node('sharedDatabaseCard').dataset.selected = String(shared);
+    node('personalDatabaseSelection').textContent = local ? '✓ Используется сейчас' : '';
+    node('sharedDatabaseSelection').textContent = shared ? '✓ Используется сейчас' : '';
+    node('sharedWorkspaceDisconnect').hidden = !shared;
+    node('sharedWorkspaceDisconnect').disabled = busy || Boolean(state?.pending);
+    node('sharedWorkspaceConnect').textContent = shared ? 'Выбрать другую общую папку' : 'Подключить общую папку';
     if (status.textContent !== label) status.textContent = label;
     const detail = error || (state?.error ? statusMessage(state.error) : '');
     if (message.textContent !== detail) message.textContent = detail;
@@ -102,7 +106,7 @@
   }
 
   async function connect() {
-    if (busy || window.tauriOperations?.updating) return;
+    if (busy || !state || state.pending || window.tauriOperations?.updating || window.tauriOperations?.saves) return;
     busy = true;
     render();
     let error = '';
@@ -112,6 +116,22 @@
       if (state?.mode === 'shared' && !state.available) window.nativeFolderAutoImport?.forgetWorkspaceSession();
       else await window.nativeFolderAutoImport?.stopForWorkspaceChange();
       const result = await raw('shared_workspace_connect', {folder: path});
+      await apply(result, true);
+    } catch (failure) { error = statusMessage(failure); }
+    finally { busy = false; render(error); schedule(); }
+  }
+
+  async function disconnect() {
+    if (busy || state?.mode !== 'shared' || state.pending || window.tauriOperations?.updating || window.tauriOperations?.saves) return;
+    busy = true;
+    render();
+    const token = state.workspace_token;
+    let error = '';
+    try {
+      if (!await window.confirm('Перейти в личную базу на этом компьютере? Отчёты останутся в своих базах. Автоимпорт из папки в этом сеансе остановится.')) return;
+      if (state.available) await window.nativeFolderAutoImport?.stopForWorkspaceChange();
+      else window.nativeFolderAutoImport?.forgetWorkspaceSession();
+      const result = await raw('shared_workspace_disconnect', {workspaceToken: token});
       await apply(result, true);
     } catch (failure) { error = statusMessage(failure); }
     finally { busy = false; render(error); schedule(); }
@@ -135,12 +155,9 @@
   async function init() {
     if (ready) return;
     ready = true;
-    node('sharedWorkspaceShortcut').addEventListener('click', () => {
-      window.referenceDesktop.openPanel('upload');
-      node('sharedWorkspacePanel').open = true;
-      node('sharedWorkspaceHeading').focus();
-      node('sharedWorkspaceHeading').scrollIntoView({block:'nearest'});
-    });
+    node('sharedWorkspaceShortcut').addEventListener('click', event =>
+      window.referenceDesktop.openPanel('databases', event.currentTarget));
+    node('sharedWorkspaceDisconnect').addEventListener('click', disconnect);
     node('sharedWorkspaceConnect').addEventListener('click', connect);
     node('sharedWorkspaceDiscard').addEventListener('click', discard);
     node('sharedWorkspaceRetry').addEventListener('click', () => check(true));
