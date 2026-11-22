@@ -16,8 +16,9 @@
             ${If} $3 >= 0
               ${If} $2 == ""
               ${OrIf} $2 == "$INSTDIR\${MAINBINARYNAME}.exe"
+              ${OrIf} $2 == "$INSTDIR\analysis-bars-blue.ico"
                 ${If} $4 = 0
-                  ${IShellLink::SetIconLocation} $0 '(w "$INSTDIR\analysis-bars-blue.ico",0).r3'
+                  ${IShellLink::SetIconLocation} $0 '(w "$INSTDIR\analysis-reports.ico",0).r3'
                   ${If} $3 = 0
                     ${IPersistFile::Save} $1 '(w "${shortcut}",1).r3'
                     ${If} $3 = 0

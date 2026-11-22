@@ -28,15 +28,15 @@
       "nsis"
     ],
     "icon": [
-      "icons/icon.ico"
+      "branding/analysis-reports.ico"
     ],
     "resources": {
-      "icons/icon.ico": "analysis-bars-blue.ico"
+      "branding/analysis-reports.ico": "analysis-reports.ico"
     },
     "windows": {
       "nsis": {
         "installerHooks": "windows-installer.nsh",
-        "installerIcon": "icons/icon.ico"
+        "installerIcon": "branding/analysis-reports.ico"
       }
     }
   },
