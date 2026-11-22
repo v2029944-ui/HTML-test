@@ -44,6 +44,9 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     assert before['reports'] == 0, 'This acceptance requires an isolated empty database'
     previous = api(page, 'list')['folder']
     navigate(page, 'upload')
+    expect(page.locator('#unifiedUploadImport')).to_have_attribute('aria-pressed', 'true')
+    expect(page.locator('#uploadReviewCard')).to_be_hidden()
+    expect(page.locator('#unifiedImportStatus')).to_be_empty()
     listing = set_folder(page, folder, [p.name for p in folder.glob('*.xlsx')])
     assert len(listing['files']) == 101 and listing['files'][100]['name'] == book.name
     file = listing['files'][100]
@@ -53,6 +56,9 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     # The Windows file dialog can return a DOS path instead of the folder's verbatim path.
     # Start with this entry point before the folder row has populated any saved choices.
     dialogs = OwnedFileDialogs(confirmations)
+    page.locator('#uploadSourceFile').click()
+    expect(page.locator('#desktopSource')).to_be_hidden()
+    expect(page.locator('#uploadSourceFile')).to_have_attribute('aria-pressed', 'true')
     page.locator('#excelFile').click()
     title = 'Выберите XLSX для нативного импорта'
     hwnd, owner = dialogs.find(title)
@@ -68,17 +74,23 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     expect(page.locator('#sheetSelect')).to_be_enabled()
     page.locator('#importType').select_option('day')
     expect(page.locator('#importPreview')).to_be_empty()
+    page.locator('#uploadSourceFolder').click()
     page.locator('#sourceFolderRefresh').click()
     expect(page.locator('#sourceFolderRefresh')).to_be_enabled()
     wait_for_text(page, '#sourceFolderCount', '101')
     pager = page.locator('[data-sql-pager="sourceFolderRows"]')
     pager.locator('[data-page-action="choose"]').click()
+    # A file watcher may deliver another scan while the page picker is open.
+    page.evaluate('window.unifiedReports.refreshFolder()')
+    expect(pager.locator('[data-page-action="choose"]')).to_have_attribute('aria-expanded', 'true')
     pager.locator('[data-page-number="2"]').click()
     row = page.locator('#sourceFolderRows tr').filter(has_text=book.name)
     expect(row).to_be_visible()
+    expect(page.locator('#excelFile')).to_be_hidden()
+    expect(page.locator('#uploadSourceFolder')).to_have_attribute('aria-pressed', 'true')
     expect(page.locator('#sourceFolderRows tr')).to_have_count(1)
-    row.get_by_role('button', name='Проверить '+book.name, exact=True).click()
-    wait_for_text(page, '#excelFileStatus', book.name)
+    row.get_by_role('button', name='Открыть для проверки '+book.name, exact=True).click()
+    expect(page.locator('#uploadSelectedBook')).to_contain_text(book.name)
     expect(page.locator('#sheetSelect')).to_have_value('xl/worksheets/sheet2.xml')
     expect(page.locator('#importType')).to_have_value('week')
     expect(page.locator('#importWeek')).to_have_value(rule['start'])
@@ -160,13 +172,14 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     from test_daily_wide import wide_xlsx
     book.write_bytes(wide_xlsx(2024))
     navigate(page, 'upload')
+    page.locator('#uploadSourceFolder').click()
     page.locator('#sourceFolderRefresh').click()
     expect(page.locator('#sourceFolderRefresh')).to_be_enabled()
     pager = page.locator('[data-sql-pager="sourceFolderRows"]')
     pager.locator('[data-page-action="choose"]').click()
     pager.locator('[data-page-number="2"]').click()
     page.locator('#sourceFolderRows tr').filter(has_text=book.name).get_by_role(
-        'button', name='Проверить '+book.name, exact=True).click()
+        'button', name='Открыть для проверки '+book.name, exact=True).click()
     expect(page.locator('#importFormat')).to_have_value('daily-wide', timeout=90_000)
     expect(page.locator('#sheetSelect')).not_to_be_visible()
     page.locator('#inspectFile').click()
@@ -190,6 +203,5 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     invoke(page, 'set_folder', {'folder': previous})
     assert page.evaluate('window.unifiedUI.refresh()')['reports'] == 0
     navigate(page, 'upload')
-    if not page.locator('#desktopSource').evaluate('node=>node.open'):
-        page.locator('#desktopSource > summary').click()
+    page.locator('#uploadSourceFolder').click()
     page.locator('#sourceFolderRefresh').click()

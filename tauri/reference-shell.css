@@ -1046,3 +1046,41 @@ body:has(#refRoot)>footer {display:none}
  #referencePrintDocument tr {break-inside:avoid}
  #referencePrintDocument .num {text-align:right;font-variant-numeric:tabular-nums}
 }
+
+/* Selected management and report sections stay identifiable in every theme. */
+#refRoot #toolsPage .tool-tabs button[aria-pressed="true"],
+#refNative #unifiedUploadNav button[aria-pressed="true"],
+#refNative .upload-sources button[aria-pressed="true"] {
+ color:var(--on-accent);background:var(--accent-fill);border-color:var(--accent-fill);
+ font-weight:700;box-shadow:inset 0 -3px 0 currentColor;
+}
+#refNative .upload-layout {
+ display:grid;gap:16px;margin-block:18px;align-items:start;
+}
+#refNative .upload-layout>section {
+ min-width:0;padding:clamp(14px,2vw,22px);border:1px solid var(--border);
+ border-radius:var(--radius-control);background:var(--surface);
+}
+#refNative .upload-layout h3 {margin:0 0 12px}
+#refNative .upload-layout .upload-file-picker {grid-template-columns:minmax(0,24rem)}
+#refNative .upload-layout .import-grid {margin-block:12px}
+#refNative .upload-layout :is(#importAdvanced,#sourceRuleEditor) {margin-block:14px}
+#refNative #uploadReviewCard:not(:has(#importPreview:not(:empty))),
+#refNative #unifiedImportStatus:empty,#refNative #importDateEvidence:empty,
+#refNative .upload-layout [hidden] {display:none!important}
+#refNative #importPreview {min-height:0;margin:0 0 14px;padding:0;border:0;background:transparent}
+#refNative .upload-selected-book {font-weight:650;overflow-wrap:anywhere}
+#refNative #desktopSource {min-width:0;margin-block:12px}
+#refNative #sourceFolderLocation {overflow-wrap:anywhere}
+#refNative #desktopSource table {width:100%;text-align:left;border-collapse:collapse}
+#refNative #desktopSource :is(th,td) {padding:8px 12px;border-bottom:1px solid var(--border)}
+#refNative #desktopSource .source-file-actions .button {margin:3px 7px 3px 0;padding:7px 12px}
+#refNative #desktopSource .table-scroll {max-width:100%;overflow-x:auto}
+#refNative #uploadEntryCard:has(#desktopSource:not([hidden])) {grid-column:1/-1}
+@media(min-width:1000px){
+ #refNative .upload-layout {grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+ #refNative #uploadReviewCard {grid-column:1/-1}
+ #refNative .upload-layout:has(#desktopSource:not([hidden])) #uploadParameterCard {grid-column:1/-1}
+ #refNative .upload-layout:has(#importPreview:not(:empty)):has(#desktopSource[hidden]) #uploadReviewCard {grid-column:2;grid-row:1 / span 2}
+ #refNative .upload-layout:has(#importPreview:not(:empty)):has(#desktopSource[hidden]) #uploadParameterCard {grid-column:1;grid-row:2}
+}
