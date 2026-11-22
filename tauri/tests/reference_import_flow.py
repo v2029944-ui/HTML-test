@@ -80,6 +80,9 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     wait_for_text(page, '#sourceFolderCount', '101')
     pager = page.locator('[data-sql-pager="sourceFolderRows"]')
     pager.locator('[data-page-action="choose"]').click()
+    # A file watcher may deliver another scan while the page picker is open.
+    page.evaluate('window.unifiedReports.refreshFolder()')
+    expect(pager.locator('[data-page-action="choose"]')).to_have_attribute('aria-expanded', 'true')
     pager.locator('[data-page-number="2"]').click()
     row = page.locator('#sourceFolderRows tr').filter(has_text=book.name)
     expect(row).to_be_visible()

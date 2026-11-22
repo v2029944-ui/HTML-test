@@ -15,7 +15,7 @@ const fields={
 if(!choose||!refresh||!location||!status||!rows||!count||
    Object.values(fields).some(item=>!item))return;
 const maxVisible=100;
-let pageIndex=0,listedFiles=[],listedRules={};
+let pageIndex=0,listedFiles=[],listedRules={},pagerView=null;
 const pager=document.createElement('div');pager.id='sourceFolderPager';rows.parentElement?.after(pager);
 const autoEnabled=()=>window.nativeFolderAutoImport?.isEnabled()===true;
 const ruleEffect=()=>autoEnabled()
@@ -140,7 +140,12 @@ function renderFiles(){
       button.addEventListener('click',()=>openEditor(file,hasRule?listedRules[file.name]:null));
       action.append(inspect,button);tr.append(action);rows.append(tr);
     }
- window.sqlRowScroll.attach(rows,{index:pageIndex,size:maxVisible,count:rows.children.length,total:listedFiles.length,controlsOnly:true,footer:pager,label:'Страницы файлов Excel',go:index=>{if(busy||changing)return false;pageIndex=index;renderFiles();}});
+ // A filesystem notification can arrive while the user is choosing a page.
+ // Update row metadata on every scan, keeping the open chooser when its pages still apply.
+ if(!pagerView||pagerView.folder!==folder||pagerView.index!==pageIndex||pagerView.total!==listedFiles.length){
+   pagerView={folder,index:pageIndex,total:listedFiles.length};
+   window.sqlRowScroll.attach(rows,{index:pageIndex,size:maxVisible,count:rows.children.length,total:listedFiles.length,controlsOnly:true,footer:pager,label:'Страницы файлов Excel',go:index=>{if(busy||changing)return false;pageIndex=index;renderFiles();}});
+ }
  lock();
 }
 async function load(){

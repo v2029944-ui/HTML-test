@@ -253,3 +253,20 @@ test('one folder table pages beyond 100 and checks the actual 101st path without
  await x.nodes.sourceFolderRows.scrollWindow.go(1);assert.equal(x.nodes.sourceFolderRows.children.length,1);const row=x.nodes.sourceFolderRows.children[0];assert.equal(row.children[0].textContent,'report-100.xlsx');await row.children[3].children[0].events.click();assert.equal(x.calls.at(-1).source,folder+(folder.includes('\\')?'\\':'/')+'report-100.xlsx');assert.equal(x.calls.some(c=>c.kind==='rule'),false);
  }
 });
+
+test('rescanning a file preserves its page chooser while refreshing row metadata',async()=>{
+ const files=Array.from({length:101},(_,i)=>({name:i+'.xlsx',size:1024,nativeSignature:'sig',tooLarge:false}));
+ const listing={folder:'C:/reports',revision:1,files,rules:{}};
+ const x=mount({listing});await x.window.nativeFolderReady;
+ const rows=x.nodes.sourceFolderRows;
+ const picker=rows.scrollWindow;
+ files[0]={...files[0],size:2048,nativeSignature:'changed'};
+ await x.window.unifiedReports.refreshFolder();
+ assert.equal(rows.scrollWindow,picker);
+ assert.equal(rows.children[0].children[1].textContent,'2 КБ');
+ await picker.go(1);
+ assert.equal(rows.children[0].children[0].textContent,'100.xlsx');
+ files.pop();await x.window.unifiedReports.refreshFolder();
+ assert.equal(rows.scrollWindow.index,0);
+ assert.equal(rows.scrollWindow.total,100);
+});
