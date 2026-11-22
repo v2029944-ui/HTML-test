@@ -116,23 +116,6 @@ test('clear dialog shows the selected personal database and actual whole-databas
 test('organization rename validates exactly four names and backs up before native mutation',async()=>{const m=mount();m.snapshot(7);const inputs=m.nodes.organizationFields.querySelectorAll('input');inputs[0].value='Б';await m.nodes.saveOrganizations.fire();assert.equal(m.writes.length,0);assert.equal(m.messages.at(-1)[1],true);inputs[0].value='АА';m.setBackup('/org-backup.sqlite3');await m.nodes.saveOrganizations.fire();assert.deepEqual(JSON.parse(JSON.stringify(m.writes)),[['org',7,['АА','Б','В','Г'],'/org-backup.sqlite3']]);assert.equal(m.UI.state.reports.length,0);});
 test('group file import is previewed and hash-confirmed; cancelled picker and denial never write',async()=>{const m=mount();m.snapshot(7);await m.nodes.importGroups.fire();assert.equal(m.writes.length,0);m.setSource('/groups.json');m.setConfirm(false);await m.nodes.importGroups.fire();assert.equal(m.writes.length,0);m.setConfirm(true);await m.nodes.importGroups.fire();assert.deepEqual(m.writes,[['import',7,'/groups.json','hash',true]]);});
 
-test('backup verification remains read-only and does not render restore actions',async()=>{
- const m=mount();m.snapshot(7);
- const actions=()=>m.backupPanel.querySelectorAll('button').map(node=>node.textContent);
- for(const label of ['Создать отдельную восстановленную копию','Восстановить при следующем запуске','Отменить запланированное восстановление'])assert.equal(actions().includes(label),false);
- m.setSource('/backup.sqlite3');await m.nodes.importBackup.fire();
- assert.equal(m.writes.length,0);
- assert.match(m.backupPanel.children.find(n=>n.tagName==='p').textContent,/Копия проверена.*Рабочая база не изменена/);
- assert.equal(m.backupPanel.querySelectorAll('button').length,0);
-});
-test('backup verification reports invalid evidence without exposing a restore mutation',async()=>{
- const m=mount();m.snapshot(7);m.setSource('/bad.sqlite3');
- m.api.nativeRestorePreview=async()=>({verification:'invalid',reportCount:2});
- await m.nodes.importBackup.fire();
- assert.equal(m.writes.length,0);assert.match(m.messages.at(-1)[0],/целостность/);
- assert.equal(m.backupPanel.querySelectorAll('button').length,0);
-});
-
 test('audit uses whole-name SQL query, custom dates, scoped coverage and never moves unused group labels',async()=>{const m=mount(),calls=[];m.api.unifiedGroupAuditPage=async(...args)=>{calls.push(args);return {rows:[{key:'group:one',name:'Unused group',group:'9007199254740999',members:2,active:null}],total:1,coverage:{complete:false,periods:2,missing:1}};};m.snapshot(7);for(const fn of m.scopes)fn(m.UI.scope);m.nodes.groupAuditMode.value='unused';m.nodes.groupAuditFrom.value='2024-01-02';m.nodes.groupAuditTo.value='2024-01-20';m.nodes.groupAuditSearch.value='all search';m.nodes.groupAuditPanel.open=true;await m.nodes.groupAuditPanel.fire('toggle');await tick();assert.deepEqual(JSON.parse(JSON.stringify(calls[0])),[{revision:7,displayType:'day',source:'daily',organizations:['А'],selectedNames:[],selectedKeys:[],allNames:true,from:'2024-01-02',to:'2024-01-20'},'unused','all search',0,50]);assert.equal(m.nodes.groupAuditResults.querySelectorAll('select').length,0);assert.match(m.nodes.groupAuditCoverage.textContent,/Неполные данные/);});
 
 test('successful mutation followed by refresh failure clears stale rows and prevents duplicate writes',async()=>{const m=mount();m.snapshot(7);m.views.groups();await tick();m.UI.refresh=async()=>{throw Error('read failure');};m.setBackup('/safe.sqlite3');await confirmClear(m);assert.equal(m.writes.length,1);assert.equal(m.nodes.groupList.children.length,0);await m.nodes.clearReports.fire();assert.equal(m.writes.length,1);assert.match(m.messages.at(-1)[0],/Отчёты удалены.*Не удалось обновить/);});
@@ -209,13 +192,7 @@ test('all management destructive confirmations await native false promises',asyn
   const answer=deferred();m.setConfirm(answer.promise);const pending=action.fire();await tick();assert.equal(m.questions.length,1,name);assert.equal(m.writes.length,0,name+' wrote before answer');assert.equal(m.pickers.length,0,name+' opened destination before answer');answer.resolve(false);await pending;assert.equal(m.writes.length,0,name+' ignored denial');assert.equal(m.pickers.length,0,name+' opened destination after denial');
  }
 });
-test('canceling backup verification selection retains the previous read-only result',async()=>{
- const m=mount();m.snapshot(7);m.setSource('/A.sqlite3');await m.nodes.importBackup.fire();
- const status=m.backupPanel.children.find(n=>n.tagName==='p').textContent;
- m.setSource(null);await m.nodes.importBackup.fire();
- assert.equal(m.backupPanel.children.find(n=>n.tagName==='p').textContent,status);
- assert.equal(m.writes.length,0);assert.equal(m.backupPanel.querySelectorAll('button').length,0);
-});
+
 test('audit export captures the filter for all pages and rejects a stale destination choice',async()=>{
  const m=mount(),writes=[];m.api.unifiedGroupAuditPage=async()=>({rows:[],total:64,coverage:{complete:false}});
  m.api.chooseCsvPath=async()=>'/tmp/audit.csv';m.api.unifiedGroupAuditCsv=async(...args)=>writes.push(args);

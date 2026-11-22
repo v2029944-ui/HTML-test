@@ -5,7 +5,7 @@ let initialized=false;
 function init(){
  if(initialized)return;initialized=true;
  const U=window.unifiedUI,{api,$,el}=U,LIMIT=50;
- let revision=null,busy=false,active=false,editing=null,selected=new Set(),restore=null,editTicket=0;
+ let revision=null,busy=false,active=false,editing=null,selected=new Set(),editTicket=0;
  const controls=new Set(),pages=new Set(),memberPages=new Set();
  const valid=r=>Number.isSafeInteger(r)&&r===revision&&r===U.revision;
  async function confirmAction(expected,message){const accepted=await window.confirm(message);if(!valid(expected))throw Error('База изменилась. Повторите действие.');return accepted===true;}
@@ -167,9 +167,7 @@ function init(){
   })();
   if(!clearReports.disabled&&(!document.activeElement||document.activeElement===document.body))clearReports.focus({preventScroll:true});
  });
- bind('exportBackup',guard(async()=>{const destination=await api.chooseSqliteBackupPath('analiz-backup.sqlite3');if(!destination)return;await api.nativeBackupSqlite(destination);U.notice('Проверенная резервная копия SQLite сохранена.');}));
- $('exportBackup').title='Сохранить проверенную резервную копию SQLite';$('clearReports').title='Удалить загруженные отчёты после подтверждения';$('importBackup').accept='.sqlite3';const backupPanel=$('importBackup').parentNode.parentNode.parentNode,restoreStatus=el('p','','muted small');backupPanel.append(restoreStatus);function restoreMessage(text){restoreStatus.textContent=text;}
- file('importBackup',async()=>{const source=await api.chooseRestoreBackupPath();if(!source){if(!restore)restoreMessage('Выбор отменён.');return;}restore=null;restoreMessage('Проверка резервной копии…');const preview=await api.nativeRestorePreview(source);if(!preview||!/^[a-f0-9]{64}$/i.test(preview.verification)||!Number.isSafeInteger(preview.reportCount)||preview.reportCount<0)throw Error('Не удалось подтвердить целостность резервной копии.');restore={source,verification:preview.verification};restoreMessage('Копия проверена. Отчётов: '+preview.reportCount+'. Рабочая база не изменена.');});
+ clearReports.title='Удалить загруженные отчёты после подтверждения';
  const auditEmptyPeriod='Выберите корректный период в аналитике.';
  const audit=existingPager('groupAudit',$('groupAuditResults'));audit.ready=()=>Boolean(U.scope);audit.query=()=>$('groupAuditSearch').value;
  audit.actions=el('div',null,'actions');$('groupAuditPanel').append(audit.actions);
@@ -199,8 +197,6 @@ function init(){
  U.onScope(scope=>{if(scope){U.setPeriodInput('groupAuditFrom',scope.displayType,scope.from);U.setPeriodInput('groupAuditTo',scope.displayType,scope.to);}clear(audit);$('groupAuditCoverage').textContent=scope?'':auditEmptyPeriod;if(scope&&active&&$('groupAuditPanel').open)void load(audit);});$('groupAuditPanel').addEventListener('toggle',()=>{if($('groupAuditPanel').open)void load(audit);});
  U.onSnapshot(snapshot=>{revision=Number.isSafeInteger(snapshot?.revision)?snapshot.revision:null;editTicket++;editing=null;selected=new Set();resetCatalogEditor();for(const p of pages)clear(p);$('groupSearchCount').textContent='';$('groupCoverage').textContent='';$('catalogStatus').textContent='';$('groupAuditCoverage').textContent=U.scope?'':auditEmptyPeriod;organizationFields();lock();if(active&&valid(revision)){void load(groups);void load(works);if(catalogPanel.open)void load(catalog);if($('groupAuditPanel').open)void load(audit);}});
  U.onView('groups',()=>{active=true;if(valid(revision)){void load(groups,groups.offset);void load(works,works.offset);if(catalogPanel.open)void load(catalog);}});U.onView('storage',()=>{organizationFields();});
- $('storageModeInfo').textContent='Резервная копия активной базы включает отчёты, группы, справочник и настройки.';
- if(typeof api.nativeRestoreLaunchInfo==='function')void api.nativeRestoreLaunchInfo().then(result=>{if(result?.message)restoreMessage(result.message);if(result?.restartRequired)restoreMessage('Восстановление ожидает перезапуска приложения.');}).catch(fail);
  lock();
 }
 window.unifiedManagement={init};

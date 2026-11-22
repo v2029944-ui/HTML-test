@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -142,7 +142,11 @@ class ClientIsolationTests(unittest.TestCase):
     def test_database_must_be_on_its_own_local_root_not_unc_or_a_prefix_collision(self):
         root = r'C:\fixture\client-a\data'
         expected = r'c:\fixture\client-a\data\shared-runtime\local\reports.sqlite3'
-        self.assertEqual(require_private_database(r'\\?\C:\fixture\client-a\data\shared-runtime\local\reports.sqlite3', root), expected)
+        normalized = require_private_database(r'\\?\C:\fixture\client-a\data\shared-runtime\local\reports.sqlite3', root)
+        self.assertEqual(normalized, expected)
+        uri = PureWindowsPath(normalized).as_uri()
+        self.assertTrue(uri.startswith('file:///c:/'))
+        self.assertNotIn('%3F', uri)
         for wrong in (r'\\localhost\test\reports.sqlite3', r'reports.sqlite3',
                       r'C:\fixture\client-b\data\reports.sqlite3',
                       r'C:\fixture\client-a\data-other\reports.sqlite3'):

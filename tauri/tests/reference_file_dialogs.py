@@ -442,7 +442,7 @@ class ReferenceFileDialogWalkthrough:
           .some(n => n.getClientRects().length)""", timeout=TIMEOUT)
 
     def section(self, name):
-        key = {'Отчёты': 'upload', 'Группы работ': 'groups', 'Настройки': 'storage'}[name]
+        key = {'Отчёты': 'upload', 'Группы работ': 'groups', 'Базы данных': 'databases', 'Настройки': 'storage'}[name]
         tab = self.page.locator(f'.tool-tabs [data-section="{key}"]')
         if not tab.is_visible():
             self.page.locator('#refImport' if key == 'upload' else '#refSettings').click()
@@ -458,7 +458,7 @@ class ReferenceFileDialogWalkthrough:
           preview:document.querySelector('#importPreview')?.textContent,
           metricPreview:document.querySelector('#metricKindPreview')?.textContent,
           selectedSource:document.querySelector('#excelFileStatus')?.textContent,
-          restorePreview:document.querySelector('#importBackup')?.parentNode.parentNode.parentNode.querySelector(':scope > p:last-of-type')?.textContent
+          restorePreview:document.querySelector('#databaseRestoreStatus').textContent
         })""")
 
     def exercise(self, name, trigger, title, confirmation=None):
@@ -518,9 +518,9 @@ def check_reference_file_dialogs(page, nativeConfirmations, output):
     page.locator('#uploadSourceFolder').click()
     exercise('excel-folder', page.locator('#sourceFolderChoose'), 'Папка с Excel-отчётами')
 
-    section('Настройки')
+    section('Базы данных')
     exercise('sqlite-backup', page.locator('#exportBackup'), 'Сохранить резервную копию SQLite')
-    exercise('sqlite-restore', page.locator('#importBackup').locator('xpath=ancestor::label[1]'),
+    exercise('sqlite-restore', page.locator('#importBackup'),
              'Проверить резервную копию SQLite')
 
     section('Группы работ')
@@ -601,12 +601,10 @@ def check_reference_data_file_dialogs(page, nativeConfirmations, output):
         assert backup.is_file() and backup.stat().st_size > 0
         original = hashlib.sha256(backup.read_bytes()).hexdigest()
         assert nativeConfirmations.revision() == revision
-        walk.section('Настройки')
-        for removed in ('Создать отдельную восстановленную копию',
-                        'Восстановить при следующем запуске',
-                        'Отменить запланированное восстановление'):
-            expect(page.get_by_role('button', name=removed, exact=True)).to_have_count(0)
-        chooser = page.locator('#importBackup').locator('xpath=ancestor::label[1]')
+        walk.section('Базы данных')
+        expect(page.locator('#scheduleDatabaseRestore')).to_be_hidden()
+        expect(page.locator('#cancelDatabaseRestore')).to_be_hidden()
+        chooser = page.locator('#importBackup')
         expect(chooser).to_be_visible()
         chooser.click()
         title = 'Проверить резервную копию SQLite'
@@ -614,8 +612,8 @@ def check_reference_data_file_dialogs(page, nativeConfirmations, output):
         opened = walk.dialogs.open_file_for_preview(
             hwnd, owner, title, backup, walk.output / 'native-file-verified-backup-open.png')
         walk.settled()
-        status = chooser.locator('xpath=../..').locator('p').filter(
-            has_text='Копия проверена. Отчётов: ' + str(reports) + '.')
+        status = page.locator('#databaseRestoreStatus').filter(
+            has_text=f'Сейчас отчётов в личной базе: {reports}. После восстановления: {reports}.')
         expect(status).to_be_visible(timeout=TIMEOUT)
         assert nativeConfirmations.revision() == revision
         assert hashlib.sha256(backup.read_bytes()).hexdigest() == original
@@ -623,13 +621,18 @@ def check_reference_data_file_dialogs(page, nativeConfirmations, output):
             **opened, reportCount=reports, sourceSha256=original,
             screenshot='native-file-verified-backup-open.png',
             caption=title + ' — настоящий Open изолированной копии для проверки без восстановления')
-        for removed in ('Создать отдельную восстановленную копию',
-                        'Восстановить при следующем запуске',
-                        'Отменить запланированное восстановление'):
-            expect(page.get_by_role('button', name=removed, exact=True)).to_have_count(0)
+        schedule = page.locator('#scheduleDatabaseRestore')
+        expect(schedule).to_be_enabled()
+        expect(page.locator('#cancelDatabaseRestore')).to_be_hidden()
+        prompt = (f'Заменить личную базу при следующем запуске? Сейчас отчётов: {reports}. '
+                  f'В проверенной копии: {reports}. Группы, справочник и настройки также будут взяты из копии.')
+        nativeConfirmations.cancel_then_accept(schedule, prompt)
+        expect(page.locator('#cancelDatabaseRestore')).to_be_visible()
+        assert page.evaluate('() => window.desktopAPI.nativeRestorePending()') is True
+        page.locator('#cancelDatabaseRestore').click()
+        expect(page.locator('#databaseRestoreStatus')).to_contain_text('Восстановление отменено')
+        assert page.evaluate('() => window.desktopAPI.nativeRestorePending()') is False
 
-        # Restoring is no longer a user action in Settings. Preserve coverage of
-        # the supported native APIs using only this runner's synthetic backup.
         reviewed = page.evaluate('source => window.desktopAPI.nativeRestorePreview(source)', str(backup))
         assert reviewed['reportCount'] == reports
         destination = Path(temporary) / 'recovered-test.sqlite3'

@@ -23,7 +23,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from reference_file_dialogs import OwnedFileDialogs
 from windows_smoke import (ROOT, NativeConfirmations, api, navigate, ready,
-                           record_secondary_failure, set_calendar_field, wait_for_text,
+                           record_secondary_failure, set_calendar_field, wait_for_app_state, wait_for_text,
                            wait_for_webview_page, wide_xlsx, windows_test_workspace)
 
 
@@ -196,10 +196,10 @@ class InstalledClient:
             self.page.on('pageerror', lambda error: self.errors.append(str(error)))
             ready(self.page, reports, shared=shared)
             info = api(self.page, 'info')
-            require_private_database(info['dataFile'], self.data)
+            database = Path(require_private_database(info['dataFile'], self.data))
             self.verified = True
             self.personal_file = self.data / 'reports.sqlite3'
-            self.confirmations = NativeConfirmations(self.process.pid, Path(info['dataFile']))
+            self.confirmations = NativeConfirmations(self.process.pid, database)
             self.dialogs = OwnedFileDialogs(self.confirmations)
         except BaseException as error:
             record_secondary_failure(error, self.name + ' startup cleanup failed', self.force_stop)
@@ -298,9 +298,8 @@ def native_select(client, path, kind, step):
 def connect_shared(client, folder, *, cancel_first=False):
     page = client.page
     navigate(page, 'upload')
-    panel = page.locator('#sharedWorkspacePanel')
-    if not panel.evaluate('element => element.open'):
-        panel.locator('summary').click()
+    page.locator('#sharedWorkspaceShortcut').click()
+    expect(page.locator('#refNative')).to_have_attribute('data-panel', 'databases')
     trigger = page.locator('#sharedWorkspaceConnect')
     if cancel_first:
         before = client.state()
@@ -447,6 +446,24 @@ def run():
                     client.page.screenshot(path=str(output / ('shared-smb-' + client.name + '-reopened.png')))
                 assert generations(folder) == committed, 'Reopen modified an immutable shared generation'
                 note('both-clients-reopened-in-persisted-shared-workspace', writer=a.state(), reader=b.state())
+                navigate(b.page, 'databases')
+                trigger = b.page.locator('#sharedWorkspaceDisconnect')
+                prompt = 'Перейти в личную базу на этом компьютере? Отчёты останутся в своих базах. Автоимпорт из папки в этом сеансе остановится.'
+                b.confirmations.cancel_only(trigger, prompt)
+                assert b.state()['mode'] == 'shared' and summary(b)['reports'] == 366
+                trigger.click()
+                dialog, owner = b.confirmations.find_dialog(prompt)
+                b.confirmations.answer(dialog, owner, prompt, 1)
+                # Successful disconnect retires the private shared checkout. Verify both
+                # surviving databases rather than reopening that old temporary file.
+                wait_for_app_state(b.page,
+                    "window.sharedWorkspace.state?.mode==='personal' && !window.sharedWorkspace.busy && window.unifiedUI.snapshot?.reports===0",
+                    'Return the reader to its original personal database')
+                assert windows_path(api(b.page, 'info')['dataFile']) == windows_path(b.personal_file)
+                assert a.state()['mode']=='shared' and generations(folder)==committed
+                assert summary(a)['reports'] == 366
+                assert api(b.page, 'nativeSettingsBootstrap')['reports'] == 0
+                note('reader-returned-to-original-empty-personal-base')
         # windows_test_workspace has now released its profile-specific workers.
         for port in (9231, 9232, 9234, 9235):
             wait_for_webview_shutdown(port)

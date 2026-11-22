@@ -37,9 +37,9 @@ test('canonical DOM and all styles survive except duplicate source/year calendar
 });
 test('boot initializes each SQL module once and waits for refresh without invoking legacy entrypoints',async()=>{
  const calls=[],window={unifiedUI:{init:()=>calls.push('UI'),refresh:async()=>calls.push('refresh'),notice:()=>assert.fail('unexpected error')}};
- for(const name of ['unifiedManagement','unifiedReports','unifiedExtended','unifiedAnalytics'])window[name]={init:()=>calls.push(name)};
+ for(const name of ['unifiedManagement','unifiedReports','unifiedExtended','unifiedAnalytics','databaseBackups'])window[name]={init:()=>calls.push(name)};
  const code=fs.readFileSync(path.resolve(__dirname,'../unified-app.js'),'utf8');vm.runInNewContext(code,{window});
- assert.equal(await window.appReady,true);assert.deepEqual(calls,['unifiedManagement','unifiedReports','unifiedExtended','unifiedAnalytics','UI','refresh']);
+ assert.equal(await window.appReady,true);assert.deepEqual(calls,['unifiedManagement','unifiedReports','unifiedExtended','unifiedAnalytics','databaseBackups','UI','refresh']);
  assert.throws(()=>vm.runInNewContext(code,{window}),/уже запущено/);
 });
 test('boot failure is visible, resolves safely and never starts a partial workspace',async()=>{

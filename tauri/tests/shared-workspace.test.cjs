@@ -8,7 +8,7 @@ const team={...personal,mode:'shared',folder:'fixture/team',generation:0,workspa
 function fixture(initial=personal) {
   const calls=[],refreshes=[],nodes=new Map(),handlers=new Map(),timers=new Map(),timerIds={value:0};
   function node(id){
-    if(!nodes.has(id))nodes.set(id,{addEventListener:(event,fn)=>handlers.set(id+'-'+event,fn),textContent:'',hidden:false,disabled:false});
+    if(!nodes.has(id))nodes.set(id,{addEventListener:(event,fn)=>handlers.set(id+'-'+event,fn),dataset:{},textContent:'',hidden:false,disabled:false});
     return nodes.get(id);
   }
   const scenario={selected:null,server:initial,accept:false,chooseCalls:[],stops:0,revocations:0,syncError:null,read:null};
@@ -17,6 +17,7 @@ function fixture(initial=personal) {
     if(name==='shared_workspace_status')return scenario.server;
     if(name==='shared_workspace_choose_folder')return scenario.selected;
     if(name==='shared_workspace_connect'){assert.equal(args.folder,scenario.selected);scenario.server=team;return team;}
+    if(name==='shared_workspace_disconnect'){assert.equal(args.workspaceToken,scenario.server.workspace_token);return scenario.server=personal;}
     if(name==='shared_workspace_sync'){if(scenario.syncError)throw Error(scenario.syncError);return scenario.server;}
     if(name==='shared_workspace_discard_pending'){
       assert.equal(args.workspaceToken,scenario.server.workspace_token);
@@ -64,7 +65,7 @@ test('peer changes refresh equal SQL revisions, discard late reads and block off
   f.scenario.syncError='Связь прервана';await f.tick();
   assert.match(f.node('sharedWorkspaceStatus').textContent,/Связь.*отсутствует/);
   assert.equal(f.node('sharedWorkspaceMode').textContent,'Общая база недоступна');
-  assert.equal(f.node('sharedWorkspacePanel').open,true);
+  assert.equal(f.node('sharedWorkspaceDisconnect').hidden,false);
   assert.equal(f.node('sharedWorkspaceRetry').hidden,false);
   const before=f.calls.length;await assert.rejects(f.window.desktopAPI.nativeRevision(),/Связь прервана/);
   assert.equal(f.calls.length,before,'offline reads never go to another database');
@@ -91,4 +92,21 @@ test('a registered offline share can be replaced on the first selection without 
   await f.click('sharedWorkspaceConnect');
   assert.equal(f.scenario.stops,0);assert.ok(f.scenario.revocations>0);
   assert.equal(f.calls.filter(c=>c.name==='shared_workspace_connect').length,1);
+});
+
+test('switching back confirms, never moves reports and never crosses pending publication',async()=>{
+  const f=fixture(team);await f.window.sharedWorkspace.init();
+  assert.equal(f.node('sharedDatabaseCard').dataset.selected,'true');
+  await f.click('sharedWorkspaceDisconnect');assert.equal(f.scenario.stops,0);
+  f.scenario.accept=true;await f.click('sharedWorkspaceDisconnect');
+  assert.equal(f.scenario.stops,1);assert.equal(f.refreshes.at(-1).mode,'personal');
+  assert.equal(f.node('personalDatabaseCard').dataset.selected,'true');
+  assert.equal(f.node('sharedWorkspaceDisconnect').hidden,true);
+  const pending=fixture({...team,pending:true});await pending.window.sharedWorkspace.init();
+  pending.scenario.accept=true;
+  await pending.click('sharedWorkspaceDisconnect');await pending.click('sharedWorkspaceConnect');
+  assert.equal(pending.calls.length,1);assert.equal(pending.scenario.stops,0);
+  const offline=fixture({...team,available:false});await offline.window.sharedWorkspace.init();
+  offline.scenario.accept=true;await offline.click('sharedWorkspaceDisconnect');
+  assert.equal(offline.scenario.stops,0);assert.equal(offline.refreshes.at(-1).mode,'personal');
 });

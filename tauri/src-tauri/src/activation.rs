@@ -177,6 +177,10 @@ impl Storage {
 }
 
 impl Storage {
+    pub fn restore_is_pending(&self) -> Result<bool, String> {
+        Ok(load_request(&self.root)?.is_some())
+    }
+
     /// A cancellation never modifies the live SQLite file; the staged copy is
     /// retained as an independent recovery artifact.
     pub fn cancel_scheduled_restore(&self) -> Result<bool, String> {
@@ -447,7 +451,9 @@ mod tests {
         assert!(warning.message.contains("не выполнено"));
         let reopened=Storage::new(root.clone()).unwrap();
         assert_eq!(reopened.load().unwrap(),data(42.0));
+        assert!(reopened.restore_is_pending().unwrap());
         assert!(reopened.cancel_scheduled_restore().unwrap());
+        assert!(!reopened.restore_is_pending().unwrap());
         assert!(load_request(&root).unwrap().is_none());
         assert_eq!(reopened.load().unwrap(),data(42.0));
     }

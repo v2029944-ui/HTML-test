@@ -62,8 +62,8 @@ pub async fn shared_workspace_sync(app: tauri::AppHandle) -> Result<WorkspaceSta
         .map_err(|e| e.to_string())?
 }
 #[tauri::command]
-pub async fn shared_workspace_disconnect(app: tauri::AppHandle) -> Result<WorkspaceStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || app.state::<Runtime>().disconnect())
+pub async fn shared_workspace_disconnect(app: tauri::AppHandle, workspace_token: Option<String>) -> Result<WorkspaceStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Runtime>().disconnect(workspace_token.as_deref()))
         .await
         .map_err(|e| e.to_string())?
 }

@@ -296,7 +296,7 @@ def navigate(page, section):
     key = 'overviewPanel' if section == 'dashboard' else section
     tab = page.locator(f'.tool-tabs [data-section="{key}"]')
     if not tab.is_visible():
-        if key in ('upload', 'groups', 'storage'):
+        if key in ('upload', 'groups', 'databases', 'storage'):
             page.locator('#refImport' if key == 'upload' else '#refSettings').click()
         else:
             if not page.locator('#refAnalytics').is_visible():
@@ -541,8 +541,7 @@ def check_cancelled_management_confirmations(page, confirmations):
 
     def drafts():
         return page.evaluate('''() => ({organizations:[...document.querySelectorAll('#organizationFields input')]
-          .map(node=>node.value),restore:[...document.querySelector('#importBackup').parentNode.parentNode.parentNode
-          .querySelectorAll(':scope > p')].map(node=>node.textContent)})''')
+          .map(node=>node.value),restore:document.querySelector('#databaseRestoreStatus').textContent})''')
 
     confirmations.cancel_only(page.locator('#saveOrganizations'),
         'Изменить названия подразделений во всех отчётах и справочнике? '
@@ -1276,6 +1275,8 @@ def check_delete_without_backup(page, temporary, confirmations):
 def check_backup_and_replace(page, temporary, snapshot):
     revision=api(page,'nativeBackupSqlite',str(snapshot))
     assert isinstance(revision,int) and snapshot.is_file()
+    assert_rejected(lambda:api(page,'nativeOpenBackupFolder',str(temporary)),
+                    'Reveal accepted an arbitrary directory','недоступна')
     original=backup_contents(snapshot)
     assert len(original[0])==366 and original[1] is not None and original[2]==2
     before=snapshot.read_bytes()
@@ -1659,8 +1660,8 @@ def run():
                 assert backup_contents(retained.pop())==still_live
                 info=api(page,'nativeRestoreLaunchInfo')
                 assert info and info['restored'] is True and 'Восстановление выполнено' in info['message'],info
-                navigate(page,'storage')
-                page.locator('#storage').get_by_text('Восстановление выполнено',exact=False).wait_for()
+                navigate(page,'databases')
+                expect(page.locator('#databaseRestoreStatus')).to_contain_text('Восстановление выполнено')
                 assert workbook.read_bytes()==original_xlsx
                 report['checks'].append('Installed restart restores exactly the SQLite backup, retains the replaced data and displays confirmation')
                 check_source_evidence(page,tmp,output)

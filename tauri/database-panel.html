@@ -1,0 +1,43 @@
+<section id="databases" class="view" aria-label="Базы данных">
+  <div class="panel">
+    <h2>Где хранятся отчёты</h2>
+    <p class="muted">Выбранная база используется для импорта и аналитики. При переключении отчёты между базами не копируются.</p>
+    <div class="database-sources">
+      <section class="database-source" id="personalDatabaseCard">
+        <h3>Личная база</h3>
+        <p id="personalDatabaseSelection" class="database-selection"></p>
+        <p>Отчёты хранятся на этом компьютере. Коллеги их здесь не видят.</p>
+        <button id="sharedWorkspaceDisconnect" type="button" class="button secondary" hidden>Перейти в личную базу</button>
+      </section>
+      <section class="database-source" id="sharedDatabaseCard">
+        <h3>Общая база</h3>
+        <p id="sharedDatabaseSelection" class="database-selection"></p>
+        <p>На рабочих компьютерах выберите одну сетевую папку. Сохранённые отчёты появятся у коллег после синхронизации. Пустая общая папка начнёт работу без отчётов.</p>
+        <p id="sharedWorkspaceStatus" role="status" aria-live="polite">Проверка подключения…</p>
+        <div class="actions">
+          <button type="button" class="button secondary" id="sharedWorkspaceConnect">Подключить общую папку</button>
+          <button type="button" class="button secondary" id="sharedWorkspaceRetry" hidden>Повторить подключение</button>
+          <button type="button" class="button secondary" id="sharedWorkspaceDiscard" hidden>Отменить неподтверждённые изменения</button>
+        </div>
+        <p id="sharedWorkspaceMessage" role="status" hidden></p>
+      </section>
+    </div>
+    <details class="database-help"><summary>Кто может добавлять отчёты и когда их увидят коллеги?</summary>
+      <p>Доступ к общей папке назначает администратор файлового сервера. Для сохранения нужны права записи. Отдельных ролей сотрудников в приложении нет.</p>
+      <p>При импорте файла выберите Excel, проверьте результат и подтвердите сохранение. Папка Excel служит источником файлов. Если в этом сеансе включён автоимпорт, новые отчёты, прошедшие проверку, сохраняются в выбранную базу автоматически. Замены и файлы с замечаниями требуют ручной проверки.</p>
+    </details>
+  </div>
+  <section class="panel"><h2>Резервная копия</h2>
+    <p id="storageModeInfo" class="muted">Копия SQLite включает отчёты, группы, справочник и настройки выбранной базы.</p>
+    <div class="actions"><button id="exportBackup" type="button" class="button secondary">Сохранить копию активной базы</button>
+      <button id="openBackupFolder" type="button" class="button secondary" hidden>Открыть папку с копией</button></div>
+    <p id="databaseBackupStatus" role="status" hidden></p>
+  </section>
+  <section class="panel"><h2>Восстановление личной базы</h2>
+    <p class="muted">Проверьте файл .sqlite3 и сравните число отчётов. Личная база заменится только после подтверждения и следующего запуска приложения. Перед заменой приложение создаст страховочную копию.</p>
+    <div class="actions"><button id="importBackup" type="button" class="button secondary">Проверить файл копии…</button>
+      <button id="scheduleDatabaseRestore" type="button" class="button secondary" hidden>Восстановить при следующем запуске</button>
+      <button id="cancelDatabaseRestore" type="button" class="button secondary" hidden>Отменить запланированное восстановление</button></div>
+    <p id="databaseRestoreStatus" role="status"></p>
+  </section>
+</section>
