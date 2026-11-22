@@ -329,6 +329,9 @@ def preview_xlsx(client, workbook):
     page.locator('#excelFile').click()
     native_select(client, workbook, 'xlsx', 'xlsx-' + client.name)
     wait_for_text(page, '#excelFileStatus', workbook.name)
+    page.locator('#importType').select_option('day')
+    if page.locator('#editImportLayout').is_visible():
+        page.locator('#editImportLayout').click()
     page.locator('#importFormat').select_option('daily-wide')
     set_calendar_field(page, 'dailyYear', '2024')
     page.locator('#inspectFile').click()

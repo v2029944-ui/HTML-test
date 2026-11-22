@@ -432,6 +432,9 @@ def import_year(page, workbook, confirmations):
     expect(page.locator('#unifiedAcceptQuality')).not_to_be_visible()
     page.locator('#sourceFolderRows tr').filter(has_text=workbook.name).get_by_role('button',name='Открыть для проверки '+workbook.name,exact=True).click()
     wait_for_text(page,'#excelFileStatus',workbook.name)
+    page.locator('#importType').select_option('day')
+    if page.locator('#editImportLayout').is_visible():
+        page.locator('#editImportLayout').click()
     page.locator('#importFormat').select_option('daily-wide')
     set_calendar_field(page, 'dailyYear', '2024')
     metadata=api(page,'nativeImportSheets',str(workbook))
@@ -1318,7 +1321,8 @@ def check_folder_rule_and_revocation(page, workbook, confirmations):
     assert {file['name'] for file in listing['files']}=={workbook.name}
     row=page.locator('#sourceFolderRows tr').filter(has_text=workbook.name)
     row.get_by_role('button',name='Настроить правило для '+workbook.name,exact=True).click()
-    page.locator('#sourceRuleFormat').select_option('daily-wide')
+    page.locator('#sourceRuleType').select_option('day')
+    page.locator('#sourceRuleFormat').select_option('period-pairs')
     page.locator('#sourceRuleYear').fill('2024')
     confirmations.cancel_then_accept(page.locator('#sourceRuleSave'),
         f'Сохранить правило для «{workbook.name}»?')

@@ -9,7 +9,10 @@ use std::{
 };
 use zip::{write::SimpleFileOptions, ZipWriter};
 fn book(path: &std::path::Path, rows: &[Vec<&str>], extra: &str, target: &str) {
-    let mut xml = String::from("<worksheet><sheetData>");
+    const SHEETS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    const DOC_REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    const PACKAGE: &str = "http://schemas.openxmlformats.org/package/2006";
+    let mut xml = format!(r#"<worksheet xmlns="{SHEETS}"><sheetData>"#);
     for (r, row) in rows.iter().enumerate() {
         xml.push_str(&format!("<row r=\"{}\">", r + 1));
         for (c, v) in row.iter().enumerate() {
@@ -27,7 +30,17 @@ fn book(path: &std::path::Path, rows: &[Vec<&str>], extra: &str, target: &str) {
     xml.push_str(extra);
     xml.push_str("</worksheet>");
     let mut z = ZipWriter::new(fs::File::create(path).unwrap());
-    for(name,content) in [(target,xml),("xl/workbook.xml","<workbook xmlns:r=\"r\"><sheets><sheet name=\"Data\" r:id=\"r1\"/></sheets></workbook>".into()),("xl/_rels/workbook.xml.rels",format!("<Relationships><Relationship Id=\"r1\" Target=\"/{}\" Type=\"worksheet\"/></Relationships>",target))]{z.start_file(name,SimpleFileOptions::default()).unwrap();z.write_all(content.as_bytes()).unwrap();}
+    let parts = [
+        (target, xml),
+        ("[Content_Types].xml", format!(r#"<Types xmlns="{PACKAGE}/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/{target}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#)),
+        ("_rels/.rels", format!(r#"<Relationships xmlns="{PACKAGE}/relationships"><Relationship Id="r1" Type="{DOC_REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>"#)),
+        ("xl/workbook.xml", format!(r#"<workbook xmlns="{SHEETS}" xmlns:r="{DOC_REL}"><sheets><sheet name="Data" sheetId="1" r:id="r1"/></sheets></workbook>"#)),
+        ("xl/_rels/workbook.xml.rels", format!(r#"<Relationships xmlns="{PACKAGE}/relationships"><Relationship Id="r1" Target="/{target}" Type="{DOC_REL}/worksheet"/></Relationships>"#)),
+    ];
+    for (name, content) in parts {
+        z.start_file(name, SimpleFileOptions::default()).unwrap();
+        z.write_all(content.as_bytes()).unwrap();
+    }
     z.finish().unwrap();
 }
 fn rows() -> Vec<Vec<&'static str>> {
@@ -618,4 +631,280 @@ fn empty_grand_total_reports_the_last_daily_section_mismatch_once() {
     let report = stage.report_page(0, 1).unwrap().remove(0);
     let issues = stage.report_issues(&report.id, 0, 100).unwrap();
     assert_eq!(issues.iter().filter(|i| i.kind == "mismatch" && i.scope.as_deref() != Some("source-period")).count(), 1);
+}
+
+#[test]
+fn each_column_pair_is_one_week_or_month_in_manual_and_folder_import() {
+    let temp = tempfile::tempdir().unwrap();
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let path = temp.path().join("periods.xlsx");
+    let cancel = Arc::new(AtomicBool::new(false));
+    let component = "xl/worksheets/sheet1.xml";
+    // Unrepresented weeks and months must not be synthesized or added to either pair.
+    for (kind, starts, ends) in [
+        ("week", ["2024-02-26", "2024-03-11"], ["2024-03-03", "2024-03-17"]),
+        ("month", ["2024-02-01", "2024-04-01"], ["2024-02-29", "2024-04-30"]),
+    ] {
+        let mut data = rows();
+        data[0][1] = starts[0];
+        data[0][3] = starts[1];
+        book(&path, &data, MERGES, component);
+        let options = WideOptions { kind: kind.into(), ..Default::default() };
+        for mode in [ImportMode::Manual, ImportMode::Folder] {
+            let mut stage = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+            assert_eq!(stage.worksheet_layout(component).unwrap(), Some("daily-wide"));
+            let result = stage.convert_wide(&options, cancel.clone(), |_| {}).unwrap();
+            assert_eq!((result.reports, result.rows, result.issues), (2, 2, 0));
+            let reports = stage.report_page(0, 10).unwrap();
+            for (i, report) in reports.iter().enumerate() {
+                assert_eq!((report.kind.as_str(), report.start.as_str(), report.end.as_str()), (kind, starts[i], ends[i]));
+                let row = stage.report_rows(&report.id, 0, 10).unwrap().remove(0);
+                assert_eq!(row.work, "Work");
+                assert_eq!((row.count, row.amount), [(1.0, 10.0), (2.0, 20.0)][i]);
+                assert_eq!(row.count_cell, ["B4", "D4"][i]);
+            }
+            let prepared = stage.prepare_with_mode(mode, &cancel, |_| {}).unwrap();
+            assert_eq!(prepared.report_count(), 2);
+            let first = prepared.next_report(0).unwrap().unwrap();
+            let second = prepared.next_report(first.ordinal).unwrap().unwrap();
+            assert_eq!((second.kind.as_str(), second.start.as_str(), second.end.as_str()), (kind, starts[1], ends[1]));
+            let source = second.provenance.unwrap();
+            assert_eq!(source.source_format, "period-pairs");
+            assert_eq!((source.coverage.start.as_str(), source.coverage.end.as_str()), (starts[0], ends[1]));
+        }
+    }
+}
+
+#[test]
+fn separate_work_columns_and_ambiguous_headers_are_distinguished() {
+    let temp = tempfile::tempdir().unwrap();
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let path = temp.path().join("layout.xlsx");
+    let sheet = "xl/worksheets/sheet1.xml";
+    let cancel = AtomicBool::new(false);
+    let independent = vec![
+        vec!["Работа", "Количество", "Сумма", "Работа", "Количество", "Сумма"],
+        vec!["СМУ16", "1", "10", "СМУ16", "2", "20"],
+        vec!["Альфа", "1", "10", "Бета", "2", "20"],
+        vec!["Итого", "1", "10", "Итого", "2", "20"],
+    ];
+    book(&path, &independent, "", sheet);
+    let mut stage = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+    assert_eq!(stage.worksheet_layout(sheet).unwrap(), Some("legacy"));
+    for (kind, dates, last_end) in [
+        ("day", ["2024-02-28", "2024-02-29"], "2024-02-29"),
+        ("week", ["2024-02-26", "2024-03-04"], "2024-03-10"),
+        ("month", ["2024-02-01", "2024-03-01"], "2024-03-31"),
+    ] {
+        let options = analiz_import_core::LegacyOptions {
+            sheet: sheet.into(), kind: kind.into(), start: dates[0].into(),
+            organizations: WideOptions::default().organizations, mappings: None,
+            period_dates: Some(dates.iter().map(|date| date.to_string()).collect()),
+        };
+        assert_eq!(stage.convert_legacy(&options, &cancel, |_| {}).unwrap().reports, 2);
+        let reports = stage.report_page(0, 10).unwrap();
+        let left = stage.report_rows(&reports[0].id, 0, 10).unwrap().remove(0);
+        let right = stage.report_rows(&reports[1].id, 0, 10).unwrap().remove(0);
+        assert_eq!((left.work.as_str(), right.work.as_str()), ("Альфа", "Бета"));
+        assert_eq!(reports[1].end, last_end);
+    }
+    for headers in [
+        vec!["Работа", "Количество", "Сумма"],
+        vec!["Работа", "Количество", "Сумма", "", "Количество", "Сумма"],
+        vec!["Работа", "Количество", "Сумма", "Количество", "Сумма", "Работа", "Количество", "Сумма"],
+    ] {
+        book(&path, &[headers], "", sheet);
+        let uncertain = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+        assert_eq!(uncertain.worksheet_layout(sheet).unwrap(), None);
+    }
+}
+
+#[test]
+fn single_undated_pair_uses_only_an_explicit_start_and_multiple_pairs_require_headers() {
+    let temp = tempfile::tempdir().unwrap();
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let path = temp.path().join("undated.xlsx");
+    let sheet = "xl/worksheets/sheet1.xml";
+    let cancel = Arc::new(AtomicBool::new(false));
+    let single: Vec<_> = rows().into_iter().map(|r| r[..3].to_vec()).collect();
+    for date_in_excel in [false, true] {
+        let mut data = single.clone();
+        data[0][1] = if date_in_excel { "2024-02-01" } else { "" };
+        book(&path, &data, "", sheet);
+        let mut stage = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+        let mut cfg = WideOptions { kind: "month".into(), sheets: vec!["Data".into()], ..Default::default() };
+        if !date_in_excel {
+            assert!(stage.convert_wide(&cfg, cancel.clone(), |_| {}).is_err());
+            cfg.start = Some("2024-02-01".into());
+        }
+        assert_eq!(stage.convert_wide(&cfg, cancel.clone(), |_| {}).unwrap().reports, 1);
+        let previous = stage.report_page(0, 1).unwrap().remove(0);
+        assert_eq!((previous.start.as_str(), previous.end.as_str()), ("2024-02-01", "2024-02-29"));
+        // A mismatched or invalid confirmation cannot silently replace an earlier preview.
+        cfg.start = Some(if date_in_excel { "2024-03-01" } else { "2024-02-02" }.into());
+        assert!(stage.convert_wide(&cfg, cancel.clone(), |_| {}).is_err());
+        assert_eq!(stage.report_page(0, 1).unwrap()[0].id, previous.id);
+    }
+
+    let mut data = rows();
+    data[0][1] = "";
+    data[0][3] = "2024-03-01";
+    book(&path, &data, MERGES, sheet);
+    let mut stage = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+    let cfg = WideOptions { kind: "month".into(), start: Some("2024-02-01".into()), ..Default::default() };
+    assert!(stage.convert_wide(&cfg, cancel, |_| {}).is_err());
+}
+
+#[test]
+fn overlapping_periods_and_cancellation_leave_the_previous_conversion_intact() {
+    let temp = tempfile::tempdir().unwrap();
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let path = temp.path().join("overlap.xlsx");
+    let cancel = Arc::new(AtomicBool::new(false));
+    for (first, second, overlaps) in [
+        ("2024-02-26", "2024-03-01", true),
+        ("2024-02-26", "2024-03-04", false),
+    ] {
+        let mut data = rows();
+        data[0][1] = first;
+        data[0][3] = second;
+        book(&path, &data, MERGES, "xl/worksheets/sheet1.xml");
+        let mut stage = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+        stage.convert_wide(&WideOptions::default(), cancel.clone(), |_| {}).unwrap();
+        let cfg = WideOptions { kind: "week".into(), ..Default::default() };
+        let result = stage.convert_wide(&cfg, cancel.clone(), |progress| {
+            if !overlaps && progress.reports == 1 { cancel.store(true, Ordering::Release); }
+        });
+        cancel.store(false, Ordering::Release);
+        assert!(result.is_err());
+        let reports = stage.report_page(0, 10).unwrap();
+        assert_eq!(reports.len(), 2);
+        assert!(reports.iter().all(|report| report.kind == "day" && report.start == report.end));
+    }
+}
+
+#[test]
+fn month_totals_remain_controls_and_blank_pairs_are_not_zeroes() {
+    let temp = tempfile::tempdir().unwrap();
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let file = temp.path().join("monthly-controls.xlsx");
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut data = rows();
+    data[0][1] = "2024-02";
+    data[0][3] = "2024-03";
+    for row in &mut data[2..] {
+        row[1] = "0";
+        row[2] = "0";
+        row[3] = "";
+        row[4] = "";
+    }
+    book(&file, &data, MERGES, "xl/worksheets/sheet1.xml");
+    let mut stage = area.ingest(&file, Limits::default(), &cancel, |_| {}).unwrap();
+    let cfg = WideOptions { kind: "month".into(), ..Default::default() };
+    let converted = stage.convert_wide(&cfg, cancel, |_| {}).unwrap();
+    assert_eq!(converted.reports, 1);
+    let report = stage.report_page(0, 10).unwrap().remove(0);
+    assert_eq!((report.start.as_str(), report.end.as_str()), ("2024-02-01", "2024-02-29"));
+    assert_eq!((report.count, report.amount), (0.0, 0.0));
+    let issues = stage.source_issues("Data", 0, 100).unwrap();
+    assert!(issues.iter().any(|i| i.kind == "missing-period" && i.date.as_deref() == Some("2024-03-01")));
+    assert!(issues.iter().any(|i| i.kind == "mismatch" && i.count_cell.as_deref() == Some("F4")));
+}
+
+#[test]
+fn named_month_cannot_be_replaced_by_a_manual_day_or_week() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("month.xlsx");
+    let mut data: Vec<_> = rows().into_iter().map(|row| row[..3].to_vec()).collect();
+    data[0][1] = "Март 2026";
+    book(&path, &data, "", "xl/worksheets/sheet1.xml");
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut stage = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+    let mut cfg = WideOptions { kind: "month".into(), ..Default::default() };
+    assert_eq!(stage.convert_wide(&cfg, cancel.clone(), |_| {}).unwrap().reports, 1);
+
+    for kind in ["day", "week"] {
+        cfg.kind = kind.into();
+        cfg.start = Some("2026-03-02".into());
+        assert!(stage.convert_wide(&cfg, cancel.clone(), |_| {}).is_err(), "{kind}");
+        let previous = stage.report_page(0, 1).unwrap().remove(0);
+        assert_eq!((previous.kind.as_str(), previous.start.as_str(), previous.end.as_str()),
+                   ("month", "2026-03-01", "2026-03-31"));
+    }
+}
+
+#[test]
+fn split_day_and_month_keep_the_date_under_a_merged_month_heading() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("split.xlsx");
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    for (month, day_row) in [("Март 2026", vec!["", "2"]), ("2026-03", vec!["", "", "2"])] {
+        let mut data: Vec<_> = rows().into_iter().map(|row| row[..3].to_vec()).collect();
+        data[0][1] = month;
+        data.insert(1, day_row);
+        book(&path, &data, r#"<mergeCells><mergeCell ref="B1:C1"/></mergeCells>"#,
+             "xl/worksheets/sheet1.xml");
+        let mut stage = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+        let mut cfg = WideOptions::default();
+        for (kind, last_day) in [("day", "2026-03-02"), ("week", "2026-03-08")] {
+            cfg.kind = kind.into();
+            assert_eq!(stage.convert_wide(&cfg, cancel.clone(), |_| {}).unwrap().reports, 1);
+            let report = stage.report_page(0, 1).unwrap().remove(0);
+            assert_eq!((report.kind.as_str(), report.start.as_str(), report.end.as_str()),
+                       (kind, "2026-03-02", last_day));
+        }
+        cfg.kind = "month".into();
+        assert!(stage.convert_wide(&cfg, cancel.clone(), |_| {}).is_err());
+        assert_eq!(stage.report_page(0, 1).unwrap()[0].start, "2026-03-02");
+    }
+}
+
+#[test]
+fn week_range_cannot_be_shortened_or_silently_accepted_as_a_month() {
+    let temp = tempfile::tempdir().unwrap();
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let path = temp.path().join("range.xlsx");
+    let cancel = Arc::new(AtomicBool::new(false));
+    for second in ["с 04.03.2024 по 10.03.2024", "с 04.03.2024 по 08.03.2024"] {
+        let mut data = rows();
+        data[0][1] = "с 26.02.2024 по 03.03.2024";
+        data[0][3] = second;
+        book(&path, &data, MERGES, "xl/worksheets/sheet1.xml");
+        let mut stage = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+        let cfg = WideOptions { kind: "week".into(), ..Default::default() };
+        let result = stage.convert_wide(&cfg, cancel.clone(), |_| {});
+        if second.contains("10.03") {
+            assert_eq!(result.unwrap().reports, 2);
+            let first = stage.report_page(0, 1).unwrap().remove(0);
+            assert_eq!((first.start.as_str(), first.end.as_str()), ("2024-02-26", "2024-03-03"));
+        } else {
+            assert!(result.is_err());
+        }
+        let cfg = WideOptions { kind: "month".into(), ..Default::default() };
+        assert!(stage.convert_wide(&cfg, cancel.clone(), |_| {}).is_err());
+    }
+}
+
+#[test]
+fn classic_auto_rule_requires_daily_evidence_and_accepts_late_headers() {
+    let temp = tempfile::tempdir().unwrap();
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let path = temp.path().join("calendar.xlsx");
+    let component = "xl/worksheets/sheet1.xml";
+    let cancel = AtomicBool::new(false);
+    let organizations = WideOptions::default().organizations;
+    for (next, classic) in [("2024-02-29", true), ("2024-03-06", false)] {
+        let mut data = vec![vec!["Служебный заголовок"]; 17];
+        let mut metrics = rows();
+        metrics[0][3] = next;
+        metrics[1][0] = "Работа";
+        data.extend(metrics);
+        book(&path, &data, "", component);
+        let stage = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+        assert_eq!(stage.worksheet_layout(component).unwrap(), Some("daily-wide"));
+        assert_eq!(stage.classic_daily_workbook(&stage.sheet_names().unwrap(), &organizations, &cancel).unwrap(), classic);
+    }
 }

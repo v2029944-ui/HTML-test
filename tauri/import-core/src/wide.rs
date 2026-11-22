@@ -2,7 +2,7 @@
 //! sheet metadata are resident; financial rows and diagnostics stay in SQLite.
 use crate::report_stage::{self, cell, normalize, number, page_limit};
 use crate::{check_cancel, fail, ConversionSummary, LegacyOptions, Result, Stage, TripleMapping};
-use chrono::{Datelike, Duration, Local, NaiveDate};
+use chrono::{Datelike, Duration, Local, Months, NaiveDate};
 use regex::Regex;
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -30,6 +30,10 @@ pub struct WideSequentialPeriod {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WideOptions {
+    /// Granularity of each pair, never an aggregation request.
+    pub kind: String,
+    /// Optional confirmed date for a single period lacking a header.
+    pub start: Option<String>,
     pub year: Option<i32>,
     pub sheets: Vec<String>,
     pub mappings: BTreeMap<String, WideMapping>,
@@ -40,6 +44,8 @@ pub struct WideOptions {
 impl Default for WideOptions {
     fn default() -> Self {
         Self {
+            kind: "day".into(),
+            start: None,
             year: None,
             sheets: vec![],
             mappings: BTreeMap::new(),
@@ -146,6 +152,12 @@ struct Parts {
     suffix: Option<i32>,
     month: u32,
     day: u32,
+}
+struct ColumnDate {
+    parts: Parts,
+    row: u32,
+    col: u32,
+    month_only: bool,
 }
 struct Day {
     pair: Pair,
@@ -377,6 +389,7 @@ impl Stage<'_> {
         &self,
         sheet: &str,
         manual: Option<&WideMapping>,
+        min_pairs: usize,
         orgs: &[String; 4],
         p: &Patterns,
         cancel: &AtomicBool,
@@ -395,7 +408,7 @@ impl Stage<'_> {
                 || m.total_count_col.is_some_and(|c| c == 0 || c > 2048)
                 || m.total_amount_col.is_some_and(|c| c == 0 || c > 2048)
             {
-                return Err(fail("invalid manual daily mapping"));
+                return Err(fail("Проверьте номера строк и столбцов."));
             }
             if m.total_amount_col.is_some() && m.total_count_col.is_none() {
                 return Err(fail("Укажите столбец итогового количества вместе с итоговой суммой."));
@@ -409,7 +422,8 @@ impl Stage<'_> {
                 q,
                 a: m.total_amount_col.unwrap_or(q + 1),
             });
-            if pairs.is_empty()
+            if end <= m.first_day_col || (end - m.first_day_col) % 2 != 0
+                || pairs.is_empty()
                 || pairs.len() > 1024
                 || pairs.iter().any(|x| x.q == m.work_col || x.a == m.work_col)
                 || totals.is_some_and(|x| {
@@ -420,7 +434,7 @@ impl Stage<'_> {
                         || pairs.iter().any(|y| y.q == x.a || y.a == x.a)
                 })
             {
-                return Err(fail("invalid manual daily columns"));
+                return Err(fail("Проверьте пары столбцов количества и суммы."));
             }
             return Ok(Some(Info {
                 work: m.work_col,
@@ -439,7 +453,7 @@ impl Stage<'_> {
             let col: u32 = r.get(1)?;
             let val = normalize(&r.get::<_, Option<String>>(2)?.unwrap_or_default());
             if row != current {
-                if pairs.len() >= 2 {
+                if pairs.len() >= min_pairs {
                     if let Some(i) = self.detect_work(
                         sheet,
                         current,
@@ -462,7 +476,7 @@ impl Stage<'_> {
                 quantity = p.quantity.is_match(&val).then_some(col);
             }
         }
-        if pairs.len() >= 2 {
+        if pairs.len() >= min_pairs {
             return self.detect_work(sheet, current, pairs, orgs, p, cancel);
         }
         Ok(None)
@@ -527,6 +541,84 @@ impl Stage<'_> {
             totals: None,
         }))
     }
+    /// Classify only repeated structures with explicit work and metric headers.
+    /// One triple is compatible with both layouts.
+    pub fn worksheet_layout(&self, sheet: &str) -> Result<Option<&'static str>> {
+        let p = Patterns::new();
+        let mut stmt = self.db.prepare(&format!("SELECT c.row_num,c.col_num,{} FROM cells c LEFT JOIN strings s ON c.kind='s' AND s.id=CAST(c.value AS INTEGER) WHERE c.sheet=?1 AND c.row_num<=64 ORDER BY c.row_num,c.col_num", resolved()))?;
+        let mut rows = stmt.query([sheet])?;
+        let mut work = BTreeMap::<u32, BTreeSet<u32>>::new();
+        let mut pairs = BTreeMap::<u32, Vec<u32>>::new();
+        let mut totals = BTreeMap::<u32, u32>::new();
+        let mut quantity = None;
+        while let Some(row) = rows.next()? {
+            let r: u32 = row.get(0)?;
+            let c: u32 = row.get(1)?;
+            let value = normalize(&row.get::<_, Option<String>>(2)?.unwrap_or_default());
+            if p.work.is_match(&value) && !p.amount.is_match(&value) && !p.quantity.is_match(&value) {
+                work.entry(r).or_default().insert(c);
+            }
+            if p.total.is_match(&value) { totals.entry(c).or_insert(r); }
+            if quantity == Some((r, c - 1)) && p.amount.is_match(&value) {
+                pairs.entry(r).or_default().push(c - 1);
+            }
+            quantity = p.quantity.is_match(&value).then_some((r, c));
+        }
+        let mut hint = None;
+        for (row, mut cols) in pairs {
+            cols.retain(|q| ![*q, *q + 1].iter().any(|col| totals.get(col).is_some_and(|r| *r <= row)));
+            if cols.len() < 2 { continue; }
+            let Some((_, labels)) = work.range(..=row).next_back() else { continue };
+            let next = if cols.iter().all(|c| labels.contains(&(c - 1))) {
+                Some("legacy")
+            } else if labels.len() == 1 && labels.first().is_some_and(|c| *c < cols[0])
+                && cols.windows(2).all(|pair| pair[1] == pair[0] + 2) {
+                Some("daily-wide")
+            } else { None };
+            if next.is_none() || hint.is_some_and(|prior| Some(prior) != next) { return Ok(None); }
+            hint = next;
+        }
+        Ok(hint)
+    }
+
+    /// Old auto rules apply their kind and start to ordinary blocks. A shared
+    /// calendar with adjacent daily headers retained its own dates and sheets.
+    pub fn classic_daily_workbook(
+        &self, book: &[(String, String)], orgs: &[String; 4], cancel: &AtomicBool,
+    ) -> Result<bool> {
+        if book.is_empty() || book.len() > 12 { return Ok(false); }
+        let p = Patterns::new();
+        let mut active = Vec::new();
+        for (_, sheet) in book {
+            check_cancel(cancel)?;
+            if self.page(sheet, 0, 1)?.is_empty() { continue; }
+            if self.worksheet_layout(sheet)? != Some("daily-wide") { return Ok(false); }
+            active.push(sheet);
+        }
+        if active.is_empty() { return Ok(false); }
+        self.wide_setup(cancel)?;
+        let date1904 = self.uses_1904_epoch()?;
+        for sheet in active {
+            let Some(info) = self.info(sheet, None, 2, orgs, &p, cancel)? else { return Ok(false); };
+            let mut previous: Option<NaiveDate> = None;
+            let mut adjacent = false;
+            // Two adjacent calendar starts rule out non-overlapping weeks or months.
+            // Full conversion still verifies every pair, date and control total.
+            for pair in info.pairs.iter().take(3) {
+                let Some((parts, _, _)) = self.pair_date(sheet, &info, *pair, "detect-day", date1904, &p, cancel)? else { break };
+                let Some(date) = NaiveDate::from_ymd_opt(parts.year.unwrap_or(2000), parts.month, parts.day) else { return Ok(false); };
+                if previous.is_some_and(|d| d.succ_opt() == Some(date)) { adjacent = true; break; }
+                previous = Some(date);
+            }
+            if !adjacent { return Ok(false); }
+        }
+        Ok(true)
+    }
+
+    fn uses_1904_epoch(&self) -> Result<bool> {
+        Ok(self.db.query_row("SELECT EXISTS(SELECT 1 FROM nodes n JOIN attributes a ON a.component=n.component AND a.seq=n.seq AND a.key='date1904' WHERE n.component='xl/workbook.xml' AND n.tag='workbookPr' AND a.value IN ('1','true'))",[],|r|r.get(0))?)
+    }
+
     pub fn detect_wide(
         &self,
         cfg: &WideOptions,
@@ -547,6 +639,7 @@ impl Stage<'_> {
                 if let Some(i) = self.info(
                     &path,
                     cfg.mappings.get(&name),
+                    2,
                     &cfg.organizations,
                     &p,
                     &cancel,
@@ -580,18 +673,25 @@ impl Stage<'_> {
         sheet: &str,
         info: &Info,
         col: u32,
+        period_kind: &str,
         date1904: bool,
         p: &Patterns,
         cancel: &AtomicBool,
-    ) -> Result<Option<(Parts, u32, u32)>> {
+    ) -> Result<Option<ColumnDate>> {
+        let mut month = None;
         let mut st = self.header_rows(sheet, info.header, col)?;
         let mut rows = st.query(params![sheet, info.header, col])?;
         while let Some(r) = rows.next()? {
             check_cancel(cancel)?;
             let row: u32 = r.get(0)?;
             if let Some((v, kind, styled)) = self.header_value(sheet, row, col, true)? {
-                if let Some(parts) = date_parts(&v, &kind, styled, date1904, p)? {
-                    return Ok(Some((parts, row, col)));
+                if let Some(parts) = period_header_date(&v, &kind, styled, date1904, period_kind, p)? {
+                    return Ok(Some(ColumnDate { parts, row, col, month_only: false }));
+                }
+                if month.is_none() && period_kind != "detect-day" {
+                    if let Some(parts) = month_header_date(&v, &kind, p)? {
+                        month = Some(ColumnDate { parts, row, col, month_only: true });
+                    }
                 }
             }
         }
@@ -612,47 +712,54 @@ impl Stage<'_> {
             while let Some(h) = hr.next()? {
                 check_cancel(cancel)?;
                 let n: u32 = h.get(0)?;
-                if let Some(v) = self.header_value(sheet, n, col, false)? {
-                    if let Some(parts) =
-                        date_parts(&format!("{day} {}", v.0), "inlineStr", false, false, p)?
-                    {
-                        return Ok(Some((parts, row, col)));
+                if let Some((label, kind, _)) = self.header_value(sheet, n, col, false)? {
+                    if let Some(mut parts) = month_header_date(&label, &kind, p)? {
+                        parts.day = day.parse()?;
+                        return Ok(Some(ColumnDate { parts, row, col, month_only: false }));
                     }
                 }
             }
         }
-        Ok(None)
+        Ok(month)
     }
     fn pair_date(
         &self,
         sheet: &str,
         i: &Info,
         pair: Pair,
+        period_kind: &str,
         date1904: bool,
         p: &Patterns,
         cancel: &AtomicBool,
     ) -> Result<Option<(Parts, u32, u32)>> {
-        let a = self.column_date(sheet, i, pair.q, date1904, p, cancel)?;
-        let b = self.column_date(sheet, i, pair.a, date1904, p, cancel)?;
-        match (a, b) {
-            (None, x) | (x, None) => Ok(x),
-            (Some((mut a, r, c)), Some((b, _, _))) => {
-                if a.day != b.day
-                    || a.month != b.month
-                    || matches!((a.year,b.year),(Some(x),Some(y))if x!=y)
-                    || matches!((a.year,b.suffix),(Some(x),Some(y))if x%100!=y)
-                    || matches!((b.year,a.suffix),(Some(x),Some(y))if x%100!=y)
-                    || matches!((a.suffix,b.suffix),(Some(x),Some(y))if x!=y)
-                {
-                    return Err(fail("quantity and amount header dates conflict"));
-                }
-                if a.year.is_none() {
-                    a.year = b.year;
-                }
-                a.suffix = a.suffix.or(b.suffix);
-                Ok(Some((a, r, c)))
+        let a = self.column_date(sheet, i, pair.q, period_kind, date1904, p, cancel)?;
+        let b = self.column_date(sheet, i, pair.a, period_kind, date1904, p, cancel)?;
+        // A merged month can cover both metrics while only one names the day.
+        let (mut selected, other) = match (a, b) {
+            (Some(a), Some(b)) if a.month_only && !b.month_only => (b, Some(a)),
+            (Some(a), b) => (a, b),
+            (None, Some(b)) => (b, None),
+            (None, None) => return Ok(None),
+        };
+        if let Some(other) = other {
+            let a = &mut selected.parts;
+            let b = other.parts;
+            if (!other.month_only && a.day != b.day)
+                || a.month != b.month
+                || matches!((a.year,b.year),(Some(x),Some(y))if x!=y)
+                || matches!((a.year,b.suffix),(Some(x),Some(y))if x%100!=y)
+                || matches!((b.year,a.suffix),(Some(x),Some(y))if x%100!=y)
+                || matches!((a.suffix,b.suffix),(Some(x),Some(y))if x!=y)
+            {
+                return Err(fail("quantity and amount header dates conflict"));
             }
+            a.year = a.year.or(b.year);
+            a.suffix = a.suffix.or(b.suffix);
         }
+        if selected.month_only && period_kind != "month" {
+            return Err(fail("В заголовке указан месяц. Проверьте период отчёта."));
+        }
+        Ok(Some((selected.parts, selected.row, selected.col)))
     }
     /// Uses the local calendar date, matching browser reportToday().
     pub fn convert_wide(
@@ -688,6 +795,7 @@ impl Stage<'_> {
                         .info(
                             path,
                             cfg.mappings.get(name),
+                            if book.len() == 1 || cfg.start.is_some() { 1 } else { 2 },
                             &cfg.organizations,
                             &p,
                             &cancel,
@@ -708,7 +816,10 @@ impl Stage<'_> {
                 return Err(fail(&format!("Лист «{name}» из ручной настройки отсутствует среди листов для загрузки. Проверьте книгу и правило.")));
             }
             if names.is_empty() {
-                return Err(fail("no shared-work daily sheets found"));
+                return Err(fail("Не найден лист с единым списком работ и парами столбцов. Проверьте структуру или укажите столбцы вручную."));
+            }
+            if names.len() > 1 && cfg.start.is_some() {
+                return Err(fail("Ручная дата относится к одному листу. Выберите лист или используйте даты в Excel."));
             }
             if cfg
                 .sequential_periods
@@ -717,8 +828,10 @@ impl Stage<'_> {
             {
                 return Err(fail("sequential period refers to an unused worksheet"));
             }
-            let date1904:bool=self.db.query_row("SELECT EXISTS(SELECT 1 FROM nodes n JOIN attributes a ON a.component=n.component AND a.seq=n.seq AND a.key='date1904' WHERE n.component='xl/workbook.xml' AND n.tag='workbookPr' AND a.value IN ('1','true'))",[],|r|r.get(0))?;
+            let date1904 = self.uses_1904_epoch()?;
             let mut summary = ConversionSummary::default();
+            let mut occupied = BTreeMap::<NaiveDate, NaiveDate>::new();
+            let confirmed_start = cfg.start.as_deref().map(parse_start).transpose()?;
             for name in names {
                 check_cancel(&cancel)?;
                 let sequential = cfg.sequential_periods.get(&name);
@@ -732,13 +845,15 @@ impl Stage<'_> {
                     .info(
                         path,
                         cfg.mappings.get(&name),
+                        1,
                         &cfg.organizations,
                         &p,
                         &cancel,
                     )?
-                    .ok_or_else(|| fail("daily mapping not found"))?;
+                    .ok_or_else(|| fail("Не найдены пары столбцов для выбранного листа."))?;
                 let mut days = Vec::new();
                 let mut total = None;
+                let mut used_start = false;
                 let mut years = BTreeSet::new();
                 for pair in &info.pairs {
                     check_cancel(&cancel)?;
@@ -762,7 +877,7 @@ impl Stage<'_> {
                     let date = if is_total {
                         None
                     } else {
-                        self.pair_date(path, &info, *pair, date1904, &p, &cancel)?
+                        self.pair_date(path, &info, *pair, &cfg.kind, date1904, &p, &cancel)?
                     };
                     if is_total || date.is_none() && metric_total {
                         if total.is_some() && info.totals.is_none() {
@@ -796,10 +911,15 @@ impl Stage<'_> {
                             date.map_or(info.header, |d| d.1),
                             date.map_or(pair.q, |d| d.2),
                         )
+                    } else if date.is_none() && confirmed_start.is_some() && days.is_empty() {
+                        let first = confirmed_start.unwrap();
+                        used_start = true;
+                        (Parts { year: Some(first.year()), suffix: None, month: first.month(), day: first.day() },
+                         info.header, pair.q)
                     } else {
                         date.ok_or_else(|| {
                             fail(&format!(
-                                "date not found above {} / {}",
+                                "Над ячейками {} / {} нет даты периода. Для единственного периода укажите начало вручную.",
                                 cell(pair.q, info.header),
                                 cell(pair.a, info.header)
                             ))
@@ -815,6 +935,9 @@ impl Stage<'_> {
                         header_col: col,
                         date: NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(),
                     });
+                }
+                if used_start && days.len() != 1 {
+                    return Err(fail("Укажите в заголовках даты каждой пары столбцов. Ручная дата подходит для одного периода."));
                 }
                 if days.is_empty() {
                     return Err(fail("no daily date columns"));
@@ -977,9 +1100,13 @@ impl Stage<'_> {
                 let year = sequential
                     .map(|p| p.year)
                     .or(cfg.year)
-                    .or_else(|| (years.len() == 1).then(|| *years.first().unwrap()))
+                    .or_else(|| confirmed_start.map(|d| d.year()))
+                    .or_else(|| {
+                        let explicit = cfg.kind != "day" && days.iter().all(|d| d.parts.year.is_some());
+                        (years.len() == 1 || explicit).then(|| *years.first().unwrap())
+                    })
                     .ok_or_else(|| fail("year is ambiguous; provide a confirmed year"))?;
-                for day in &mut days {
+                for (index, day) in days.iter_mut().enumerate() {
                     if day.parts.suffix.is_some_and(|s| year % 100 != s) {
                         return Err(fail("year conflicts with abbreviated date"));
                     }
@@ -989,6 +1116,14 @@ impl Stage<'_> {
                     }
                     day.date = NaiveDate::from_ymd_opt(y, day.parts.month, day.parts.day)
                         .ok_or_else(|| fail("invalid day in header"))?;
+                    if index == 0 && confirmed_start.is_some_and(|d| d != day.date) {
+                        return Err(fail("Дата первого периода не совпадает с датой в заголовке Excel."));
+                    }
+                    let end = shared_period_end(day.date, &cfg.kind)?;
+                    if occupied.range(..=end).next_back().is_some_and(|(_, prior_end)| *prior_end >= day.date) {
+                        return Err(fail("duplicate day or overlapping periods: периоды пересекаются. Проверьте период и даты в Excel."));
+                    }
+                    occupied.insert(day.date, end);
                     self.db
                         .execute(
                             "INSERT INTO wide_days VALUES(?1,?2,?3,?4,?5,?6)",
@@ -1003,7 +1138,10 @@ impl Stage<'_> {
                         )
                         .map_err(|_| fail("duplicate day within or across selected sheets"))?;
                 }
-                let (begin, end) = if let Some(bounds) = sequential_bounds {
+                let (begin, end) = if cfg.kind != "day" {
+                    (days.iter().map(|d| d.date).min().unwrap(),
+                     shared_period_end(days.iter().map(|d| d.date).max().unwrap(), &cfg.kind)?)
+                } else if let Some(bounds) = sequential_bounds {
                     bounds
                 } else if let Some(q) = quarters.into_iter().flatten().next() {
                     let month = (q - 1) * 3 + 1;
@@ -1041,8 +1179,8 @@ impl Stage<'_> {
                     if !any {
                         self.source_issue(
                             &name,
-                            "missing-day",
-                            "Daily columns are blank; no zero report invented",
+                            if cfg.kind == "day" { "missing-day" } else { "missing-period" },
+                            if cfg.kind == "day" { "Daily columns are blank; no zero report invented" } else { "В столбцах периода нет значений" },
                             Some(day.date),
                             None,
                             None,
@@ -1062,11 +1200,13 @@ impl Stage<'_> {
                         amount_col: day.pair.a,
                         header_row: info.header,
                     };
-                    self.db.execute("INSERT INTO converted_reports VALUES(?1,?2,?3,'day',?4,?4,0,0,0,0,?5,?6,?7,?8)",params![summary.reports+1,id,path,date,info.header,info.work,day.pair.q,day.pair.a])?;
+                    let period_end = shared_period_end(day.date, &cfg.kind)?;
+                    self.db.execute("INSERT INTO converted_reports VALUES(?1,?2,?3,?4,?5,?6,0,0,0,0,?7,?8,?9,?10)",
+                        params![summary.reports+1,id,path,cfg.kind,date,period_end.to_string(),info.header,info.work,day.pair.q,day.pair.a])?;
                     let legacy = LegacyOptions {
                         period_dates: None,
                         sheet: path.clone(),
-                        kind: "day".into(),
+                        kind: cfg.kind.clone(),
                         start: date.clone(),
                         organizations: cfg.organizations.clone(),
                         mappings: None,
@@ -1108,7 +1248,7 @@ impl Stage<'_> {
                     self.source_totals(&name, path, &info, &days, totals, cfg, &cancel)?;
                 }
                 let mut date = begin;
-                while date <= end && date <= today {
+                while cfg.kind == "day" && date <= end && date <= today {
                     check_cancel(&cancel)?;
                     if !days.iter().any(|d| d.date == date) {
                         self.source_issue(
@@ -1158,7 +1298,7 @@ impl Stage<'_> {
                 }
             }
             if summary.reports == 0 {
-                return Err(fail("selected sheets contain no populated daily data"));
+                return Err(fail("В выбранных листах нет заполненных периодов."));
             }
             check_cancel(&cancel)?;
             self.db.execute(
@@ -1238,7 +1378,7 @@ impl Stage<'_> {
                     } else {
                         "mismatch"
                     },
-                    "Daily values do not match source-period controls",
+                    if cfg.kind == "day" { "Daily values do not match source-period controls" } else { "Значения по периодам не совпадают с контрольными итогами Excel" },
                     None,
                     Some(row),
                     org,
@@ -1288,7 +1428,7 @@ impl Stage<'_> {
         if !exists {
             return Ok(None);
         }
-        Ok(self.db.query_row("SELECT p.sheet_name,p.source_block,p.explicit_zero,p.source_control_date,p.coverage_start,p.coverage_end FROM wide_provenance p JOIN converted_reports r ON r.id=p.report_id WHERE p.report_id=?1",[id],|r|Ok(ReportProvenance{sheet_name:r.get(0)?,source_format:"daily-wide".into(),source_block:r.get(1)?,explicit_zero:r.get(2)?,source_control_date:r.get(3)?,coverage:Coverage{start:r.get(4)?,end:r.get(5)?}})).optional()?)
+        Ok(self.db.query_row("SELECT p.sheet_name,p.source_block,p.explicit_zero,p.source_control_date,p.coverage_start,p.coverage_end,CASE WHEN r.kind='day' THEN 'daily-wide' ELSE 'period-pairs' END FROM wide_provenance p JOIN converted_reports r ON r.id=p.report_id WHERE p.report_id=?1",[id],|r|Ok(ReportProvenance{sheet_name:r.get(0)?,source_format:r.get(6)?,source_block:r.get(1)?,explicit_zero:r.get(2)?,source_control_date:r.get(3)?,coverage:Coverage{start:r.get(4)?,end:r.get(5)?}})).optional()?)
     }
     pub fn source_issue_page(&self, after: u64, limit: usize) -> Result<Vec<SourceIssue>> {
         page_limit(limit)?;
@@ -1339,7 +1479,34 @@ fn read_source_issue(r: &rusqlite::Row<'_>) -> rusqlite::Result<SourceIssue> {
     })
 }
 
+fn parse_start(value: &str) -> Result<NaiveDate> {
+    let date = NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map_err(|_| fail("Укажите корректную дату первого периода."))?;
+    if !(1900..=9999).contains(&date.year()) || date.to_string() != value {
+        return Err(fail("Укажите корректную дату первого периода."));
+    }
+    Ok(date)
+}
+
+pub(crate) fn shared_period_end(start: NaiveDate, kind: &str) -> Result<NaiveDate> {
+    let end = match kind {
+        "day" => Some(start),
+        "week" => start.checked_add_signed(Duration::days(6)),
+        "month" if start.day() == 1 => start.checked_add_months(Months::new(1)).and_then(|d| d.pred_opt()),
+        "month" => return Err(fail("Месячный период должен начинаться первого числа.")),
+        _ => return Err(fail("Выберите день, неделю или месяц.")),
+    };
+    end.filter(|d| d.year() <= 9999).ok_or_else(|| fail("Дата периода вне диапазона."))
+}
+
 fn validate(cfg: &WideOptions) -> Result<()> {
+    if !matches!(cfg.kind.as_str(), "day" | "week" | "month")
+        || (!cfg.sequential_periods.is_empty() && (cfg.kind != "day" || cfg.start.is_some())) {
+        return Err(fail("Последовательные колонки за квартал или год доступны для дневных отчётов."));
+    }
+    if let Some(raw) = &cfg.start {
+        shared_period_end(parse_start(raw)?, &cfg.kind)?;
+    }
     if cfg.year.is_some_and(|y| !(1900..=9999).contains(&y))
         || cfg.sheets.len() > 12
         || cfg.mappings.len() > 12
@@ -1457,6 +1624,52 @@ pub(crate) fn typed_excel_date(value: &str) -> Option<NaiveDate> {
     // Preserve the calendar date written in the workbook without converting the offset to UTC.
     NaiveDate::parse_from_str(&ISO.captures(value)?[1], "%Y-%m-%d").ok()
 }
+fn month_header_date(value: &str, cell_kind: &str, patterns: &Patterns) -> Result<Option<Parts>> {
+    if !matches!(cell_kind, "s" | "str" | "inlineStr") {
+        return Ok(None);
+    }
+    let text = value.trim();
+    let bytes = text.as_bytes();
+    if bytes.len() == 7 && bytes[4] == b'-'
+        && bytes[..4].iter().chain(&bytes[5..]).all(u8::is_ascii_digit)
+    {
+        let first = parse_start(&format!("{text}-01"))?;
+        return Ok(Some(Parts {
+            year: Some(first.year()),
+            suffix: None,
+            month: first.month(),
+            day: 1,
+        }));
+    }
+    date_parts(&format!("1 {text}"), "inlineStr", false, false, patterns)
+}
+
+fn period_header_date(
+    value: &str, cell_kind: &str, styled: bool, date1904: bool,
+    period_kind: &str, patterns: &Patterns,
+) -> Result<Option<Parts>> {
+    if let Some(parts) = date_parts(value, cell_kind, styled, date1904, patterns)? {
+        return Ok(Some(parts));
+    }
+    if period_kind == "detect-day" || !matches!(cell_kind, "s" | "str" | "inlineStr") { return Ok(None); }
+    let text = value.trim();
+    static RANGE: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+        r"(?i)^(?:(?:отч[её]тный\s+)?период\s*[:=]?\s*)?(?:с\s+)?(\d{4}-\d{2}-\d{2}|\d{1,2}[./]\d{1,2}[./]\d{4})\s*(?:по|[–—-])\s*(\d{4}-\d{2}-\d{2}|\d{1,2}[./]\d{1,2}[./]\d{4})$"
+    ).unwrap());
+    if let Some(range) = RANGE.captures(text) {
+        let parse = |raw: &str| -> Result<NaiveDate> {
+            let fmt = if raw.contains('.') { "%d.%m.%Y" } else if raw.contains('/') { "%d/%m/%Y" } else { "%Y-%m-%d" };
+            NaiveDate::parse_from_str(raw, fmt).map_err(|_| fail("В заголовке Excel указана некорректная дата."))
+        };
+        let first = parse(&range[1])?;
+        if shared_period_end(first, period_kind)? != parse(&range[2])? {
+            return Err(fail("Диапазон дат в заголовке Excel не соответствует выбранному периоду."));
+        }
+        return Ok(Some(Parts { year: Some(first.year()), suffix: None, month: first.month(), day: first.day() }));
+    }
+    Ok(None)
+}
+
 fn date_parts(
     value: &str,
     kind: &str,

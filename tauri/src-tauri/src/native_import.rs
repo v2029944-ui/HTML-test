@@ -346,12 +346,11 @@ pub async fn native_import_sheets(
                 if sheets.len() > 64 {
                     return Err("Too many Excel worksheets for native review".into());
                 }
-                let auto_sheets = if let Some(rule)=rule.filter(|r|r.format.as_deref()==Some("auto")) {
-                    let organizations=storage.folder_import_organizations(storage.revision()?)?;
-                    let options=rule.native_wide_options(organizations)?;
-                    Some(stage.detect_wide(&options,Arc::new(AtomicBool::new(false)))
-                        .map_err(|e|e.to_string())?)
-                } else {None};
+                let auto = rule.as_ref().is_some_and(|r| r.format.as_deref() == Some("auto"));
+                let classic_daily = if auto {
+                    let orgs = storage.folder_import_organizations(storage.revision()?)?;
+                    stage.classic_daily_workbook(&sheets, &orgs, &cancel).map_err(|e| e.to_string())?
+                } else { false };
                 let mut result = Vec::new();
                 for (name, component) in sheets {
                     if !stage
@@ -359,8 +358,9 @@ pub async fn native_import_sheets(
                         .map_err(|e| e.to_string())?
                         .is_empty()
                     {
-                        let daily_wide=auto_sheets.as_ref().map(|sheets|sheets.iter().any(|sheet|sheet.component==component));
-                        result.push(NativeWorksheet { name, component, daily_wide });
+                        let layout = stage.worksheet_layout(&component).map_err(|e| e.to_string())?;
+                        let daily_wide = if auto { layout.map(|shape| shape == "daily-wide") } else { None };
+                        result.push(NativeWorksheet { name, component, daily_wide, layout, classic_daily });
                     }
                 }
                 Ok(result)
@@ -377,6 +377,9 @@ pub struct NativeWorksheet {
     pub component: String,
     #[serde(rename="dailyWide",skip_serializing_if="Option::is_none")]
     pub daily_wide: Option<bool>,
+    pub layout: Option<&'static str>,
+    #[serde(rename="classicDaily")]
+    pub classic_daily: bool,
 }
 
 #[tauri::command]
@@ -554,20 +557,33 @@ fn with_folder_prepared<T>(
     let operation = store.begin_folder_import(window, request)?;
     let cancel = operation.job.cancellation();
     let (rule, source, file) = store.checked_folder_import(request)?;
-    if !matches!(rule.format.as_deref(), None | Some("legacy" | "daily-wide" | "auto")) {
+    if !matches!(rule.format.as_deref(), None | Some("legacy" | "daily-wide" | "period-pairs" | "auto")) {
         return Err("Выберите формат импорта файла.".into());
     }
     let organizations = store.folder_import_organizations(request.revision)?;
     let area = StageArea::open(store.root().join("native-import-stages")).map_err(|e|e.to_string())?;
     let mut stage = area.ingest_opened(source, file, Limits::default(), cancel, |_|{})
         .map_err(|e|e.to_string())?;
-    let wide_options=rule.native_wide_options(organizations.clone())?;
-    let wide=rule.format.as_deref()==Some("daily-wide") ||
-        rule.format.as_deref()==Some("auto") && !stage.detect_wide(&wide_options,operation.job.cancellation_handle()).map_err(|e|e.to_string())?.is_empty();
+    let mut wide_options=rule.native_wide_options(organizations.clone())?;
+    let book=stage.sheet_names().map_err(|e|e.to_string())?;
+    let wide = if rule.format.as_deref() == Some("auto") {
+        if stage.classic_daily_workbook(&book, &organizations, cancel).map_err(|e| e.to_string())? {
+            wide_options.kind = "day".into();
+            wide_options.start = None;
+            true
+        } else {
+            let sheet = rule.native_legacy_sheet(&book)?;
+            let layout = stage.worksheet_layout(&sheet).map_err(|e| e.to_string())?
+                .ok_or("Не удалось однозначно определить структуру Excel. Укажите её в правиле файла.")?;
+            if layout == "daily-wide" {
+                wide_options.sheets = book.iter().filter(|(_, component)| *component == sheet).map(|(name, _)| name.clone()).collect();
+            }
+            layout == "daily-wide"
+        }
+    } else { matches!(rule.format.as_deref(), Some("daily-wide" | "period-pairs")) };
     if wide {
         stage.convert_wide(&wide_options,operation.job.cancellation_handle(),|_|{}).map_err(|e|e.to_string())?;
     } else {
-        let book=stage.sheet_names().map_err(|e|e.to_string())?;
         let sheet=rule.native_legacy_sheet(&book)?;
         let options=LegacyOptions{period_dates:None,sheet,kind:rule.kind.clone(),start:rule.start.clone(),organizations,mappings:None};
         stage.convert_legacy(&options,cancel,|_|{}).map_err(|e|e.to_string())?;

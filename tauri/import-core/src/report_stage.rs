@@ -434,7 +434,7 @@ impl Stage<'_> {
             {
                 return Err(fail("Некорректное сопоставление столбцов."));
             }
-            if cfg.mappings.is_some() && [m.work_col,m.count_col,m.amount_col].iter().any(|&col| !used_columns.insert(col)) {
+            if [m.work_col,m.count_col,m.amount_col].iter().any(|&col| !used_columns.insert(col)) {
                 return Err(fail("Один столбец указан в нескольких наборах Excel."));
             }
         }

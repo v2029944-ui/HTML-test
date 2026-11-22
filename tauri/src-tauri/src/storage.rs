@@ -240,8 +240,8 @@ fn validate_rule(rule: &Rule) -> Result<(), String> {
     if !REPORT_TYPES.contains(&rule.kind.as_str()) {
         return Err("Тип отчёта должен быть «Дни», «Недели» или «Месяцы».".into());
     }
-    let wide = rule.format.as_deref() == Some("daily-wide");
-    if (rule.format.is_some() && !matches!(rule.format.as_deref(), Some("auto" | "legacy" | "daily-wide"))) || (wide && rule.kind != "day") {
+    let wide = matches!(rule.format.as_deref(), Some("daily-wide" | "period-pairs"));
+    if (rule.format.is_some() && !matches!(rule.format.as_deref(), Some("auto" | "legacy" | "daily-wide" | "period-pairs"))) || (rule.format.as_deref() == Some("daily-wide") && rule.kind != "day") {
         return Err("Некорректный формат импорта.".into());
     }
     if !(wide && rule.start.is_empty())

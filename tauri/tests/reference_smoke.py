@@ -371,6 +371,11 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         expect(page.locator('#inspectFile')).to_be_disabled()
         expect(page.locator('#saveImport')).to_be_disabled()
         expect(page.locator('#excelFile')).to_be_attached()
+        layout = page.locator('#importFormat')
+        if not layout.input_value():
+            expect(page.locator('#importAdvanced')).to_be_hidden()
+        layout.select_option('legacy')
+        expect(page.locator('#importAdvanced')).to_be_visible()
         mapping = page.locator('#importMappingMode')
         mapping_summary = page.locator('#upload').get_by_text('Столбцы и даты каждого набора', exact=True)
         if not mapping_summary.evaluate('(node) => node.parentElement.open'):
