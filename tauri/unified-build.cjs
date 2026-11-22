@@ -129,16 +129,21 @@ function buildUnified(source){
 
  html=html.replace('</head>','<meta name="analiz-unified-sql" content="true"><link rel="stylesheet" href="tauri-app-status.css"><link rel="stylesheet" href="tauri-unified.css"><link rel="stylesheet" href="tauri-sql-row-scroll.css"><script src="tauri-shared-workspace.js"></script><script src="tauri-bridge.js"></script></head>');
  const storageView='<section id="storage" class="view">';
- if(!html.includes(storageView))throw Error('Missing storage settings view');
+ const uploadView='<section id="upload" class="view">';
+ if(!html.includes(storageView)||!html.includes(uploadView))throw Error('Missing desktop management view');
  html=html.replace(storageView,storageView+
-  '<section id="sharedWorkspacePanel" class="panel" aria-labelledby="sharedWorkspaceHeading">'+
-  '<h2 id="sharedWorkspaceHeading">Общая база</h2>'+
-  '<p>Выберите одну и ту же общую папку на рабочих компьютерах. Пустая папка откроется с пустой базой. Личные отчёты останутся на этом компьютере.</p>'+
+  '<button type="button" class="button secondary" id="sharedWorkspaceShortcut">Настроить общую базу в отчётах</button>');
+ html=html.replace(uploadView,uploadView+
+  '<details id="sharedWorkspacePanel" class="panel"><summary id="sharedWorkspaceHeading">'+
+  '<strong id="sharedWorkspaceMode">База отчётов</strong> · Настроить</summary>'+
   '<p id="sharedWorkspaceStatus" role="status" aria-live="polite">Проверка подключения…</p>'+
+  '<p>Выберите на рабочих компьютерах одну и ту же сетевую папку. При разовой загрузке выберите Excel, нажмите «Проверить Excel», затем «Сохранить отчёты». После подтверждения и синхронизации отчёт появится у коллег.</p>'+
+  '<p>Для сохранения нужны права записи в сетевую папку. Их назначает администратор файлового сервера. В приложении ролей сотрудников нет.</p>'+
+  '<p>Пустая папка откроется без отчётов. Личные отчёты останутся на этом компьютере. Подключение запомнится. Вернуться к личной базе через интерфейс сейчас нельзя.</p>'+
   '<p id="sharedWorkspaceMessage" role="status" hidden></p><div class="actions">'+
   '<button type="button" class="button primary" id="sharedWorkspaceConnect">Подключить общую папку</button>'+
   '<button type="button" class="button secondary" id="sharedWorkspaceRetry" hidden>Повторить подключение</button>'+
-  '<button type="button" class="button secondary" id="sharedWorkspaceDiscard" hidden>Отменить неподтверждённые изменения и обновить</button></div></section>');
+  '<button type="button" class="button secondary" id="sharedWorkspaceDiscard" hidden>Отменить неподтверждённые изменения и обновить</button></div></details>');
  html=html.replace('Удалить все импортированные отчёты на этом устройстве.', 'Удалить все импортированные отчёты из активной базы.');
  html=html.replace('Данные остаются в этом браузере','Локальная база SQLite');
  html=html.replace('и защиты от очистки данных браузера.','и защиты от потери данных.');

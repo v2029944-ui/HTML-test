@@ -33,7 +33,7 @@ async function fixture() {
   const window = {referenceResults: {beginScopeChange() {},failScopeChange() {},refresh(scope) {seen.push(scope);}}};
   const choices=[{key:'group:1',kind:'group',name:'Ремонт'},{key:'work:p',kind:'work',name:'Покраска'}];
   let dialog;
-  window.referenceDesktop={dialog(){dialog=element();return dialog;}};
+  window.referenceDesktop={dialog(){dialog=element();return dialog;},setDialogApply(action){dialog.append(action);}};
   window.sqlRowScroll={attach(){},reset(){}};
   function checkboxInDialog(text) {
     const visit=node=>node.options.some(child=>child.textContent===text)?node.options[0]:node.options.map(visit).find(Boolean);

@@ -357,7 +357,6 @@
  .screen>.tools-column:empty {display:none}
 }
 .screen .compact-source,.screen .changes-table .mobile-position {display:none}
-.report-filter details[open]>summary .filter-summary {display:none}
 :is(#s1,#sharedHeader,#reportShell) .insight-card>div>div>span {min-width:0;overflow-wrap:anywhere}
 @media screen and (max-width:1050px) {
  .screen .compact-source {display:inline;color:#a8b5c4}
@@ -891,17 +890,21 @@
 
 
 #sharedHeader,#reportShell {width:100%;max-width:none;zoom:1}
-#reportShell {position:sticky;top:0;z-index:8;overflow:visible;background:var(--ui-bg)}
+#reportShell {position:sticky;top:calc(-1 * var(--filter-scroll-away,0px));z-index:8;overflow:visible;background:var(--ui-bg)}
 #reportShell>.report-filter {margin:0 auto;width:min(calc(100% - 2 * var(--gutter)),calc(var(--max) - 2 * var(--gutter)));border:1px solid var(--ui-line);border-radius:9px}
-#reportShell .filter-fold[open] .filter-content {max-height:min(49dvh,32rem);overflow:auto;overscroll-behavior:contain}
+#reportShell .filter-fold > summary {position:sticky;top:0;z-index:1;background:var(--ui-surface);border-radius:inherit}
 #reportShell .filter-fold summary {min-height:42px;padding-block:9px}
 #reportShell .filter-summary {display:inline;font-size:12px;line-height:1.3}
-#reportShell .filter-fold[open] .filter-summary {display:none}
+#reportShell .report-filter .filter-periods {
+  display:flex;flex-wrap:wrap;align-items:flex-end;
+}
+#reportShell .filter-periods > .lbl {flex:1 1 max-content;min-width:0;max-width:100%}
+#reportShell .filter-periods > .lbl:has([data-compare]) {min-width:min(100%,17em)}
 #reportShell .filter-options {align-items:stretch}
 #reportShell .filter-options > .lbl > :is(select,button) {margin-block-start:auto}
 #reportShell .filter-shortcuts {border:0;padding:0;min-width:0;gap:5px}
 #reportShell .preset-fields {min-width:0;display:grid;gap:3px;align-content:start}
-#reportShell .preset-title {font:550 var(--date-label-font)/16px var(--date-family,system-ui,sans-serif);color:#b6c2d0}
+#reportShell .preset-title {font:550 var(--date-label-font)/16px var(--date-family,system-ui,sans-serif);color:var(--ui-muted)}
 #reportShell .quick-actions {display:flex;flex-wrap:wrap;gap:5px}
 #reportShell .filter-shortcuts .quick-actions .chip {
   height:var(--date-height);min-height:var(--date-height);margin:0;padding:0 10px;
@@ -951,6 +954,11 @@
 #refRoot {min-height:100vh;min-width:0}
 #refRoot *,#refRoot *::before,#refRoot *::after {box-sizing:border-box}
 #refRoot [hidden] {display:none!important}
+#sheet[open] {display:flex;flex-direction:column;overflow:hidden}
+#sheet #dialogBody {min-height:0;overflow:auto;overscroll-behavior:contain}
+#sheet form {display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:8px;flex:none}
+#sheet form .filter-apply {background:var(--ui-accent);color:var(--ui-accent-ink)}
+#sheet #dialogBody p,#sheet .filter-list-actions output {color:var(--ui-muted)}
 #sheet::backdrop {background:#080b10b8}
 #refNative .ref-calendar-source {display:none!important}
 body:has(#refRoot)>footer {display:none}
@@ -992,7 +1000,11 @@ body:has(#refRoot)>footer {display:none}
 #refRoot[data-theme="light"] :is(#s1,#s2) :is(.up,.numeric-rise) {color:#075d87}
 #refRoot[data-theme="light"] :is(#s1,#s2) :is(.down,.numeric-fall) {color:#9c421e}
 #refRoot[data-theme="light"] :is(#sheet,.period-calendar) :is(button,input,select) {color:var(--text);background:var(--field-bg);border-color:var(--field-border)}
-#refRoot[data-theme="light"] :is(#sheet,.period-calendar) :is(.cal-confirm,[aria-pressed=true]) {background:var(--accent-fill);color:var(--on-accent)}
+#refRoot[data-theme="light"] :is(#sheet,.period-calendar) :is(.cal-confirm,.filter-apply,[aria-pressed=true]) {background:var(--accent-fill);color:var(--on-accent)}
+#refRoot:is([data-ui-size="large"],[data-ui-size="xlarge"]) #toolsTitle {font-size:var(--ui-heading-font)}
+#refRoot:is([data-ui-size="large"],[data-ui-size="xlarge"]) #toolsPage header :is(.tool-tabs button,#backBtn) {
+  font-size:var(--ui-button-font);min-height:var(--ui-control-height);
+}
 #refRoot[data-ui-size="large"] :is(#sharedHeader,#reportShell,#s1,#s2) {zoom:1.12}
 #refRoot[data-ui-size="xlarge"] :is(#sharedHeader,#reportShell,#s1,#s2) {zoom:1.25}
 

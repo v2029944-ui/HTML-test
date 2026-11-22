@@ -63,6 +63,9 @@ test('peer changes refresh equal SQL revisions, discard late reads and block off
   assert.equal(f.scenario.revocations,1,'the old native folder lease does not survive a peer pull');
   f.scenario.syncError='Связь прервана';await f.tick();
   assert.match(f.node('sharedWorkspaceStatus').textContent,/Связь.*отсутствует/);
+  assert.equal(f.node('sharedWorkspaceMode').textContent,'Общая база недоступна');
+  assert.equal(f.node('sharedWorkspacePanel').open,true);
+  assert.equal(f.node('sharedWorkspaceRetry').hidden,false);
   const before=f.calls.length;await assert.rejects(f.window.desktopAPI.nativeRevision(),/Связь прервана/);
   assert.equal(f.calls.length,before,'offline reads never go to another database');
   f.scenario.syncError=null;f.scenario.server={...team,generation:1,workspace_token:'reconnected'};

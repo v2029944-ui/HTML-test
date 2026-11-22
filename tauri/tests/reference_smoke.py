@@ -195,12 +195,15 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
 
     def quality_controls():
         page.locator('#unifiedUploadQuality').click()
-        expect(page.locator('#qualitySummary')).to_contain_text('Найдено:', timeout=TIMEOUT)
-        has_issues = page.locator('#qualityTable tbody tr').count() > 0
+        status = page.locator('#qualitySummary')
+        # Successful empty and populated queries both explain the coverage limit.
+        expect(status).to_contain_text('Отсутствие замечаний само по себе не подтверждает полноту', timeout=TIMEOUT)
+        has_issues = 'Найдено:' in status.inner_text()
         export_available('#qualityExportCsv', has_issues, '04-quality-csv-availability')
         inventory.append({'step': '04-quality-advice-availability', 'available': has_issues,
                           'reason': None if has_issues else 'The current result has no issue advice.'})
         if has_issues:
+            expect(page.locator('#qualityTable tbody tr').first).to_be_visible()
             advice = page.locator('#qualityTable .quality-advice').first
             summary = advice.locator(':scope > summary')
             expect(summary).to_have_text('Как проверить и исправить')
@@ -211,7 +214,10 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                 expect(advice).to_have_js_property('open', expanded)
                 focused(summary)
             expect(advice.locator('p')).to_be_visible()
-        record('04-quality', page.locator('#qualityTable'))
+        else:
+            expect(status).to_contain_text('Замечаний по выбранным условиям нет')
+            expect(page.locator('#qualityTable table')).to_have_count(0)
+        record('04-quality', page.locator('#qualityTable') if has_issues else status)
         table_help('#qualityTable > section', '04-quality-table-help', 2)
 
     def calendar(trigger, name, mode=None, commit=False):
@@ -462,7 +468,13 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                            'usualPanel': '#usualResults .metric-table',
                            'regularityPanel': '#regularityResults .metric-table'}
             if target in help_tables:
-                table_help(help_tables[target], '08-' + target + '-table-help')
+                table_help(help_tables[target], '08-' + target + '-table-help',
+                           expected_count=2 if target == 'usualPanel' else None)
+                if target == 'usualPanel' and has_reports:
+                    expect(page.locator('#usualMetrics summary')).to_contain_text('Выбрано')
+                    hints = page.locator('#usualResults .metric-table:visible').first.locator('thead .table-help-button')
+                    expect(hints.nth(0)).to_have_attribute('aria-label', 'Пояснение: Среднее раньше')
+                    expect(hints.nth(1)).to_have_attribute('aria-label', 'Пояснение: Оценка')
             if target == 'comparison':
                 contribution = page.locator('#contributions')
                 contribution_summary = contribution.locator(':scope > summary')

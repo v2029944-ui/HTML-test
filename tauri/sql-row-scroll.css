@@ -16,5 +16,5 @@
 .sql-pager .sql-page-entry input {box-sizing:border-box;min-width:0;width:7em;max-width:100%;font:inherit;color:var(--text,#eaf0f6);background:var(--field-bg,#151b22);border:1px solid var(--field-border,#455367);border-radius:5px;min-height:2.1em;padding:.25em .4em}
 .sql-pager :is(button,input):focus-visible {outline:2px solid var(--focus,#f5c542);outline-offset:1px}
 .sql-pager [role=alert] {color:var(--danger,#ec9d99)}
-.sql-obsolete-control[hidden],.sql-pager[hidden] {display:none!important}
+.sql-obsolete-control[hidden],.sql-pager[hidden],.sql-pager-controls[hidden] {display:none!important}
 @media print {.sql-pager {display:none!important}.sql-page-content {max-block-size:none!important;min-height:0!important;overflow:visible!important}}

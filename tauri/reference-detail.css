@@ -59,6 +59,22 @@
 #refNative:not([data-panel="comparison"]) #refComparisonModes,
 #refNative[data-panel="comparison"] #comparison .section-filter-row > label:has(> #comparisonMode) {display:none!important}
 #refComparisonModes {width:fit-content;max-width:100%;display:flex;flex-wrap:wrap}
+#refNative #refComparisonModes > button {flex:1 0 auto;max-width:100%;overflow-wrap:normal}
+#refRoot #toolsPage :is(.tool-tabs,.chart-mode-controls,#refComparisonModes) button[aria-pressed=true] {
+  background:var(--accent-fill);color:var(--on-accent);border-color:var(--accent-fill);
+}
+#refNative #structurePanel .extended-filters {
+  display:flex;flex-wrap:wrap;align-items:flex-end;
+}
+#refNative #structurePanel .extended-filters > label {flex:1 1 13em;max-width:100%}
+#refNative #structurePanel .extended-filters > label:has(#structureScope) {flex-basis:19em}
+#refNative #regularityResults .table-scroll tr > :first-child {
+  position:sticky;left:0;z-index:1;background:var(--surface);box-shadow:1px 0 var(--border);
+  min-width:min(11em,37vw);max-width:min(16em,42vw);white-space:normal;overflow-wrap:anywhere;
+}
+#refNative #regularityResults .table-scroll thead tr > :first-child {z-index:2;background:var(--subtle)}
+#refNative #overviewKpis > .kpi {display:grid;grid-row:span 3;grid-template-rows:subgrid;row-gap:4px;align-content:start}
+
 
 /* The date picker is the visible form control, including in the full workspace. */
 #refNative label:has(> .ref-calendar-field):not([hidden]) {
