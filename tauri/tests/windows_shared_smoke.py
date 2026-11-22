@@ -23,7 +23,7 @@ from playwright.sync_api import expect, sync_playwright
 
 from reference_file_dialogs import OwnedFileDialogs
 from windows_smoke import (ROOT, NativeConfirmations, api, navigate, ready,
-                           record_secondary_failure, set_calendar_field, wait_for_text,
+                           record_secondary_failure, set_calendar_field, wait_for_app_state, wait_for_text,
                            wait_for_webview_page, wide_xlsx, windows_test_workspace)
 
 
@@ -456,7 +456,10 @@ def run():
                 b.confirmations.answer(dialog, owner, prompt, 1)
                 # Successful disconnect retires the private shared checkout. Verify both
                 # surviving databases rather than reopening that old temporary file.
-                b.page.wait_for_function("window.sharedWorkspace.state?.mode==='personal' && window.unifiedUI.snapshot?.reports===0")
+                wait_for_app_state(b.page,
+                    "window.sharedWorkspace.state?.mode==='personal' && !window.sharedWorkspace.busy && window.unifiedUI.snapshot?.reports===0",
+                    'Return the reader to its original personal database')
+                assert windows_path(api(b.page, 'info')['dataFile']) == windows_path(b.personal_file)
                 assert a.state()['mode']=='shared' and generations(folder)==committed
                 assert summary(a)['reports'] == 366
                 assert api(b.page, 'nativeSettingsBootstrap')['reports'] == 0
