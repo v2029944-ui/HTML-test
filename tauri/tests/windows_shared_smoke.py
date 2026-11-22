@@ -196,10 +196,10 @@ class InstalledClient:
             self.page.on('pageerror', lambda error: self.errors.append(str(error)))
             ready(self.page, reports, shared=shared)
             info = api(self.page, 'info')
-            require_private_database(info['dataFile'], self.data)
+            database = Path(require_private_database(info['dataFile'], self.data))
             self.verified = True
             self.personal_file = self.data / 'reports.sqlite3'
-            self.confirmations = NativeConfirmations(self.process.pid, Path(info['dataFile']))
+            self.confirmations = NativeConfirmations(self.process.pid, database)
             self.dialogs = OwnedFileDialogs(self.confirmations)
         except BaseException as error:
             record_secondary_failure(error, self.name + ' startup cleanup failed', self.force_stop)
@@ -447,10 +447,19 @@ def run():
                 assert generations(folder) == committed, 'Reopen modified an immutable shared generation'
                 note('both-clients-reopened-in-persisted-shared-workspace', writer=a.state(), reader=b.state())
                 navigate(b.page, 'databases')
-                b.confirmations.cancel_then_accept(b.page.locator('#sharedWorkspaceDisconnect'),
-                    'Перейти в личную базу на этом компьютере? Отчёты останутся в своих базах. Автоимпорт из папки в этом сеансе остановится.')
+                trigger = b.page.locator('#sharedWorkspaceDisconnect')
+                prompt = 'Перейти в личную базу на этом компьютере? Отчёты останутся в своих базах. Автоимпорт из папки в этом сеансе остановится.'
+                b.confirmations.cancel_only(trigger, prompt)
+                assert b.state()['mode'] == 'shared' and summary(b)['reports'] == 366
+                trigger.click()
+                dialog, owner = b.confirmations.find_dialog(prompt)
+                b.confirmations.answer(dialog, owner, prompt, 1)
+                # Successful disconnect retires the private shared checkout. Verify both
+                # surviving databases rather than reopening that old temporary file.
                 b.page.wait_for_function("window.sharedWorkspace.state?.mode==='personal' && window.unifiedUI.snapshot?.reports===0")
                 assert a.state()['mode']=='shared' and generations(folder)==committed
+                assert summary(a)['reports'] == 366
+                assert api(b.page, 'nativeSettingsBootstrap')['reports'] == 0
                 note('reader-returned-to-original-empty-personal-base')
         # windows_test_workspace has now released its profile-specific workers.
         for port in (9231, 9232, 9234, 9235):
