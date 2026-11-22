@@ -28,6 +28,25 @@ function mount(overrides={}){
 }
 const text=e=>[e.textContent||'',...e.children.map(x=>typeof x==='object'?text(x):'')].join(' ');
 const flush=()=>new Promise(r=>setImmediate(r));
+test('both Excel previews show workbook cells independently of imported rows', async () => {
+ for (const format of ['legacy', 'daily-wide']) {
+  const preview = async () => ({
+   reviewToken: 'a'.repeat(64), reportCount: 1, rowCount: 2, processedCellCount: 12345
+  });
+  const ui = mount({
+   chooseWideXlsx: async () => '/tmp/cells.xlsx',
+   nativeLegacyImportPreview: preview, nativeWideImportPreview: preview
+  });
+  await ui.nodes.excelFile.click();
+  ui.nodes.importFormat.value = format;
+  await ui.nodes.importFormat.fire('change');
+  await ui.nodes.inspectFile.click();
+  const cards = ui.nodes.importPreview.querySelectorAll('*').filter(el => el.className === 'kpi');
+  const values = Object.fromEntries(cards.map(el => [el.children[1].textContent, el.children[0].textContent]));
+  assert.equal(values['Строк работ'], '2', format);
+  assert.equal(values['Обработано ячеек в книге'], (12345).toLocaleString('ru-RU'), format);
+ }
+});
 test('wide import selects multiple named sheets and keeps legacy component identifiers',async()=>{
  const previews=[];const ui=mount({chooseWideXlsx:async()=>'/tmp/quarters.xlsx',nativeImportSheets:async()=>[
   {name:'Первый квартал',component:'xl/worksheets/sheet1.xml'},

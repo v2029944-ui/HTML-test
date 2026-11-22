@@ -709,6 +709,10 @@ impl PreparedImport<'_> {
     pub fn row_count(&self) -> u64 {
         self.rows
     }
+    /// Explicit worksheet cells read from the entire workbook, including stored empty cells.
+    pub fn processed_cell_count(&self) -> u64 {
+        self.stage.stats.cells
+    }
     pub fn validate_source_and_database(&self, cancel: &AtomicBool) -> Result<()> {
         if self.stage.current_source_hash(cancel)? != self.stage.bound_hash
         {

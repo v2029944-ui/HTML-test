@@ -491,6 +491,7 @@ def check_dated_quarters_preview(page,temporary):
     assert all_quarters['reportCount']==365,all_quarters
     second=api(page,'nativeWideImportPreview',str(source),options|{'sheets':['Q2']})
     assert second['reportCount']==91 and second['sampleReports'][0]['start']=='2023-04-01',second
+    assert second['processedCellCount']==all_quarters['processedCellCount']>all_quarters['rowCount']
     assert api(page,'nativeRevision')==before
 
 
@@ -698,6 +699,7 @@ def check_source_evidence(page, temporary, output):
     options={'year':2020,'sheets':[],'mappings':{},'organizations':snapshot['org_names']}
     preview=api(page,'nativeWideImportPreview',str(source),options)
     assert preview['reportCount']==1 and preview['rowCount']==0 and preview['conflicts']['new_reports']==1,preview
+    assert preview['processedCellCount']==23,preview
     flags={'replaceExact':False,'acceptCrossType':False,'acceptQuality':False}
     assert_rejected(lambda:api(page,'nativeWideImportApply',str(source),options,preview['reviewToken'],flags),
                     'Source gaps bypassed explicit quality acknowledgment','quality')
