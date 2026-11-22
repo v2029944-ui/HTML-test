@@ -120,6 +120,8 @@ pub struct DailyRollupPage {
 }
 #[derive(Debug, Serialize)]
 pub struct TimelinePoint {
+    pub first_start: String,
+    pub last_start: String,
     pub has_activity: bool,
     pub start: String,
     pub periods: i64,
@@ -141,6 +143,8 @@ pub struct WorkTrendSummary {
 }
 #[derive(Debug, Serialize)]
 pub struct OrganizationTrendPoint {
+    pub first_start: String,
+    pub last_start: String,
     pub has_activity: bool,
     pub start: String,
     pub periods: i64,
@@ -1397,6 +1401,37 @@ fn range_rows(
     }
     Ok(out)
 }
+// Aggregate missing evidence separately to avoid multiplying amounts by detail rows.
+const TIMELINE_BUCKET_TOTALS: &str = r#"
+            WITH buckets AS (
+                SELECT CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
+                       COUNT(*) AS periods, MIN(start) AS first_start, MAX(start) AS last_start
+                FROM temp.an_periods WHERE slot=1 GROUP BY label
+            ), missing AS (
+                SELECT CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
+                       COUNT(*) AS missing
+                FROM temp.an_missing WHERE slot=1 GROUP BY label
+            ), values_by_bucket AS (
+                SELECT CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
+                       SUM(x.count) AS count, SUM(x.amount) AS amount, MAX(x.count<>0 OR x.amount<>0) AS active
+                FROM temp.an_periods p
+                JOIN temp.an_valid v ON v.start=p.start
+                JOIN analysis_filter_items f ON f.id=?2 AND f.item=v.org
+                JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
+                LEFT JOIN analysis_groups g ON g.work=x.work
+                WHERE p.slot=1 AND (?3 IS NULL OR EXISTS(
+                    SELECT 1 FROM analysis_filter_items names
+                    WHERE names.id=?3 AND names.item=COALESCE(g.name,x.work)))
+                GROUP BY label
+            )
+            SELECT b.label,b.periods,COALESCE(m.missing,0),
+                   COALESCE(v.count,0),COALESCE(v.amount,0), COALESCE(v.active,0), b.first_start, b.last_start
+            FROM buckets b
+            LEFT JOIN missing m ON m.label=b.label
+            LEFT JOIN values_by_bucket v ON v.label=b.label
+            ORDER BY b.label
+        "#;
+
 impl Storage {
     /// Bounded data for the graphical timeline, with missing periods as nulls.
     /// Up to 120 source periods remain individual; longer selections are
@@ -1425,38 +1460,7 @@ impl Storage {
             [], |r| r.get(0),
         ).map_err(err)?;
         let (mode, granularity) = timeline_grouping(s,q,grouping,period_count)?;
-        // Aggregate data and missing evidence in independent subqueries:
-        // joining both to detail rows would multiply amounts.
-        let sql = r#"
-            WITH buckets AS (
-                SELECT CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
-                       COUNT(*) AS periods
-                FROM temp.an_periods WHERE slot=1 GROUP BY label
-            ), missing AS (
-                SELECT CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
-                       COUNT(*) AS missing
-                FROM temp.an_missing WHERE slot=1 GROUP BY label
-            ), values_by_bucket AS (
-                SELECT CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count, SUM(x.amount) AS amount, MAX(x.count<>0 OR x.amount<>0) AS active
-                FROM temp.an_periods p
-                JOIN temp.an_valid v ON v.start=p.start
-                JOIN analysis_filter_items f ON f.id=?2 AND f.item=v.org
-                JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
-                LEFT JOIN analysis_groups g ON g.work=x.work
-                WHERE p.slot=1 AND (?3 IS NULL OR EXISTS(
-                    SELECT 1 FROM analysis_filter_items names
-                    WHERE names.id=?3 AND names.item=COALESCE(g.name,x.work)))
-                GROUP BY label
-            )
-            SELECT b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(v.count,0),COALESCE(v.amount,0), COALESCE(v.active,0)
-            FROM buckets b
-            LEFT JOIN missing m ON m.label=b.label
-            LEFT JOIN values_by_bucket v ON v.label=b.label
-            ORDER BY b.label
-        "#;
-        let mut stmt = tx.prepare(sql).map_err(err)?;
+        let mut stmt = tx.prepare(TIMELINE_BUCKET_TOTALS).map_err(err)?;
         let mut rows = stmt.query(params![mode, &s.organizations, &s.names]).map_err(err)?;
         let mut points = Vec::new();
         while let Some(row) = rows.next().map_err(err)? {
@@ -1465,6 +1469,8 @@ impl Storage {
             }
             let missing: i64 = row.get(2).map_err(err)?;
             points.push(TimelinePoint {
+                first_start: row.get(6).map_err(err)?,
+                last_start: row.get(7).map_err(err)?,
                 has_activity: row.get(5).map_err(err)?,
                 start: row.get(0).map_err(err)?,
                 periods: row.get(1).map_err(err)?,
@@ -1517,7 +1523,7 @@ impl Storage {
                 WHERE id=?2 ORDER BY ordinal LIMIT 8
             ), buckets AS (
                 SELECT CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
-                       COUNT(*) AS periods
+                       COUNT(*) AS periods, MIN(start) AS first_start, MAX(start) AS last_start
                 FROM temp.an_periods WHERE slot=1 GROUP BY label
             ), missing AS (
                 SELECT org,
@@ -1540,7 +1546,7 @@ impl Storage {
                 GROUP BY v.org,label
             )
             SELECT s.org,b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(v.count,0),COALESCE(v.amount,0), COALESCE(v.active,0)
+                   COALESCE(v.count,0),COALESCE(v.amount,0), COALESCE(v.active,0), b.first_start, b.last_start
             FROM selected s CROSS JOIN buckets b
             LEFT JOIN missing m ON m.org=s.org AND m.label=b.label
             LEFT JOIN values_by_bucket v ON v.org=s.org AND v.label=b.label
@@ -1564,6 +1570,8 @@ impl Storage {
                 return Err("Organization series exceeds 124 points".into());
             }
             current.points.push(OrganizationTrendPoint {
+                first_start: row.get(7).map_err(err)?,
+                last_start: row.get(8).map_err(err)?,
                 has_activity: row.get(6).map_err(err)?,
                 start:row.get(1).map_err(err)?,
                 periods:row.get(2).map_err(err)?,
@@ -1741,7 +1749,7 @@ impl Storage {
         let sql = r#"
             WITH buckets AS (
                 SELECT CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
-                       COUNT(*) AS periods
+                       COUNT(*) AS periods, MIN(start) AS first_start, MAX(start) AS last_start
                 FROM temp.an_periods WHERE slot=1 GROUP BY label
             ), missing AS (
                 SELECT CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start, '-' || ((CAST(strftime('%w',start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
@@ -1760,7 +1768,7 @@ impl Storage {
                 GROUP BY label
             )
             SELECT b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(a.count,0),COALESCE(a.amount,0), COALESCE(a.active,0)
+                   COALESCE(a.count,0),COALESCE(a.amount,0), COALESCE(a.active,0), b.first_start, b.last_start
             FROM buckets b
             LEFT JOIN missing m ON m.label=b.label
             LEFT JOIN aggregates a ON a.label=b.label
@@ -1773,6 +1781,8 @@ impl Storage {
             if points.len()>=124 {return Err("Work timeline exceeds 124 points".into());}
             let missing:i64=row.get(2).map_err(err)?;
             points.push(TimelinePoint{
+                first_start: row.get(6).map_err(err)?,
+                last_start: row.get(7).map_err(err)?,
                 has_activity: row.get(5).map_err(err)?,
                 start:row.get(0).map_err(err)?,
                 periods:row.get(1).map_err(err)?,
@@ -1802,7 +1812,7 @@ impl Storage {
         if !matches!(metric, "amount" | "count") {
             return Err("Unknown ranking metric".into());
         }
-        if !matches!(category, "all" | "work" | "group") {
+        if !matches!(category, "all" | "work" | "group" | "selectable") {
             return Err("Unknown ranking category".into());
         }
         let mut c = self.connect()?;
@@ -1813,19 +1823,25 @@ impl Storage {
         if !complete(&tx, 1, org)? {
             return Ok(RankingSummary { complete: false, rows: Vec::new() });
         }
-        // Every predicate and sort expression is fixed SQL, not user input.
-        let sql = if org.is_some() {
-            "SELECT key,name,kind,count,amount,active FROM temp.an_values
-             WHERE slot=1 AND org=?3 AND (?1='all' OR kind=?1)
-             ORDER BY ABS(CASE WHEN ?2='count' THEN count ELSE amount END) DESC,
-                      key ASC LIMIT 12"
+        // The manual work filter accepts unique names of at most 512 UTF-8 bytes.
+        // Apply its catalog before the ranking limit, preserving the unrestricted ranking.
+        let names_filter = if category == "selectable" {
+            unified_analytics::create_name_catalog(&tx, false)?;
+            "AND key IN (SELECT key FROM unified_names)"
         } else {
-            "SELECT key,name,kind,count,amount,active FROM temp.an_combined
-             WHERE slot=1 AND ?3 IS NULL AND (?1='all' OR kind=?1)
-             ORDER BY ABS(CASE WHEN ?2='count' THEN count ELSE amount END) DESC,
-                      key ASC LIMIT 12"
+            ""
         };
-        let mut stmt = tx.prepare(sql).map_err(err)?;
+        let (table, division) = if org.is_some() {
+            ("temp.an_values", "org=?3")
+        } else {
+            ("temp.an_combined", "?3 IS NULL")
+        };
+        let sql = format!(
+            "SELECT key,name,kind,count,amount,active FROM {table}
+             WHERE slot=1 AND {division} AND (?1 IN ('all','selectable') OR kind=?1) {names_filter}
+             ORDER BY ABS(CASE WHEN ?2='count' THEN count ELSE amount END) DESC, key ASC LIMIT 12"
+        );
+        let mut stmt = tx.prepare(&sql).map_err(err)?;
         let mut cursor = stmt.query(params![category, metric, org]).map_err(err)?;
         let mut rows = Vec::new();
         while let Some(r) = cursor.next().map_err(err)? {
@@ -2539,32 +2555,33 @@ fn export_before(
     let _ = fs::remove_file(&path);
     result
 }
-fn change_csv(w: &mut impl Write, v: &ChangeValue) -> Result<(), String> {
+fn changes_csv_header(w: &mut impl Write, metrics: &[&str]) -> Result<(), String> {
+    let prefix = ["key", "name", "kind", "org", "baseStart", "currentStart", "status"];
+    let mut headers: Vec<_> = prefix.iter().map(|name| (*name).to_owned()).collect();
+    for metric in metrics {
+        for field in ["base", "current", "delta", "percent"] {
+            headers.push(format!("{metric}.{field}"));
+        }
+    }
+    csv_record(w, &headers.iter().map(|h| Cell::Text(h)).collect::<Vec<_>>())
+}
+
+fn change_csv(w: &mut impl Write, v: &ChangeValue, metrics: &[&str]) -> Result<(), String> {
     use Cell::*;
-    csv_record(
-        w,
-        &[
-            Text(&v.key),
-            Text(&v.name),
-            Text(&v.kind),
-            Text(&v.org),
-            Text(&v.base_start),
-            Text(&v.current_start),
-            Text(&v.status),
-            Number(Some(v.count.base)),
-            Number(Some(v.count.current)),
-            Number(Some(v.count.delta)),
-            Number(v.count.percent),
-            Number(Some(v.amount.base)),
-            Number(Some(v.amount.current)),
-            Number(Some(v.amount.delta)),
-            Number(v.amount.percent),
-            Number(v.average.base),
-            Number(v.average.current),
-            Number(v.average.delta),
-            Number(v.average.percent),
-        ],
-    )
+    let mut row = vec![Text(&v.key), Text(&v.name), Text(&v.kind), Text(&v.org),
+                       Text(&v.base_start), Text(&v.current_start), Text(&v.status)];
+    for &metric in metrics {
+        let values = match metric {
+            "count" | "amount" => {
+                let m = if metric == "count" { &v.count } else { &v.amount };
+                [Some(m.base), Some(m.current), Some(m.delta), m.percent]
+            }
+            "average" => [v.average.base, v.average.current, v.average.delta, v.average.percent],
+            _ => return Err("Unknown change metric".into()),
+        };
+        row.extend(values.into_iter().map(Number));
+    }
+    csv_record(w, &row)
 }
 impl Storage {
     pub fn analysis_export_changes(
@@ -2810,35 +2827,12 @@ fn export_changes_table(
 }
 
 fn write_changes_rows(tx: &Connection, q: &ChangeQuery, w: &mut impl Write) -> Result<(), String> {
-    use Cell::*;
-    csv_record(
-        w,
-        &[
-            Text("key"),
-            Text("name"),
-            Text("kind"),
-            Text("org"),
-            Text("baseStart"),
-            Text("currentStart"),
-            Text("status"),
-            Text("count.base"),
-            Text("count.current"),
-            Text("count.delta"),
-            Text("count.percent"),
-            Text("amount.base"),
-            Text("amount.current"),
-            Text("amount.delta"),
-            Text("amount.percent"),
-            Text("average.base"),
-            Text("average.current"),
-            Text("average.delta"),
-            Text("average.percent"),
-        ],
-    )?;
+    let metrics = ["count", "amount", "average"];
+    changes_csv_header(w, &metrics)?;
     let mut stmt=tx.prepare("SELECT start,base,org,key,name,kind,bc,ba,cc,ca FROM temp.an_changes ORDER BY start,org,key").map_err(err)?;
     let mut rows = stmt.query([]).map_err(err)?;
     while let Some(r) = rows.next().map_err(err)? {
-        change_csv(w, &change_value(r, q)?)?;
+        change_csv(w, &change_value(r, q)?, &metrics)?;
     }
     Ok(())
 }

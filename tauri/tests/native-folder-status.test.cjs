@@ -32,6 +32,8 @@ function mount(options={}){
     onFilesChanged:(callback)=>{onChanged=callback;return ()=>{unsubscribed=true;};}
   };
   const window={
+    unifiedReports:{openSource:source=>calls.push({kind:'inspect',source})},
+    sqlRowScroll:require('./scroll-window-fixture.cjs'),
     desktopAPI:api,
     confirm:message=>{calls.push('confirm');confirmations.push(message);return options.confirm?options.confirm(message):options.consent!==false;},
     nativeFolderAutoImport:options.autoEnabled?{isEnabled:()=>true,updateSnapshot:()=>{}}:undefined,
@@ -42,14 +44,14 @@ function mount(options={}){
     },
     addEventListener:(name,callback)=>{if(name==='pagehide')window.onHide=callback;}
   };
-  const document={getElementById:id=>nodes[id],createElement:tag=>new Node(tag)};
+  nodes.__created=[];const document={getElementById:id=>nodes[id],createElement:tag=>{const node=new Node(tag);nodes.__created.push(node);return node;}};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-folder-status.js'),'utf8'),{window,document});
   return {nodes,window,calls,confirmations,getListing:()=>listing,setListing:v=>listing=v,onChanged:()=>onChanged?.(),isUnsubscribed:()=>unsubscribed};
 }
 
 // Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 
-test('metadata-only list is capped to 100 rendered names and escapes untrusted data',async()=>{
+test('metadata-only list bounds each page to 100 names and escapes untrusted data',async()=>{
   const files=Array.from({length:140},(_,i)=>({
     name:i===0?'<img src=x onerror=alert(1)>.xlsx':'report-'+i+'.xlsx',
     nativeSignature:'test-sig-'+i,
@@ -65,7 +67,7 @@ test('metadata-only list is capped to 100 rendered names and escapes untrusted d
   assert.equal(nodes.sourceFolderRows.children[0].children[0].children.length,0);
   assert.equal(nodes.sourceFolderRows.children[1].children[2].textContent,'Есть правило');
   assert.match(nodes.sourceFolderRows.children[2].children[2].textContent,/Превышен предел/);
-  assert.match(nodes.sourceFolderCount.textContent,/показаны первые 100/);
+  assert.equal(nodes.sourceFolderCount.textContent,'Найдено XLSX: 140');
   assert.equal(calls.includes('save'),false);
 });
 
@@ -124,7 +126,7 @@ test('save Excel rule only after explicit source selection and valid date',async
  await panel.window.nativeFolderReady;
  const e=panel.nodes;
  assert.equal(e.sourceRuleSave.disabled,true);
- e.sourceFolderRows.children[0].children[3].children[0].events.click();
+ e.sourceFolderRows.children[0].children[3].children[1].events.click();
  assert.equal(e.sourceRuleSave.disabled,false);
  e.sourceRuleFormat.value='legacy';e.sourceRuleType.value='week';
  e.sourceRuleStart.value='invalid';
@@ -153,7 +155,7 @@ test('wide import rule accepts day only, optional year and no first period',asyn
  const panel=mount({listing:{folder:'C:/Excel',revision:23,files:[file],rules:{}}});
  await panel.window.nativeFolderReady;
  const e=panel.nodes;
- e.sourceFolderRows.children[0].children[3].children[0].events.click();
+ e.sourceFolderRows.children[0].children[3].children[1].events.click();
  e.sourceRuleFormat.value='daily-wide';e.sourceRuleFormat.events.change();
  assert.equal(e.sourceRuleType.value,'day');
  assert.equal(e.sourceRuleType.disabled,true);
@@ -172,7 +174,7 @@ test('advanced mapping is protected against accidental deletion',async()=>{
  const panel=mount({listing:{folder:'C:/Excel',revision:12,files:[file],
    rules:{'complex.xlsx':{type:'day',start:'',format:'daily-wide',mappings:{Sheet1:{work_col:0}}}}}});
  await panel.window.nativeFolderReady;
- panel.nodes.sourceFolderRows.children[0].children[3].children[0].events.click();
+ panel.nodes.sourceFolderRows.children[0].children[3].children[1].events.click();
  assert.equal(panel.nodes.sourceRuleSave.disabled,true);
  assert.match(panel.nodes.sourceRuleStatus.textContent,/расширенную настройку/);
 });
@@ -182,7 +184,7 @@ test('stale revision is rejected and never marked saved',async()=>{
  const panel=mount({listing:{folder:'C:/Excel',revision:12,files:[file],rules:{}},failRule:true});
  await panel.window.nativeFolderReady;
  const e=panel.nodes;
- e.sourceFolderRows.children[0].children[3].children[0].events.click();
+ e.sourceFolderRows.children[0].children[3].children[1].events.click();
  e.sourceRuleStart.value='2026-11-16';
  await e.sourceRuleSave.events.click();
  assert.equal(panel.calls.some(x=>x.kind==='rule'),true);
@@ -205,10 +207,10 @@ test('SQL folder accepts 40-MiB files in native mode while classic 30-MiB indica
  await panel.window.nativeFolderReady;
  const rows=panel.nodes.sourceFolderRows.children;
  assert.equal(rows.length,2);
- assert.equal(rows[0].children[3].children[0].disabled,false);
- rows[0].children[3].children[0].events.click();
+ assert.equal(rows[0].children[3].children[1].disabled,false);
+ rows[0].children[3].children[1].events.click();
  assert.equal(panel.nodes.sourceRuleSave.disabled,false);
- assert.equal(rows[1].children[3].children[0].disabled,true);
+ assert.equal(rows[1].children[3].children[1].disabled,true);
  assert.match(rows[1].children[2].textContent,/100 МиБ/);
  assert.equal(panel.calls.some(x=>x.kind==='rule'),false);
 });
@@ -218,7 +220,7 @@ test('saving a rule discloses possible automatic writes when the session opt-in 
  const panel=mount({autoEnabled:true,listing:{folder:'C:/Excel',revision:12,files:[file],rules:{}}});
  await panel.window.nativeFolderReady;
  const e=panel.nodes;
- e.sourceFolderRows.children[0].children[3].children[0].events.click();
+ e.sourceFolderRows.children[0].children[3].children[1].events.click();
  e.sourceRuleStart.value='2026-11-16';
  await e.sourceRuleSave.events.click();
  assert.match(panel.confirmations[0],/Автоимпорт включён/);
@@ -234,12 +236,19 @@ test('folder choice waits for asynchronous consent and denial never opens its pi
 test('rule save waits for asynchronous consent, writes once after acceptance, and reports dialog errors',async()=>{
  const listing={folder:'C:/Excel',revision:12,files:[{name:'report.xlsx',nativeSignature:'sig',size:1,tooLarge:false}],rules:{}};
  const answer=deferredConsent(),x=mount({listing,confirm:()=>answer.promise});await x.window.nativeFolderReady;
- const row=x.nodes.sourceFolderRows.children[0];await row.children.at(-1).children[0].events.click();
+ const row=x.nodes.sourceFolderRows.children[0];await row.children.at(-1).children[1].events.click();
  x.nodes.sourceRuleStart.value='2024-01-01';x.nodes.sourceRuleType.value='day';
  const pending=x.nodes.sourceRuleSave.events.click();assert.equal(x.calls.some(c=>c.kind==='rule'),false);await x.nodes.sourceRuleSave.events.click();answer.resolve(true);await pending;
  assert.equal(x.calls.filter(c=>c.kind==='rule').length,1);
  const rejected=deferredConsent(),y=mount({listing:{...listing,rules:{}},confirm:()=>rejected.promise});await y.window.nativeFolderReady;
- await y.nodes.sourceFolderRows.children[0].children.at(-1).children[0].events.click();y.nodes.sourceRuleStart.value='2024-01-01';y.nodes.sourceRuleType.value='day';
+ await y.nodes.sourceFolderRows.children[0].children.at(-1).children[1].events.click();y.nodes.sourceRuleStart.value='2024-01-01';y.nodes.sourceRuleType.value='day';
  const failing=y.nodes.sourceRuleSave.events.click();rejected.reject(Error('dialog unavailable'));await failing;
  assert.equal(y.calls.some(c=>c.kind==='rule'),false);assert.match(y.nodes.sourceRuleStatus.textContent,/dialog unavailable/);
+});
+
+test('one folder table pages beyond 100 and checks the actual 101st path without writing',async()=>{
+ for(const folder of ['C:/Excel',String.raw`\\?\C:\Excel`]){
+ const files=Array.from({length:101},(_,i)=>({name:'report-'+i+'.xlsx',nativeSignature:'sig-'+i,size:1,tooLarge:false}));const x=mount({listing:{folder,revision:12,files,rules:{}}});await x.window.nativeFolderReady;
+ await x.nodes.sourceFolderRows.scrollWindow.go(1);assert.equal(x.nodes.sourceFolderRows.children.length,1);const row=x.nodes.sourceFolderRows.children[0];assert.equal(row.children[0].textContent,'report-100.xlsx');await row.children[3].children[0].events.click();assert.equal(x.calls.at(-1).source,folder+(folder.includes('\\')?'\\':'/')+'report-100.xlsx');assert.equal(x.calls.some(c=>c.kind==='rule'),false);
+ }
 });

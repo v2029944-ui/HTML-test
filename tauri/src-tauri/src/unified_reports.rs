@@ -248,6 +248,18 @@ mod folder_rule_tests {
   assert!(rule.native_legacy_sheet(&book).is_err());rule.sheet="Отчёт".into();assert_eq!(rule.native_legacy_sheet(&book).unwrap(),"xl/worksheets/sheet7.xml");rule.sheet="Нет".into();assert!(rule.native_legacy_sheet(&book).is_err());
  }
  #[test] fn malformed_advanced_coordinates_are_rejected(){let mut rule:super::super::Rule=serde_json::from_value(json!({"format":"daily-wide","type":"day","start":"","sheet":"","mappings":{"Data":{"workCol":2048,"headerRow":0,"firstDayCol":1}}})).unwrap();assert!(rule.native_wide_options(["A".into(),"B".into(),"C".into(),"D".into()]).is_err());rule.mappings=None;let options=rule.native_wide_options(["A".into(),"B".into(),"C".into(),"D".into()]).unwrap();assert!(options.mappings.is_empty());}
+ #[test] fn saved_auto_rule_uses_native_detector_for_daily_and_ordinary_books(){
+  use std::{io::Write,sync::{Arc,atomic::AtomicBool}};
+  let daily=r#"<row r="1"><c r="A1" t="inlineStr"><is><t>Работа</t></is></c><c r="B1" t="inlineStr"><is><t>2024-01-01</t></is></c><c r="D1" t="inlineStr"><is><t>2024-01-02</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>Работа</t></is></c><c r="B2" t="inlineStr"><is><t>Количество</t></is></c><c r="C2" t="inlineStr"><is><t>Сумма</t></is></c><c r="D2" t="inlineStr"><is><t>Количество</t></is></c><c r="E2" t="inlineStr"><is><t>Сумма</t></is></c></row>"#;
+  let ordinary=r#"<row r="1"><c r="A1" t="inlineStr"><is><t>Работа</t></is></c><c r="B1" t="inlineStr"><is><t>Количество</t></is></c><c r="C1" t="inlineStr"><is><t>Сумма</t></is></c><c r="D1" t="inlineStr"><is><t>Работа</t></is></c><c r="E1" t="inlineStr"><is><t>Количество</t></is></c><c r="F1" t="inlineStr"><is><t>Сумма</t></is></c></row>"#;
+  for (header,expected) in [(daily,true),(ordinary,false)] {
+   let d=tempfile::tempdir().unwrap();let source=d.path().join("auto.xlsx");let mut zip=zip::ZipWriter::new(std::fs::File::create(&source).unwrap());
+   zip.start_file("xl/worksheets/custom.xml",zip::write::SimpleFileOptions::default()).unwrap();write!(zip,"<worksheet><sheetData>{header}<row r=\"3\"><c r=\"A3\" t=\"inlineStr\"><is><t>A</t></is></c></row><row r=\"4\"><c r=\"A4\" t=\"inlineStr\"><is><t>Service</t></is></c><c r=\"B4\"><v>2</v></c><c r=\"C4\"><v>20</v></c></row></sheetData></worksheet>").unwrap();
+   for (name,xml) in [("xl/workbook.xml",r#"<workbook xmlns:r="r"><sheets><sheet name="Second" r:id="r7"/></sheets></workbook>"#),("xl/_rels/workbook.xml.rels",r#"<Relationships><Relationship Id="r7" Target="/xl/worksheets/custom.xml" Type="worksheet"/></Relationships>"#)]{zip.start_file(name,zip::write::SimpleFileOptions::default()).unwrap();zip.write_all(xml.as_bytes()).unwrap();}zip.finish().unwrap();
+   let rule:super::super::Rule=serde_json::from_value(json!({"format":"auto","type":"week","start":"2024-02-05","sheet":"Second"})).unwrap();
+   let options=rule.native_wide_options(["A".into(),"B".into(),"C".into(),"D".into()]).unwrap();let area=analiz_import_core::StageArea::open(d.path().join("stage")).unwrap();let cancel=Arc::new(AtomicBool::new(false));let stage=area.ingest(&source,analiz_import_core::Limits::default(),&cancel,|_|{}).unwrap();let found=stage.detect_wide(&options,cancel).unwrap();assert_eq!(!found.is_empty(),expected);assert_eq!(rule.native_legacy_sheet(&stage.sheet_names().unwrap()).unwrap(),"xl/worksheets/custom.xml");if expected{assert_eq!(found[0].name,"Second");}
+  }
+ }
  #[test] fn translated_saved_mapping_converts_real_xlsx_with_display_sheet_name(){
   use std::{io::Write,sync::{Arc,atomic::AtomicBool}};
   let d=tempfile::tempdir().unwrap();let source=d.path().join("advanced.xlsx");let mut zip=zip::ZipWriter::new(std::fs::File::create(&source).unwrap());

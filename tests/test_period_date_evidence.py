@@ -6,7 +6,7 @@ from test_import_controls import daily_workbook_bytes
 from test_navigation import open_view
 ROOT=Path(__file__).resolve().parents[1]
 
-def dated_book(headers):
+def dated_book(headers, styles=None):
     src=zipfile.ZipFile(io.BytesIO(daily_workbook_bytes()))
     ns='{http://schemas.openxmlformats.org/spreadsheetml/2006/main}'
     sheet=ET.fromstring(src.read('xl/worksheets/sheet1.xml'));data=sheet.find(ns+'sheetData')
@@ -17,12 +17,26 @@ def dated_book(headers):
     for i,values in reversed(list(enumerate(headers,1))):
         row=ET.Element(ns+'row',r=str(i))
         for j,value in enumerate(values):
-            c=ET.SubElement(row,ns+'c',r=chr(65+j)+str(i),t='inlineStr')
-            ET.SubElement(ET.SubElement(c,ns+'is'),ns+'t').text=value
+            c=ET.SubElement(row,ns+'c',r=chr(65+j)+str(i))
+            if isinstance(value,tuple):
+                number,style=value
+                c.set('s',str(style))
+                ET.SubElement(c,ns+'v').text=str(number)
+            else:
+                c.set('t','inlineStr')
+                ET.SubElement(ET.SubElement(c,ns+'is'),ns+'t').text=value
         data.insert(0,row)
     out=io.BytesIO()
     with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
-        for name in src.namelist():z.writestr(name,ET.tostring(sheet) if name.endswith('sheet1.xml') else src.read(name))
+        for name in src.namelist():
+            value=src.read(name)
+            if name.endswith('sheet1.xml'):value=ET.tostring(sheet)
+            elif styles and name=='[Content_Types].xml':
+                value=value.replace(b'</Types>',b'<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>')
+            elif styles and name=='xl/_rels/workbook.xml.rels':
+                value=value.replace(b'</Relationships>',b'<Relationship Id="styles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>')
+            z.writestr(name,value)
+        if styles:z.writestr('xl/styles.xml',styles)
     return out.getvalue()
 
 class PeriodDateEvidence(unittest.TestCase):
@@ -43,6 +57,18 @@ class PeriodDateEvidence(unittest.TestCase):
         self.page.wait_for_function('(name)=>state.fileName===name',arg=name)
     def confirm(self,accept):
         self.page.evaluate('(accept)=>{window.dateConfirms=0;window.confirm=async()=>{dateConfirms++;return accept;}}',accept)
+    def test_only_calendar_number_formats_support_a_period_start(self):
+        styles='''<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+          <numFmts count="3"><numFmt numFmtId="164" formatCode="[Red]0.00"/>
+          <numFmt numFmtId="165" formatCode="[$-409]dd-mmm-yyyy"/><numFmt numFmtId="166" formatCode="0_d"/></numFmts>
+          <cellXfs count="5"><xf numFmtId="0"/><xf numFmtId="164"/><xf numFmtId="21"/>
+          <xf numFmtId="165"/><xf numFmtId="166"/></cellXfs></styleSheet>'''
+        headers=[['Начало периода',(46000,style)] for style in (1,2,3,4)]
+        self.upload(dated_book(headers,styles))
+        marked=self.page.evaluate("[...state.workbook.Sheets[state.workbook.SheetNames[0]]['!dateCells']]")
+        self.assertEqual(marked,['2:1'])
+        cells=self.page.evaluate('currentOrdinaryDateEvidence().candidates.map(candidate=>candidate.dateCell)')
+        self.assertEqual(cells,['B3'])
     def test_explicit_choice_survives_evidence_and_new_file_drops_both(self):
         self.page.locator('#importWeek').fill('2026-11-16')
         self.upload(dated_book([['Начало периода: 09.11.2026']]))

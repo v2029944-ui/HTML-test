@@ -773,8 +773,8 @@ input[type=checkbox]{accent-color:var(--accent-fill)}
 h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 .kpi strong,.table td:not(:first-child),.metric-plot svg text{font-family:var(--font-numeric);font-variant-numeric:tabular-nums}
 .metric-plot svg polyline{filter:var(--line-glow)}
-.metric-plot svg :is(circle,rect):hover{stroke:var(--text);stroke-width:2px}
-.metric-plot svg :is(circle,rect):focus-visible{outline:2px solid var(--focus);outline-offset:3px;stroke:var(--text);stroke-width:2px}
+.metric-plot svg :is(circle,rect,polygon):hover{stroke:var(--text);stroke-width:2px}
+.metric-plot svg :is(circle,rect,polygon):focus-visible{outline:2px solid var(--focus);outline-offset:3px;stroke:var(--text);stroke-width:2px}
 .metric-plot svg rect{rx:var(--radius-control)}
 .table tbody tr:nth-child(even) td{background:var(--row-alt)}
 .table tbody tr:hover td{background:var(--hover)}
@@ -1200,6 +1200,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 .chart-legend--departments span{display:flex;max-width:none;gap:9px;white-space:normal;overflow:visible;overflow-wrap:anywhere;color:var(--text);font-size:12px}
 .chart-legend--departments span:before{display:none}
 .chart-legend--departments svg{width:38px!important;height:16px!important;min-height:0!important;max-height:none!important;flex:0 0 38px;overflow:visible}
+.chart-legend--departments svg[width="60"]{width:60px!important;flex-basis:60px}
 @media(max-width:740px){.chart-legend--departments{grid-template-columns:minmax(0,1fr);max-height:240px}}
 .chart-view-controls select{display:block;box-sizing:border-box;min-width:0;width:100%;height:var(--control-height);margin-top:var(--field-gap)}
 .chart-mode-controls{display:flex;flex-wrap:wrap;width:fit-content;max-width:100%;margin-bottom:14px}
@@ -1222,6 +1223,8 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 .calendar-overlap small,.calendar-partial small{color:var(--negative);font-weight:700}
 .chart-series-control{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:12px;font-size:var(--ui-legend-font,14px)}
 .chart-series-control select{width:auto;min-width:100px;max-width:100%}
+.metric-chart .metric-plot,.panel .metric-plot{height:auto;max-height:none;overflow-x:auto}
+.metric-plot .chart-series{pointer-events:none}
 .metric-plot>.chart-legend{max-height:none;overflow:visible;flex-wrap:wrap}
 .filter-scope-title{font-size:var(--ui-legend-font,14px);margin:0 0 12px}
 
@@ -1496,7 +1499,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
             <label>Что сравнивать<select id="chartBreakdown"><option value="works">Работы и группы</option><option value="organizations">Подразделения по показателям</option></select></label>
             <label id="chartOrgScopeLabel" hidden>Какие услуги учитывать<select id="chartOrgScope"><option value="all">Все выполненные работы</option><option value="selected">Только отмеченные работы и группы</option></select></label>
             <div id="chartMetricsWrap" class="chart-metric-control" hidden><span>Показатели этого графика</span><div id="chartMetrics" class="multi-choices"></div></div>
-            <label id="chartSeriesLayoutLabel" hidden>Как расположить показатели<select id="chartSeriesLayout"><option value="combined">Вместе — относительная шкала (%)</option><option value="separate">Отдельно — исходные значения</option></select></label>
+            <label id="chartSeriesLayoutLabel" hidden>Как расположить показатели<select id="chartSeriesLayout"><option value="separate">Отдельно — исходные значения</option><option value="combined">Вместе — % от максимума каждого показателя</option></select></label>
           </div>
         </div>
         <details class="quick-help" id="chartNotes" hidden><summary>Настройки и шкалы графика</summary>
@@ -1634,7 +1637,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <div class="changes-filters change-toolbar">
           <label>Режим<select id="changesMode"><option value="strong">Сильные изменения</option><option value="all">Все работы</option></select></label>
           <label>Поиск работы или группы<input id="changesSearch" type="search" placeholder="Название услуги или группы"></label>
-          <label>Показать<select id="changesDirection"><option value="all">Все направления</option><option value="up">Рост</option><option value="down">Снижение</option><option value="new">Новые</option><option value="gone">Нет выполнений</option><option value="small">Малая база</option><option value="negative">Отрицательные значения</option><option value="unchanged">Без изменений</option></select></label>
+          <label>Показать<select id="changesDirection"><option value="all">Все направления</option><option value="up">Рост</option><option value="down">Снижение</option><option value="significant-up">Значительный рост</option><option value="significant-down">Значительное снижение</option><option value="new">Новые</option><option value="gone">Нет выполнений</option><option value="small">Малая база</option><option value="negative">Отрицательные значения</option><option value="unchanged">Без изменений</option></select></label>
           <label>Сортировка<select id="changesSort"><option value="significance-count">Значимость по количеству</option><option value="significance-amount">Значимость по сумме</option><option value="absolute-count">Абс. изменение количества</option><option value="absolute-amount">Абс. изменение суммы</option><option value="percent-count">Процент количества</option><option value="percent-amount">Процент суммы</option><option value="current-count">Количество: больше сначала</option><option value="current-amount">Сумма: больше сначала</option><option value="name">Название</option></select></label>
         </div>
         <p class="muted small">Сначала обычная база, затем малая. Значимость: выполнение порогов, затем абсолютная разница выбранного показателя. Каждая строка указывает конкретную пару соседних периодов. <span class="numeric-rise">Синий — рост</span>, <span class="numeric-fall">фиолетовый — снижение</span>; это направление числа, а не оценка эффективности.</p>
@@ -1676,7 +1679,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
           <p class="muted small">Выберите отчётные листы. Итоги квартала или года проверяются отдельно и не становятся дополнительным днём. При неоднозначной шапке укажите год и ручные столбцы; пустые дни не заменяются нулями.</p>
           <div id="dailySheetChoices"></div><button type="button" id="saveDailyFolderRule" class="button secondary" hidden>Запомнить настройки файла для автоимпорта</button>
         </section>
-        <p class="muted small">Для обычных недельных и дневных отчётов укажите первую дату по данным вашего Excel: название файла не определяет начало периода. Даты последующих наборов рассчитываются последовательно, при пропусках их можно скорректировать вручную. Недельные суммы автоматически по дням не распределяются. HTML работает без интернета.</p>
+        <p id="ordinaryImportHint" class="muted small">Для обычных недельных и дневных отчётов укажите первую дату по данным вашего Excel: название файла не определяет начало периода. Даты последующих наборов рассчитываются последовательно, при пропусках их можно скорректировать вручную. Недельные суммы автоматически по дням не распределяются. HTML работает без интернета.</p>
         <details class="quick-help import-advanced" id="importAdvanced">
           <summary>Столбцы и даты каждого набора</summary>
           <p>Обычно столбцы распознаются автоматически, а периоды идут подряд. Для другого формата Excel включите ручную настройку: укажите буквы столбцов работы, количества и суммы и номер строки заголовка для каждого набора. Даты ниже можно изменить по отдельности без изменения первого периода.</p>
@@ -2264,7 +2267,7 @@ length_base[28] = 258;
     if(!v)return null;
     const raw=v.textContent||'';
     if(kind==='s')return strings[Number(raw)]??'';
-    if(kind==='str')return raw;
+    if(kind==='str'||kind==='d')return raw;
     if(kind==='e')return v?.textContent||'#ERROR!';
     if(kind==='b')return raw==='1';
     if(raw.trim()==='')return null;
@@ -2291,7 +2294,7 @@ length_base[28] = 258;
         if(value===null&&first(cell,'f'))budget.uncachedFormulaCells++;
         else if(value===null||typeof value==='string'&&value.trim()==='')budget.emptyCells++;
         else budget.filledCells++;
-        if(dateStyles.has(Number(cell.getAttribute('s')||0)))table['!dateCells'].add(index+':'+c);
+        if(cell.getAttribute('t')==='d'||typeof value==='number'&&dateStyles.has(Number(cell.getAttribute('s')||0)))table['!dateCells'].add(index+':'+c);
       }
       table[index]=result;
     }
@@ -2310,7 +2313,7 @@ length_base[28] = 258;
     const strings=sharedXml?nodes(parseXml(sharedXml),'si').map(si=>nodes(si,'t').map(x=>x.textContent).join('')):[];
     const styleXml=load('xl/styles.xml',true),dateStyles=new Set();
     if(styleXml){const styles=parseXml(styleXml),custom=new Map(nodes(styles,'numFmt').map(node=>[Number(node.getAttribute('numFmtId')),node.getAttribute('formatCode')||'']));
-      nodes(first(styles,'cellXfs')||styles,'xf').forEach((node,index)=>{const id=Number(node.getAttribute('numFmtId'));const format=(custom.get(id)||'').replace(/"[^"]*"|\\./g,'');if(id>=14&&id<=22||/[dy]/i.test(format))dateStyles.add(index);});}
+      nodes(first(styles,'cellXfs')||styles,'xf').forEach((node,index)=>{const id=Number(node.getAttribute('numFmtId'));const format=(custom.get(id)||'').replace(/"[^"]*"|\[[^\]]*\]|[\\_*]./g,'');if(id>=14&&id<=17||id===22||/[dy]/i.test(format))dateStyles.add(index);});}
     const SheetNames=[],Sheets=Object.create(null),budget={cells:0,filledCells:0,emptyCells:0,uncachedFormulaCells:0};
     const date1904=['1','true'].includes(first(workbook,'workbookPr')?.getAttribute('date1904'));
     for(const sheet of nodes(workbook,'sheet')){
@@ -2508,7 +2511,7 @@ function parseSheet(sheet,manualMappings=null,options={}) {
   const triples=manualMappings===null?readTripleColumns(matrix):manualMappings;
   if(!triples.length) throw Error('Не найдены тройки столбцов «Работа / Количество / Сумма». Проверьте второй ряд заголовков.');
   return triples.map((triple,index)=>{
-    const rows=[],warnings=[],totals=[],issues=[],byOrg=new Map();
+    const rows=[],warnings=[],totals=[],issues=[],organizations=new Set();
     let active=null, skipped=0, hasMismatch=false,overallRow=null;
     const sourceColumn=offset=>offset===0?triple.col:offset===1?(triple.countCol??triple.col+1):(triple.amountCol??triple.col+2);
     const cellsAt=(row,offsets)=>offsets.map(offset=>excelCellRef(sourceColumn(offset),row)).filter(Boolean);
@@ -2519,12 +2522,12 @@ function parseSheet(sheet,manualMappings=null,options={}) {
     };
     function addWork(work,q,a) {
       rows.push({organization:active.name,work,count:q,amount:a});
-      if(!byOrg.has(active.name))byOrg.set(active.name,{count:0,amount:0});
-      const sum=byOrg.get(active.name);sum.count+=q;sum.amount+=a;
+      organizations.add(active.name);
+      active.actual.count+=q;active.actual.amount+=a;
     }
     function checkBlock() {
       if(!active||active.expectedCount===null||active.expectedAmount===null) return;
-      const actual=byOrg.get(active.name)||{count:0,amount:0};
+      const actual=active.actual;
       if(Math.abs(actual.count-active.expectedCount)>0.001 || Math.abs(actual.amount-active.expectedAmount)>0.03) {
         hasMismatch=true;
         warnings.push('Не сошлись контрольные значения '+active.name+': количество '+fmtNumber(actual.count,'count')+' / '+fmtNumber(active.expectedCount,'count')+', сумма '+fmtNumber(actual.amount,'amount')+' / '+fmtNumber(active.expectedAmount,'amount'));
@@ -2556,9 +2559,9 @@ function parseSheet(sheet,manualMappings=null,options={}) {
         continue;
       }
       if(/^(итого|всего)(\s|:|$)/i.test(work)) {
-        checkBlock();
         if(options.dailyWide&&blankPair){if(rows.length)break;continue;}
         if(rows.length||options.dailyWide) {
+          checkBlock();
           overallRow=ri+1;
           if(q===null||a===null){warnings.push('Общий итог (строка '+(ri+1)+') содержит некорректное количество или сумму.');issue('invalid',warnings.at(-1),ri+1,null,raw,{cells:numberCells(ri+1,q,a)});}
           totals.push({type:'all',count:number(values[sourceColumn(1)]),amount:number(values[sourceColumn(2)]),row:ri+1});
@@ -2569,11 +2572,11 @@ function parseSheet(sheet,manualMappings=null,options={}) {
       const known=orgName(work);
       if(known) {
         checkBlock();
-        if(options.dailyWide&&blankPair){active={name:known,expectedCount:null,expectedAmount:null,sourceRow:ri+1};continue;}
+        if(options.dailyWide&&blankPair){active={name:known,actual:{count:0,amount:0},expectedCount:null,expectedAmount:null,sourceRow:ri+1};continue;}
         if(q===null||a===null){warnings.push('Итог подразделения '+known+' (строка '+(ri+1)+') не содержит оба числа');issue('invalid',warnings.at(-1),ri+1,known,raw,{cells:numberCells(ri+1,q,a)});active=null;continue;}
-        active={name:known,expectedCount:q,expectedAmount:a,sourceRow:ri+1};
+        active={name:known,actual:{count:0,amount:0},expectedCount:q,expectedAmount:a,sourceRow:ri+1};
         totals.push({type:'org',name:known,count:q,amount:a,row:ri+1});
-        if(!byOrg.has(known))byOrg.set(known,{count:0,amount:0});
+        organizations.add(known);
         continue;
       }
       if(options.dailyWide&&blankPair)continue;
@@ -2593,7 +2596,7 @@ function parseSheet(sheet,manualMappings=null,options={}) {
     const explicitZero=!!options.dailyWide&&!rows.length&&totals.some(t=>t.type==='org')&&totals.every(t=>t.count===0&&t.amount===0);
     if(!rows.length&&!explicitZero)warnings.push('Нет распознанных работ');
     return {index:index+1,col:triple.col,countCol:sourceColumn(1),amountCol:sourceColumn(2),headerRow:triple.headerRow,rows,warnings,issues,hasMismatch,totals,...(explicitZero?{explicitZero:true}:{}),
-      count:round(byCount,6),amount:round(byAmount,2),organizations:[...byOrg.keys()]};
+      count:round(byCount,6),amount:round(byAmount,2),organizations:[...organizations]};
   });
 }
 
@@ -2618,9 +2621,17 @@ function dailyHeaderInfo(sheet,mapping=null){
     const {workCol,headerRow,firstDayCol}=mapping;
     if(![workCol,headerRow,firstDayCol].every(Number.isInteger)||workCol<0||firstDayCol<0||workCol>=2048||firstDayCol>=2048||headerRow<0||headerRow>=sheet.length)
       throw Error('Проверьте ручные столбцы и строку заголовков.');
+    if(mapping.totalAmountCol!=null&&mapping.totalCountCol==null)throw Error('Укажите столбец итогового количества вместе с итоговой суммой.');
+    if([mapping.totalCountCol,mapping.totalAmountCol].some(col=>col!=null&&(!Number.isInteger(col)||col<0||col>=2048)))
+      throw Error('Итоговые столбцы должны быть в пределах листа Excel.');
     const width=sheet.reduce((n,row)=>Math.max(n,row?.length||0),0),end=mapping.totalCountCol??width;
     const pairs=[];for(let c=firstDayCol;c+1<end;c+=2)pairs.push({countCol:c,amountCol:c+1});
-    return {workCol,headerRow,pairs,totals:mapping.totalCountCol!==undefined&&mapping.totalCountCol!==null?{countCol:mapping.totalCountCol,amountCol:mapping.totalAmountCol??mapping.totalCountCol+1}:null};
+    const totals=mapping.totalCountCol==null?null:{countCol:mapping.totalCountCol,amountCol:mapping.totalAmountCol??mapping.totalCountCol+1};
+    const columns=[workCol,...pairs.flatMap(pair=>[pair.countCol,pair.amountCol])];
+    if(totals)columns.push(totals.countCol,totals.amountCol);
+    if(!pairs.length||pairs.length>1024||columns.some(col=>!Number.isInteger(col)||col<0||col>=2048)||new Set(columns).size!==columns.length)
+      throw Error('Проверьте столбцы ручной разметки: работа, дневные значения и итоги должны занимать разные столбцы.');
+    return {workCol,headerRow,pairs,totals};
   }
   for(let r=0;r<sheet.length;r++){
     const row=sheet[r]||[],pairs=[];
@@ -2645,6 +2656,11 @@ function dailyHeaderInfo(sheet,mapping=null){
   return null;
 }
 function findDailySheets(workbook){return workbook.SheetNames.filter(name=>!!dailyHeaderInfo(workbook.Sheets[name]));}
+function typedExcelDate(value){
+  // Excel dates belong to the workbook calendar, including when its timestamp carries an offset.
+  const match=/^(\d{4}-\d{2}-\d{2})(?:T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)?)?$/.exec(value);
+  return match&&validReportDate(match[1])?match[1]:null;
+}
 function dailyDateParts(value,date1904=false,forceSerial=false){
   if(value instanceof Date&&!Number.isNaN(value.getTime()))return {year:value.getUTCFullYear(),month:value.getUTCMonth()+1,day:value.getUTCDate()};
   if(typeof value==='number'&&value>=(date1904?0:1)&&value<2958466&&(forceSerial||value>=20000)){
@@ -2653,6 +2669,10 @@ function dailyDateParts(value,date1904=false,forceSerial=false){
     const date=new Date(base+n*86400000);return {year:date.getUTCFullYear(),month:date.getUTCMonth()+1,day:date.getUTCDate()};
   }
   if(typeof value!=='string')return null;
+  if(forceSerial){
+    const date=typedExcelDate(value);if(!date)return null;
+    return {year:+date.slice(0,4),month:+date.slice(5,7),day:+date.slice(8)};
+  }
   const text=value.trim().toLowerCase().replace(/^(?:количество|кол[.-]?во|сумма)\s*[:;,·—-]?\s*/,'').replace(/[\s,:;·—-]*(?:количество|кол[.-]?во|сумма)$/,'').replace(/\s+г\.?$/,'');
   let m=/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[t ]00:00(?::00)?)?$/.exec(text);
   if(m)return {year:+m[1],month:+m[2],day:+m[3]};
@@ -2689,7 +2709,8 @@ function dailyHeaderDate(sheet,info,pair){
       (a.year&&b.yearSuffix!=null&&a.year%100!==b.yearSuffix)||(b.year&&a.yearSuffix!=null&&b.year%100!==a.yearSuffix)||
       (a.yearSuffix!=null&&b.yearSuffix!=null&&a.yearSuffix!==b.yearSuffix))
       throw Error('Даты количества и суммы различаются: '+excelCellRef(first.col,first.row+1)+' / '+excelCellRef(next.col,next.row+1)+'. Проверьте шапку.');
-    if(!first.parts.year&&b.year)first.parts.year=b.year;
+    if(!a.year&&b.year)a.year=b.year;
+    if(a.yearSuffix==null&&b.yearSuffix!=null)a.yearSuffix=b.yearSuffix;
   }
   return first;
 }
@@ -2702,14 +2723,16 @@ function dailyPeriodCoverage(sheetName,headerText,year,dates){
   return {start:dates.slice().sort()[0],end:dates.slice().sort().at(-1)};
 }
 function parseDailyWorkbook(workbook,options={}){
-  const names=options.sheets?.length?options.sheets:findDailySheets(workbook);
+  const mappings=new Map(Object.entries(options.mappings||{}));
+  const names=options.sheets?.length?options.sheets:workbook.SheetNames.filter(name=>mappings.has(name)||dailyHeaderInfo(workbook.Sheets[name]));
+  for(const name of mappings.keys())if(!names.includes(name))throw Error('Лист «'+name+'» из ручной настройки отсутствует среди листов для загрузки. Проверьте книгу и правило.');
   if(!names.length)throw Error('Не найдены листы с общим столбцом работ и дневными парами. Выберите лист и ручную настройку.');
   if(names.length>12||new Set(names).size!==names.length)throw Error('Выберите не более 12 разных листов.');
   const reports=[],sheets=[],seenDates=new Map();
   for(const name of names){
     const sheet=workbook.Sheets[name];if(!sheet)throw Error('Лист «'+name+'» отсутствует в книге.');
     try{
-      const info=dailyHeaderInfo(sheet,options.mappings?.[name]);
+      const info=dailyHeaderInfo(sheet,mappings.get(name));
       if(!info)throw Error('Не найдены дневные пары. Укажите столбцы и строку заголовков вручную.');
       const headerText=sheet.slice(0,info.headerRow+1).map(row=>(row||[]).filter(value=>typeof value==='string').join(' ')).join(' ');
       const pairs=[],totalPairs=[];
@@ -2834,7 +2857,7 @@ function ordinaryDateToken(value,type){
   else if(typeof value==='string'){
     const text=value.trim();let m;
     if(/^\d{4}-\d{2}-\d{2}$/.test(text))date=text;
-    else if((m=/^(\d{2})[./](\d{2})[./](\d{4})$/.exec(text)))date=m[3]+'-'+m[2]+'-'+m[1];
+    else if((m=/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/.exec(text)))date=m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
     else if(type==='month'&&/^\d{4}-\d{2}$/.test(text))date=text+'-01';
   }
   return validReportDate(date)&&date>='1900-01-01'&&(type!=='month'||date.endsWith('-01'))?date:null;
@@ -2842,16 +2865,28 @@ function ordinaryDateToken(value,type){
 function ordinaryDateEvidence(matrix,mappings,type){
   const result={candidates:[],conflict:false,truncated:false};
   const first=mappings?.[0];if(!first)return result;
-  const begin=first.col,end=Math.min(...mappings.filter(m=>m.col>begin).map(m=>m.col),Math.max(begin,first.countCol??begin+1,first.amountCol??begin+2)+1);
+  const columns=m=>[m.col,m.countCol??m.col+1,m.amountCol??m.col+2];
+  const firstColumns=columns(first),begin=Math.min(...firstColumns);
+  const end=Math.max(...firstColumns)+1;
+  const otherRanges=mappings.slice(1).map(columns).map(cols=>[Math.min(...cols),Math.max(...cols)]);
   const lastRow=Math.min(first.headerRow,63),lastCol=Math.min(end,begin+64);
   result.truncated=first.headerRow>63||end>begin+64;
+  const allowed=new Set();
+  for(let col=begin;col<lastCol;col++)if(firstColumns.includes(col)||!otherRanges.some(([lo,hi])=>col>=lo&&col<=hi))allowed.add(col);
   const add=(raw,label,row,col,dateCol)=>{
+    if(matrix['!dateCells']?.has(row+':'+dateCol)){
+      if(typeof raw==='number'){
+        const date1904=!!matrix['!date1904'];if(!date1904&&Math.floor(raw)===60)return;
+        const parts=dailyDateParts(raw,date1904,true);if(!parts)return;
+        raw=String(parts.year)+'-'+String(parts.month).padStart(2,'0')+'-'+String(parts.day).padStart(2,'0');
+      }else if(typeof raw==='string')raw=typedExcelDate(raw);
+    }
     const date=ordinaryDateToken(raw,type);if(!date)return;
     if(result.candidates.length===16){result.truncated=true;return;}
     result.candidates.push({date,labelCell:excelCellRef(col,row+1),dateCell:excelCellRef(dateCol,row+1),label:label.slice(0,160)});
   };
   const kinds={недели:'week',месяца:'month',дня:'day'};
-  for(let r=0;r<=lastRow;r++)for(let c=begin;c<lastCol;c++){
+  for(let r=0;r<=lastRow;r++)for(const c of allowed){
     const value=matrix[r]?.[c];if(typeof value!=='string')continue;
     if(value.length>4096){result.truncated=true;continue;}
     const text=value.trim();
@@ -2860,7 +2895,7 @@ function ordinaryDateEvidence(matrix,mappings,type){
       if(kinds[label[1].toLocaleLowerCase('ru-RU')]&&kinds[label[1].toLocaleLowerCase('ru-RU')]!==type)continue;
       const inline=label[2]?.trim();
       if(inline)add(inline,text,r,c,c);
-      else if(c+1<lastCol)add(matrix[r]?.[c+1],text,r,c,c+1);
+      else if(allowed.has(c+1))add(matrix[r]?.[c+1],text,r,c,c+1);
       continue;
     }
     const range=/^(?:(?:отч[её]тный\s+)?период)\s*(?:[:=—-]\s*)?с\s+(\d{4}-\d{2}-\d{2}|\d{2}[./]\d{2}[./]\d{4})\s+по\s+(\d{4}-\d{2}-\d{2}|\d{2}[./]\d{2}[./]\d{4})$/iu.exec(text);
@@ -3046,6 +3081,7 @@ function dailyImportOptions(){
 function syncImportFormat(){
   const wide=$('importFormat').value==='daily-wide';
   $('dailyWideOptions').hidden=!wide;
+  $('ordinaryImportHint').hidden=wide;
   $('importType').closest('label').hidden=wide;
   $('weekStartLabel').hidden=wide||$('importType').value==='month';
   $('monthStartLabel').hidden=wide||$('importType').value!=='month';
@@ -3484,20 +3520,52 @@ function chartTickLabel(value,step){
   return new Intl.NumberFormat('ru-RU',{maximumFractionDigits:digits}).format(value);
 }
 // Один период — это сравнение величин, а не динамика: показываем рейтинг.
+const defaultHideZeroRankingRows=false;
+function averageQuantityReason(count) {
+  return count===0?'количество равно нулю':Number.isFinite(count)&&count<0?'отрицательное количество':'';
+}
+function chartPointNotice(point,shown,metric,options,index) {
+  const supplied=options.pointNotice?.(index,shown);
+  const notices=typeof supplied==='string'&&supplied.trim()?[supplied]:[];
+  if(point&&metric==='average'){
+    const unavailable=new Map();
+    for(const key of shown){
+      const item=point.get(key),reason=averageQuantityReason(item?.count);
+      if(!reason||Number.isFinite(item.average))continue;
+      if(!unavailable.has(reason))unavailable.set(reason,[]);
+      unavailable.get(reason).push(options.label?options.label(key):key);
+    }
+    for(const [reason,labels] of unavailable)notices.push('Средняя недоступна ('+reason+'): '+labels.join(', ')+'.');
+  }
+  return notices.join(' ');
+}
 function renderSinglePeriodRanking(root,period,shown,data,metric,options,seriesColor){
   if(!data){empty(root,'Нет полного отчёта за выбранный период. Отсутствующие данные не считаются нулём.');return;}
-  const rows=shown.map(name=>{
+  const available=shown.map(name=>{
     const item=data.get(name),value=item?item[metric]:0;
     return {name,label:options.label?options.label(name):name,value};
-  }).filter(item=>Number.isFinite(item.value))
-    .sort((a,b)=>b.value-a.value||a.label.localeCompare(b.label,'ru'));
-  if(!rows.length){empty(root,'Нет сопоставимых значений за выбранный период.');return;}
-  root.append(elem('p','Рейтинг за '+displayPeriod(period)+'. Для динамики выберите несколько периодов.','muted small'));
+  }).filter(item=>Number.isFinite(item.value));
+  const reason=chartPointNotice(data,shown,metric,options,0);
+  if(!available.length){
+    empty(root,'Нет доступных значений за выбранный период.'+(reason?' '+reason:''));
+    return;
+  }
+  const hideZero=options.hideZeroRankingRows??defaultHideZeroRankingRows;
+  const rows=available.filter(row=>!hideZero||row.value!==0).sort((a,b)=>b.value-a.value||a.label.localeCompare(b.label,'ru'));
+  if(!rows.length){
+    const missing=reason?' '+reason:available.length<shown.length?' Остальные значения недоступны.':'';
+    empty(root,'Нет ненулевых значений за выбранный период. Нулевые строки рейтинга скрыты.'+missing);
+    return;
+  }
+  const actualStart=period.actualStart||period.start;
+  const interval=period.end&&period.end!==actualStart?displayDay(actualStart)+' — '+displayDay(period.end):displayDay(actualStart);
+  root.append(elem('p','Рейтинг за '+interval+' ('+metricTitle(metric)+'). Для динамики выберите несколько периодов.','muted small'));
+  if(reason)root.append(elem('p',reason,'muted small'));
   if(rows.some(row=>row.value<0))
     root.append(elem('p','Длина столбца показывает модуль значения; знак указан рядом с числом.','muted small'));
   const largest=Math.max(0,...rows.map(row=>Math.abs(row.value)));
   const list=elem('div',null,'chart-ranking');list.setAttribute('role','list');
-  list.setAttribute('aria-label','Рейтинг работ и групп за '+displayPeriod(period));
+  list.setAttribute('aria-label','Рейтинг за '+interval+' ('+metricTitle(metric)+')');
   rows.forEach(row=>{
     const line=elem('div',null,'chart-ranking-row'),name=elem('span',row.label,'chart-ranking-name');
     name.title=row.label;
@@ -3507,7 +3575,8 @@ function renderSinglePeriodRanking(root,period,shown,data,metric,options,seriesC
     track.append(fill);
     const amount=elem('strong',fmtNumber(row.value,metric),'chart-ranking-value');
     line.setAttribute('role','listitem');
-    line.setAttribute('aria-label',row.label+': '+fmtNumber(row.value,metric));
+    line.dataset.chartTooltip=row.label+' · '+interval+' · '+metricTitle(metric)+': '+fmtNumber(row.value,metric);
+    line.setAttribute('aria-label',line.dataset.chartTooltip);line.setAttribute('tabindex','0');
     line.append(name,track,amount);list.append(line);
   });
   root.append(list);
@@ -3528,7 +3597,9 @@ function drawChart(periods,orgs,metric,root,options={}) {
     select.value=String(page);select.addEventListener('change',()=>{options.seriesPage=Number(select.value);drawChart(periods,orgs,metric,root,options);root.querySelector('select')?.focus();});
     control.append(select);root.append(control);if(restoreSeriesFocus)select.focus({preventScroll:true});
   }
-  const seriesColor=name=>options.seriesType==='organizations'?departmentSeriesColor(name):workSeriesColor(name);
+  const seriesColor=options.seriesType==='organizations'?visibleDepartmentColors(shown):visibleWorkColors(shown);
+  const seriesNumbers=options.seriesType==='organizations'&&groups.length>COLORS.length?
+    new Map(shown.map((name,i)=>[name,page*limit+i+1])):null;
   const data=options.data||periods.map(p=>reportHasOrganizations(p,orgs)?summary(p,orgs).by:null);
   if(periods.length===1){
     renderSinglePeriodRanking(root,periods[0],shown,data[0],metric,options,seriesColor);
@@ -3554,11 +3625,21 @@ function drawChart(periods,orgs,metric,root,options={}) {
   }
   svg.append(svgEl('line',{x1:left,y1:py(0),x2:width-right,y2:py(0),stroke:'var(--axis)'}));
   const step=usableW/periods.length,px=i=>left+step*(i+.5);
-  const gaps=chartTimelineGaps(periods),gapStarts=new Set(gaps.map(gap=>gap.nextIndex));
-  gaps.forEach(gap=>{
-    const x=(px(gap.nextIndex-1)+px(gap.nextIndex))/2;
-    const notice=svgEl('text',{x,y:top+15,'text-anchor':'middle',fill:'var(--warning)','font-size':11},'Пропуск');
-    notice.append(svgEl('title',{},'Нет данных за '+displayDay(gap.first)+' — '+displayDay(periodEnd(gap.last,periods[gap.nextIndex].type))+'. Линия разорвана.'));
+  const breaks=chartTimelineGaps(periods),gapStarts=new Set(breaks.map(gap=>gap.nextIndex));
+  const missingRanges=[];
+  breaks.forEach(({nextIndex,first,last})=>{
+    const hidden=(options.hiddenPeriods||[]).filter(p=>p.start>=first&&p.start<=last);
+    const current=periods[nextIndex];
+    const missing=chartTimelineGaps([periods[nextIndex-1],...hidden,current]);
+    const ranges=missing.map(gap=>displayDay(gap.first)+' — '+displayDay(periodEnd(gap.last,current.type)));
+    missingRanges.push(...ranges);
+    const x=(px(nextIndex-1)+px(nextIndex))/2;
+    const label=missing.length?'Пропуск':hidden.length===1?'Скрыт ноль':'Скрыты нули';
+    const notice=svgEl('text',{x,y:top+15,'text-anchor':'middle',fill:'var(--warning)','font-size':11},label);
+    const details=[];
+    if(ranges.length)details.push('Нет данных за '+ranges.join('; ')+'.');
+    if(hidden.length)details.push('Скрыты подтверждённые нулевые периоды: '+hidden.map(p=>displayPeriod(p)).join(', ')+'.');
+    notice.append(svgEl('title',{},details.join(' ')+(bar?'':' Линия разорвана.')));
     svg.append(notice);
   });
   periods.forEach((p,i)=>{
@@ -3566,18 +3647,23 @@ function drawChart(periods,orgs,metric,root,options={}) {
       plotPeriodLabel(p));
     label.append(svgEl('title',{},displayPeriod(p)));svg.append(label);
     svg.append(svgEl('text',{x:px(i),y:height-32,'text-anchor':'middle',fill:'var(--plot-label)','font-size':10},p.start.slice(0,4)));
-    if(!data[i]){
+    const customNotice=chartPointNotice(data[i],shown,metric,options,i);
+    if(!data[i]||customNotice){
       const present=new Set(p.organizations||p.rows?.map(row=>row.organization)||[]);
       const available=[...orgs].filter(org=>present.has(org)).length;
-      const message=available?'Неполные данные: '+available+' из '+orgs.size+' подразделений':'Нет отчёта';
+      const message=customNotice||(available?'Неполные данные: '+available+' из '+orgs.size+' подразделений':'Нет отчёта');
       const note=svgEl('text',{x:px(i),y:top+20,'text-anchor':'middle',fill:'var(--warning)','font-size':10});
-      if(available){note.append(svgEl('tspan',{x:px(i)},'Неполные данные: '),svgEl('tspan',{x:px(i),dy:13},available+' из '+orgs.size+' подразделений'));}
-      else note.textContent=message;
-      note.append(svgEl('title',{},message+'. Общий итог не построен: нужны отчёты всех выбранных подразделений.'));svg.append(note);
+      if(!customNotice&&available){note.append(svgEl('tspan',{x:px(i)},'Неполные данные: '),svgEl('tspan',{x:px(i),dy:13},available+' из '+orgs.size+' подразделений'));}
+      else note.textContent=data[i]&&message.length>25?'Есть недоступные значения':message;
+      if(customNotice&&data[i]){
+        note.dataset.chartTooltip=message;note.setAttribute('tabindex','0');note.setAttribute('aria-label',message);note.setAttribute('aria-describedby','chartTooltip');
+      }
+      note.append(svgEl('title',{},customNotice||message+'. Общий итог не построен: нужны отчёты всех выбранных подразделений.'));svg.append(note);
     }
   });
+  const numberMarks=[];
   shown.forEach((name,index)=>{
-    let segment=[];
+    let segment=[],number=seriesNumbers?.get(name);
     const flush=()=>{if(segment.length>1)svg.append(svgEl('polyline',{points:segment.map(p=>p.join(',')).join(' '),fill:'none',stroke:seriesColor(name),'stroke-width':2.5,'class':'chart-series'}));segment=[];};
     periods.forEach((p,i)=>{
       if(gapStarts.has(i))flush();
@@ -3590,17 +3676,29 @@ function drawChart(periods,orgs,metric,root,options={}) {
       }else{
         segment.push([px(i),y]);mark=svgEl('circle',{cx:px(i),cy:y,r:4,fill:seriesColor(name)});
       }
-      mark.dataset.chartTooltip=(options.label?options.label(name):name)+' · '+displayPeriod(p)+': '+fmtNumber(value,metric);
+      if(number){
+        const x=bar?px(i)-step*.4+(index+.5)*step*.8/shown.length:px(i);
+        numberMarks.push(departmentNumber(number,x,Math.max(12,y-7)));number=null;
+      }
+      const samePoint=bar?[name]:shown.filter(other=>{
+        const point=data[i].get(other);
+        return (point?point[metric]:0)===value;
+      });
+      const labels=samePoint.map(key=>options.label?options.label(key):key);
+      mark.dataset.chartTooltip=labels.join(', ')+' · '+displayPeriod(p)+': '+fmtNumber(value,metric);
       mark.setAttribute('tabindex','0');mark.setAttribute('aria-label',mark.dataset.chartTooltip);mark.setAttribute('aria-describedby','chartTooltip');svg.append(mark);
     });flush();
   });
-  root.append(svg);
+  svg.append(...numberMarks);root.append(svg);
   const legend=elem('div',null,'chart-legend');
-  shown.forEach((x,i)=>{const label=options.label?options.label(x):x;const tag=elem('span',label);tag.title=label;tag.style.setProperty('--series',seriesColor(x));legend.append(tag);});root.append(legend);
-  if(gaps.length){
-    const ranges=gaps.slice(0,3).map(gap=>displayDay(gap.first)+' — '+displayDay(periodEnd(gap.last,periods[gap.nextIndex].type))).join('; ');
-    root.append(elem('p','Между показанными точками нет отчётов за: '+ranges+
-      (gaps.length>3?'; и ещё '+(gaps.length-3)+' промежутков':'')+
+  shown.forEach(name=>{
+    const label=options.label?options.label(name):name;
+    const tag=elem('span',seriesNumbers?seriesNumbers.get(name)+' · '+label:label);
+    tag.title=label;tag.style.setProperty('--series',seriesColor(name));legend.append(tag);
+  });root.append(legend);
+  if(missingRanges.length){
+    root.append(elem('p','Между показанными точками нет отчётов за: '+missingRanges.slice(0,3).join('; ')+
+      (missingRanges.length>3?'; и ещё '+(missingRanges.length-3)+' промежутков':'')+
       '. Линии через пропуски не соединяются.','warn small'));
   }
   if(groups.length>shown.length)root.append(elem('p','Показаны серии '+(page*limit+1)+'–'+(page*limit+shown.length)+'. Все выбранные работы доступны в таблице.','muted small'));
@@ -4291,21 +4389,62 @@ function workSeriesColor(key){
   let hash=0;for(const character of identity)hash=(Math.imul(hash,31)+character.codePointAt(0))>>>0;
   return COLORS[(hash+4)%COLORS.length];
 }
-function departmentSeriesColor(organization,orgIndex=0){
-  const position=state.settings.orgNames.indexOf(organization);
-  return COLORS[(position<0?orgIndex:position)%COLORS.length];
+function visibleWorkColors(names){
+  const assigned=new Map(),used=new Set();
+  for(const name of [...names].sort()){
+    let index=COLORS.indexOf(workSeriesColor(name));
+    if(used.size<COLORS.length)while(used.has(COLORS[index]))index=(index+1)%COLORS.length;
+    const color=COLORS[index];assigned.set(name,color);used.add(color);
+  }
+  return name=>assigned.get(name);
 }
-function departmentLegendSample(metric,color,bar){
+function chartCount(n,one,few,many){
+  const v=n%100,last=n%10;
+  return n+' '+(v>=11&&v<=14?many:last===1?one:last>=2&&last<=4?few:many);
+}
+function departmentChartTitle(organizations,metrics){
+  return chartCount(organizations,'подразделение','подразделения','подразделений')+' · '+
+    chartCount(metrics,'показатель','показателя','показателей')+' (% от максимума каждого показателя)';
+}
+function visibleDepartmentColors(organizations){
+  const assigned=new Map(),used=new Set(),catalog=state.settings.orgNames;
+  const position=name=>{const index=catalog.indexOf(name);return index<0?catalog.length+organizations.indexOf(name):index;};
+  for(const name of [...organizations].sort((a,b)=>position(a)-position(b))){
+    if(used.size===COLORS.length)used.clear();
+    let index=position(name)%COLORS.length;
+    while(used.has(index))index=(index+1)%COLORS.length;
+    used.add(index);assigned.set(name,COLORS[index]);
+  }
+  return name=>assigned.get(name);
+}
+function departmentNumber(number,x,y){
+  return svgEl('text',{x,y,'text-anchor':'middle',fill:'var(--text)',stroke:'var(--surface)','stroke-width':3,
+    'paint-order':'stroke','pointer-events':'none','font-size':11,'font-weight':700},String(number));
+}
+let metricPatternId=0;
+function metricMarker(metric,x,y,color){
+  if(metric==='count')return svgEl('polygon',{points:[[x,y-5],[x+5,y+4],[x-5,y+4]].map(p=>p.join(',')).join(' '),fill:color});
+  if(metric==='average')return svgEl('polygon',{points:[[x,y-5],[x+5,y],[x,y+5],[x-5,y]].map(p=>p.join(',')).join(' '),fill:color});
+  return svgEl('circle',{cx:x,cy:y,r:4,fill:color});
+}
+function metricBarFill(svg,metric,color){
+  if(metric==='amount')return color;
+  const id='metric-pattern-'+(++metricPatternId),defs=svgEl('defs'),pattern=svgEl('pattern',{id,width:6,height:6,patternUnits:'userSpaceOnUse'});
+  pattern.append(svgEl('rect',{width:6,height:6,fill:'var(--surface)'}));
+  pattern.append(metric==='count'?svgEl('path',{d:'M-1 1L1 -1M0 6L6 0M5 7L7 5',stroke:color,'stroke-width':2}):svgEl('circle',{cx:3,cy:3,r:1.8,fill:color}));
+  defs.append(pattern);svg.append(defs);return 'url(#'+id+')';
+}
+function departmentLegendSample(metric,color,bar,fill,number){
   const style=departmentMetricStyle(metric);
-  const svg=svgEl('svg',{viewBox:'0 0 38 16',width:38,height:16,'aria-hidden':'true',focusable:'false'});
-  if(bar){
-    svg.append(svgEl('rect',{x:3,y:2,width:30,height:12,fill:color,
-      'fill-opacity':style.barOpacity,stroke:color,'stroke-width':1}));
-  }else{
+  const width=number?60:38;
+  const svg=svgEl('svg',{viewBox:'0 0 '+width+' 16',width,height:16,'aria-hidden':'true',focusable:'false'});
+  if(bar)svg.append(svgEl('rect',{x:3,y:2,width:30,height:12,fill:fill||color,stroke:color,'stroke-width':1}));
+  else{
     const attrs={x1:1,y1:8,x2:37,y2:8,stroke:color,'stroke-width':3,'stroke-linecap':'butt'};
     if(style.dash)attrs['stroke-dasharray']=style.dash;
-    svg.append(svgEl('line',attrs));
+    svg.append(svgEl('line',attrs),metricMarker(metric,19,8,color));
   }
+  if(number)svg.append(departmentNumber(number,49,12));
   return svg;
 }
 function departmentScaleMax(series){
@@ -4319,19 +4458,21 @@ function departmentScaleMax(series){
 }
 // Разные единицы не наносятся на одну абсолютную ось: каждый показатель
 // нормируется по своему максимальному по модулю значению; исходные числа сохраняются.
-function drawDepartmentMultiChart(periods,organizations,metrics,data,root){
-  chartRenders.set(root,()=>drawDepartmentMultiChart(periods,organizations,metrics,data,root));
+function drawDepartmentMultiChart(periods,organizations,metrics,data,root,options={}){
+  chartRenders.set(root,()=>drawDepartmentMultiChart(periods,organizations,metrics,data,root,options));
   root.replaceChildren();
   const series=departmentMultiSeries(organizations,metrics,data);
   if(!periods.length||!series.length){empty(root,'Нет выбранных показателей или отчётных периодов');return;}
-  if(periods.length===1&&state.chart==='line'){
-    empty(root,'Для динамики подразделений выберите несколько периодов. Для сравнения за один период переключитесь на «Столбцы» или «Таблица значений».');
-    return;
-  }
-  const scales=departmentScaleMax(series),bar=state.chart==='bar';
+  const scales=departmentScaleMax(series),bar=state.chart==='bar',horizontal=bar&&options.orientation==='horizontal';
+  const pageSize=12,page=horizontal?Math.min(Math.floor((periods.length-1)/pageSize),options.page||0):0;
+  const start=page*pageSize,shown=horizontal?periods.slice(start,start+pageSize):periods;
+  if(horizontal&&periods.length>pageSize&&window.unifiedChartPager)window.unifiedChartPager(root,'chart-periods',{
+    index:page,size:pageSize,count:shown.length,total:periods.length,axis:'x',label:'Периоды горизонтальной диаграммы',
+    go:index=>{options.page=index;drawDepartmentMultiChart(periods,organizations,metrics,data,root,options);}
+  });
   const phone=window.matchMedia?.('(max-width:740px)').matches||false;
-  const left=phone?55:76,right=phone?15:28,top=27,bottom=80,height=phone?325:370;
-  const width=phone?Math.max(root.clientWidth||Math.max(240,innerWidth-64),left+right+periods.length*Math.max(84,bar?series.length*16:0)):
+  const left=horizontal?155:phone?55:76,right=phone?15:28,top=27,bottom=horizontal?20:80,height=horizontal?top+shown.length*(series.length*18+22)+bottom:phone?325:370;
+  const width=horizontal?Math.max(root.clientWidth||740,640):phone?Math.max(root.clientWidth||Math.max(240,innerWidth-64),left+right+periods.length*Math.max(84,bar?series.length*16:0)):
     Math.max(800,periods.length*Math.max(116,bar?series.length*19:116));
   const usableW=width-left-right,usableH=height-top-bottom;
   const negative=series.some(entry=>entry.values.some(value=>Number.isFinite(value)&&value<0));
@@ -4340,24 +4481,28 @@ function drawDepartmentMultiChart(periods,organizations,metrics,data,root){
   const svg=svgEl('svg',{viewBox:'0 0 '+width+' '+height,role:'img',
     'aria-label':'Сравнение подразделений и показателей. Шкала в процентах от максимума по каждому показателю'});
   svg.style.minWidth=width+'px';
+  const hx=value=>left+(value-min)/(max-min)*usableW;
   for(let i=0;i<=4;i++){
-    const value=min+(max-min)*i/4,y=py(value);
-    svg.append(svgEl('line',{x1:left,y1:y,x2:width-right,y2:y,stroke:'var(--grid)'}));
-    svg.append(svgEl('text',{x:left-8,y:y+4,'text-anchor':'end',fill:'var(--plot-label)','font-size':11},fmtNumber(value,'count')+'%'));
+    const value=min+(max-min)*i/4,y=py(value),x=hx(value);
+    svg.append(svgEl('line',{x1:horizontal?x:left,y1:horizontal?top:y,x2:horizontal?x:width-right,y2:horizontal?height-bottom:y,stroke:value===0?'var(--axis)':'var(--grid)'}));
+    svg.append(svgEl('text',{x:horizontal?x:left-8,y:horizontal?16:y+4,'text-anchor':horizontal?'middle':'end',fill:'var(--plot-label)','font-size':11},fmtNumber(value,'count')+'%'));
   }
-  svg.append(svgEl('line',{x1:left,y1:py(0),x2:width-right,y2:py(0),stroke:'var(--axis)'}));
-  periods.forEach((period,i)=>{
-    const label=svgEl('text',{x:px(i),y:height-49,'text-anchor':'middle',fill:'var(--plot-label)','font-size':11},
-      plotPeriodLabel(period));
+  const rowHeight=series.length*18+22;
+  shown.forEach((period,i)=>{
+    const label=svgEl('text',{x:horizontal?8:px(i),y:horizontal?top+i*rowHeight+14:height-49,'text-anchor':horizontal?'start':'middle',fill:'var(--plot-label)','font-size':11},
+      horizontal?displayPeriod(period):plotPeriodLabel(period));
     label.append(svgEl('title',{},displayPeriod(period)));svg.append(label);
-    svg.append(svgEl('text',{x:px(i),y:height-32,'text-anchor':'middle',fill:'var(--plot-label)','font-size':10},period.start.slice(0,4)));
-    if(series.every(entry=>entry.values[i]===null))
-      svg.append(svgEl('text',{x:px(i),y:top+18,'text-anchor':'middle',fill:'var(--warning)','font-size':11},'Нет данных'));
+    if(!horizontal)svg.append(svgEl('text',{x:px(i),y:height-32,'text-anchor':'middle',fill:'var(--plot-label)','font-size':10},period.start.slice(0,4)));
+    if(series.every(entry=>entry.values[start+i]===null))
+      svg.append(svgEl('text',{x:horizontal?left+5:px(i),y:horizontal?top+i*rowHeight+14:top+18,fill:'var(--warning)','font-size':11},'Нет данных'));
   });
+  const seriesColor=visibleDepartmentColors(organizations),numbered=organizations.length>COLORS.length;
+  const numbers=[],fills=[],gaps=new Set(chartTimelineGaps(periods).map(gap=>gap.nextIndex));
   series.forEach((entry,index)=>{
-    const color=departmentSeriesColor(entry.organization,entry.orgIndex),maximum=scales.get(entry.metric)||0;
+    const color=seriesColor(entry.organization),maximum=scales.get(entry.metric)||0;
     const style=departmentMetricStyle(entry.metric),dash=style.dash;
-    let segment=[];
+    const fill=bar?metricBarFill(svg,entry.metric,color):color;fills.push(fill);
+    let segment=[],needsNumber=numbered;
     const flush=()=>{
       if(segment.length>1){
         const attrs={points:segment.map(point=>point.join(',')).join(' '),fill:'none',stroke:color,'stroke-width':2.5,'class':'chart-series'};
@@ -4366,34 +4511,41 @@ function drawDepartmentMultiChart(periods,organizations,metrics,data,root){
       }
       segment=[];
     };
-    entry.values.forEach((value,i)=>{
+    shown.forEach((period,i)=>{
+      const value=entry.values[start+i];if(gaps.has(start+i))flush();
       if(!Number.isFinite(value)){flush();return;}
       const normalized=maximum?value/maximum*100:0,y=py(normalized);
       let mark;
       if(bar){
         const w=step*.84/series.length,x=px(i)-step*.42+index*w;
-        mark=svgEl('rect',{x:x+1,y:Math.min(y,py(0)),width:Math.max(1,w-2),
-          height:Math.max(1,Math.abs(y-py(0))),fill:color,'fill-opacity':style.barOpacity,
-          stroke:color,'stroke-width':.5});
+        mark=horizontal?svgEl('rect',{x:Math.min(hx(0),hx(normalized)),y:top+i*rowHeight+index*18+3,width:Math.max(1,Math.abs(hx(normalized)-hx(0))),height:14,fill,stroke:color}):
+          svgEl('rect',{x:x+1,y:Math.min(y,py(0)),width:Math.max(1,w-2),height:Math.max(1,Math.abs(y-py(0))),fill,stroke:color,'stroke-width':1});
       }else{
-        segment.push([px(i),y]);
-        mark=svgEl('circle',{cx:px(i),cy:y,r:4,fill:color});
+        // A small, consistent offset within the date keeps coincident values inspectable.
+        const x=px(i)+(index-(series.length-1)/2)*Math.min(10,step*.7/series.length);
+        segment.push([x,y]);mark=metricMarker(entry.metric,x,y,color);
       }
-      mark.dataset.chartTooltip=entry.label+' · '+displayPeriod(periods[i])+': '+fmtNumber(value,entry.metric)+
+      if(needsNumber){
+        // Match each series to the numbered legend on its first available mark.
+        const x=bar?(horizontal?hx(normalized):px(i)-step*.42+(index+.5)*step*.84/series.length):segment.at(-1)[0];
+        const tagY=horizontal?top+i*rowHeight+index*18+14:Math.max(12,y-7);
+        numbers.push(departmentNumber(entry.orgIndex+1,x,tagY));needsNumber=false;
+      }
+      mark.dataset.chartTooltip=entry.label+' · '+displayPeriod(period)+': '+fmtNumber(value,entry.metric)+
         ' (шкала: '+fmtNumber(normalized,'count')+'% от максимума показателя)';
       mark.setAttribute('tabindex','0');mark.setAttribute('aria-label',mark.dataset.chartTooltip);
       mark.setAttribute('aria-describedby','chartTooltip');svg.append(mark);
     });
     flush();
   });
-  root.append(svg);
+  svg.append(...numbers);root.append(svg);
   const legend=elem('div',null,'chart-legend chart-legend--departments');
   legend.setAttribute('role','list');
   legend.setAttribute('aria-label','Обозначения подразделений и показателей');
-  series.forEach(entry=>{
+  series.forEach((entry,index)=>{
     const label=entry.label,tag=elem('span');
     tag.title=label;tag.setAttribute('role','listitem');
-    tag.append(departmentLegendSample(entry.metric,departmentSeriesColor(entry.organization,entry.orgIndex),bar),elem('span',label));
+    tag.append(departmentLegendSample(entry.metric,seriesColor(entry.organization),bar,fills[index],numbered?entry.orgIndex+1:null),elem('span',label));
     legend.append(tag);
   });
   root.append(legend);
@@ -4428,7 +4580,7 @@ function renderDepartmentTrend(index,orgs,metrics){
       });
   }else if(metrics.length>1&&$('chartSeriesLayout').value==='combined'){
     const section=elem('section',null,'metric-chart'),plot=elem('div',null,'metric-plot');
-    section.append(elem('h3','Совместное сравнение: '+organizations.length+' подразделений × '+metrics.length+' показателя'),plot);
+    section.append(elem('h3',departmentChartTitle(organizations.length,metrics.length)),plot);
     charts.append(section);drawDepartmentMultiChart(periods,organizations,metrics,data,plot);
   }else{
     for(const metric of metrics){
@@ -5285,6 +5437,8 @@ function changeMatches(row,metrics,filter) {
   if(filter==='small')return metrics.some(m=>row[m].smallBase&&row[m].delta!==0);
   if(filter==='negative')return metrics.some(m=>row[m].negative);
   if(filter==='unchanged')return metrics.every(m=>row[m].delta===0);
+  if(filter==='significant-up'||filter==='significant-down')
+    return metrics.some(m=>row[m].significant&&!row[m].smallBase&&!row[m].negative&&(filter==='significant-up'?row[m].delta>0:row[m].delta<0));
   if(filter==='up'||filter==='down')return metrics.some(m=>!row[m].negative&&(filter==='up'?row[m].delta>0:row[m].delta<0));
   return true;
 }

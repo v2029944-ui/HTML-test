@@ -402,7 +402,7 @@ def run():
                 save.click()
                 dialog, owner = a.confirmations.find_dialog(prompt)
                 a.confirmations.answer(dialog, owner, prompt, 1)
-                wait_for_text(a.page, '#unifiedImportStatus', 'Сохранено: 366 отчётов', 120_000)
+                wait_for_text(a.page, '#unifiedImportStatus', 'Сохранено отчётов: 366', 120_000)
                 started = time.monotonic()
                 # Observe only. The test never invokes sync/refresh or clicks Retry on the reader.
                 b.page.wait_for_function('''generation => window.unifiedUI.snapshot?.reports===366

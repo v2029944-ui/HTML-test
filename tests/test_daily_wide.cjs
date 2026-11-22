@@ -118,3 +118,42 @@ test('generic overall metric captions with explicit dates are daily values, not 
  const sheet=matrix('2024-01-01',2);sheet[2][1]='Общее количество';sheet[2][3]='Общее количество';
  assert.equal(parse(book({Лист:sheet})).reports.length,2);
 });
+
+test('a short year in either half of a quantity/amount pair constrains the selected year',()=>{
+ for(const [quantity,amount] of [['01.01','01.01.25'],['01.01.25','01.01']]){
+  const sheet=matrix('2025-01-01',1);sheet['!merges']=[];sheet[1][1]=quantity;sheet[1][2]=amount;
+  assert.throws(()=>parse(book({Data:sheet}),{year:2024}),/год не совпадает/i);
+  assert.equal(parse(book({Data:sheet}),{year:2025}).reports[0].start,'2025-01-01');
+ }
+});
+
+test('repeated organization controls describe their own section and preserve the combined report total',()=>{
+ const data=[['Работа','Количество','Сумма'],['СМУ16',1,10],['А',1,10],['СМУ16',2,20],['Б',2,20],['Итого',3,30]];
+ const parseBlock=()=>run('parseSheet(data,[{col:0,headerRow:0}])[0]',{data});
+ const clean=parseBlock();
+ assert.equal(clean.hasMismatch,false);
+ assert.deepEqual([clean.count,clean.amount,Array.from(clean.organizations)],[3,30,['СМУ16']]);
+ data[3]=['СМУ16',3,30];const invalid=parseBlock();
+ const issue=invalid.issues.find(i=>i.type==='mismatch');
+ assert.deepEqual([issue.row,issue.expected.amount,issue.actual.amount],[4,30,20]);
+});
+
+test('typed ISO date/time headers preserve the written Excel date even with a time or UTC offset',()=>{
+ const sheet=matrix('2024-01-01',1);sheet['!merges']=[];sheet[1][1]='2024-01-01T23:45:12.125-06:00';sheet['!dateCells']=new Set(['1:1']);
+ assert.equal(parse(book({Data:sheet})).reports[0].start,'2024-01-01');
+ sheet[1][1]='2024-01-01T25:00:00';assert.throws(()=>parse(book({Data:sheet})),/Не определена дата/);
+});
+
+test('a blank overall row in a daily pair does not duplicate the last section discrepancy',()=>{
+ const data=[['Работа','Количество','Сумма'],['СМУ16',3,30],['А',1,10],['Итого',null,null]];
+ const report=run('parseSheet(data,[{col:0,headerRow:0}],{dailyWide:true})[0]',{data});
+ assert.equal(report.issues.filter(i=>i.type==='mismatch').length,1);
+});
+
+test('manual daily total columns cannot reuse a day, work or another total column',()=>{
+ const sheet=matrix('2024-01-01',2),base={workCol:0,headerRow:2,firstDayCol:1,totalCountCol:5};
+ for(const totalAmountCol of [5,4,0]){
+  const options={sheets:['Data'],mappings:{Data:{...base,totalAmountCol}}};
+  assert.throws(()=>parse(book({Data:sheet}),options),/столбц/i);
+ }
+});

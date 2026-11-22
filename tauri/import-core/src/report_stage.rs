@@ -1,6 +1,8 @@
 //! Sequential conversion of ordinary triples into disk-backed reports.
 //! Financial rows and diagnostics are never collected into a report-sized Vec.
 use crate::{check_cancel, fail, Result, Stage};
+#[path = "ordinary_date.rs"]
+mod ordinary_date;
 use chrono::{Datelike, Duration, Months, NaiveDate};
 use rusqlite::{params, Connection};
 use serde::Serialize;
@@ -419,6 +421,7 @@ impl Stage<'_> {
                 "Не найдены тройки столбцов «Работа / Количество / Сумма».",
             ));
         }
+        let mut used_columns = HashSet::new();
         for m in &mappings {
             if m.header_row == 0
                 || m.header_row > self.limits.rows
@@ -431,8 +434,12 @@ impl Stage<'_> {
             {
                 return Err(fail("Некорректное сопоставление столбцов."));
             }
+            if cfg.mappings.is_some() && [m.work_col,m.count_col,m.amount_col].iter().any(|&col| !used_columns.insert(col)) {
+                return Err(fail("Один столбец указан в нескольких наборах Excel."));
+            }
         }
         let periods = legacy_periods(cfg, start, mappings.len())?;
+        let date_notices = ordinary_date::check(self, cfg, &mappings, periods[0].0, cancel)?;
         self.db.execute_batch(SCHEMA)?;
         self.db.execute_batch("BEGIN IMMEDIATE;DELETE FROM converted_reports;DELETE FROM converted_rows;DELETE FROM converted_issues;DELETE FROM converted_totals;DELETE FROM converted_organizations;DELETE FROM manifest WHERE name='conversion_complete';")?;
         let result = (|| {
@@ -473,6 +480,12 @@ impl Stage<'_> {
                     overall: false,
                     daily: false,
                 };
+                if i == 0 {
+                    for notice in &date_notices {
+                        context.issue("warning", &notice.reason, notice.row, None,
+                            (notice.address.clone(),None,None), None,None,false)?;
+                    }
+                }
                 let mut stmt=self.db.prepare("SELECT c.row_num,c.col_num,CASE WHEN c.kind='s' THEN s.value WHEN c.kind='b' THEN CASE c.value WHEN '1' THEN 'true' ELSE 'false' END ELSE c.value END FROM cells c LEFT JOIN strings s ON c.kind='s' AND s.id=CAST(c.value AS INTEGER) WHERE c.sheet=?1 AND c.row_num>?2 AND c.col_num IN (?3,?4,?5) ORDER BY c.row_num,c.col_num")?;
                 let mut rows = stmt.query(params![
                     cfg.sheet,
@@ -713,6 +726,7 @@ struct Active {
     amount: f64,
     row: u32,
     unchecked: bool,
+    actual: (f64, f64),
 }
 struct Context<'a> {
     db: &'a Connection,
@@ -770,7 +784,7 @@ impl Context<'_> {
             if a.unchecked {
                 return Ok(());
             }
-            let actual = self.by_org[a.org];
+            let actual = a.actual;
             if (actual.0 - a.count).abs() > 0.001 || (actual.1 - a.amount).abs() > 0.03 {
                 self.mismatch = true;
                 self.issue(
@@ -798,10 +812,11 @@ impl Context<'_> {
         }
     }
     fn add(&mut self, row: u32, work: &str, q: f64, a: f64) -> Result<()> {
-        let org = self
-            .active
-            .ok_or_else(|| fail("No active organization"))?
-            .org;
+        let active = self.active.as_mut().ok_or_else(|| fail("No active organization"))?;
+        active.actual.0 += q;
+        active.actual.1 += a;
+        let org = active.org;
+        let block = active.actual;
         self.rows += 1;
         self.sum.0 += q;
         self.sum.1 += a;
@@ -813,6 +828,8 @@ impl Context<'_> {
             self.sum.1,
             self.by_org[org].0,
             self.by_org[org].1,
+            block.0,
+            block.1,
         ]
         .iter()
         .any(|v| !v.is_finite())
@@ -905,11 +922,11 @@ impl Context<'_> {
             })
         });
         if total {
-            self.check_block()?;
             if self.daily && blank_pair {
                 return Ok(self.rows > 0);
             }
             if self.rows > 0 || self.daily {
+                self.check_block()?;
                 self.overall = true;
                 self.totals += 1;
                 self.db.execute(
@@ -964,6 +981,7 @@ impl Context<'_> {
                     amount: 0.,
                     row,
                     unchecked: true,
+                    actual: (0., 0.),
                 });
                 return Ok(false);
             }
@@ -974,6 +992,7 @@ impl Context<'_> {
                     amount: a,
                     row,
                     unchecked: false,
+                    actual: (0., 0.),
                 });
                 self.mark_present(org);
                 self.totals += 1;

@@ -4,6 +4,7 @@
 //! revision-checked publication. No report JSON enters the WebView.
 use crate::storage::{ImportConfirmation, ImportCounts, ImportJob, ImportPreview, ImportReceipt, Storage};
 use analiz_import_core::{LegacyOptions, Limits, PreparedImport, QualityCounts, SourceDiagnostics, StageArea, WideOptions};
+use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{path::Path, sync::{atomic::AtomicBool, Arc}};
@@ -17,6 +18,7 @@ pub struct NativeWideReview {
     pub source_hash: String,
     pub revision: i64,
     pub report_count: u64,
+    pub period_range: Option<NativePeriodRange>,
     pub row_count: u64,
     pub catalog_entries: u64,
     pub conflicts: ImportCounts,
@@ -28,6 +30,28 @@ pub struct NativeWideReview {
     pub sample_reports: Vec<NativeReportSample>,
     pub sample_report_issues: Vec<serde_json::Value>,
     pub sample_source_issues: serde_json::Value,
+}
+#[derive(Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct NativePeriodRange {
+    pub kind: String,
+    pub from: String,
+    pub to: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub mixed_week_starts: bool,
+}
+impl NativePeriodRange {
+    fn include(&mut self, kind: &str, start: &str, end: &str) -> Result<(), String> {
+        if self.kind != kind { return Err("Mixed reviewed report types".into()); }
+        if kind == "week" && !self.mixed_week_starts {
+            let weekday = |value: &str| NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                .map(|day| day.weekday()).map_err(|error| error.to_string());
+            self.mixed_week_starts = weekday(&self.from)? != weekday(start)?;
+        }
+        if start < self.from.as_str() { self.from = start.to_owned(); }
+        if end > self.to.as_str() { self.to = end.to_owned(); }
+        Ok(())
+    }
 }
 #[derive(Serialize)]
 #[serde(rename_all="camelCase")]
@@ -99,9 +123,15 @@ fn review<T: serde::Serialize>(
     let mut quality_period_months=std::collections::BTreeMap::new();
     let mut quality_periods_partial=false;
     let mut after=0;
+    let mut period_range:Option<NativePeriodRange>=None;
     let mut reports=0u64;
     let mut rows=0u64;
     while let Some(report)=prepared.next_report(after).map_err(|e|e.to_string())? {
+        match &mut period_range {
+            Some(range) => range.include(&report.kind, &report.start, &report.end)?,
+            None => period_range=Some(NativePeriodRange{kind:report.kind.clone(),
+                from:report.start.clone(),to:report.end.clone(),mixed_week_starts:false}),
+        }
         let month=report.start.get(..7).ok_or("Invalid reviewed period start")?;
         let day=report.start.get(8..).and_then(|s|s.parse::<u32>().ok()).filter(|d|(1..=31).contains(d)).ok_or("Invalid reviewed period day")?;
         let key=format!("{}:{month}",report.kind);
@@ -150,7 +180,7 @@ fn review<T: serde::Serialize>(
         source_name:prepared.source_name().to_string(),
         source_hash:prepared.source_hash().to_string(),
         revision:preview.revision(),
-        report_count:reports,row_count:rows,catalog_entries,
+        report_count:reports,period_range,row_count:rows,catalog_entries,
         conflicts:preview.counts().clone(),
         quality:prepared.quality().clone(),
         diagnostics:prepared.source_diagnostics().clone(),
@@ -281,6 +311,7 @@ fn with_legacy_prepared<T>(
 pub async fn native_import_sheets(
     app: tauri::AppHandle,
     source: String,
+    rule: Option<crate::storage::Rule>,
     workspace_token: Option<String>,
 ) -> Result<Vec<NativeWorksheet>, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -313,6 +344,12 @@ pub async fn native_import_sheets(
                 if sheets.len() > 64 {
                     return Err("Too many Excel worksheets for native review".into());
                 }
+                let auto_sheets = if let Some(rule)=rule.filter(|r|r.format.as_deref()==Some("auto")) {
+                    let organizations=storage.folder_import_organizations(storage.revision()?)?;
+                    let options=rule.native_wide_options(organizations)?;
+                    Some(stage.detect_wide(&options,Arc::new(AtomicBool::new(false)))
+                        .map_err(|e|e.to_string())?)
+                } else {None};
                 let mut result = Vec::new();
                 for (name, component) in sheets {
                     if !stage
@@ -320,7 +357,8 @@ pub async fn native_import_sheets(
                         .map_err(|e| e.to_string())?
                         .is_empty()
                     {
-                        result.push(NativeWorksheet { name, component });
+                        let daily_wide=auto_sheets.as_ref().map(|sheets|sheets.iter().any(|sheet|sheet.component==component));
+                        result.push(NativeWorksheet { name, component, daily_wide });
                     }
                 }
                 Ok(result)
@@ -335,6 +373,8 @@ pub async fn native_import_sheets(
 pub struct NativeWorksheet {
     pub name: String,
     pub component: String,
+    #[serde(rename="dailyWide",skip_serializing_if="Option::is_none")]
+    pub daily_wide: Option<bool>,
 }
 
 #[tauri::command]
@@ -700,6 +740,17 @@ mod reviewed_quality_tests {
     }
 
     #[test]
+    fn reviewed_week_range_records_an_off_schedule_week_between_matching_endpoints() {
+        let mut range = NativePeriodRange { kind: "week".into(), from: "2026-11-04".into(),
+            to: "2026-11-10".into(), mixed_week_starts: false };
+        range.include("week", "2026-11-25", "2026-12-01").unwrap();
+        assert!(serde_json::to_value(&range).unwrap().get("mixedWeekStarts").is_none());
+        range.include("week", "2026-11-12", "2026-11-18").unwrap();
+        assert!(range.mixed_week_starts);
+        assert_eq!((range.from.as_str(), range.to.as_str()), ("2026-11-04", "2026-12-01"));
+    }
+
+    #[test]
     fn reviewed_quality_rejects_same_path_different_bytes_before_creating_csv() {
         let dir=tempfile::tempdir().unwrap();
         let path=dir.path().join("quality.xlsx");
@@ -714,6 +765,8 @@ mod reviewed_quality_tests {
         let reviewed=with_legacy_prepared(&store,"native-import-stages",source,options(),|p,v,o|review(p,v,o,b"legacy-manual-review-v1\0",&o.organizations)).unwrap();
         assert_eq!(reviewed.quality_period_months.get("day:2024-01"),Some(&1));
         assert!(!reviewed.quality_periods_partial);
+        let range=reviewed.period_range.as_ref().unwrap();
+        assert_eq!((&*range.kind,&*range.from,&*range.to),("day","2024-01-01","2024-01-01"));
         let make_query=||ReviewedQualityQuery{
             source:source.into(),selection:QualityImportOptions::Legacy(options()),review_token:reviewed.review_token.clone(),filter:Default::default(),
         };

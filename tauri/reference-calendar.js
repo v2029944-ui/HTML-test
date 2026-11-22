@@ -12,9 +12,9 @@ function dateAt(year,month,day=1){
 function day(value,offset){
  const date=dateOf(value);date.setUTCDate(date.getUTCDate()+offset);return serial(date);
 }
-function period(value,unit){
+function period(value,unit,weekStartsOn=1){
  const date=dateOf(value),year=date.getUTCFullYear(),month=date.getUTCMonth();
- if(unit==='week'){const start=day(value,-((date.getUTCDay()+6)%7));return [start,day(start,6)];}
+ if(unit==='week'){const start=day(value,-((date.getUTCDay()-weekStartsOn+7)%7));return [start,day(start,6)];}
  if(unit==='month')return [dateAt(year,month),dateAt(year,month+1,0)];
  if(unit==='year')return [dateAt(year,0),dateAt(year,11,31)];
  return [value,value];
@@ -23,7 +23,23 @@ const short=value=>value.slice(8)+'.'+value.slice(5,7);
 const stamp=value=>short(value)+'.'+value.slice(0,4);
 const valid=value=>/^\d{4}-\d{2}-\d{2}$/.test(value)&&value.slice(0,4)!=='0000'&&!isNaN(dateOf(value))&&serial(dateOf(value))===value;
 const btn=(text,run)=>{const button=make('button',text);button.type='button';button.addEventListener('click',run);return button;};
-function openCalendar({anchor, title, initial, unit='day', allowed, variants, allLabel, allSelected=false, spanFor=period, apply}){
+// Fetch a bounded month once per open calendar, including overlapping report weeks.
+function savedWeeksForDay(api, revision, current) {
+ let month, request;
+ return async value => {
+  const start=period(value,'month')[0];
+  if(month!==start){
+   month=start;
+   const pending=api.unifiedPeriodOptions(revision,'week',null,null,37,start);
+   request=pending;
+   Promise.resolve(pending).catch(()=>{if(request===pending)month=null;});
+  }
+  const page=await request;
+  if(!current())throw Error('Изменились фильтры.');
+  return page.rows.filter(row=>row.start<=value&&value<=row.end);
+ };
+}
+function openCalendar({anchor, title, initial, unit='day', allowed, variants, allLabel, allSelected=false, spanFor=period, weeksForDay, apply}){
  const dialog=make('dialog');dialog.className='period-calendar';dialog.setAttribute('aria-label',title);
  const heading=make('div',title);heading.className='cal-title';
  const toolbar=make('div');toolbar.className='cal-toolbar';
@@ -40,7 +56,39 @@ function openCalendar({anchor, title, initial, unit='day', allowed, variants, al
  const iso=dateAt;
  const capital=v=>v.charAt(0).toUpperCase()+v.slice(1);
  const press=(label,fn)=>{const button=btn(label,fn);button.type='button';return button};
- function choose(v){allSelected=false;selected=v;view=v;draw();grid.querySelector('[data-stamp="'+v+'"]')?.focus({preventScroll:true})}
+ const weekField=make('label','Сохранённая неделя'),weekSelect=make('select');weekField.className='lbl';weekSelect.className='sel';weekField.hidden=true;weekField.append(weekSelect);
+ let weekStart=null,weekStatus='',weekRequest=0;
+ weekSelect.onchange=()=>{weekStart=weekSelect.value||null;draw();};
+ async function loadWeeks(preferred){
+  const ticket=++weekRequest;
+  weekStart=null;weekStatus='Загрузка недель…';weekField.hidden=true;draw();
+  try{
+   const rows=await weeksForDay(selected);
+   if(ticket!==weekRequest||!dialog.isConnected)return;
+   weekStatus='';
+   weekStart=rows.find(r=>r.start===preferred)?.start||(rows.length===1?rows[0].start:null);
+   if(rows.length>1){
+    const empty=make('option','Выберите неделю');empty.value='';weekSelect.replaceChildren(empty);
+    for(const row of rows){const option=make('option',stamp(row.start)+' — '+stamp(row.end));option.value=row.start;weekSelect.append(option);}
+    weekField.hidden=false;weekSelect.value=weekStart||'';
+   }
+  }catch(error){
+   if(ticket!==weekRequest||!dialog.isConnected)return;
+   weekStatus='Не удалось прочитать недели. Выберите дату повторно.';
+  }
+  const focused=document.activeElement;
+  const focusDate=grid.contains(focused)?focused.dataset.stamp:null;
+  const toolbarIndex=Array.prototype.indexOf.call(toolbar.children,focused);
+  draw();
+  if(focusDate)grid.querySelector('[data-stamp="'+focusDate+'"]')?.focus({preventScroll:true});
+  else if(toolbarIndex>=0)toolbar.children[toolbarIndex]?.focus({preventScroll:true});
+  position();
+ }
+ function choose(v){
+  allSelected=false;selected=v;view=v;
+  if(weeksForDay)void loadWeeks();else draw();
+  grid.querySelector('[data-stamp="'+v+'"]')?.focus({preventScroll:true});
+ }
  function move(n){
   const y=Number(view.slice(0,4)),m=Number(view.slice(5,7))-1;
   const next=mode==='days'?iso(y,m+n):iso(y+n*(mode==='years'?12:1),m);
@@ -54,11 +102,13 @@ function openCalendar({anchor, title, initial, unit='day', allowed, variants, al
   const titleButton=press(headingText,()=>{mode=mode==='days'?'months':'years';draw();grid.querySelector('button:not(:disabled)')?.focus()});
   titleButton.disabled=mode==='years';titleButton.title=mode==='days'?'Выбрать месяц':'Выбрать год';
   const prev=press('‹',()=>move(-1)),next=press('›',()=>move(1));prev.setAttribute('aria-label','Назад по календарю');next.setAttribute('aria-label','Вперёд по календарю');toolbar.append(prev,titleButton,next);
-  const [lo,hi]=spanFor(selected,unit);
-  summary.textContent=unit==='year'?selected.slice(0,4):unit==='month'?capital(monthName.format(dateOf(selected)))+' '+selected.slice(0,4):unit==='week'?short(lo)+' — '+short(hi)+' · '+hi.slice(0,4):fullDate.format(dateOf(selected));
+  const [lo,hi]=weekStart?[weekStart,day(weekStart,6)]:!weekField.hidden?[selected,selected]:spanFor(selected,unit);
+  summary.textContent=unit==='year'?selected.slice(0,4):unit==='month'?capital(monthName.format(dateOf(selected)))+' '+selected.slice(0,4):unit==='week'?(lo.slice(0,4)===hi.slice(0,4)?short(lo):stamp(lo))+' — '+stamp(hi):fullDate.format(dateOf(selected));
+  if(weekStatus)summary.textContent=weekStatus;
+  else if(!weekField.hidden&&!weekStart)summary.textContent='На эту дату приходится несколько отчётных недель.';
   if(allSelected)summary.textContent=allLabel;
   if(allButton)allButton.setAttribute('aria-pressed',String(allSelected));
-  confirm.disabled=!allSelected&&Boolean(allowed&&!allowed.has(selected));
+  confirm.disabled=Boolean(weekStatus||(!weekField.hidden&&!weekStart)||(!allSelected&&allowed&&!allowed.has(selected)));
   for(const button of variantRow.children)button.setAttribute('aria-pressed',String(!allSelected&&button.dataset.unit===unit));
   const monthStart=iso(y,m),start=day(monthStart,-((dateOf(monthStart).getUTCDay()+6)%7));
   const count=mode==='days'?42:12;
@@ -96,10 +146,11 @@ function openCalendar({anchor, title, initial, unit='day', allowed, variants, al
   });button.dataset.unit=kind;variantRow.append(button);
  }
  const allButton=allLabel?press(allLabel,()=>{allSelected=true;draw()}):null;
- const confirm=press('Подтвердить',()=>{apply(allSelected?null:selected,unit);dialog.close()});confirm.className='cal-confirm';
+ const confirm=press('Подтвердить',()=>{apply(allSelected?null:selected,unit,weekStart);dialog.close()});confirm.className='cal-confirm';
  actions.append(press('Отмена',()=>dialog.close()),confirm);footer.append(summary,actions);
  const body=make('div');body.className='cal-body';body.append(weekdays,grid);
- dialog.append(heading);if(variantRow.childElementCount>1)dialog.append(variantRow);if(allButton)dialog.append(allButton);dialog.append(toolbar,body,footer);(document.getElementById('refRoot')||document.body).append(dialog);draw();dialog.showModal();position();
+ dialog.append(heading);if(variantRow.childElementCount>1)dialog.append(variantRow);if(allButton)dialog.append(allButton);dialog.append(toolbar,body);if(weeksForDay)dialog.append(weekField);dialog.append(footer);(document.getElementById('refRoot')||document.body).append(dialog);draw();dialog.showModal();position();
+ if(weeksForDay)void loadWeeks(spanFor(initial,unit)[0]);
  const focus=grid.querySelector('[aria-pressed=true]:not(:disabled)')||grid.querySelector('button:not(:disabled)');focus?.focus({preventScroll:true});
  window.addEventListener('resize',position);dialog.addEventListener('click',e=>{if(e.target!==dialog)return;const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)dialog.close()});
  dialog.addEventListener('close',()=>{window.removeEventListener('resize',position);dialog.remove();anchor.focus({preventScroll:true})},{once:true});
@@ -183,5 +234,5 @@ function openField(field,anchor){
  openCalendar({anchor,title,initial,unit,allowed,allLabel:optional?(field.id==='dailyYear'?'Определить по Excel':'Очистить дату'):null,allSelected:optional&&!field.value,
   apply:value=>commit(value?selection.fromIsoDate(value,unit):'')});
 }
-window.referenceCalendar=Object.freeze({open:openCalendar,enhance,syncField,period,day,dateAt,dateOf,stamp,valid});
+window.referenceCalendar=Object.freeze({open:openCalendar,savedWeeksForDay,enhance,syncField,period,day,dateAt,dateOf,stamp,valid});
 })();

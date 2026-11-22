@@ -197,7 +197,12 @@ class ImportControls(unittest.TestCase):
         self.page.locator('#saveImport').click();self.page.locator('#reportCount').filter(has_text='6').wait_for(state='attached')
         open_view(self.page,'dashboard')
         self.page.locator('#periodType').select_option('day')
-        self.assertGreater(self.page.locator('svg').count(),0)
+        self.page.locator('#overviewMode').select_option('range')
+        self.page.locator('#rangeStart').select_option('2026-11-10')
+        self.page.locator('#rangeEnd').select_option('2026-11-15')
+        self.page.locator('#advancedAnalytics>summary').click()
+        self.page.locator('#chartBreakdown').select_option('organizations')
+        self.page.locator('#chartsContainer svg [data-chart-tooltip]').first.wait_for()
 
     def test_comparison_and_calendar_filters_are_below_their_headings(self):
         self.load_six_week_fixture()
@@ -216,7 +221,7 @@ class ImportControls(unittest.TestCase):
                     self.assertGreaterEqual(period['y'],scope['y']+scope['height'])
             open_view(self.page,'upload')
             header=self.page.locator('#reportPeriods>.sectionbar').bounding_box()
-            field=self.page.locator('#calendarType').bounding_box()
+            field=self.page.locator('#reportPeriods .calendar-toolbar').bounding_box()
             self.assertGreaterEqual(field['y'],header['y']+header['height'])
             self.assertAlmostEqual(field['x'],header['x'],delta=1)
             self.assertEqual(self.page.locator('#reportPeriods>.sectionbar select').count(),0)
@@ -245,6 +250,9 @@ class ImportControls(unittest.TestCase):
         self.page.locator('#periodComparisonScope').select_option('range')
         self.assertEqual(self.page.locator('#comparisonCoverage').inner_text().count('3 дня'),2)
         self.assertEqual(self.page.evaluate('''()=>{const {before,after}=periodComparisonRanges(analyticsIndex(),[...state.selectedOrganizations],state.selectedCategories);return [before.total.count,before.total.amount,after.total.count,after.total.amount];}'''),[12,420,30,2310])
+        self.page.locator('#overviewMode').select_option('range')
+        self.page.locator('#rangeStart').select_option('2026-11-10')
+        self.page.locator('#rangeEnd').select_option('2026-11-15')
         axis=self.page.locator('#chartsContainer svg text').evaluate_all('(nodes)=>nodes.map(node=>[...node.childNodes].filter(child=>child.nodeType===Node.TEXT_NODE).map(child=>child.textContent).join(""))')
         self.assertIn('15.11',axis);self.assertNotIn('2026-11',axis)
         amount=self.page.locator('#comparisonTable .metric-table').filter(has=self.page.get_by_role('heading',name='Сумма',exact=True))
@@ -288,7 +296,8 @@ class ImportControls(unittest.TestCase):
         self.page.locator('#regularityPanel>summary').click()
         self.page.wait_for_function('document.querySelector("#regularityCoverage").textContent.includes("Фактических периодов")')
         self.assertIn('Фактических периодов: 7 из 8',self.page.locator('#regularityCoverage').inner_text())
-        open_view(self.page,'upload');self.page.locator('#calendarType').select_option('day')
+        open_view(self.page,'upload')
+        self.select_calendar_year(2026)
         self.assertEqual(self.page.locator('#reportCalendar button').count(),12)
         self.page.locator('#reportCalendar [data-month=\"2026-11\"]').click()
         missing=self.page.locator('[data-date=\"2026-11-05\"]')
@@ -543,6 +552,13 @@ class ImportControls(unittest.TestCase):
                         self.assertGreaterEqual(box['width'],100)
                         self.assertLessEqual(box['height'],100)
 
+    def select_calendar_year(self, year):
+        current=int(self.page.locator('#calendarRange').inner_text().split()[0])
+        button=self.page.locator('#calendarNext' if current<year else '#calendarPrev')
+        for _ in range(abs(year-current)):
+            button.click()
+        self.assertEqual(self.page.locator('#calendarRange').inner_text(),f'{year} год')
+
     def test_calendar_and_uploaded_reports_share_one_section(self):
         self.load_analytics_fixture()
         open_view(self.page,'upload')
@@ -558,12 +574,12 @@ class ImportControls(unittest.TestCase):
         self.page.keyboard.press('Space')
         self.assertTrue(self.page.locator('#reports').is_visible())
         self.assertEqual(reports.locator('.report-row').count(),2)
-        self.page.locator('#calendarType').select_option('month')
+        self.select_calendar_year(2025)
         self.assertEqual(self.page.locator('#reportCalendar>button').count(),12)
         self.assertEqual(reports.locator('.report-row').count(),2)
-        self.page.locator('#calendarType').select_option('week')
+        self.select_calendar_year(2026)
         self.page.locator('#reportCalendar [data-month=\"2026-10\"]').click()
-        self.page.locator('#calendarDetails details').last.locator('summary').click()
+        self.page.locator('#calendarDetails summary').filter(has_text='Недельные источники (2)').click()
         self.page.get_by_role('button',name='Контроль качества: 26.10.2026',exact=False).click()
         self.assertEqual(self.page.locator('#qualityPeriod').input_value(),'week:2026-10-26')
         self.page.once('dialog',lambda dialog:dialog.dismiss())
@@ -630,24 +646,33 @@ class ImportControls(unittest.TestCase):
         self.load_analytics_fixture()
         result=self.page.evaluate('''()=>{
           const root=document.createElement('div');document.body.append(root);
-          const period=state.reports[0],orgs=DEFAULT_ORGS.slice(0,2),data=[new Map(orgs.map(org=>[org,{amount:100}]))];
+          const periods=state.reports,orgs=DEFAULT_ORGS.slice(0,2);
+          const data=periods.map(()=>new Map(orgs.map((org,i)=>[org,{amount:100+i}])));
           const read=()=>Object.fromEntries([...root.querySelectorAll('.chart-legend span')].map(node=>[node.textContent,node.style.getPropertyValue('--series')]));
-          const cases=[];
+          const cases=[],expected={};
           for(const chart of ['line','bar']){
             for(const categories of [orgs,[orgs[1]],[orgs[1],orgs[0]]]){
-              drawChart([period],new Set(categories),'amount',root,{chart,seriesType:'organizations',categories,data});
-              cases.push([...root.querySelectorAll('.chart-legend span')].every(node=>node.style.getPropertyValue('--series')===departmentSeriesColor(node.textContent)));
-              cases.push([...root.querySelectorAll('[data-chart-tooltip]')].every(node=>node.getAttribute('fill')===departmentSeriesColor(node.dataset.chartTooltip.split(' · ')[0])));
+              drawChart(periods,new Set(categories),'amount',root,{chart,seriesType:'organizations',categories,data});
+              const legend=read(),marks=[...root.querySelectorAll('[data-chart-tooltip]')];
+              cases.push(Object.keys(legend).length===categories.length && new Set(Object.values(legend)).size===categories.length);
+              for(const name of categories){
+                expected[name]??=legend[name];
+                cases.push(legend[name]===expected[name]);
+              }
+              cases.push(marks.length===periods.length*categories.length && marks.every(node=>node.getAttribute('fill')===legend[node.dataset.chartTooltip.split(' · ')[0]]));
             }
           }
-          drawChart([period],new Set(orgs),'amount',root,{categories:['Работа 1','Работа 2']});const before=read();
-          drawChart([period],new Set(orgs),'amount',root,{categories:['Работа 2']});cases.push(before['Работа 2']===read()['Работа 2']);
-          root.remove();return cases;
+          const categories=['Работа 1','Работа 2'];
+          drawChart(periods,new Set(orgs),'amount',root,{categories});const before=read();
+          drawChart(periods,new Set(orgs),'amount',root,{categories:categories.slice(1)});
+          cases.push(Boolean(before['Работа 2']) && before['Работа 2']===read()['Работа 2']);
+          root.remove();return {cases,expected};
         }''')
-        self.assertTrue(all(result),result)
+        self.assertTrue(all(result['cases']),result)
         self.page.locator('#chartBreakdown').select_option('organizations')
         self.page.locator('#chartSeriesLayout').select_option('separate')
-        self.assertTrue(self.page.evaluate('''()=>[...document.querySelectorAll('#chartsContainer .chart-legend span')].every(node=>node.style.getPropertyValue('--series')===departmentSeriesColor(node.textContent))'''))
+        legend=self.page.locator('#chartsContainer .chart-legend').first.locator('span').evaluate_all('''nodes=>Object.fromEntries(nodes.map(node=>[node.textContent,node.style.getPropertyValue('--series')]))''')
+        self.assertEqual(legend,result['expected'])
 
     def test_partial_calendar_direction_colors_and_average_explanation(self):
         self.load_analytics_fixture()

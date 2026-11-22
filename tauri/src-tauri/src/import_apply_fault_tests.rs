@@ -192,6 +192,7 @@ fn kill_child() {
     let p = prepared(&area, &root.join("data.xlsx"), "day", "2025-01-01");
     let storage = Storage::new(root.join("live")).unwrap();
     let preview = storage.preview_import(&p).unwrap();
+    fs::write(root.join("preview_ready"), b"ready").unwrap();
     storage
         .apply_import(
             &p,
@@ -231,17 +232,25 @@ fn process_death_rolls_back_and_recovers_stage() {
         .stdout(std::process::Stdio::null())
         .spawn()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !root.path().join("in_transaction").exists() && Instant::now() < deadline {
-        if child.try_wait().unwrap().is_some() {
-            panic!("child exited before transaction");
+    // Setup includes process startup, Excel conversion and a SQLite preview.
+    // Kill only after the child has actually written into the open transaction.
+    for marker in ["preview_ready", "in_transaction"] {
+        let path = root.path().join(marker);
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !path.exists() {
+            if let Some(status) = child.try_wait().unwrap() {
+                panic!("child exited with {status} before {marker}");
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                child.wait().unwrap();
+                panic!("child did not reach {marker} within 120 seconds");
+            }
+            thread::sleep(Duration::from_millis(20));
         }
-        thread::sleep(Duration::from_millis(20));
     }
-    let reached = root.path().join("in_transaction").exists();
     child.kill().unwrap();
     child.wait().unwrap();
-    assert!(reached);
     let reopened = Storage::new(root.path().join("live")).unwrap();
     assert_eq!(reopened.load().unwrap(), before);
     assert_eq!(reopened.revision().unwrap(), revision);

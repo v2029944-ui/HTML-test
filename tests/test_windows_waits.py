@@ -1,11 +1,12 @@
 """Keep Windows smoke waits compatible with the unchanged strict application CSP."""
-import importlib.util
+import sys
 import unittest
 from pathlib import Path
 from playwright.sync_api import sync_playwright, Error as PlaywrightError
+
 ROOT=Path(__file__).resolve().parents[1]
-spec=importlib.util.spec_from_file_location('windows_smoke_for_tests',ROOT/'tauri/tests/windows_smoke.py')
-smoke=importlib.util.module_from_spec(spec);spec.loader.exec_module(smoke)
+sys.path.insert(0, str(ROOT / 'tauri' / 'tests'))
+import windows_smoke as smoke
 
 class CspSafeWindowsWaits(unittest.TestCase):
     @classmethod

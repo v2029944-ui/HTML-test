@@ -30,7 +30,7 @@ function fixture(overrides={}){
  if(!methods.unifiedComparisonWindow&&methods.unifiedComparisonPage)methods.unifiedComparisonWindow=async(...args)=>{const rows=await methods.unifiedComparisonPage(...args.slice(0,3),null,args[4]);return {rows,total_rows:rows.length};};
  const api=new Proxy(methods,{get(target,key){if(key in target)return target[key];if(key==='load'||key==='save')throw Error('Forbidden full history API');return (...args)=>{calls.push({key,args});return Promise.reject(Error('Unexpected API '+key));};}});
  const UI={api,revision:1,snapshot:{org_names:['A','B','C','D']},state:{selectedMetrics:new Set(['count','amount'])},$:id=>nodes.get(id),el:(tag,text,cls)=>{const node=new Element(tag,text);node.className=cls;return node;},fmt:n=>Number.isFinite(n)?String(n):'—',table:(root,metric,caption,headers,rows,options)=>{tables.push({root:root.id,metric,caption,headers,rows,options});root.append(new Element('table',rows.map(row=>row.map(c=>c?.textContent??String(c??'—')).join('|')).join('\n')));},setPeriodInput:(id,kind,date)=>{nodes.get(id).value=date;},range:(kind,from,to,source)=>/^\d{4}-\d{2}-\d{2}$/.test(from)&&from<=to?{type:source==='daily'?'day':kind,displayType:kind,source,from,to}:null,request:(scope,overrides={})=>({revision:scope.revision,source:scope.source,displayType:scope.displayType,organizations:scope.organizations,selectedNames:scope.selectedNames,query:{method:'previous',from:scope.from,to:scope.to,percent:30,min_count:5,min_amount:1000,...overrides}}),onScope:cb=>hooks.scope.push(cb),onSnapshot:cb=>hooks.snapshot.push(cb),onView:(name,cb)=>(hooks.views[name]??=[]).push(cb),drawChart(){},notice(){}};
- const window={unifiedUI:UI};vm.runInNewContext(script,{window,setTimeout,clearTimeout,console,Date,Map,Set});window.unifiedExtended.init();
+ const window={unifiedUI:UI};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../analysis-summary.js'),'utf8'),{window});vm.runInNewContext(script,{window,setTimeout,clearTimeout,console,Date,Map,Set});window.unifiedExtended.init();
  const scope={revision:1,source:'daily',displayType:'day',type:'day',from:'2024-01-01',to:'2024-01-02',organizations:['A'],selectedNames:['Work'],selectedKeys:['work:Work'],nameRows:[{name:'Work',key:'work:Work',kind:'work'}],allNames:false};
  return {UI,nodes,tables,calls,window,publish:patch=>{if(patch===null){UI.scope=null;hooks.scope.forEach(cb=>cb(null));return;}Object.assign(scope,patch);UI.scope={...scope};hooks.scope.forEach(cb=>cb(UI.scope));},view:name=>hooks.views[name]?.forEach(cb=>cb()),snapshot:()=>hooks.snapshot.forEach(cb=>cb(null))};
 }
@@ -113,9 +113,10 @@ test('clicking a change KPI filters the SQL rows by the selected category',async
  const selected=[];const f=fixture({unifiedChangesPage:async(_request,options)=>{selected.push(options.direction);return page();}});
  f.publish();f.view('changes');await settle();
  const cards=f.nodes.get('changesSummary').children;
+ f.nodes.get('changesMode').value='strong';
  assert.equal(cards[1].tagName,'BUTTON');assert.match(cards[1].attributes['aria-label'],/Значительно снизилось/);
  cards[1].dispatch('click');await settle();
- assert.equal(f.nodes.get('changesDirection').value,'down');assert.equal(selected.at(-1),'down');
+ assert.equal(f.nodes.get('changesDirection').value,'significant-down');assert.equal(selected.at(-1),'significant-down');assert.equal(f.nodes.get('changesMode').value,'all');
 });
 
 test('shared baseline seeds comparison and structure, local overrides stay flagged until reset',async()=>{
@@ -173,8 +174,8 @@ test('hidden advanced controls advertise an active KPI direction filter',async()
  const f=fixture({unifiedChangesPage:async()=>page()});f.publish();f.view('changes');await settle();
  const category=f.nodes.get('changesSummary').children[1];
  category.dispatch('click');await settle();
- assert.equal(f.nodes.get('changesDirection').value,'down');
- assert.match(f.nodes.get('changesActiveFilter').textContent,/^фильтр: снижение/);
+ assert.equal(f.nodes.get('changesDirection').value,'significant-down');
+ assert.match(f.nodes.get('changesActiveFilter').textContent,/^фильтр: значительное снижение/);
  f.nodes.get('changesDirection').value='all';f.nodes.get('changesDirection').dispatch('change');await settle();
  assert.doesNotMatch(f.nodes.get('changesActiveFilter').textContent,/снижение/);
 });
@@ -295,6 +296,7 @@ test('reference comparison uses exact shared intervals and excludes unavailable 
  f.window.referenceDetail={active:'comparison'};f.window.referenceFilters={setOrganizations:names=>applied.push(...names)};
  f.publish({from:'2024-01-10',to:'2024-01-20',baseFrom:'2024-01-01',baseTo:'2024-01-04',organizations:['A','B']});
  await f.window.unifiedExtended.openComparison();
+ assert.match(f.nodes.get('comparisonHelp').textContent,/Область расчёта: выбранные работы и группы \(1\)/);assert.match(f.nodes.get('comparisonHelp').textContent,/Сводка и главный «Анализ изменений» учитывают все работы/);
  assert.deepEqual(requests[0].slice(2,6),['2024-01-01','2024-01-04','2024-01-10','2024-01-20']);
  assert.deepEqual([...requests[0][6]],['A']);
  const exportView=f.tables[0].options.csvContext;
@@ -320,4 +322,235 @@ test('reference regularity sends the chosen calendar-day baseline and never calc
  f.UI.api.nativeAnalysisOrganizations=async()=>[{org:'A',complete:true,missing:0}];
  f.nodes.get('regularityPanel').dispatch('toggle');await settle();
  assert.equal(calls.length,1);assert.equal(calls[0][0].displayType,'day');assert.deepEqual({...calls[0][3].baseline},{from:'2023-02-01',to:'2023-02-28'});
+});
+
+test('reference comparison and its CSV use the same three of four organizations for either incomplete interval and zero base',async()=>{
+ for(const [missingBefore,missingAfter,zeroBase]of [[false,true,false],[true,false,false],[true,true,false],[false,true,true]]){
+  const selected=['A','B','C','D'],included=selected.slice(0,3),exports=[],calls=[];
+  const baseline=zeroBase?0:90,current=210,measure={base:baseline,current,delta:current-baseline,percent:zeroBase?null:(current-baseline)/Math.abs(baseline)*100};
+  const total=n=>({complete:true,periods:2,missing:0,total:{count:n/10,amount:n,average:n?10:null}});
+  const f=fixture({
+   nativeAnalysisOrganizations:async(_rev,_kind,from)=>selected.map(org=>({org,complete:org!=='D'||!(from==='2024-01-01'?missingBefore:missingAfter),missing:org==='D'&&(from==='2024-01-01'?missingBefore:missingAfter)?1:0})),
+   nativeAnalysisCompare:async(...args)=>{calls.push(args);assert.deepEqual([...args[6]],included);return {summary:{before:total(baseline),after:total(current)}};},
+   unifiedComparisonWindow:async(req,before)=>{assert.deepEqual([...req.organizations],included);assert.deepEqual({...before},{from:'2024-01-01',to:'2024-01-02'});return {rows:[{key:'work:Work',name:'Work',kind:'work',amount:measure,count:{...measure,base:baseline/10,current:current/10,delta:(current-baseline)/10}}],total_rows:1};},
+   chooseCsvPath:async()=>'/tmp/comparable.csv',referenceDetailCsv:async(...args)=>exports.push(args)
+  });
+  f.window.referenceDetail={active:'comparison'};f.window.referenceFilters={setOrganizations(){}};
+  f.publish({from:'2024-01-10',to:'2024-01-11',baseFrom:'2024-01-01',baseTo:'2024-01-02',organizations:selected,selectedNames:[],selectedKeys:[],allNames:true});
+  await f.window.unifiedExtended.openComparison();
+  assert.match(f.nodes.get('comparisonHelp').textContent,/Область расчёта: все работы/);assert.equal(calls.length,1);assert.deepEqual(calls[0].slice(2,6),['2024-01-01','2024-01-02','2024-01-10','2024-01-11']);
+  const amount=f.tables.find(table=>table.root==='comparisonTable'&&table.metric==='amount');assert.ok(amount);assert.deepEqual([...amount.options.csvRows[0].slice(1,4)],[baseline,current,current-baseline]);assert.equal(amount.options.csvRows[0][4],measure.percent);
+  const text=f.nodes.get('comparisonCoverage').textContent;assert.match(text,/Сопоставимые подразделения: 3 из 4/);assert.match(text,/Исключены из расчёта: D/);if(missingBefore)assert.match(text,/D · базовый период · пропусков: 1/);if(missingAfter)assert.match(text,/D · анализируемый период · пропусков: 1/);
+  await amount.options.csvContext.export();assert.deepEqual([...exports[0][0].request.organizations],included);assert.deepEqual({...exports[0][0].before},{from:'2024-01-01',to:'2024-01-02'});
+  if(zeroBase){assert.equal(amount.rows[0][1],'0');assert.equal(amount.rows[0][4],'—');assert.doesNotMatch(f.nodes.get('comparisonTable').textContent,/Infinity|NaN/);}
+ }
+});
+
+test('reference comparison with disjoint complete organizations explains both incomplete intervals and offers no numerical comparison',async()=>{
+ const f=fixture({nativeAnalysisOrganizations:async(_rev,_kind,from)=>['A','B','C','D'].map(org=>({org,complete:from==='2024-01-01'?['A','B'].includes(org):['C','D'].includes(org),missing:1})),
+  nativeAnalysisCompare:async()=>({summary:{before:{complete:false,periods:1,missing:2,total:{count:null,amount:null,average:null}},after:{complete:false,periods:1,missing:2,total:{count:null,amount:null,average:null}}}}),
+  unifiedComparisonWindow:async()=>({rows:[],total_rows:0})});
+ f.window.referenceDetail={active:'comparison'};f.publish({from:'2024-01-10',to:'2024-01-10',baseFrom:'2024-01-01',baseTo:'2024-01-01',organizations:['A','B','C','D'],selectedNames:[],selectedKeys:[],allNames:true});
+ await f.window.unifiedExtended.openComparison();assert.equal(f.tables.length,0);assert.equal(f.nodes.get('kpis').children.length,0);assert.match(f.nodes.get('comparisonCoverage').textContent,/Нет сопоставимых подразделений/);assert.match(f.nodes.get('comparisonTable').textContent,/оба интервала неполны/);
+});
+
+test('adjacent pairs follow the exact common unit and interval even when old local dates disagree',async()=>{
+ const requests=[];
+ const f=fixture({unifiedChangesPageAtPage:async req=>{requests.push(req);return page('Work');}});
+ f.window.referenceDetail={active:'changes'};
+ f.publish({displayType:'month',source:'daily',from:'2024-02-01',to:'2024-02-29',overviewMode:'range'});
+ f.nodes.get('changesFrom').value='2023-12-01';f.nodes.get('changesTo').value='2023-12-31';
+ f.view('changes');await settle();
+ assert.deepEqual([requests.at(-1).query.method,requests.at(-1).query.from,requests.at(-1).query.to],['previous','2024-02-01','2024-02-29']);
+ f.publish({from:'2024-01-01',to:'2024-03-31'});await settle();
+ assert.deepEqual([requests.at(-1).query.method,requests.at(-1).query.from,requests.at(-1).query.to],['range','2024-01-01','2024-03-31']);
+});
+
+test('history receives focus before SQL and closing restores the same logical source row after a redraw',async()=>{
+ const wait=deferred(),fx=fixture({unifiedChangesPage:async()=>page('Work'),nativeWorkTimeline:()=>wait.promise});
+ fx.publish();fx.view('changes');await settle();
+ const source=fx.tables.find(t=>t.root==='changesResults').rows[0][0],heading=fx.nodes.get('changeDetailTitle');
+ let focused=source;heading.focus=()=>{focused=heading;};
+ const sibling=new Element('button'),replacement=new Element('button'),host=fx.nodes.get('changesResults');
+ sibling.dataset.historyEntry=source.dataset.historyEntry;replacement.dataset.historyEntry=source.dataset.historyEntry;
+ const before=[sibling,source],after=[sibling,replacement];host.querySelectorAll=()=>source.isConnected?before:after;
+ source.isConnected=true;source.closest=()=>host;source.focus=()=>{focused=source;};replacement.focus=()=>{focused=replacement;};
+ source.dispatch('click');assert.equal(focused,heading,'Escape must target the drilldown while its SQL is pending');
+ source.isConnected=false;fx.nodes.get('closeChangeDetails').dispatch('click');
+ assert.equal(fx.nodes.get('changeDetails').hidden,true);assert.equal(focused,replacement,'same occurrence when two metric rows have the same work');
+ wait.resolve({points:[],granularity:'day'});await settle();assert.equal(focused,replacement);
+});
+
+test('contribution CSV becomes unavailable as soon as the local baseline changes and stays unavailable after comparison failure',async()=>{
+ let baseline='2024-01-08',blocked;
+ const saved=[],compositionReads=[];
+ const period={complete:true,periods:1,missing:0,total:{count:1,amount:10,average:10}};
+ const f=fixture({
+  nativeAnalysisOrganizations:async()=>[{org:'A',...period}],
+  nativeAnalysisCompare:()=>blocked?blocked.promise:Promise.resolve({summary:{before:period,after:period}}),
+  unifiedComparisonWindow:async()=>({rows:[],total_rows:0}),
+  nativeCompositionPageAtPage:async(_request,before)=>{
+   compositionReads.push(before.from);
+   return {rows:[{name:'Work',key:'work:Work',kind:'work',base:1,current:2,delta:1,percent:100,contribution:100}],
+    total_rows:1,baseComplete:true,currentComplete:true,check:{sum:1,delta:1,reconciled:true}};
+  },
+  chooseCsvPath:async()=>'/tmp/contribution.csv',referenceDetailCsv:async spec=>saved.push(spec)
+ });
+ f.UI.state.selectedMetrics=new Set(['amount']);
+ f.window.referenceDetail={active:'comparison',currentComparison:()=>({
+  before:{from:baseline,to:'2024-01-09'},after:{from:'2024-01-10',to:'2024-01-11'}})};
+ f.publish();const detail=f.nodes.get('contributions'),results=f.nodes.get('contributionResults');
+ detail.open=true;await f.window.unifiedExtended.openComparison();await settle();
+ const old=f.tables.findLast(t=>t.root===results.id).options.csvContext;
+ const dialog=deferred();f.UI.api.chooseCsvPath=()=>dialog.promise;
+ const saving=old.export();
+ baseline='2024-01-05';blocked=deferred();
+ const update=f.window.unifiedExtended.openComparison();
+ assert.equal(results.inert,true);
+ dialog.resolve('/tmp/old.csv');await assert.rejects(saving,/изменились/);
+ await assert.rejects(old.export(),/изменились/);
+ detail.dispatch('toggle');await settle();
+ assert.deepEqual(compositionReads,['2024-01-08']);
+ blocked.reject(Error('comparison read failed'));await update;
+ assert.match(results.textContent,/comparison read failed/);assert.equal(results.children.some(n=>n.tagName==='TABLE'),false);
+ detail.dispatch('toggle');await settle();await assert.rejects(old.export(),/изменились/);
+ assert.deepEqual(compositionReads,['2024-01-08']);assert.equal(saved.length,0);
+ blocked=null;await f.window.unifiedExtended.openComparison();await settle();
+ await f.tables.findLast(t=>t.root===results.id).options.csvContext.export();
+ assert.equal(saved.length,1);assert.deepEqual({...saved[0].before},{from:'2024-01-05',to:'2024-01-09'});
+});
+
+test('month scope with equal-length October baseline uses exact daily intervals for composition and row history',async()=>{
+ const period={complete:true,periods:30,missing:0,total:{amount:20,count:1,average:20}};
+ const item={key:'work:Work',name:'Work',kind:'work',amount:{base:1,current:2,delta:1,percent:100}};
+ const reads=[],history=[],f=fixture({
+  nativeAnalysisOrganizations:async()=>[{org:'A',...period}],
+  nativeAnalysisCompare:async()=>({summary:{before:period,after:period}}),
+  unifiedComparisonWindow:async()=>({rows:[item],total_rows:1}),
+  nativeWorkTimeline:async(...args)=>{history.push(args);return {granularity:'period',points:[]};},
+  nativeCompositionPage:async(req,before,mode)=>{reads.push([mode,req,before]);return {baseComplete:true,currentComplete:true,sharesValid:true,total_rows:0,rows:[],check:{reconciled:true}};}
+ });
+ f.UI.state.selectedMetrics=new Set(['amount']);f.window.referenceDetail={active:'structurePanel'};
+ f.publish({displayType:'month',from:'2026-11-01',to:'2026-11-30',baseFrom:'2026-10-02',baseTo:'2026-10-31'});
+ f.nodes.get('structurePanel').open=true;f.nodes.get('structurePanel').dispatch('toggle');await settle();
+ f.window.referenceDetail.active='comparison';f.nodes.get('contributions').open=true;
+ await f.window.unifiedExtended.openComparison();await settle();
+ for(const [mode,req,before] of reads){
+  assert.equal(req.displayType,'day',mode);
+  assert.deepEqual([req.query.from,req.query.to,before.from,before.to],['2026-11-01','2026-11-30','2026-10-02','2026-10-31']);
+ }
+ assert.deepEqual(reads.map(r=>r[0]),['structure','contributions']);
+ const link=f.tables.find(t=>t.root==='comparisonTable').rows[1][0];link.dispatch('click');await settle();
+ assert.deepEqual([history[0][2],history[0][3],history[0][8]],['2026-10-02','2026-11-30','day']);
+});
+test('overview comparison shortcut uses the same section router as the comparison tab',()=>{
+ const calls=[],f=fixture();f.window.referenceDetail={active:'overviewPanel'};
+ f.window.referenceDesktop={openPanel:(...args)=>calls.push(args)};
+ const shortcut=f.nodes.get('overviewShowComparison');shortcut.dispatch('click');
+ assert.deepEqual(calls,[['comparison',shortcut]]);
+});
+
+test('usual level captions expand calendar keys into the full sampled dates',async()=>{
+ for(const [source,kind,from,to,first,last,baseEnd,currentEnd] of [
+  ['imported','week','2024-01-10','2024-01-10','2023-12-13','2024-01-03','09.01.2024','16.01.2024'],
+  ['imported','month','2024-02-01','2024-02-01','2023-10-01','2024-01-01','31.01.2024','29.02.2024'],
+  ['daily','month','2024-02-01','2024-02-29','2023-10-01','2024-01-01','31.01.2024','29.02.2024']
+ ]){
+  const f=fixture({unifiedPatternPage:async()=>({rows:[],total_rows:0,used:4,expected:4,previous_used:4,current_complete:true,baseline_from:first,baseline_to:last,current_from:from,current_to:from})});
+  f.UI.range=()=>({type:source==='daily'?'day':kind,displayType:kind,source,from,to});f.publish({displayType:kind,source,type:source==='daily'?'day':kind,from,to});
+  f.nodes.get('usualPeriod').value=from;f.nodes.get('usualPanel').open=true;f.nodes.get('usualPanel').dispatch('toggle');await settle();
+  const caption=f.tables.find(t=>t.root==='usualResults').caption;
+  assert.ok(caption.includes(baseEnd)&&caption.endsWith(currentEnd),caption);
+ }
+});
+
+test('department comparison uses identity-keyed rows for an entire catalog page and matches both organizations',async()=>{
+ const totals=[{org:'A',complete:true,missing:0,total:{amount:150}},{org:'B',complete:true,missing:0,total:{amount:260}}];
+ const rows=[['group:g','Ремонт (группа)','group',100,200],['work:Ремонт','Ремонт (работа)','work',40,60],['work:Уборка','Уборка','work',10,0]];
+ const calls=[];
+ const f=fixture({
+  nativeAnalysisOrganizations:async()=>totals,
+  unifiedNameOptionsAtPage:async()=>({rows:[{name:'Уборка',key:'work:Уборка',kind:'work'}],total_rows:1}),
+  unifiedOrganizationWorkWindow:async(req,index,limit)=>{calls.push([req,index,limit]);return {rows:rows.map(([key,name,kind,a,b])=>({entry:{key,name,kind},rows:[{org:'A',total:{amount:a}},{org:'B',total:{amount:b}}]})),total_rows:3};},
+  nativeOrganizationTrends:async()=>({granularity:'period',series:[]}),
+  nativeWorkTimeline:async(...args)=>{calls.push(args);return {points:[]};}
+ });
+ f.window.referenceDetail={active:'comparison'};
+ f.publish({organizations:['A','B'],selectedNames:[],selectedKeys:[],nameRows:[],allNames:true});
+ f.nodes.get('comparisonMode').value='organizations';f.nodes.get('comparisonBaseOrg').value='A';
+ await f.window.unifiedExtended.openComparison();
+ const table=f.tables.find(t=>t.metric==='amount');assert.ok(table);
+ assert.deepEqual(Array.from(table.rows.slice(1),r=>[r[0].textContent,r[1],r[2]]),rows.map(r=>[r[1],String(r[3]),String(r[4])]));
+ assert.deepEqual(Array.from(table.options.csvRows.slice(1),r=>Array.from(r).slice(0,3)),rows.map(r=>[r[1],r[3],r[4]]));
+ assert.equal(calls[0][1],0);assert.equal(calls[0][2],50);
+ table.rows[1][0].dispatch('click');await settle();assert.equal(calls[1][6],'group:g');
+});
+
+test('opening a group uses the same qualified label in the history title and chart',async()=>{
+ const metric={base:10,current:25,delta:15,percent:150};
+ const f=fixture({
+  nativeAnalysisCompare:async()=>({summary:{before:{complete:true,total:{amount:10}},after:{complete:true,total:{amount:25}}}}),
+  unifiedComparisonWindow:async()=>({rows:[{name:'Ремонт',kind:'group',key:'group:g',amount:metric}],total_rows:1}),
+  nativeWorkTimeline:async()=>({granularity:'period',points:[{start:'2024-01-02',missing:0,total:{amount:25}}]})
+ });
+ const labels=[];f.UI.drawChart=(_p,_o,_m,_root,options)=>labels.push(options.label());
+ f.publish();await f.window.unifiedExtended.openComparison();
+ const button=f.tables.find(t=>t.metric==='amount').rows[1][0];
+ assert.equal(button.textContent,'Ремонт (группа)');button.dispatch('click');await settle();
+ assert.equal(f.nodes.get('analyticsDetailTitle').textContent,button.textContent);
+ assert.ok(labels.length);assert.ok(labels.every(label=>label===button.textContent));
+});
+
+test('composition chart distinguishes a work and matching group just like its table',async()=>{
+ const rows=['work','group'].map((kind,i)=>({key:kind+':r',name:'Ремонт',kind,base:5,current:i+1}));
+ const f=fixture({nativeCompositionPage:async()=>({rows,total:3,currentComplete:true,baseComplete:true,sharesValid:true})});
+ let labels;
+ f.UI.drawChart=(_p,_o,_m,_root,options)=>{labels=options.categories.map(options.label);};
+ f.publish({allNames:true});f.nodes.get('structurePanel').open=true;f.nodes.get('structurePanel').dispatch('toggle');await settle();
+ const names=f.tables.find(t=>t.root==='structureResults').rows.map(row=>row[0].textContent);
+ assert.deepEqual(Array.from(labels),Array.from(names));assert.equal(new Set(labels).size,2);
+});
+
+test('drilldown on the available side of a partial comparison opens the range printed above it',async()=>{
+ const history=[];
+ const full={complete:true,periods:1,missing:0,total:{count:5,amount:10,average:2}},missing={...full,complete:false,missing:1,total:{count:null,amount:null,average:null}};
+ const fx=fixture({
+  nativeAnalysisOrganizations:async(_rev,_type,from)=>[{org:'A',...(from==='2024-01-01'?full:missing)}],
+  nativeAnalysisCompare:async()=>({summary:{before:full,after:missing}}),
+  unifiedComparisonWindow:async()=>({total_rows:1,rows:[{key:'work:W',name:'W',kind:'work',available:{amount:10,count:5}}]}),
+  nativeWorkTimeline:async(...a)=>{history.push(a);return {granularity:'period',points:[]};}
+ });
+ fx.window.referenceDetail={active:'comparison'};fx.publish({from:'2024-01-10',to:'2024-01-10',baseFrom:'2024-01-01',baseTo:'2024-01-01',allNames:true});
+ await fx.window.unifiedExtended.openComparison();
+ const table=fx.tables.find(t=>t.root==='comparisonTable');assert.equal(table.caption,'01.01.2024');
+ table.rows[1][0].dispatch('click');await settle();
+ assert.deepEqual(history[0].slice(2,4),['2024-01-01','2024-01-01']);
+});
+
+test('detailed comparison displays rounded changes neutrally while CSV retains their original precision',async()=>{
+ const total=amount=>({complete:true,total:{count:1,amount,average:amount}});
+ const delta=-0.002,measure={base:10,current:10+delta,delta,percent:-0.02};
+ const f=fixture({
+  nativeAnalysisCompare:async()=>({summary:{before:total(10),after:total(10+delta)}}),
+  unifiedComparisonWindow:async()=>({rows:[{key:'work:r',name:'Ремонт',kind:'work',amount:measure}],total_rows:1})
+ });
+ f.UI.fmt=(n,m)=>Number.isFinite(n)?n.toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2}):'—';
+ f.publish();await f.window.unifiedExtended.openComparison();
+ const table=f.tables.find(t=>t.root==='comparisonTable'&&t.metric==='amount');
+ assert.equal(table.rows[1][3],'0,00');assert.equal(table.rows[1][4],'≈ 0%');
+ assert.equal(table.options.csvRows[1][3],delta);assert.equal(table.options.csvRows[1][4],-0.02);
+});
+
+test('adjacent change table and leader keep a rounded-zero change neutral and identify its group',async()=>{
+ const data=page('Ремонт'),row=data.rows[0];
+ row.kind='group';row.status='existing';row.amount={base:10,current:10.003,delta:.003,percent:.03};
+ data.summary.top_amount=row;
+ const f=fixture({unifiedChangesPage:async()=>data});
+ f.UI.fmt=(n,metric)=>Number.isFinite(n)?n.toFixed(metric==='amount'?2:3).replace('.',','):'—';
+ f.publish();f.view('changes');await settle();
+ const table=f.tables.find(item=>item.root==='changesResults');
+ const direction=table.rows[1].at(-1);
+ assert.equal(direction.textContent,'≈ без изменений');assert.equal(direction.className,'');
+ const leader=f.nodes.get('changesSummary').children.at(-1);
+ assert.match(leader.textContent,/Ремонт \(группа\)/);assert.equal(leader.children[1].className,'');
 });

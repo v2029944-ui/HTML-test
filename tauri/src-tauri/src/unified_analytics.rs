@@ -52,6 +52,7 @@ pub struct UnifiedNameOption {
 }
 #[derive(Serialize)]
 pub struct UnifiedNameOptions {
+    pub has_omitted_names: bool,
     pub rows: Vec<UnifiedNameOption>,
     pub next: Option<String>,
     pub total_rows: i64,
@@ -162,7 +163,7 @@ fn validate_options(o: &UnifiedChangeOptions) -> Result<(), String> {
         || !matches!(o.mode.as_str(), "strong" | "all")
         || !matches!(
             o.direction.as_str(),
-            "all" | "up" | "down" | "new" | "gone" | "small" | "negative" | "unchanged"
+            "all" | "up" | "down" | "significant-up" | "significant-down" | "new" | "gone" | "small" | "negative" | "unchanged"
         )
         || o.search.len() > 512
     {
@@ -198,6 +199,9 @@ fn all(o: &UnifiedChangeOptions, expr: impl Fn(&str) -> String) -> String {
             .join(" AND ")
     )
 }
+fn significant_direction(options: &UnifiedChangeOptions, sign: &str) -> String {
+    any(options, |m| format!("{m}_significant AND NOT {m}_small AND NOT {m}_negative AND {m}_delta{sign}0"))
+}
 fn prepare_unified(
     c: &Connection,
     s: &AnalysisScope,
@@ -220,6 +224,8 @@ fn prepare_unified(
     }
     c.execute_batch(&format!("CREATE TEMP TABLE unified_values AS WITH averages AS (SELECT *,CASE WHEN bc>0 THEN ba/bc END bavg,CASE WHEN cc>0 THEN ca/cc END cavg FROM an_changes) SELECT *,classic_normalized(name) normalized_name,((bc=0 AND ba=0) AND (cc<>0 OR ca<>0)) is_new,((bc<>0 OR ba<>0) AND (cc=0 AND ca=0)) is_gone,{} FROM averages",expressions.join(","))).map_err(err)?;
     let direction = match o.direction.as_str() {
+        "significant-up" => significant_direction(o, ">"),
+        "significant-down" => significant_direction(o, "<"),
         "new" => "is_new".into(),
         "gone" => "is_gone".into(),
         "small" => any(o, |m| format!("{m}_small AND {m}_delta<>0")),
@@ -278,12 +284,28 @@ fn top(c: &Connection, q: &ChangeQuery, m: &str) -> Result<Option<ChangeValue>, 
         .map(|r| change_value(r, q))
         .transpose()
 }
-pub(super) fn create_name_catalog(tx: &Connection) -> Result<(), String> {
-    tx.execute_batch("CREATE TEMP TABLE unified_names AS WITH candidates AS (
+pub(super) fn create_name_catalog(tx: &Connection, all_series: bool) -> Result<bool, String> {
+    // Name-based selection must be unambiguous. The all-work chart uses identity
+    // keys and can safely display both members of a matching work/group pair.
+    let labels = if all_series {
+        "SELECT key,name,kind,
+                CASE WHEN count(*) OVER(PARTITION BY name)>1
+                     THEN name || CASE kind WHEN 'group' THEN ' (группа)' ELSE ' (работа)' END
+                     ELSE name END label FROM candidates WHERE name<>''"
+    } else {
+        "SELECT key,name,min(kind) kind,name label,count(*) copies FROM candidates
+         WHERE name<>'' GROUP BY name"
+    };
+    tx.execute_batch(&format!("CREATE TEMP TABLE unified_names AS WITH candidates AS (
             SELECT g.key,g.name,'group' kind FROM analysis_groups g GROUP BY g.key,g.name
             UNION ALL SELECT 'work:'||x.work,x.work,'work' FROM report_rows x
             WHERE NOT EXISTS(SELECT 1 FROM analysis_groups g WHERE g.work=x.work) GROUP BY x.work
-        ) SELECT key,name,min(kind) kind FROM candidates WHERE name<>'' AND length(CAST(name AS BLOB))<=512 GROUP BY name HAVING count(*)=1").map_err(err)
+        ) {labels}")).map_err(err)?;
+    if all_series { return Ok(false); }
+    let omitted = tx.execute(
+        "DELETE FROM unified_names WHERE copies>1 OR length(CAST(name AS BLOB))>512", []
+    ).map_err(err)?;
+    Ok(omitted > 0)
 }
 impl Storage {
     /// Metadata only; each response is bounded even for very large history.
@@ -294,12 +316,23 @@ impl Storage {
         after: Option<&str>,
         limit: usize,
     ) -> Result<UnifiedNameOptions, String> {
-        self.name_options_window(revision, search, after, limit, None)
+        self.name_options_window(revision, search, after, limit, None, None, false)
     }
     pub fn unified_name_options_at_page(&self, revision:i64, search:&str, page_index:usize, limit:usize) -> Result<UnifiedNameOptions,String> {
-        self.name_options_window(revision,search,None,limit,Some(page_index))
+        self.name_options_window(revision,search,None,limit,Some(page_index),None,false)
     }
-    fn name_options_window(&self, revision:i64, search:&str, after:Option<&str>, limit:usize, page_index:Option<usize>) -> Result<UnifiedNameOptions,String> {
+    pub fn unified_work_series_at_page(&self, revision:i64, page_index:usize, limit:usize) -> Result<UnifiedNameOptions,String> {
+        self.name_options_window(revision,"",None,limit,Some(page_index),None,true)
+    }
+    /// One revision-consistent read returns the catalog total and the surviving selection.
+    pub fn unified_selected_name_options(&self, revision: i64, keys: &[String]) -> Result<UnifiedNameOptions, String> {
+        if keys.len() > 50 || keys.iter().any(String::is_empty) {
+            return Err("Invalid selected name keys".into());
+        }
+        for key in keys { key_bound(key)?; }
+        self.name_options_window(revision, "", None, 50, None, Some(keys), false)
+    }
+    fn name_options_window(&self, revision:i64, search:&str, after:Option<&str>, limit:usize, page_index:Option<usize>, selected_keys:Option<&[String]>, all_series:bool) -> Result<UnifiedNameOptions,String> {
         if !(1..=50).contains(&limit) || search.len() > 512 {
             return Err("Invalid name option query".into());
         }
@@ -319,11 +352,11 @@ impl Storage {
         let fingerprint = format!(
             "{:x}",
             Sha256::digest(
-                serde_json::to_vec(&json!(["names", revision, search, limit])).map_err(err)?
+                serde_json::to_vec(&json!(["names", revision, search, limit, all_series])).map_err(err)?
             )
         );
         let cursor_offset = page_offset(after, &fingerprint)?;
-        create_name_catalog(&tx)?;
+        let has_omitted_names = create_name_catalog(&tx,all_series)?;
         let term = normalized(search);
         tx.execute(
             "DELETE FROM unified_names WHERE instr(classic_normalized(name),?1)=0",
@@ -331,8 +364,12 @@ impl Storage {
         )
         .map_err(err)?;
         let total_rows = count_sql(&tx, "SELECT count(*) FROM unified_names")?;
+        if let Some(keys) = selected_keys {
+            tx.execute("DELETE FROM unified_names WHERE key NOT IN (SELECT value FROM json_each(?1))",
+                [serde_json::to_string(keys).map_err(err)?]).map_err(err)?;
+        }
         let offset=match page_index {Some(index)=>crate::storage::direct_page_offset(index,limit,total_rows)?,None=>cursor_offset};
-        let mut stmt=tx.prepare("SELECT key,name,kind FROM unified_names ORDER BY (instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key LIMIT ?2 OFFSET ?3").map_err(err)?;
+        let mut stmt=tx.prepare("SELECT key,label,kind FROM unified_names ORDER BY (instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key LIMIT ?2 OFFSET ?3").map_err(err)?;
         let mut result = stmt
             .query(params![term, (limit + 1) as i64, offset])
             .map_err(err)?;
@@ -351,6 +388,7 @@ impl Storage {
             None
         };
         Ok(UnifiedNameOptions {
+            has_omitted_names,
             rows,
             next,
             total_rows,
@@ -366,9 +404,11 @@ impl Storage {
         grouping: Option<&str>,
         after: Option<&str>,
         limit: usize,
+        week_calendar_month: Option<&str>,
     ) -> Result<UnifiedPeriodOptions, String> {
         if !matches!(report_type, "day" | "week" | "month")
             || !(1..=500).contains(&limit)
+            || week_calendar_month.is_some_and(|day| report_type != "week" || !valid_date(day) || !day.ends_with("-01"))
             || grouping.is_some_and(|g| {
                 report_type != "day" || !matches!(g, "day" | "week" | "month" | "year")
             })
@@ -395,18 +435,26 @@ impl Storage {
         let fingerprint = format!(
             "{:x}",
             Sha256::digest(
-                serde_json::to_vec(&json!(["periods", revision, report_type, grouping, limit]))
+                serde_json::to_vec(&json!(["periods", revision, report_type, grouping, limit, week_calendar_month]))
                     .map_err(err)?
             )
         );
         let offset = page_offset(after, &fingerprint)?;
+        // For a calendar month, index validation and lookup share the reports_by_period window.
+        // At most 37 different starts can touch the month.
+        let window = if week_calendar_month.is_some() {
+            " AND r.period_start BETWEEN date(?2,'-6 days') AND date(?2,'+1 month','-1 day')"
+        } else {
+            " AND ?2 IS NULL"
+        };
         let incomplete: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM reports r LEFT JOIN analysis_reports a ON a.report_id=r.id WHERE r.report_type=?1 AND a.report_id IS NULL)",
-            [report_type], |r|r.get(0)).map_err(err)?;
+            &format!("SELECT EXISTS(SELECT 1 FROM reports r LEFT JOIN analysis_reports a ON a.report_id=r.id WHERE r.report_type=?1 AND a.report_id IS NULL{window})"),
+            params![report_type,week_calendar_month], |r|r.get(0)).map_err(err)?;
         if incomplete {
             return Err("Report analysis index is incomplete".into());
         }
-        tx.execute(&format!("CREATE TEMP TABLE unified_periods AS SELECT DISTINCT {start} start FROM reports r JOIN analysis_reports a ON a.report_id=r.id WHERE a.valid=1 AND r.report_type=?1"),[report_type]).map_err(err)?;
+        tx.execute(&format!("CREATE TEMP TABLE unified_periods AS SELECT DISTINCT {start} start FROM reports r JOIN analysis_reports a ON a.report_id=r.id WHERE a.valid=1 AND r.report_type=?1{window}"),
+            params![report_type,week_calendar_month]).map_err(err)?;
         let (min, max, total_rows) = tx
             .query_row(
                 "SELECT min(start),max(start),count(*) FROM unified_periods",
@@ -468,17 +516,10 @@ impl Storage {
         let unique = |pred: &str| {
             count_sql(&tx,&format!("SELECT count(*) FROM (SELECT org,key FROM unified_values WHERE {pred} GROUP BY org,key)"))
         };
-        let meaningful = |sign: &str| {
-            any(options, |m| {
-                format!(
-                    "{m}_significant AND NOT {m}_small AND NOT {m}_negative AND {m}_delta{sign}0"
-                )
-            })
-        };
         let summary = UnifiedChangeSummary {
             rows: totals.rows,
-            grown: unique(&meaningful(">"))?,
-            fallen: unique(&meaningful("<"))?,
+            grown: unique(&significant_direction(options, ">"))?,
+            fallen: unique(&significant_direction(options, "<"))?,
             new: unique("is_new")?,
             gone: unique("is_gone")?,
             top_count: top(&tx, q, "count")?,
@@ -560,31 +601,8 @@ impl Storage {
                     Text(&serde_json::to_string(options).map_err(err)?),
                 ],
             )?;
-            // Preserve existing guarded CSV encoding/formula protection.
-            csv_record(
-                w,
-                &[
-                    Text("key"),
-                    Text("name"),
-                    Text("kind"),
-                    Text("org"),
-                    Text("baseStart"),
-                    Text("currentStart"),
-                    Text("status"),
-                    Text("count.base"),
-                    Text("count.current"),
-                    Text("count.delta"),
-                    Text("count.percent"),
-                    Text("amount.base"),
-                    Text("amount.current"),
-                    Text("amount.delta"),
-                    Text("amount.percent"),
-                    Text("average.base"),
-                    Text("average.current"),
-                    Text("average.delta"),
-                    Text("average.percent"),
-                ],
-            )?;
+            let metrics: Vec<_> = options.metrics.iter().map(String::as_str).collect();
+            changes_csv_header(w, &metrics)?;
             let mut stmt = tx
                 .prepare(&format!(
                     "SELECT {COLS} FROM unified_visible ORDER BY {order}"
@@ -598,7 +616,7 @@ impl Storage {
             }
             .map_err(err)?;
             while let Some(r) = rows.next().map_err(err)? {
-                change_csv(w, &change_value(r, q)?)?
+                change_csv(w, &change_value(r, q)?, &metrics)?
             }
             Ok(())
         })

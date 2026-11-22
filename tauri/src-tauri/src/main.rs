@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod windows_taskbar;
 mod storage;
 mod native_shared_runtime;
 use native_shared_runtime::{shared_workspace_status,shared_workspace_choose_folder,shared_workspace_connect,shared_workspace_sync,shared_workspace_disconnect,shared_workspace_discard_pending};
@@ -16,7 +18,7 @@ mod native_coverage;
 mod native_pagination;
 use native_pagination::{unified_report_window, unified_report_org_window, native_quality_matrix_reports_at_page};
 mod native_reference_changes;
-use native_reference_changes::{reference_changes,reference_changes_csv,reference_summary_csv};
+use native_reference_changes::{reference_changes,reference_changes_csv,reference_changes_print,reference_summary_csv};
 use native_coverage::{native_quality_matrix_page,native_quality_matrix_reports};
 mod native_name_selection;
 mod unified_commands;
@@ -1498,6 +1500,18 @@ async fn native_set_rule_checked(
 }
 
 #[tauri::command]
+async fn native_import_folder_context(
+    app: tauri::AppHandle,
+    source: String,
+    workspace_token: Option<String>,
+) -> Result<Option<serde_json::Value>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::native_shared_runtime::execute(&app, workspace_token.as_deref(),
+            storage::shared_runtime::Access::Read, |store| store.import_folder_context(std::path::Path::new(&source)))
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn list_excel(
     app: tauri::AppHandle,
     workspace_token: Option<String>,
@@ -1611,16 +1625,51 @@ fn smoke_configuration() -> Result<Option<(std::path::PathBuf, u16)>, String> {
 fn main() {
     #[allow(unused_mut)]
     let mut context = tauri::generate_context!();
+    #[cfg(windows)]
+    if let Err(error) = windows_taskbar::set_process_identity(&context.config().identifier) {
+        eprintln!("Unable to set Windows application identity: {error}");
+    }
+    // Build the window hidden and set its shell properties before Explorer groups it.
+    #[cfg(windows)]
+    let startup_windows: Vec<_> = context.config_mut().app.windows.iter_mut()
+        .filter(|window| window.create)
+        .map(|window| {
+            let config = window.clone();
+            window.create = false;
+            config
+        })
+        .collect();
     #[cfg(feature = "ci-webview2")]
     let smoke = smoke_configuration().expect("Invalid CI-only smoke configuration");
-    #[cfg(feature = "ci-webview2")]
+    #[cfg(all(feature = "ci-webview2", not(windows)))]
     if smoke.is_some() {
         for window in &mut context.config_mut().app.windows {
             window.create = false;
         }
     }
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(windows)]
+    let builder = builder.on_page_load(|webview, page| {
+        // Apply ICON_BIG to the window that actually finished loading, including cold WebView2 starts.
+        if matches!(page.event(), tauri::webview::PageLoadEvent::Finished) {
+            let icon = webview.window().hwnd()
+                .map_err(|error| std::io::Error::other(error.to_string()))
+                .and_then(|hwnd| windows_taskbar::set_large_icon(hwnd).map_err(std::io::Error::other));
+            if let Err(error) = icon {
+                eprintln!("Unable to set the Windows taskbar icon: {error}");
+            }
+        }
+    });
+    builder
         .on_window_event(|window, event| {
+            #[cfg(windows)]
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                if let Ok(hwnd) = window.hwnd() {
+                    if let Err(error) = windows_taskbar::clear_relaunch(hwnd) {
+                        eprintln!("Unable to clear Windows relaunch metadata: {error}");
+                    }
+                }
+            }
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 if let Some(runtime) = window.try_state::<storage::shared_runtime::Runtime>() {
                     runtime.close_window(window.label());
@@ -1659,15 +1708,50 @@ fn main() {
             app.manage(lease);
             app.manage(runtime);
             app.manage(storage::RestoreLaunchInfo(restored));
-            #[cfg(feature = "ci-webview2")]
-            if let Some((_, port)) = &smoke {
-                for config in app.config().app.windows.clone() {
-                    tauri::WebviewWindowBuilder::from_config(app, &config)?
-                        .data_directory(root.join(format!("webview-profile-{port}")))
-                        .additional_browser_args(&format!(
-                            "--remote-debugging-address=127.0.0.1 --remote-debugging-port={port}"
-                        ))
-                        .build()?;
+            #[cfg(any(windows, feature = "ci-webview2"))]
+            {
+                #[cfg(not(windows))]
+                let startup_windows = if smoke.is_some() {
+                    app.config().app.windows.clone()
+                } else {
+                    Vec::new()
+                };
+                for config in &startup_windows {
+                    let builder = tauri::WebviewWindowBuilder::from_config(app, config)?;
+                    #[cfg(windows)]
+                    let builder = builder.visible(false);
+                    #[cfg(feature = "ci-webview2")]
+                    let builder = if let Some((_, port)) = &smoke {
+                        builder.data_directory(root.join(format!("webview-profile-{port}")))
+                            .additional_browser_args(&format!(
+                                "--remote-debugging-address=127.0.0.1 --remote-debugging-port={port}"
+                            ))
+                    } else {
+                        builder
+                    };
+                    let _window = builder.build()?;
+                    #[cfg(windows)]
+                    {
+                        match _window.hwnd() {
+                            Ok(hwnd) => {
+                                if let Err(error) = windows_taskbar::set_large_icon(hwnd) {
+                                    eprintln!("Unable to set the Windows taskbar icon: {error}");
+                                }
+                                if let Err(error) = windows_taskbar::configure_relaunch(hwnd, &app.config().identifier) {
+                                    eprintln!("Unable to set Windows relaunch metadata: {error}");
+                                }
+                            }
+                            Err(error) => eprintln!("Unable to obtain the Windows window handle: {error}"),
+                        }
+                        if config.visible {
+                            _window.show()?;
+                            if config.focus {
+                                if let Err(error) = _window.set_focus() {
+                                    eprintln!("Unable to focus the startup window: {error}");
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Ok(())
@@ -1681,6 +1765,7 @@ fn main() {
             shared_workspace_discard_pending,
             reference_changes,
             reference_changes_csv,
+            reference_changes_print,
             reference_summary_csv,
             unified_period_options,
             unified_name_options,
@@ -1691,6 +1776,7 @@ fn main() {
             unified_pattern_page,
             unified_comparison_page,
             unified_comparison_window,
+            unified_organization_work_window,
             unified_group_audit_page,
             unified_rename_organizations,
             unified_clear_reports,
@@ -1758,6 +1844,7 @@ fn main() {
             native_wide_import_apply,
             native_preview_quality_page,
             native_preview_quality_csv,
+            native_import_folder_context,
             native_import_sheets,
             native_legacy_import_sheets,
             native_legacy_import_preview,

@@ -867,12 +867,10 @@
 }
 :is(#s1,#sharedHeader,#reportShell) .org-warning:hover {background:#383024}
 :is(#s1,#sharedHeader,#reportShell) .org-warning svg {display:block;stroke:currentColor}
-:is(#s1,#sharedHeader,#reportShell) .data-card .bar {margin-inline:auto 0}
+:is(#s1,#sharedHeader,#reportShell) .data-card .bar {margin-inline:auto}
 :is(#s1,#sharedHeader,#reportShell) .data-card table :is(th,td),#s2 .changes-table :is(th,td),#sheet table.sample-values :is(th,td) {
-  text-align:right!important;font-variant-numeric:tabular-nums;
+  text-align:center!important;vertical-align:middle;font-variant-numeric:tabular-nums;
 }
-:is(#s1,#sharedHeader,#reportShell) .data-card table :is(th,td):first-child,#s2 .changes-table :is(th,td):nth-child(-n+2),
-#sheet table.sample-values :is(th,td):first-child,#sheet .matrix table :is(th,td) {text-align:left!important}
 #s2 .changes-table td:nth-child(-n+2), #s2 .position-heading>span {color:inherit}
 #s2 .kind-grid .kpi::after {display:none}
 #s2 .kind-grid .kpi[aria-pressed=true] {background:#302c20;border-color:#dbba5a;box-shadow:inset 0 0 0 1px #c9a541}
@@ -980,9 +978,13 @@ body:has(#refRoot)>footer {display:none}
 #refRoot #s1 .metric-delta button {font:inherit;color:inherit;min-height:22px;background:none;border:0;border-bottom:1px dotted currentColor;cursor:pointer}
 #s1 .insight-row {display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding-block:10px;border-bottom:1px solid var(--ui-line)}
 #s1 .insight-row strong {flex:none}
+#reportShell .filter-fold > summary strong,
+#reportShell .report-dates .date-group-title {color:var(--text,#e8edf4)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader,#toolsPage,#sheet,.period-calendar) {color:var(--text);background:var(--bg)}
 #refRoot[data-theme="light"] :is(.app-header,.tools-column header) {background:var(--surface)!important;border-color:var(--border)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader) :is(.card,.kpi,.sel,.btn,.filter-picker,.filter-shift,.chip,.change-metrics button,.filter-threshold,.filter-base-edit,.filter-reset) {color:var(--text);border-color:var(--field-border);background:var(--surface)}
+#refRoot[data-theme="light"] #reportShell .filter-summary {color:var(--muted)}
+#refRoot[data-theme="light"] :is(#s1,#s2) .report-range a[href="#reportShell"] {color:var(--accent)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) :is(.app-header nav button[aria-current="page"],.app-header nav button:hover,.filter-base-edit,.analytics-trigger,.edit-dates-link) {color:var(--accent)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) :is(button.pri,button.on,button[aria-pressed="true"]:not(.kpi)) {background:var(--accent-fill);color:var(--on-accent)}
 #refRoot[data-theme="light"] :is(#s1,#s2) :is(th,.quality-notice) {background:var(--subtle)!important;border-color:var(--border)!important;color:var(--text)}
@@ -1015,4 +1017,20 @@ body:has(#refRoot)>footer {display:none}
  #groupCatalog .catalog-actions {flex-wrap:wrap}
  #groupCatalog .catalog-actions .button {flex:1;min-width:0}
  #groupCatalog .catalog-row {gap:8px;padding-inline:0}
+}
+
+/* A full filtered print document is independent of the visible SQL page. */
+#referencePrintDocument {display:none}
+@media print {
+ :root:has(body[data-reference-print="document"]),body[data-reference-print="document"] {color-scheme:light!important;background:#fff!important;color:#111!important}
+ body[data-reference-print="document"] > :not(#referencePrintDocument) {display:none!important}
+ body[data-reference-print="document"] #referencePrintDocument {display:block!important;color:#111;background:#fff;font:10pt/1.4 Arial,sans-serif}
+ #referencePrintDocument h1 {font-size:18pt;margin:0 0 12pt}
+ #referencePrintDocument h2 {font-size:12pt;margin:14pt 0 6pt}
+ #referencePrintDocument p {margin:6pt 0}
+ #referencePrintDocument table {border-collapse:collapse;width:100%;margin:10pt 0;table-layout:auto}
+ #referencePrintDocument th,#referencePrintDocument td {padding:5pt;border:1px solid #999;background:#fff!important;color:#111!important;overflow-wrap:anywhere;white-space:normal}
+ #referencePrintDocument thead {display:table-header-group}
+ #referencePrintDocument tr {break-inside:avoid}
+ #referencePrintDocument .num {text-align:right;font-variant-numeric:tabular-nums}
 }

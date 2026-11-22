@@ -68,6 +68,23 @@ class DailyWideImport(unittest.TestCase):
     def upload(self,payload):
         self.page.locator('#excelFile').set_input_files({'name':'Синтетический.xlsx','mimeType':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','buffer':payload})
         self.page.wait_for_function('state.workbook!==null')
+    def test_native_excel_date_and_time_uses_workbook_day(self):
+        # The UTC instant falls on the following day; the workbook header says January 1.
+        src=io.BytesIO(wide_xlsx(2024))
+        out=io.BytesIO()
+        with zipfile.ZipFile(src) as source, zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as book:
+            for name in source.namelist():
+                data=source.read(name)
+                if name=='xl/worksheets/sheet1.xml':
+                    old=b'<c r="B18" t="inlineStr"><is><t>2024-01-01</t></is></c>'
+                    self.assertIn(old,data)
+                    data=data.replace(old,b'<c r="B18" t="d"><v>2024-01-01T23:45:12.125-06:00</v></c>',1)
+                book.writestr(name,data)
+        self.upload(out.getvalue())
+        self.page.locator('#inspectFile').click()
+        self.page.wait_for_function('state.pending.length===366')
+        periods=self.page.evaluate('state.pending.map(r=>r.start)')
+        self.assertEqual(periods[:2],['2024-01-01','2024-01-02'])
     def test_complete_years_and_four_quarter_sheets_are_real_xlsx(self):
         for year,quarters,serial in [(2025,False,False),(2024,False,True),(2024,True,False)]:
             with self.subTest(year=year,quarters=quarters):
@@ -103,6 +120,17 @@ class DailyWideImport(unittest.TestCase):
         self.assertTrue(self.page.evaluate("!state.pending.some(r=>r.start==='2024-02-05')"))
         self.assertTrue(self.page.evaluate("state.pending.some(r=>r.issues.some(i=>i.type==='missing-day'))"))
         self.page.once('dialog',lambda dialog:dialog.dismiss());self.page.locator('#saveImport').click();self.assertEqual(self.page.evaluate('state.reports.length'),0)
+    def test_changed_workbook_must_keep_every_sheet_in_the_saved_mapping(self):
+        self.upload(wide_xlsx(2024))
+        outcome=self.page.evaluate("""()=>{
+          const mappings={'Старое имя':{workCol:0,headerRow:18,firstDayCol:1}};
+          try{return parseDailyWorkbook(state.workbook,{sheets:[],mappings}).reports.length;}
+          catch(error){return error.message;}
+        }""")
+        self.assertIsInstance(outcome,str)
+        self.assertIn('Старое имя',outcome)
+        self.assertEqual(self.page.evaluate('state.reports.length'),0)
+
     def test_folder_wide_sync_real_parser_and_labeled_fields(self):
         self.page.evaluate('''payload=>{
           window.wideBytes=payload;window.signature='1';window.writes=0;

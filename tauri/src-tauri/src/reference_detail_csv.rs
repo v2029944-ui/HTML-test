@@ -25,6 +25,13 @@ fn measure_label(m: &str) -> Result<&'static str, String> {
         _ => Err("Unknown metric".into()),
     }
 }
+fn work_label(name: &str, kind: &str) -> String {
+    if kind == "group" {
+        format!("{name} (группа)")
+    } else {
+        name.to_owned()
+    }
+}
 fn value(t: &AnalysisTotals, m: &str) -> Option<f64> {
     match m {
         "count" => t.count,
@@ -32,6 +39,15 @@ fn value(t: &AnalysisTotals, m: &str) -> Option<f64> {
         "average" => t.average,
         _ => None,
     }
+}
+fn period_header(w: &mut impl Write, label: &str, kind: &str, from: &str, last: &str) -> Result<(), String> {
+    let start = date(last)?;
+    let through = if kind == "year" {
+        NaiveDate::from_ymd_opt(start.year(), 12, 31).ok_or("Invalid year")?
+    } else {
+        end(kind, start)?
+    };
+    headers(w, &[label, from, &through.to_string()])
 }
 fn context(
     w: &mut impl Write,
@@ -42,9 +58,9 @@ fn context(
 ) -> Result<(), String> {
     headers(w, &["Показатель", measure_label(&table.metric)?])?;
     headers(w, &["Тип исходных отчётов", &s.report_type])?;
-    headers(w, &["Анализируемый период", &q.from, &q.to])?;
+    period_header(w, "Анализируемый период", &s.report_type, &q.from, &q.to)?;
     if let Some(base) = &table.before {
-        headers(w, &["Базовый период", &base.from, &base.to])?;
+        period_header(w, "Базовый период", &s.report_type, &base.from, &base.to)?;
     }
     for (label, filter) in [
         ("Подразделения", Some(&s.organizations)),
@@ -55,6 +71,7 @@ fn context(
             headers(w, &[label, &values])?;
         }
     }
+    if s.names.is_none(){headers(w,&["Работы / группы","Все работы"])?;}
     Ok(())
 }
 fn status(code: &str) -> &str {
@@ -88,12 +105,13 @@ pub(super) fn export_patterns(
     order: &str,
     used: i64,
     previous: i64,
+    base_kind: &str,
     base_from: &str,
     base_to: &str,
 ) -> Result<(), String> {
     export(path, |w| {
         context(w, tx, s, q, table)?;
-        headers(w, &["Базовый период", base_from, base_to])?;
+        period_header(w, "Базовый период", base_kind, base_from, base_to)?;
         let opts = table.options.as_ref().ok_or("Missing pattern options")?;
         headers(w, &["Поиск", &opts.search])?;
         headers(w, &["Фильтр признака", &opts.status])?;
@@ -136,13 +154,16 @@ pub(super) fn export_patterns(
         while let Some(row) = rows.next().map_err(err)? {
             let entry: Value =
                 serde_json::from_str(&row.get::<_, String>(0).map_err(err)?).map_err(err)?;
-            let name = entry["name"].as_str().ok_or("Missing pattern name")?;
+            let name = work_label(
+                entry["name"].as_str().ok_or("Missing pattern name")?,
+                entry["kind"].as_str().unwrap_or(""),
+            );
             if usual {
                 let m = &entry[&table.metric];
                 csv_record(
                     w,
                     &[
-                        Text(name),
+                        Text(&name),
                         Number(m["base"].as_f64()),
                         Number(m["current"].as_f64()),
                         Number(m["delta"].as_f64()),
@@ -166,7 +187,7 @@ pub(super) fn export_patterns(
                 csv_record(
                     w,
                     &[
-                        Text(name),
+                        Text(&name),
                         Number(entry["hits"].as_f64().filter(|_| used > 0)),
                         Number(a),
                         Number(entry["previousHits"].as_f64().filter(|_| previous > 0)),
@@ -321,7 +342,11 @@ fn write_structure(w: &mut impl Write, page: &Value) -> Result<(), String> {
         if row["current"].as_f64().is_none_or(|n| n == 0.) {
             continue;
         }
-        let mut record = vec![Text(row["name"].as_str().ok_or("Missing structure name")?)];
+        let name = work_label(
+            row["name"].as_str().ok_or("Missing structure name")?,
+            row["kind"].as_str().unwrap_or(""),
+        );
+        let mut record = vec![Text(&name)];
         record.extend(keys.iter().map(|key| Number(row[*key].as_f64())));
         csv_record(w, &record)?;
     }
@@ -354,10 +379,10 @@ fn write_contributions(w: &mut impl Write, tx: &Connection, metric: &str) -> Res
         )
         .map_err(err)?;
     let total_delta = finite(totals.1 - totals.0)?;
-    let mut stmt=tx.prepare(&format!("SELECT name,{before},{after} FROM an_comparison WHERE {before}<>{after} ORDER BY abs({after}-{before}) DESC,key")).map_err(err)?;
+    let mut stmt=tx.prepare(&format!("SELECT name,{before},{after},kind FROM an_comparison WHERE {before}<>{after} ORDER BY abs({after}-{before}) DESC,key")).map_err(err)?;
     let mut rows = stmt.query([]).map_err(err)?;
     while let Some(r) = rows.next().map_err(err)? {
-        let name: String = r.get(0).map_err(err)?;
+        let name = work_label(&r.get::<_, String>(0).map_err(err)?, &r.get::<_, String>(3).map_err(err)?);
         let change = measure(r.get(1).map_err(err)?, r.get(2).map_err(err)?, 0., 0.)?;
         let share = if total_delta == 0. {
             None
@@ -439,11 +464,11 @@ fn write_comparison(
         &range_summary(tx, s, 2)?.total,
     )?;
     let mut stmt = tx
-        .prepare("SELECT name,bc,ba,cc,ca FROM an_comparison ORDER BY key")
+        .prepare("SELECT name,bc,ba,cc,ca,kind FROM an_comparison ORDER BY key")
         .map_err(err)?;
     let mut rows = stmt.query([]).map_err(err)?;
     while let Some(r) = rows.next().map_err(err)? {
-        let name: String = r.get(0).map_err(err)?;
+        let name = work_label(&r.get::<_, String>(0).map_err(err)?, &r.get::<_, String>(5).map_err(err)?);
         let before = totals(r.get(1).map_err(err)?, r.get(2).map_err(err)?, b)?;
         let after = totals(r.get(3).map_err(err)?, r.get(4).map_err(err)?, a)?;
         if value(&before, metric).is_some() || value(&after, metric).is_some() {
@@ -452,6 +477,110 @@ fn write_comparison(
     }
     Ok(())
 }
+#[derive(Serialize)]
+pub struct OrganizationWorkValues {
+    pub entry: UnifiedNameOption,
+    pub rows: Vec<OrganizationSummary>,
+}
+
+fn ordered_organization_totals(
+    tx: &Connection,
+    s: &AnalysisScope,
+) -> Result<Vec<OrganizationSummary>, String> {
+    let mut stmt = tx.prepare(
+        "SELECT f.item,(SELECT count(*) FROM an_missing m WHERE m.slot=1 AND m.org=f.item),
+                coalesce(sum(v.count),0),coalesce(sum(v.amount),0)
+         FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item
+         WHERE f.id=?1 GROUP BY f.ordinal,f.item ORDER BY f.ordinal"
+    ).map_err(err)?;
+    let mut rows = stmt.query([&s.organizations]).map_err(err)?;
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().map_err(err)? {
+        let missing = row.get(1).map_err(err)?;
+        let complete = missing == 0;
+        result.push(OrganizationSummary {
+            org: row.get(0).map_err(err)?,
+            complete,
+            missing,
+            total: totals(row.get(2).map_err(err)?, row.get(3).map_err(err)?, complete)?,
+        });
+    }
+    Ok(result)
+}
+
+// The screen seeks a bounded page. The CSV streams the same keyed rows in the
+// same order, preserving zero on covered days and unknown on incomplete ones.
+fn visit_all_organization_works(
+    tx: &Connection,
+    s: &AnalysisScope,
+    organizations: &[OrganizationSummary],
+    page: Option<(usize, usize)>,
+    mut visit: impl FnMut(OrganizationWorkValues) -> Result<(), String>,
+) -> Result<i64, String> {
+    unified_analytics::presentation_functions(tx)?;
+    unified_analytics::create_name_catalog(tx, true)?;
+    let total = count_sql(tx, "SELECT count(*) FROM unified_names")?;
+    let (limit, offset) = match page {
+        Some((index, size)) => (size as i64, crate::storage::direct_page_offset(index, size, total)?),
+        None => (-1, 0),
+    };
+    let mut names = tx.prepare(
+        "SELECT key,label,kind FROM unified_names ORDER BY name COLLATE classic_ru,key LIMIT ?1 OFFSET ?2"
+    ).map_err(err)?;
+    let mut names = names.query(params![limit, offset]).map_err(err)?;
+    let mut amounts = tx.prepare(
+        "SELECT coalesce(v.count,0),coalesce(v.amount,0)
+         FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.key=?2
+         WHERE f.id=?1 ORDER BY f.ordinal"
+    ).map_err(err)?;
+    while let Some(name) = names.next().map_err(err)? {
+        let entry = UnifiedNameOption {
+            key: name.get(0).map_err(err)?,
+            name: name.get(1).map_err(err)?,
+            kind: name.get(2).map_err(err)?,
+        };
+        let mut values = amounts.query(params![s.organizations, entry.key]).map_err(err)?;
+        let mut rows = Vec::with_capacity(organizations.len());
+        for org in organizations {
+            let row = values.next().map_err(err)?.ok_or("Missing selected organization")?;
+            rows.push(OrganizationSummary {
+                org: org.org.clone(),
+                complete: org.complete,
+                missing: org.missing,
+                total: totals(row.get(0).map_err(err)?, row.get(1).map_err(err)?, org.complete)?,
+            });
+        }
+        visit(OrganizationWorkValues { entry, rows })?;
+    }
+    Ok(total)
+}
+
+impl Storage {
+    pub fn organization_work_window(
+        &self,
+        revision: i64,
+        scope: &AnalysisScope,
+        query: &RangeQuery,
+        index: usize,
+        size: usize,
+    ) -> Result<SqlPage<OrganizationWorkValues>, String> {
+        if scope.names.is_some() || !(1..=50).contains(&size) {
+            return Err("Select a page of 1..=50 rows from all works".into());
+        }
+        let mut conn = self.connect()?;
+        let tx = conn.transaction().map_err(err)?;
+        workspace(&tx, revision, scope)?;
+        fill_range(&tx, scope, query, 1)?;
+        let organizations = ordered_organization_totals(&tx, scope)?;
+        let mut rows = Vec::new();
+        let total_rows = visit_all_organization_works(&tx, scope, &organizations, Some((index, size)), |row| {
+            rows.push(row);
+            Ok(())
+        })?;
+        Ok(SqlPage { rows, total_rows })
+    }
+}
+
 fn write_organizations(
     w: &mut impl Write,
     tx: &Connection,
@@ -462,20 +591,9 @@ fn write_organizations(
         .base_org
         .as_deref()
         .ok_or("Missing baseline organization")?;
-    let mut stmt=tx.prepare("SELECT f.item,NOT EXISTS(SELECT 1 FROM an_missing m WHERE m.slot=1 AND m.org=f.item),coalesce(sum(v.count),0),coalesce(sum(v.amount),0) FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item WHERE f.id=?1 GROUP BY f.ordinal,f.item ORDER BY f.ordinal").map_err(err)?;
-    let mut rows = stmt.query([&s.organizations]).map_err(err)?;
-    let mut orgs = Vec::new();
-    let mut complete = Vec::new();
-    let mut summary = Vec::new();
-    while let Some(r) = rows.next().map_err(err)? {
-        orgs.push(r.get::<_, String>(0).map_err(err)?);
-        let ok = r.get(1).map_err(err)?;
-        complete.push(ok);
-        summary.push(value(
-            &totals(r.get(2).map_err(err)?, r.get(3).map_err(err)?, ok)?,
-            &table.metric,
-        ));
-    }
+    let organizations = ordered_organization_totals(tx, s)?;
+    let orgs: Vec<_> = organizations.iter().map(|org| org.org.clone()).collect();
+    let summary: Vec<_> = organizations.iter().map(|org| value(&org.total, &table.metric)).collect();
     let base_index = orgs
         .iter()
         .position(|o| o == base)
@@ -502,16 +620,18 @@ fn write_organizations(
         csv_record(w, &line)
     };
     emit("Итого по выбранным работам", &summary)?;
-    unified_analytics::presentation_functions(tx)?;
-    unified_analytics::create_name_catalog(tx)?;
-    // The explicit subset keeps its selection order. All names use the same
-    // catalog, collation and tie-break as the paginated organization table.
-    let names_sql = if s.names.is_some() {
-        "SELECT item FROM analysis_filter_items WHERE id=?1 ORDER BY ordinal"
-    } else {
-        "SELECT name FROM unified_names WHERE ?1 IS NULL ORDER BY name COLLATE classic_ru,key"
-    };
-    let mut names = tx.prepare(names_sql).map_err(err)?;
+    if s.names.is_none() {
+        visit_all_organization_works(tx, s, &organizations, None, |item| {
+            let values: Vec<_> = item.rows.iter().map(|org| value(&org.total, &table.metric)).collect();
+            emit(&item.entry.name, &values)
+        })?;
+        return Ok(());
+    }
+    let mut names = tx.prepare(
+        "SELECT f.item, CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END
+         FROM analysis_filter_items f LEFT JOIN analysis_group_names g ON g.name=f.item
+         WHERE f.id=?1 ORDER BY f.ordinal"
+    ).map_err(err)?;
     let mut names = names.query([&s.names]).map_err(err)?;
     tx.execute(
         "CREATE INDEX an_values_name_org ON an_values(slot,name,org)",
@@ -524,7 +644,7 @@ fn write_organizations(
         let mut cells = Vec::with_capacity(orgs.len());
         let mut values = amounts.query(params![s.organizations, name]).map_err(err)?;
         while let Some(r) = values.next().map_err(err)? {
-            let ok = *complete.get(cells.len()).ok_or("Unexpected organization")?;
+            let ok = organizations.get(cells.len()).ok_or("Unexpected organization")?.complete;
             cells.push(value(
                 &totals(r.get(1).map_err(err)?, r.get(2).map_err(err)?, ok)?,
                 &table.metric,
@@ -533,7 +653,8 @@ fn write_organizations(
         if cells.len() != orgs.len() {
             return Err("Organization count changed".into());
         }
-        emit(&name, &cells)?;
+        let kind: String = row.get(1).map_err(err)?;
+        emit(&work_label(&name, &kind), &cells)?;
     }
     Ok(())
 }

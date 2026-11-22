@@ -129,8 +129,34 @@
       if(cancelled)restoreOpener(opener,expectedInteraction);
     }
   }
+  async function referenceChangesPrint(request,onRows,signal){
+    const batches=new tauri.core.Channel();
+    let control=null,offset=0,abort;
+    // The producer allows one outstanding batch. Cancellation also interrupts SQLite preparation.
+    const delivered=new Promise((resolve,reject)=>{
+      const reply=value=>tauri.event.emit(control,value).catch(reject);
+      abort=()=>{if(control)void reply(null);};
+      batches.onmessage=event=>{
+        try{
+          if(event.kind==='ready'){control=event.control;if(signal?.aborted)abort();return;}
+          if(event.kind==='done'){resolve();return;}
+          if(signal?.aborted)return;
+          if(event.kind!=='rows'||!control||event.offset!==offset||!Array.isArray(event.rows)||
+             !event.rows.length||event.rows.length>128)throw Error('Нарушен порядок строк печати.');
+          onRows(event.rows);
+          offset+=event.rows.length;void reply(offset);
+        }catch(error){abort();reject(error);}
+      };
+    });
+    signal?.addEventListener('abort',abort,{once:true});
+    try{
+      const [comparable]=await Promise.all([tracked('reference_changes_print',{request,batches},'reads'),delivered]);
+      return comparable;
+    }finally{signal?.removeEventListener('abort',abort);}
+  }
   window.desktopAPI=Object.freeze({
     load:()=>invoke('load_data'),
+    referenceChangesPrint,
     referenceChanges:request=>tracked('reference_changes',{request},'reads'),
     referenceChangesCsv:(request,destination)=>tracked('reference_changes_csv',{request,destination},'saves'),
     referenceSummaryCsv:(request,destination)=>tracked('reference_summary_csv',{request,destination},'saves'),
@@ -138,9 +164,10 @@
     unifiedGroupAuditCsv:(request,mode,search,destination)=>tracked('unified_group_audit_csv',{request,mode,search,destination},'saves'),
     nativePreviewQualityPage:(query,offset)=>tracked('native_preview_quality_page',{query,offset},'reads'),
     nativePreviewQualityCsv:(query,destination)=>tracked('native_preview_quality_csv',{query,destination},'saves'),
-    unifiedPeriodOptions:(revision,reportType,grouping=null,after=null,limit=100)=>tracked('unified_period_options',{revision,reportType,grouping,after,limit},'reads'),
+    unifiedPeriodOptions:(revision,reportType,grouping=null,after=null,limit=100,weekCalendarMonth=null)=>tracked('unified_period_options',{revision,reportType,grouping,after,limit,weekCalendarMonth},'reads'),
     unifiedNameOptions:(revision,search='',after=null,limit=50)=>tracked('unified_name_options',{revision,search,after,limit},'reads'),
-    unifiedNameOptionsAtPage:(revision,search='',pageIndex=0,limit=50)=>tracked('unified_name_options',{revision,search,after:null,limit,pageIndex},'reads'),
+    unifiedSelectedNameOptions:(revision,selectedKeys)=>tracked('unified_name_options',{revision,search:'',after:null,limit:50,selectedKeys},'reads'),
+    unifiedNameOptionsAtPage:(revision,search='',pageIndex=0,limit=50,allSeries=false)=>tracked('unified_name_options',{revision,search,after:null,limit,pageIndex,...(allSeries?{allSeries:true}:{})},'reads'),
     unifiedChangesPage:(request,options,after=null)=>tracked('unified_changes_page',{request,options,after},'reads'),
     unifiedChangesPageAtPage:(request,options,pageIndex=0)=>tracked('unified_changes_page',{request,options,after:null,pageIndex},'reads'),
     unifiedChangesCsv:(request,options,destination)=>tracked('unified_changes_csv',{request,options,destination},'saves'),
@@ -149,6 +176,7 @@
     unifiedPatternPage:(request,mode,windowSize,options,after=null)=>tracked('unified_pattern_page',{request,mode,windowSize,options,after},'reads'),
     unifiedPatternPageAtPage:(request,mode,windowSize,options,pageIndex=0)=>tracked('unified_pattern_page',{request,mode,windowSize,options,after:null,pageIndex},'reads'),
     unifiedComparisonPage:(request,before,organization=null,after=null,limit=50)=>tracked('unified_comparison_page',{request,before,organization,after,limit},'reads'),
+    unifiedOrganizationWorkWindow:(request,pageIndex=0,limit=50)=>tracked('unified_organization_work_window',{request,pageIndex,limit},'reads'),
     unifiedComparisonWindow:(request,before,organization=null,pageIndex=0,limit=50)=>tracked('unified_comparison_window',{request,before,organization,pageIndex,limit},'reads'),
     unifiedGroupAuditPage:(request,mode,search='',offset=0,limit=50)=>tracked('unified_group_audit_page',{request,mode,search,offset,limit},'reads'),
     unifiedManagementPage:(revision,kind,query='',group=null,offset=0,limit=50)=>tracked('unified_management_page',{revision,kind,query,group,offset,limit},'reads'),
@@ -248,7 +276,8 @@
       'native_wide_import_apply',{source,options,reviewToken,confirmation},'saves'),
     nativeLegacyImportSheets:source=>tracked(
       'native_legacy_import_sheets',{source},'reads'),
-    nativeImportSheets:source=>tracked('native_import_sheets',{source},'reads'),
+    nativeImportFolderContext:source=>tracked('native_import_folder_context',{source},'reads'),
+    nativeImportSheets:(source,rule=null)=>tracked('native_import_sheets',{source,...(rule?{rule}:{})},'reads'),
     nativeLegacyImportPreview:(source,options)=>tracked(
       'native_legacy_import_preview',{source,options},'reads'),
     nativeLegacyImportApply:(source,options,reviewToken,confirmation)=>tracked(

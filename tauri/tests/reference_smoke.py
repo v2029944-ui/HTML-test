@@ -10,8 +10,10 @@ from pathlib import Path
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect
 
 from reference_control_layout import check_control_layout
+from reference_shell_layout import check_shell_layout
 from reference_table_help import check_table_help
 from reference_data_smoke import choose_calendar_date
+from shared_period_controls import common_period
 
 
 TIMEOUT = 90_000
@@ -192,6 +194,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                               'reason': reason or 'No visible results table for the current filters.'})
 
     def quality_controls():
+        page.locator('#unifiedUploadQuality').click()
         expect(page.locator('#qualitySummary')).to_contain_text('Найдено:', timeout=TIMEOUT)
         has_issues = page.locator('#qualityTable tbody tr').count() > 0
         export_available('#qualityExportCsv', has_issues, '04-quality-csv-availability')
@@ -377,14 +380,19 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         expect(page.locator('#importManualWrap')).not_to_be_visible()
         page.locator('#importFormat').select_option('daily-wide')
         expect(page.locator('#dailyWideOptions')).to_be_visible()
+        page.locator('#unifiedYearDetails > summary').click()
         year_trigger = page.locator('#dailyYear + .ref-calendar-field')
         calendar(year_trigger, '05-wide-year', 'years')
         page.locator('#importFormat').select_option('legacy')
         page.locator('#importType').select_option('day')
         date_trigger = page.locator('#importWeek + .ref-calendar-field')
         calendar(date_trigger, '06-import-day', 'days')
-        calendar(page.locator('#referenceReportYear'), '06-report-calendar-year', 'years')
         record('07-import', page.locator('#toolsPage'))
+        page.locator('#unifiedUploadCalendar').click()
+        report_year = page.locator('#referenceReportYear')
+        expect(report_year).to_be_visible()
+        expect(report_year).not_to_contain_text('загрузка')
+        calendar(report_year, '06-report-calendar-year', 'years')
         close_panel(importer)
 
         # Tabs must switch actual native sections, not another application route.
@@ -397,6 +405,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         for title, target in sections:
             page.locator('#toolsPage .tool-tabs').get_by_role('button', name=title, exact=True).click()
             panel(target)
+            expect(page.locator('#' + target + ' .detail-date-scope')).to_have_count(1)
             local_calendars = page.locator('#' + target).locator('.ref-calendar-field:visible:enabled, [data-compare-date]:visible:enabled')
             for index in range(local_calendars.count()):
                 calendar(local_calendars.nth(index), f'08-{target}-calendar-{index}')
@@ -410,22 +419,39 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                 expect(comparison_modes.locator('[data-value="periods"]')).to_have_attribute('aria-pressed', 'true')
                 local_dates = page.locator('#refComparisonDates')
                 if local_dates.count() and local_dates.is_visible():
-                    local_dates.locator('[data-edit-base]').click()
+                    if not local_dates.locator('details').evaluate('node => node.open'):
+                        local_dates.locator('[data-edit-base]').click()
                     for index in [0, 1]:
                         calendar(local_dates.locator(f'[data-compare-date="{index}"]'), f'08-comparison-base-{index}')
                     local_dates.locator('[data-reset-base]').click()
             if target == 'chartPanel':
                 chart = page.locator('#chartPanel')
+                mode_row = chart.locator('.chart-mode-line')
+                orientation = chart.get_by_role('combobox', name='Расположение столбцов')
                 chart.locator('[data-chart="bar"]').click()
                 expect(chart.locator('[data-chart="bar"]')).to_have_attribute('aria-pressed', 'true')
+                expect(orientation).to_be_visible()
+                bar_height = mode_row.bounding_box()['height']
                 page.locator('#chartOrientation').select_option('horizontal')
                 record('08-horizontal-chart', chart)
+                # The work chart has a scroll wrapper inside the plot. Check it
+                # directly, since the outer container can fit while this clips.
+                for wrapper in chart.locator('.horizontal-bar-scroll:visible').all():
+                    size = wrapper.evaluate('''node => ({
+                        maxHeight:getComputedStyle(node).maxHeight,
+                        overflow:node.scrollHeight-node.clientHeight
+                    })''')
+                    assert size['maxHeight'] == 'none' and size['overflow'] <= 1, size
                 chart_hover(chart)
                 page.locator('#chartOrientation').select_option('vertical')
                 chart.locator('[data-chart="table"]').click()
                 expect(chart.locator('[data-chart="table"]')).to_have_attribute('aria-pressed', 'true')
+                expect(orientation).to_have_count(0)
+                assert abs(mode_row.bounding_box()['height'] - bar_height) <= 1
                 chart.locator('[data-reference-line]').click()
                 expect(chart.locator('[data-reference-line]')).to_have_attribute('aria-pressed', 'true')
+                expect(orientation).to_have_count(0)
+                assert abs(mode_row.bounding_box()['height'] - bar_height) <= 1
             if target == 'usualPanel' and has_reports:
                 work = page.locator('#usualResults .service-link').first
                 expect(work).to_be_visible(timeout=TIMEOUT)
@@ -450,6 +476,52 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                 previous_breakdown = breakdown.input_value()
                 if breakdown.is_visible() and breakdown.is_enabled():
                     breakdown.select_option('organizations')
+                    if has_reports:
+                        saved_size = page.evaluate('({width:innerWidth,height:innerHeight})')
+                        try:
+                            for width in (720, 1028):
+                                page.set_viewport_size({'width': width, 'height': 749})
+                                check_shell_layout(page, chart=True)
+                                record(f'08-chart-controls-{width}', page.locator('#chartPanel .chart-view-controls'))
+                        finally:
+                            page.set_viewport_size(saved_size)
+                    if has_reports and page.locator('#chartSeriesLayout').is_visible():
+                        layout = page.locator('#chartSeriesLayout')
+                        original_layout = layout.input_value()
+                        chart = page.locator('#chartPanel')
+                        layout.select_option('combined')
+                        for mode, direction in [('line', None), ('bar', 'vertical'), ('bar', 'horizontal')]:
+                            chart.locator('[data-reference-line]' if mode == 'line' else '[data-chart="bar"]').click()
+                            if direction:
+                                page.locator('#chartOrientation').select_option(direction)
+                            step = '08-department-combined-' + (direction or mode)
+                            record(step, chart)
+                            plot = chart.locator('.metric-plot').first
+                            if not plot.count():
+                                inventory.append({'step': step, 'unavailable': chart.locator('#chartsContainer').inner_text()})
+                                continue
+                            results = plot.evaluate('''(root, mode) => {
+                                const svg=root.querySelector('svg[role=img]'), legend=root.querySelector('.chart-legend');
+                                if (!svg || !legend) return {unavailable:root.innerText};
+                                const marks=[...svg.querySelectorAll('[data-chart-tooltip]')];
+                                const labels=[...legend.querySelectorAll('[role=listitem]')];
+                                const matches=marks.every(mark => {
+                                    const item=labels.find(entry=>mark.dataset.chartTooltip.startsWith(entry.textContent+' · '));
+                                    if(!item || mark.tabIndex!==0 || mark.getAttribute('aria-label')!==mark.dataset.chartTooltip)return false;
+                                    const sample=item.querySelector(mode==='bar'?'rect':'circle,polygon');
+                                    return sample?.tagName===mark.tagName && sample.getAttribute('fill')===mark.getAttribute('fill') &&
+                                      (mode==='bar'||sample.tagName!=='polygon'||sample.points.length===mark.points.length);
+                                });
+                                return {marks:marks.length,labels:labels.length,matches,
+                                  scroll:root.scrollHeight-root.clientHeight,legendScroll:legend.scrollHeight-legend.clientHeight};
+                            }''', mode)
+                            if 'unavailable' not in results:
+                                assert results['matches'] and results['labels'] >= 2, results
+                                assert results['scroll'] <= 1 and results['legendScroll'] <= 1, results
+                            inventory.append({'step': step + '-geometry', **results})
+                        page.locator('#chartOrientation').select_option('vertical')
+                        chart.locator('[data-reference-line]').click()
+                        layout.select_option(original_layout)
                     record('08-department-totals', page.locator('#toolsPage'))
                 table_help('#chartOrgTotals .metric-table', '08-department-totals-table-help')
                 if breakdown.input_value() != previous_breakdown:
@@ -509,11 +581,9 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
             latest = page.evaluate('''() => window.desktopAPI.unifiedPeriodOptions(
               window.unifiedUI.revision, 'day', null, null, 1)''')['max']
             assert latest, 'The real daily import must provide a latest report date'
-            page.locator('#changesType').select_option('day')
-            page.locator('#changesMethod').select_option('previous')
-            expect(page.locator('#changesTo')).to_have_attribute('type', 'date')
-            choose_calendar_date(page, page.locator('#changesToCalendar'), latest)
-            expect(page.locator('#changesTo')).to_have_value(latest)
+            common_period(page, 'День', latest)
+            expect(page.locator('#changesToCalendar')).to_be_hidden()
+            expect(page.locator('#changes .detail-date-scope')).to_contain_text('.'.join(latest.split('-')[::-1]))
             more = page.locator('#changesMoreOptions')
             if not more.evaluate('(node) => node.open'):
                 more.locator(':scope > summary').click()
@@ -608,6 +678,29 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         record('16-changes', page.locator('#s2'))
         page.locator('#sharedHeader').get_by_role('button', name='Сводка', exact=True).click()
         expect(page.locator('#s1')).to_be_visible()
+
+        if has_reports:
+            fold = page.locator('#reportShell .filter-fold')
+            initially_open = fold.evaluate('el=>el.open')
+            if not initially_open:
+                fold.locator('summary').click()
+            try:
+                for theme in ('light','dark'):
+                    page.locator('#appearanceTheme').select_option(theme, force=True)
+                    expect(page.locator('#refRoot')).to_have_attribute('data-theme',theme)
+                    for width in (720,1028):
+                        page.set_viewport_size({'width':width,'height':749})
+                        page.screenshot(animations='disabled')
+                        check_shell_layout(page, headings=True)
+                        record(f'17-shell-{theme}-{width}',page.locator('#reportShell'))
+                        fold.locator('summary').click()
+                        page.screenshot(animations='disabled')
+                        check_shell_layout(page, folded=True)
+                        fold.locator('summary').click()
+            finally:
+                page.locator('#appearanceTheme').select_option(initial_theme,force=True)
+                if not initially_open and fold.evaluate('el=>el.open'):
+                    fold.locator('summary').click()
 
         # Layout checks include classic Windows scrollbars (clientWidth, not innerWidth).
         for width, height in [(1440, 1000), (768, 1024), (390, 844), (320, 568)]:

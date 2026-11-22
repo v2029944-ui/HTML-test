@@ -10,7 +10,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, LazyLock,
     },
 };
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -171,7 +171,6 @@ struct Patterns {
     annual: Regex,
     strip_prefix: Regex,
     strip_suffix: Regex,
-    date_style: Regex,
 }
 fn js_regex(pattern: &str) -> Regex {
     let ws = r"\x09-\x0d\x20\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
@@ -228,7 +227,6 @@ impl Patterns {
             annual: r(r"(?i)годов|за\s+\d{4}\s*год|year|annual"),
             strip_prefix: r(r"^(?:количество|кол[.-]?во|сумма)\s*[:;,·—-]?\s*"),
             strip_suffix: r(r"[\s,:;·—-]*(?:количество|кол[.-]?во|сумма)$"),
-            date_style: r(r"(?i)[dy]"),
         }
     }
 }
@@ -252,9 +250,13 @@ impl Stage<'_> {
     fn unhook(&self) {
         self.db.progress_handler(0, None::<fn() -> bool>);
     }
-    fn wide_setup(&self, p: &Patterns, cancel: &AtomicBool) -> Result<()> {
+    fn wide_setup(&self, cancel: &AtomicBool) -> Result<()> {
         self.db.execute_batch(WIDE_SCHEMA)?;
-        self.db.execute_batch("CREATE INDEX IF NOT EXISTS cells_by_column ON cells(sheet,col_num,row_num); CREATE TABLE IF NOT EXISTS custom_formats(id INTEGER PRIMARY KEY,format TEXT); DELETE FROM date_styles; DELETE FROM custom_formats;")?;
+        self.db.execute_batch("CREATE INDEX IF NOT EXISTS cells_by_column ON cells(sheet,col_num,row_num)")?;
+        self.setup_date_styles(cancel)
+    }
+    pub(crate) fn setup_date_styles(&self, cancel: &AtomicBool) -> Result<()> {
+        self.db.execute_batch("CREATE TABLE IF NOT EXISTS date_styles(style INTEGER PRIMARY KEY) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS custom_formats(id INTEGER PRIMARY KEY,format TEXT); DELETE FROM date_styles; DELETE FROM custom_formats;")?;
         let mut formats=self.db.prepare("SELECT i.value,coalesce(f.value,'') FROM nodes n JOIN attributes i ON i.component=n.component AND i.seq=n.seq AND i.key='numFmtId' LEFT JOIN attributes f ON f.component=n.component AND f.seq=n.seq AND f.key='formatCode' WHERE n.component='xl/styles.xml' AND n.tag='numFmt' ORDER BY n.seq")?;
         let mut rows = formats.query([])?;
         while let Some(row) = rows.next()? {
@@ -282,28 +284,19 @@ impl Stage<'_> {
                 })
                 .optional()?;
             let custom = format.is_some_and(|value| {
-                let (mut quoted, mut escaped) = (false, false);
-                let mut clean = String::new();
-                for c in value.chars() {
-                    if escaped {
-                        escaped = false;
-                        continue;
-                    }
-                    if c == '\\' {
-                        escaped = true;
-                        continue;
-                    }
-                    if c == '"' {
-                        quoted = !quoted;
-                        continue;
-                    }
-                    if !quoted {
-                        clean.push(c);
+                let mut chars = value.chars();
+                while let Some(ch) = chars.next() {
+                    match ch {
+                        '"' => { chars.by_ref().take_while(|c| *c != '"').count(); }
+                        '[' => { chars.by_ref().take_while(|c| *c != ']').count(); }
+                        '\\' | '_' | '*' => { chars.next(); }
+                        'd' | 'D' | 'y' | 'Y' => return true,
+                        _ => {}
                     }
                 }
-                p.date_style.is_match(&clean)
+                false
             });
-            if (14..=22).contains(&id) || custom {
+            if (14..=17).contains(&id) || id == 22 || custom {
                 self.db
                     .execute("INSERT INTO date_styles VALUES(?1)", [index])?;
             }
@@ -403,6 +396,9 @@ impl Stage<'_> {
                 || m.total_amount_col.is_some_and(|c| c == 0 || c > 2048)
             {
                 return Err(fail("invalid manual daily mapping"));
+            }
+            if m.total_amount_col.is_some() && m.total_count_col.is_none() {
+                return Err(fail("Укажите столбец итогового количества вместе с итоговой суммой."));
             }
             let end = m.total_count_col.unwrap_or(width + 1);
             let pairs = (m.first_day_col..end.saturating_sub(1))
@@ -541,7 +537,7 @@ impl Stage<'_> {
         self.hook(cancel.clone());
         let result = (|| {
             let p = Patterns::new();
-            self.wide_setup(&p, &cancel)?;
+            self.wide_setup(&cancel)?;
             let mut found = Vec::new();
             for (name, path) in self.sheet_names()? {
                 if !cfg.sheets.is_empty() && !cfg.sheets.contains(&name) {
@@ -653,6 +649,7 @@ impl Stage<'_> {
                 if a.year.is_none() {
                     a.year = b.year;
                 }
+                a.suffix = a.suffix.or(b.suffix);
                 Ok(Some((a, r, c)))
             }
         }
@@ -679,7 +676,7 @@ impl Stage<'_> {
         self.hook(cancel.clone());
         let result = (|| {
             let p = Patterns::new();
-            self.wide_setup(&p, &cancel)?;
+            self.wide_setup(&cancel)?;
             self.db.execute_batch(report_stage::SCHEMA)?;
             self.db.execute_batch("BEGIN IMMEDIATE;DELETE FROM converted_reports;DELETE FROM converted_rows;DELETE FROM converted_issues;DELETE FROM converted_totals;DELETE FROM converted_organizations;DELETE FROM wide_provenance;DELETE FROM wide_source_issues;DELETE FROM wide_days;DELETE FROM manifest WHERE name='conversion_complete';")?;
             let book = self.sheet_names()?;
@@ -707,6 +704,9 @@ impl Stage<'_> {
             } else {
                 cfg.sheets.clone()
             };
+            if let Some(name) = cfg.mappings.keys().find(|name| !names.contains(name)) {
+                return Err(fail(&format!("Лист «{name}» из ручной настройки отсутствует среди листов для загрузки. Проверьте книгу и правило.")));
+            }
             if names.is_empty() {
                 return Err(fail("no shared-work daily sheets found"));
             }
@@ -1433,6 +1433,30 @@ fn relationship_target(target: &str) -> Result<String> {
     }
     Ok(parts.join("/"))
 }
+pub(crate) fn excel_serial_date(n: f64, date1904: bool) -> Result<NaiveDate> {
+    let n = n.floor() as i64;
+    if !date1904 && n == 60 {
+        return Err(fail("nonexistent Excel date 1900-02-29"));
+    }
+    let base = if date1904 {
+        NaiveDate::from_ymd_opt(1904, 1, 1)
+    } else if n < 60 {
+        NaiveDate::from_ymd_opt(1899, 12, 31)
+    } else {
+        NaiveDate::from_ymd_opt(1899, 12, 30)
+    }
+    .unwrap();
+    base
+        .checked_add_signed(Duration::days(n))
+        .ok_or_else(|| fail("Excel date out of range"))
+}
+pub(crate) fn typed_excel_date(value: &str) -> Option<NaiveDate> {
+    static ISO: LazyLock<Regex> = LazyLock::new(|| Regex::new(
+        r"^([0-9]{4}-[0-9]{2}-[0-9]{2})(?:T(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9](?:\.[0-9]+)?)?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])?)?$"
+    ).unwrap());
+    // Preserve the calendar date written in the workbook without converting the offset to UTC.
+    NaiveDate::parse_from_str(&ISO.captures(value)?[1], "%Y-%m-%d").ok()
+}
 fn date_parts(
     value: &str,
     kind: &str,
@@ -1440,24 +1464,15 @@ fn date_parts(
     date1904: bool,
     p: &Patterns,
 ) -> Result<Option<Parts>> {
-    if !["s", "str", "inlineStr", "d"].contains(&kind) {
+    if kind == "d" {
+        return Ok(typed_excel_date(value).map(|d| Parts {
+            year: Some(d.year()), suffix: None, month: d.month(), day: d.day(),
+        }));
+    }
+    if !["s", "str", "inlineStr"].contains(&kind) {
         if let Ok(n) = value.parse::<f64>() {
             if n >= if date1904 { 0. } else { 1. } && n < 2958466. && (styled || n >= 20000.) {
-                let n = n.floor() as i64;
-                if !date1904 && n == 60 {
-                    return Err(fail("nonexistent Excel date 1900-02-29"));
-                }
-                let base = if date1904 {
-                    NaiveDate::from_ymd_opt(1904, 1, 1)
-                } else if n < 60 {
-                    NaiveDate::from_ymd_opt(1899, 12, 31)
-                } else {
-                    NaiveDate::from_ymd_opt(1899, 12, 30)
-                }
-                .unwrap();
-                let d = base
-                    .checked_add_signed(Duration::days(n))
-                    .ok_or_else(|| fail("Excel date out of range"))?;
+                let d = excel_serial_date(n,date1904)?;
                 return Ok(Some(Parts {
                     year: Some(d.year()),
                     suffix: None,
@@ -1557,6 +1572,14 @@ mod date_tests {
         assert!(date_parts("٢٠٢٤-01-01", "inlineStr", false, false, &p)
             .unwrap()
             .is_none());
+    }
+    #[test]
+    fn typed_header_keeps_the_calendar_date_and_ignores_invalid_times() {
+        let patterns = Patterns::new();
+        let d = date_parts("2024-02-29T23:45:12.125-05:00", "d", false, false, &patterns)
+            .unwrap().unwrap();
+        assert_eq!((d.year, d.month, d.day), (Some(2024), 2, 29));
+        assert!(date_parts("2024-02-29T25:00:00", "d", false, false, &patterns).unwrap().is_none());
     }
     #[test]
     fn date_serial_epoch_is_explicit_and_fake_leap_day_rejected() {

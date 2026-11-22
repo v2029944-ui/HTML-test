@@ -15,19 +15,26 @@ const interval=(lo,hi)=>lo===hi?C.stamp(lo):(lo.slice(0,4)===hi.slice(0,4)?C.sta
 const duration=(lo,hi)=>{const n=size(lo,hi);return n+' '+({one:'день',few:'дня',many:'дней',other:'дня'}[plural.select(n)])+' · дата «По» включительно';};
 const today=()=>{const d=new Date();return C.dateAt(d.getFullYear(),d.getMonth(),d.getDate());};
 let initialized=false,scope=null,revision=null,snapshot=null,latestDay=null,lastTicket=0,latestType=null,userDates=false,syncFields=null;
+let workspaceKey=null;
 let orgs=new Set(),orgNames=[],allOrgs=true,allNames=true,nameRows=new Map(),nameCount=0,metric='amount';
 let kind='week',source='daily',mode='range',rule='prev',custom=null,from,to;
+let importedWeekday=1,boundsPending=false,boundsFailed=false,nameMetadata=null;
+const detailPanels=['chartPanel','structurePanel','comparison','usualPanel','regularityPanel','overviewPanel','changes'];
 function previousYear(value){
  const d=C.dateOf(value),y=d.getUTCFullYear()-1,m=d.getUTCMonth();
  return C.dateAt(y,m,Math.min(d.getUTCDate(),C.dateOf(C.dateAt(y,m+1,0)).getUTCDate()));
 }
-function importedBound(value){return C.period(value,kind)[0];}
+function filterPeriod(value,unit=kind){return C.period(value,unit,source==='imported'?importedWeekday:1);}
+function importedBound(value){return filterPeriod(value)[0];}
 function baseRange(){
  const n=size(from,to);
- if(rule==='year')return [previousYear(from),previousYear(to)];
+ if(rule==='year'){
+  const end=previousYear(to);
+  return [previousYear(from),kind==='month'?C.period(end,'month')[1]:end];
+ }
  if(rule==='prevWeek'||rule==='prevMonth'){
   const unit=rule==='prevWeek'?'week':'month';
-  return C.period(C.day(C.period(from,unit)[0],-1),unit);
+  return filterPeriod(C.day(filterPeriod(from,unit)[0],-1),unit);
  }
  if(source==='imported'&&kind==='month'){
   const idx=date=>Number(date.slice(0,4))*12+Number(date.slice(5,7));
@@ -47,7 +54,7 @@ function allowRule(value){
  return true;
 }
 function dates(start,end=start){
- const lo=C.period(start,kind)[0],hi=C.period(mode==='single'?start:end,kind)[1];
+ const lo=filterPeriod(start)[0],hi=filterPeriod(mode==='single'?start:end)[1];
  if(!C.valid(lo)||!C.valid(hi)||lo>hi)return false;
  from=lo;to=hi;return true;
 }
@@ -58,10 +65,13 @@ function quick(index){
  return {kind:unit,mode:index===2?'range':'single',from:C.period(start,unit)[0],to:C.period(index===1?start:latestDay,unit)[1]};
 }
 function applyQuick(index){
+ if(!snapshot||boundsPending||boundsFailed)return;
  const p=quick(index);if(!p)return;
- kind=p.kind;mode=p.mode;source='daily';userDates=true;dates(p.from,p.to);if(custom)custom=C.period(custom,kind)[0];publish();
+ kind=p.kind;mode=p.mode;source='daily';userDates=true;dates(p.from,p.to);if(custom)custom=filterPeriod(custom)[0];
+ return publish();
 }
 function shift(direction){
+ if(!snapshot||boundsPending||boundsFailed)return;
  let lo,hi;
  if(kind==='month'||kind==='year'){
   const a=C.dateOf(from),b=C.dateOf(to);
@@ -71,9 +81,23 @@ function shift(direction){
  if(C.valid(lo)&&C.valid(hi)&&dates(lo,hi)){userDates=true;publish();}
 }
 function chooseDate(target,anchor){
+ if(!snapshot||boundsPending||boundsFailed)return;
+ const opened=snapshot,openedKind=kind,openedSource=source,weekly=source==='imported'&&kind==='week';
+ const weeksForDay=weekly?C.savedWeeksForDay(UI.api,opened.revision,()=>snapshot===opened&&source===openedSource&&kind===openedKind):undefined;
  const current=target==='base'?baseRange()[0]:target==='end'?to:from;
- C.open({anchor,title:target==='base'?'Базовый период':mode==='single'?'Период':target==='start'?'Начало диапазона':'Конец диапазона',unit:kind,initial:current,apply(value){
-  if(target==='base'){rule='custom';custom=C.period(value,kind)[0];}
+ C.open({anchor,title:target==='base'?'Базовый период':mode==='single'?'Период':target==='start'?'Начало диапазона':'Конец диапазона',unit:kind,initial:current,spanFor:target==='base'&&weekly?(v,k)=>C.period(v,k,C.dateOf(current).getUTCDay()):filterPeriod,weeksForDay,apply(value,unit,weekStart){
+  if(snapshot!==opened||kind!==openedKind||source!==openedSource||boundsPending||boundsFailed){UI.notice('Периоды изменились. Откройте календарь повторно.',true);return;}
+  if(weekly){
+   if(target==='base'){rule='custom';custom=weekStart||C.period(value,'week',C.dateOf(current).getUTCDay())[0];publish();return;}
+   if(weekStart){
+    const weekday=C.dateOf(weekStart).getUTCDay();
+    if(mode==='range'&&weekday!==importedWeekday&&(target==='end'?weekStart>from:C.day(weekStart,6)<to))
+     UI.notice('Открыта неделя с другим днём начала. Для диапазона выберите вторую неделю с тем же днём начала.');
+    if(weekday!==importedWeekday){from=weekStart;to=C.day(weekStart,6);}
+    importedWeekday=weekday;value=weekStart;
+   }
+  }
+  if(target==='base'){rule='custom';custom=filterPeriod(value)[0];}
   else {userDates=true;if(target==='end')dates(value<from?value:from,value);else dates(value,value>to?value:to);}
   publish();
  }});
@@ -96,34 +120,55 @@ function paint(lo,hi){
  for(const opt of one('[data-compare]').options)opt.disabled=!allowRule(opt.value);
  one('[data-measure]').value=metric;one('#referenceSource').value=source;one('#referenceSource option[value=imported]').disabled=kind==='year';
  one('[data-pick=orgs]').textContent=orgs.size===1?[...orgs][0]:allOrgs&&orgs.size?'Все ('+orgs.size+')':'Выбрано '+orgs.size+' из '+orgNames.length;
- one('[data-pick=works]').textContent=allNames?'Все ('+nameCount+')':'Выбрано '+nameRows.size+' из '+nameCount;
+ one('[data-pick=works]').textContent=allNames?'Все работы и группы':'Выбрано '+nameRows.size+' из '+nameCount;
  one('.filter-summary').textContent=caption+', база '+interval(lo,hi)+(allOrgs?'':', подразделений '+orgs.size+' из '+orgNames.length);
  const note=one('.period-length-note');note.hidden=size(lo,hi)===size(from,to);note.textContent=note.hidden?'':'Интервалы разной длительности. Сравниваются итоги за каждый интервал.';
- many('.quick-actions button').forEach((b,i)=>{const p=quick(i);b.disabled=!p;b.setAttribute('aria-pressed',String(Boolean(p&&source==='daily'&&p.kind===kind&&p.from===from&&p.to===to)));if(p)b.title=interval(p.from,p.to);else b.removeAttribute('title');});
+ many('.quick-actions button').forEach((b,i)=>{const p=quick(i);b.disabled=!p||!snapshot||boundsPending||boundsFailed;b.setAttribute('aria-pressed',String(Boolean(p&&source==='daily'&&p.kind===kind&&p.from===from&&p.to===to)));if(p)b.title=interval(p.from,p.to);else b.removeAttribute('title');});
 }
 let appliedDetailScope;
 function syncDetails(){
+ if(boundsPending)return;
  const current=scope?.revision===UI.revision?scope:null;
  // Revisiting a tool keeps its local choices until a shared filter actually changes.
  if(current===appliedDetailScope)return;
  appliedDetailScope=current;
  return window.unifiedAnalytics.applyReferenceScope(current);
 }
-function publish(){
+function publish(appliedInOverview=false){
+ if(boundsPending)return;
+ if(boundsFailed&&snapshot)return readBounds(snapshot);
  const [baseFrom,baseTo]=baseRange();
  if(![from,to,baseFrom,baseTo].every(C.valid)){
   UI.notice('Период за пределами поддерживаемого календаря.',true);scope=null;window.referenceResults.refresh(null);return;
  }
  paint(baseFrom,baseTo);
  scope=revision===null?null:{revision,type:source==='daily'?'day':kind,displayType:kind,source,overviewMode:mode,
-  from,to:source==='daily'?to:importedBound(to),baseFrom:source==='daily'?baseFrom:importedBound(baseFrom),baseTo:source==='daily'?baseTo:importedBound(baseTo),
+  from,to:source==='daily'?to:importedBound(to),baseFrom:source==='daily'||kind==='week'?baseFrom:importedBound(baseFrom),baseTo:source==='daily'?baseTo:kind==='week'?C.day(baseTo,-6):importedBound(baseTo),
   displayFrom:from,displayTo:to,displayBaseFrom:baseFrom,displayBaseTo:baseTo,organizations:[...orgs],metric,
   allNames,nameRows:[...nameRows.values()],selectedNames:allNames?[]:[...nameRows.values()].map(row=>row.name),selectedKeys:allNames?[]:[...nameRows.keys()]};
  const result=window.referenceResults.refresh(scope);
- if(['chartPanel','structurePanel','comparison','usualPanel','regularityPanel','overviewPanel','changes'].includes(window.referenceDetail?.active))void syncDetails();
+ // The overview can publish its own work selection without replaying every shared control.
+ if(appliedInOverview===true&&window.referenceDetail?.active==='overviewPanel')appliedDetailScope=scope;
+ else if(detailPanels.includes(window.referenceDetail?.active))void syncDetails();
  return result;
 }
 function setMetric(value){if(value!=='amount'&&value!=='count')return;metric=value;return publish();}
+function openImportedPeriod(range){
+ if(!range||!['day','week','month'].includes(range.kind)||!C.valid(range.from)||!C.valid(range.to)||range.from>range.to)return false;
+ kind=range.kind;source=kind==='day'?'daily':'imported';mode='range';rule='prev';custom=null;userDates=true;
+ from=range.from;to=range.to;
+ if(kind==='week'){
+  const lastStart=C.day(to,-6);
+  // Mixed weekday schedules cannot be described by one weekly SQL sequence.
+  if(range.mixedWeekStarts||C.dateOf(from).getUTCDay()!==C.dateOf(lastStart).getUTCDay()){
+   from=lastStart;
+   UI.notice('Загружены недели с разными днями начала. Открыта последняя загруженная неделя.');
+  }
+  importedWeekday=C.dateOf(from).getUTCDay();
+ }
+ return boundsPending&&snapshot?readBounds(snapshot):publish();
+}
+function setWorks(everything,selection,appliedInOverview=false){allNames=everything;nameRows=new Map(selection);return publish(appliedInOverview);}
 function setOrganizations(values){orgs=new Set(values.filter(x=>orgNames.includes(x)));allOrgs=orgs.size===orgNames.length;return publish();}
 function close(box){box.closest('dialog')?.close();}
 function listShell(title,anchor,described){
@@ -141,7 +186,7 @@ function checkbox(list,text,checked,change){
 }
 function chooseOrgs(anchor){
  const {box,query,actions,list,count}=listShell('Подразделения',anchor);
- const initial=revision,selected=new Set(orgs);
+ const opened=snapshot,selected=new Set(orgs);
  query.placeholder='Найти подразделение';query.hidden=orgNames.length<=8;
  const visible=()=>orgNames.filter(o=>o.toLocaleLowerCase('ru').includes(query.value.trim().toLocaleLowerCase('ru')));
  const all=button('Выбрать все',()=>{visible().forEach(x=>selected.add(x));draw();});
@@ -153,15 +198,15 @@ function chooseOrgs(anchor){
   if(!items.length)list.append(make('p',orgNames.length?'Совпадений нет.':'Список пуст.'));
   all.textContent=query.value.trim()?'Выбрать найденные':'Выбрать все';all.disabled=none.disabled=!items.length;update();
  }
- query.oninput=draw;const apply=button('Применить',()=>{if(initial!==revision){UI.notice('Данные изменились. Откройте выбор повторно.',true);close(box);return;}close(box);setOrganizations([...selected]);});apply.className='filter-apply';box.append(apply);draw();if(!query.hidden)query.focus();
+ query.oninput=draw;const apply=button('Применить',()=>{if(!opened||opened!==snapshot){UI.notice('Данные изменились. Откройте выбор повторно.',true);close(box);return;}close(box);setOrganizations([...selected]);});apply.className='filter-apply';box.append(apply);draw();if(!query.hidden)query.focus();
 }
 function chooseWorks(anchor){
  const {box,query,actions,list,count,pages}=listShell('Работы в подробной аналитике',anchor,'Выбор применяется к подробной аналитике. В сводке учитываются все работы.');
  query.placeholder='Найти работу';list.dataset.sqlScrollHost='reference-work-options';
- const initial=revision,selected=new Map(nameRows);
- let everything=allNames,rows=[],index=0,ticket=0,matchingTotal=0;
+ const opened=snapshot,selected=new Map(nameRows);
+ let everything=allNames,rows=[],index=0,ticket=0,matchingTotal=0,hasUnselectable=false;
  const limit=50;
- const update=()=>{count.textContent=everything?'Выбраны все работы ('+nameCount+')':'Выбрано '+selected.size+' из '+nameCount;};
+ const update=()=>{count.textContent=everything?'Выбраны все работы и группы':'Выбрано '+selected.size+' из '+nameCount;};
  const all=button('Выбрать все',()=>{
   if(!query.value.trim()){everything=true;selected.clear();}
   else if(!everything){const added=new Map(selected);for(const row of rows)added.set(row.key,row);if(added.size>limit){UI.notice('Можно выбрать до 50 отдельных работ или все работы.',true);return;}for(const row of rows)selected.set(row.key,row);}
@@ -169,84 +214,125 @@ function chooseWorks(anchor){
  });
  const clear=button('Снять выбор',()=>{if(query.value.trim()&&!everything){for(const row of rows)selected.delete(row.key);}else{everything=false;selected.clear();}draw();});
  actions.append(all,clear,count);
- const apply=button('Применить',()=>{if(initial!==revision){UI.notice('Данные изменились. Откройте выбор повторно.',true);close(box);return;}allNames=everything;nameRows=new Map(selected);close(box);publish();});apply.className='filter-apply';box.append(apply);
+ const apply=button('Применить',()=>{if(!opened||opened!==snapshot){UI.notice('Данные изменились. Откройте выбор повторно.',true);close(box);return;}close(box);setWorks(everything,selected);});apply.className='filter-apply';box.append(apply);
  function draw(){
   list.replaceChildren();update();
   const search=Boolean(query.value.trim());all.textContent=search?(matchingTotal>limit?'Выбрать показанные':'Выбрать найденные'):'Выбрать все';
-  clear.textContent=search&&!everything?'Снять выбор с показанных':'Снять выбор';all.disabled=!rows.length;
+  clear.textContent=search&&!everything?'Снять выбор с показанных':'Снять выбор';all.disabled=search&&!rows.length;
+  if(hasUnselectable)list.append(make('p',everything
+   ?'В общий итог входят также работы и группы с совпадающими или слишком длинными названиями. Для индивидуального выбора нажмите «Снять выбор».'
+   :'Для индивидуального выбора доступны только работы и группы с уникальными названиями допустимой длины.'));
+  const explicitOnly=search||nameCount>limit||hasUnselectable;
   for(const row of rows){
    const input=checkbox(list,row.name+(row.kind==='group'?' (группа)':''),everything||selected.has(row.key),field=>{
     if(everything){
-     if(nameCount>limit||search){field.checked=true;UI.notice('Для индивидуального выбора нажмите «Снять выбор».',true);return;}
+     if(explicitOnly){field.checked=true;UI.notice('Для индивидуального выбора нажмите «Снять выбор».',true);return;}
      everything=false;for(const item of rows)selected.set(item.key,item);
     }
     if(field.checked&&selected.size===limit&&!selected.has(row.key)){field.checked=false;UI.notice('Можно выбрать до 50 отдельных работ или все работы.',true);return;}
     if(field.checked)selected.set(row.key,row);else selected.delete(row.key);update();
    });
-   if(everything&&(search||nameCount>limit))input.disabled=true;
+   if(everything&&explicitOnly)input.disabled=true;
   }
-  if(!rows.length)list.append(make('p',search?'Совпадений нет.':'Список пуст.'));
+  if(!rows.length)list.append(make('p',search?'Совпадений нет.':'Нет позиций для индивидуального выбора.'));
   window.sqlRowScroll.attach(list,{index,size:limit,count:rows.length,total:matchingTotal,footer:pages,label:'Страницы списка работ',go:i=>{
-   if(!box.isConnected||initial!==revision)return false;
+   if(!box.isConnected||opened!==snapshot)return false;
    return load(i);
   }});
  }
  async function load(requested){
   const mine=++ticket;all.disabled=clear.disabled=true;
   try{
-   const page=initial===null?{rows:[],total_rows:0}:await UI.api.unifiedNameOptionsAtPage(initial,query.value.trim(),requested,limit);
-   if(mine!==ticket||!box.isConnected||initial!==revision)return;
-   rows=page.rows;matchingTotal=page.total_rows;index=requested;clear.disabled=false;draw();
-  }catch(error){if(mine===ticket&&box.isConnected){window.sqlRowScroll.reset(list);list.replaceChildren(make('p','Не удалось открыть список. '+(window.analizUserError?.(error)||error.message)));}}
+   const page=!opened?{rows:[],total_rows:0}:await UI.api.unifiedNameOptionsAtPage(opened.revision,query.value.trim(),requested,limit);
+   if(mine!==ticket||!box.isConnected||opened!==snapshot)return;
+   rows=page.rows;matchingTotal=page.total_rows;hasUnselectable=page.has_omitted_names===true;index=requested;clear.disabled=false;draw();
+  }catch(error){if(mine===ticket&&box.isConnected&&opened===snapshot){window.sqlRowScroll.reset(list);list.replaceChildren(make('p','Не удалось открыть список. '+(window.analizUserError?.(error)||error.message)));}}
  }
  query.oninput=()=>{window.sqlRowScroll.reset(list);list.replaceChildren(make('p','Загрузка…'));return load(0);};void load(0);query.focus();
 }
 async function readBounds(snap){
  const mine=++lastTicket;
+ setBoundsPending(true);
+ window.referenceResults.beginScopeChange(snap.revision);
  const reportType=source==='daily'?'day':kind;
  try{
   const daily=UI.api.unifiedPeriodOptions(snap.revision,'day',null,null,1);
-  const [last,selected,names]=await Promise.all([daily,reportType==='day'?daily:UI.api.unifiedPeriodOptions(snap.revision,reportType,null,null,1),UI.api.unifiedNameOptions(snap.revision,'',null,1)]);
+  const selectedKeys=allNames?[]:[...nameRows.keys()];
+  const selection=JSON.stringify(selectedKeys);
+  if(nameMetadata?.selection!==selection){
+   const request=selectedKeys.length?UI.api.unifiedSelectedNameOptions(snap.revision,selectedKeys):UI.api.unifiedNameOptions(snap.revision,'',null,1);
+   const cached={selection,request};nameMetadata=cached;
+   Promise.resolve(request).catch(()=>{if(nameMetadata===cached)nameMetadata=null;});
+  }
+  const metadata=nameMetadata.request;
+  const [last,selected,names]=await Promise.all([daily,reportType==='day'?daily:UI.api.unifiedPeriodOptions(snap.revision,reportType,null,null,1),metadata]);
   if(mine!==lastTicket||UI.revision!==snap.revision)return;
   latestDay=last.max;latestType=selected.max;nameCount=names.total_rows;
-  if(!userDates)dates(latestType||today());
-  return publish();
+  if(selectedKeys.length){
+   const available=new Map(names.rows.map(row=>[row.key,row]));
+   // Preserve changes the user made while this metadata read was in flight.
+   for(const key of selectedKeys)if(nameRows.has(key)){
+    if(available.has(key))nameRows.set(key,available.get(key));else nameRows.delete(key);
+   }
+  }
+  if(!userDates){
+   if(source==='imported'&&kind==='week')importedWeekday=latestType?C.dateOf(latestType).getUTCDay():1;
+   dates(latestType||today());
+  }
+  boundsFailed=false;setBoundsPending(false);return publish();
  }catch(error){
   if(mine!==lastTicket||UI.revision!==snap.revision)return;
-  scope=null;window.referenceResults.refresh(null);UI.notice('Не удалось прочитать периоды. '+(window.analizUserError?.(error)||error.message),true);
+  boundsFailed=true;setBoundsPending(false);scope=null;
+  if(detailPanels.includes(window.referenceDetail?.active))void syncDetails();
+  const message='Не удалось прочитать периоды. '+(window.analizUserError?.(error)||error.message);
+  window.referenceResults.failScopeChange(message);UI.notice(message,true);
+ }
+}
+function setBoundsPending(busy){
+ boundsPending=busy;
+ const blocked=busy||boundsFailed||!snapshot;
+ for(const b of [...many('[data-date]'),...many('[data-shift]'),...many('[data-filter=mode] button'),one('.filter-base-edit'),one('[data-compare]')])b.disabled=blocked;
+ if(blocked)for(const b of many('.quick-actions button'))b.disabled=true;
+ const retry=one('[data-retry-periods]');retry.hidden=!boundsFailed;retry.disabled=busy;
+ for(const id of [...detailPanels,'analyticsDetails','changeDetails']){
+  const node=document.getElementById(id);if(node)node.inert=busy;
  }
 }
 function configure(snap){
- ++lastTicket;
- if(!snap){snapshot=null;revision=null;scope=null;window.referenceResults.refresh(null);return;}
- const changed=previousRevision!==null&&previousRevision!==snap.revision;
- previousRevision=snap.revision;snapshot=snap;revision=snap.revision;
+ ++lastTicket;nameMetadata=null;boundsFailed=false;
+ if(!snap){snapshot=null;revision=null;scope=null;setBoundsPending(false);window.referenceResults.refresh(null);return;}
+ // A new shared generation can keep the same catalog. A different database can
+ // reuse a group key for unrelated work even when the numeric revisions match.
+ const workspace=window.sharedWorkspace?.state;
+ const key=workspace?.mode==='shared'?workspace.folder:null;
+ if(workspaceKey!==key){allNames=true;nameRows.clear();allOrgs=true;}
+ workspaceKey=key;
+ snapshot=snap;revision=snap.revision;
  orgNames=snap.org_names.slice();orgs=new Set(allOrgs?orgNames:[...orgs].filter(x=>orgNames.includes(x)));
- if(changed&&!allNames){nameRows.clear();}
  return readBounds(snap);
 }
 function reset(){
  window.referenceResults.resetSelection?.();
  source='daily';kind='week';mode='range';rule='prev';metric='amount';custom=null;userDates=false;
  allNames=true;nameRows.clear();orgs=new Set(orgNames);allOrgs=true;
- dates(latestDay||today());return publish();
+ dates(latestDay||today());return boundsPending&&snapshot?readBounds(snapshot):publish();
 }
 function setKind(value){
  if(kind===value)return;
  kind=value;
  if(kind==='year')source='daily';
  if(!allowRule(rule))rule='prev';
- if(custom)custom=C.period(custom,kind)[0];
- dates(from,to);publish();
- if(snapshot&&source==='imported')void readBounds(snapshot);
+ if(custom)custom=filterPeriod(custom)[0];
+ dates(from,to);
+ if(snapshot&&(source==='imported'||boundsPending))return readBounds(snapshot);
+ return publish();
 }
 function sourceChanged(){
  source=one('#referenceSource').value;
  if(!allowRule(rule))rule='prev';
- userDates=false;latestType=null;scope=null;window.referenceResults.refresh(null);
+ userDates=false;latestType=null;
  if(snapshot)void readBounds(snapshot);else publish();
 }
-let previousRevision=null;
 function init(){
  if(initialized)return;
  initialized=true;dates(today());
@@ -269,9 +355,10 @@ function init(){
  org.onclick=()=>chooseOrgs(org);work.onclick=()=>chooseWorks(work);
  many('.quick-actions button').forEach((b,i)=>b.onclick=()=>applyQuick(i));one('.filter-reset').onclick=reset;
  const native=document.getElementById('refNative');if(native)syncFields=C.enhance(native);
- UI.onSnapshot(configure);paint(...baseRange());
+ one('[data-retry-periods]').onclick=()=>snapshot&&readBounds(snapshot);
+ UI.onSnapshot(configure);paint(...baseRange());setBoundsPending(false);
  if(UI.snapshot)void configure(UI.snapshot);
 }
 function refresh(){syncFields?.();return publish();}
-window.referenceFilters=Object.freeze({init,refresh,setMetric,setOrganizations,syncDetails,get scope(){return scope;}});
+window.referenceFilters=Object.freeze({init,refresh,setMetric,setOrganizations,setWorks,openImportedPeriod,syncDetails,get scope(){return scope;}});
 })();

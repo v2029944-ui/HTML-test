@@ -460,18 +460,12 @@ fn preparation_cancellation_empty_data_and_budgets_leave_live_database_intact() 
 fn complete_multi_report_preview_is_bound_to_target_database() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("data.xlsx");
-    fixture(&source, 2);
+    multi_period_fixture(&source, false);
     let area = StageArea::open(root.path().join("stage")).unwrap();
     let cancel = AtomicBool::new(false);
     let mut stage = area
         .ingest(&source, Limits::default(), &cancel, |_| {})
         .unwrap();
-    let mapping = analiz_import_core::TripleMapping {
-        header_row: 1,
-        work_col: 1,
-        count_col: 2,
-        amount_col: 3,
-    };
     stage
         .convert_legacy(
             &LegacyOptions {
@@ -480,7 +474,7 @@ fn complete_multi_report_preview_is_bound_to_target_database() {
                 kind: "day".into(),
                 start: "2026-11-01".into(),
                 organizations: ["СМУ16".into(), "АВТО".into(), "ТРАК".into(), "ЦЕНТР".into()],
-                mappings: Some(vec![mapping.clone(), mapping.clone(), mapping]),
+                mappings: Some(separate_blocks(3)),
             },
             &cancel,
             |_| {},
@@ -843,17 +837,38 @@ fn prepared_documents_keep_structured_diagnostics_controls_and_bound_source_hash
     );
 }
 
+fn separate_blocks(days: usize) -> Vec<analiz_import_core::TripleMapping> {
+    (0..days as u32).map(|day| analiz_import_core::TripleMapping {
+        header_row: 1, work_col: day*3+1, count_col: day*3+2, amount_col: day*3+3,
+    }).collect()
+}
+
+fn multi_period_fixture(path: &Path, invalid: bool) {
+    let mut zip = ZipWriter::new(fs::File::create(path).unwrap());
+    zip.start_file("xl/worksheets/sheet1.xml", SimpleFileOptions::default()).unwrap();
+    write!(zip, "<worksheet><sheetData>").unwrap();
+    for (row, name, count, amount) in [(2,"СМУ16",2,4), (3,"Работа 3",1,2), (4,"Работа 4",1,2)] {
+        write!(zip, r#"<row r="{row}">"#).unwrap();
+        for (work, qty, sum) in [('A','B','C'), ('D','E','F'), ('G','H','I')] {
+            write!(zip, r#"<c r="{work}{row}" t="inlineStr"><is><t>{name}</t></is></c>"#).unwrap();
+            if invalid && row==4 && work=='A' {
+                write!(zip, r#"<c r="{qty}{row}" t="inlineStr"><is><t>bad</t></is></c>"#).unwrap();
+            } else {
+                write!(zip, r#"<c r="{qty}{row}"><v>{count}</v></c>"#).unwrap();
+            }
+            write!(zip, r#"<c r="{sum}{row}"><v>{amount}</v></c>"#).unwrap();
+        }
+        write!(zip, "</row>").unwrap();
+    }
+    write!(zip, "</sheetData></worksheet>").unwrap();
+    zip.finish().unwrap();
+}
+
 fn folder_prepared<'a>(area: &'a StageArea, source: &Path, days: usize) -> PreparedImport<'a> {
     let cancel = AtomicBool::new(false);
     let mut stage = area
         .ingest(source, Limits::default(), &cancel, |_| {})
         .unwrap();
-    let mapping = analiz_import_core::TripleMapping {
-        header_row: 1,
-        work_col: 1,
-        count_col: 2,
-        amount_col: 3,
-    };
     stage
         .convert_legacy(
             &LegacyOptions {
@@ -862,7 +877,7 @@ fn folder_prepared<'a>(area: &'a StageArea, source: &Path, days: usize) -> Prepa
                 kind: "day".into(),
                 start: "2026-11-01".into(),
                 organizations: ["СМУ16".into(), "АВТО".into(), "ТРАК".into(), "ЦЕНТР".into()],
-                mappings: Some(vec![mapping; days]),
+                mappings: Some(separate_blocks(days)),
             },
             &cancel,
             |_| {},
@@ -876,7 +891,7 @@ fn folder_prepared<'a>(area: &'a StageArea, source: &Path, days: usize) -> Prepa
 fn folder_shrink_replaces_complete_source_only_and_receipt_counts_removals() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("data.xlsx");
-    fixture(&source, 2);
+    multi_period_fixture(&source, false);
     let area = StageArea::open(root.path().join("stage")).unwrap();
     let storage = Storage::new(root.path().join("live")).unwrap();
     let mut data = original(&storage);
@@ -1083,7 +1098,7 @@ fn folder_shrink_failures_leave_all_old_days_and_settings_unchanged() {
     for fault in ["quality", "read", "write", "cancel", "source", "revision"] {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("data.xlsx");
-        fixture(&source, 2);
+        multi_period_fixture(&source, false);
         let area = StageArea::open(root.path().join("stage")).unwrap();
         let storage = Storage::new(root.path().join("live")).unwrap();
         original(&storage);
@@ -1099,7 +1114,7 @@ fn folder_shrink_failures_leave_all_old_days_and_settings_unchanged() {
             )
             .unwrap();
         if fault == "quality" {
-            quality_fixture(&source, 1);
+            multi_period_fixture(&source, true);
         }
         let p = folder_prepared(&area, &source, 2);
         let preview = storage.preview_import(&p).unwrap();
@@ -1156,7 +1171,7 @@ fn legacy_folder_ownership_is_explicit_and_unknown_identity_blocks() {
     ] {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("data.xlsx");
-        fixture(&source, 2);
+        multi_period_fixture(&source, false);
         let area = StageArea::open(root.path().join("stage")).unwrap();
         let p = folder_prepared(&area, &source, 2);
         let storage = Storage::new(root.path().join("live")).unwrap();
@@ -1214,7 +1229,7 @@ fn large_legacy_source_metadata_streams_and_cancels_without_loading_json() {
     use std::io::Write;
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("data.xlsx");
-    fixture(&source, 2);
+    multi_period_fixture(&source, false);
     let area = StageArea::open(root.path().join("stage")).unwrap();
     let p = folder_prepared(&area, &source, 2);
     let storage = Storage::new(root.path().join("live")).unwrap();
@@ -1295,7 +1310,7 @@ fn large_legacy_source_metadata_streams_and_cancels_without_loading_json() {
 fn folder_mode_never_adopts_another_source_overlapping_period() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("data.xlsx");
-    fixture(&source, 2);
+    multi_period_fixture(&source, false);
     let area = StageArea::open(root.path().join("stage")).unwrap();
     let p = folder_prepared(&area, &source, 2);
     let storage = Storage::new(root.path().join("live")).unwrap();
@@ -1313,7 +1328,7 @@ fn folder_mode_never_adopts_another_source_overlapping_period() {
 fn source_ownership_index_is_invalidated_by_replace_writers_but_not_settings_reads() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("data.xlsx");
-    fixture(&source, 2);
+    multi_period_fixture(&source, false);
     let area = StageArea::open(root.path().join("stage")).unwrap();
     let p = folder_prepared(&area, &source, 3);
     let storage = Storage::new(root.path().join("live")).unwrap();
@@ -1365,7 +1380,7 @@ fn source_ownership_index_is_invalidated_by_replace_writers_but_not_settings_rea
 fn cancellation_during_large_source_set_does_not_return_a_preview() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("data.xlsx");
-    fixture(&source, 2);
+    multi_period_fixture(&source, false);
     let area = StageArea::open(root.path().join("stage")).unwrap();
     let p = folder_prepared(&area, &source, 2);
     let storage = Storage::new(root.path().join("live")).unwrap();
@@ -1400,7 +1415,7 @@ fn cancellation_during_large_source_set_does_not_return_a_preview() {
 fn complete_conflict_and_source_scans_include_minimum_sqlite_rowid() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("data.xlsx");
-    fixture(&source, 2);
+    multi_period_fixture(&source, false);
     let area = StageArea::open(root.path().join("stage")).unwrap();
     let p = prepared(&area, &source, "day", "2026-11-01");
     let storage = Storage::new(root.path().join("live")).unwrap();
@@ -1463,4 +1478,52 @@ fn staged_quality_page_and_csv_keep_all_filtered_rows_without_importing_the_work
     assert_eq!(store.prepared_quality_page(rev,&stage,&other,0).unwrap().total,0);
     assert_eq!(fs::read(&path).unwrap(),original);
     assert!(store.load().unwrap()["reports"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn ordinary_header_conflict_blocks_folder_write_and_duplicate_columns_never_double_a_week() {
+    use analiz_import_core::{ImportMode, TripleMapping};
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("отчёт.xlsx");
+    let mut workbook = ZipWriter::new(fs::File::create(&source).unwrap());
+    workbook.start_file("xl/worksheets/sheet1.xml", SimpleFileOptions::default()).unwrap();
+    workbook.write_all(r#"<worksheet><sheetData>
+      <row r="1"><c r="A1" t="inlineStr"><is><t>Начало периода: 09.11.2026</t></is></c></row>
+      <row r="2"><c r="A2" t="inlineStr"><is><t>Работа</t></is></c><c r="B2" t="inlineStr"><is><t>Количество</t></is></c><c r="C2" t="inlineStr"><is><t>Сумма</t></is></c></row>
+      <row r="3"><c r="A3" t="inlineStr"><is><t>A</t></is></c><c r="B3"><v>2</v></c><c r="C3"><v>125</v></c></row>
+      <row r="4"><c r="A4" t="inlineStr"><is><t>Работа А</t></is></c><c r="B4"><v>2</v></c><c r="C4"><v>125</v></c></row>
+      </sheetData></worksheet>"#.as_bytes()).unwrap();
+    workbook.finish().unwrap();
+    let area = StageArea::open(root.path().join("stage")).unwrap();
+    let cancel=AtomicBool::new(false);
+    let mut cfg=LegacyOptions{period_dates:None,sheet:"xl/worksheets/sheet1.xml".into(),kind:"week".into(),
+        start:"2026-10-19".into(),organizations:["A".into(),"B".into(),"C".into(),"D".into()],mappings:None};
+    let storage=Storage::new(root.path().join("store")).unwrap();
+    let before=original(&storage);
+    let mut stage=area.ingest(&source,Limits::default(),&cancel,|_|{}).unwrap();
+    let columns=TripleMapping{header_row:2,work_col:1,count_col:2,amount_col:3};
+    cfg.mappings=Some(vec![columns.clone(),columns]);
+    assert!(stage.convert_legacy(&cfg,&cancel,|_|{}).unwrap_err().to_string().contains("нескольких наборах"));
+    cfg.mappings=None;
+    let summary=stage.convert_legacy(&cfg,&cancel,|_|{}).unwrap();
+    assert_eq!((summary.reports,summary.rows,summary.issues),(1,1,1));
+    let p=stage.prepare_with_mode(ImportMode::Folder,&cancel,|_|{}).unwrap();
+    let preview=storage.preview_import(&p).unwrap();
+    assert!(storage.apply_import(&p,&preview,ImportConfirmation::default(),&ImportJob::new(),|_|{}).is_err());
+    assert_eq!(storage.load().unwrap(),before);
+    for (date,accept) in [("2026-10-19",true),("2026-11-09",false)] {
+        cfg.start=date.into();
+        let mut stage=area.ingest(&source,Limits::default(),&cancel,|_|{}).unwrap();
+        let summary=stage.convert_legacy(&cfg,&cancel,|_|{}).unwrap();
+        assert_eq!(summary.issues,if accept {1} else {0});
+        let p=stage.prepare(&cancel,|_|{}).unwrap();
+        let preview=storage.preview_import(&p).unwrap();
+        let flags=ImportConfirmation{accept_quality:accept,..Default::default()};
+        let receipt=storage.apply_import(&p,&preview,flags,&ImportJob::new(),|_|{}).unwrap();
+        assert_eq!((receipt.reports,receipt.rows),(1,1));
+        let state=storage.load().unwrap();
+        let report=state["reports"].as_array().unwrap().iter().find(|r|r["start"]==date).unwrap();
+        assert_eq!(report["rows"][0]["amount"].as_f64(),Some(125.));
+        if accept {assert!(report["issues"][0]["reason"].as_str().unwrap().contains("A1"));}
+    }
 }
