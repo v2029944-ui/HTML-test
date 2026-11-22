@@ -139,19 +139,14 @@ function buildUnified(source){
  const storageView='<section id="storage" class="view">';
  const uploadView='<section id="upload" class="view">';
  if(!html.includes(storageView)||!html.includes(uploadView))throw Error('Missing desktop management view');
- html=html.replace(storageView,storageView+
-  '<button type="button" class="button secondary" id="sharedWorkspaceShortcut">Настроить общую базу в отчётах</button>');
+ const backupStart=html.indexOf('<div class="panel"><h2>Резервная копия</h2>');
+ const backupEnd=html.indexOf('<div class="panel danger">',backupStart);
+ if(backupStart<0||backupEnd<backupStart)throw Error('Missing desktop backup controls');
+ html=html.slice(0,backupStart)+html.slice(backupEnd);
+ html=html.replace(storageView,()=>fs.readFileSync(path.join(__dirname,'database-panel.html'),'utf8')+storageView);
  html=html.replace(uploadView,uploadView+
-  '<details id="sharedWorkspacePanel" class="panel"><summary id="sharedWorkspaceHeading">'+
-  '<strong id="sharedWorkspaceMode">База отчётов</strong> · Настроить</summary>'+
-  '<p id="sharedWorkspaceStatus" role="status" aria-live="polite">Проверка подключения…</p>'+
-  '<p>Выберите на рабочих компьютерах одну и ту же сетевую папку. При разовой загрузке выберите Excel, нажмите «Проверить Excel», затем «Сохранить отчёты». После подтверждения и синхронизации отчёт появится у коллег.</p>'+
-  '<p>Для сохранения нужны права записи в сетевую папку. Их назначает администратор файлового сервера. В приложении ролей сотрудников нет.</p>'+
-  '<p>Пустая папка откроется без отчётов. Личные отчёты останутся на этом компьютере. Подключение запомнится. Вернуться к личной базе через интерфейс сейчас нельзя.</p>'+
-  '<p id="sharedWorkspaceMessage" role="status" hidden></p><div class="actions">'+
-  '<button type="button" class="button primary" id="sharedWorkspaceConnect">Подключить общую папку</button>'+
-  '<button type="button" class="button secondary" id="sharedWorkspaceRetry" hidden>Повторить подключение</button>'+
-  '<button type="button" class="button secondary" id="sharedWorkspaceDiscard" hidden>Отменить неподтверждённые изменения и обновить</button></div></details>');
+  '<div class="panel database-destination" id="sharedWorkspacePanel"><div>Отчёты сохраняются в выбранную базу <strong id="sharedWorkspaceMode" role="status">Проверка подключения…</strong></div>'+
+  '<button type="button" class="button secondary" id="sharedWorkspaceShortcut">Управление базами</button></div>');
  html=html.replace('Удалить все импортированные отчёты на этом устройстве.', 'Удалить все импортированные отчёты из активной базы.');
  html=html.replace('Данные остаются в этом браузере','Локальная база SQLite');
  html=html.replace('и защиты от очистки данных браузера.','и защиты от потери данных.');
@@ -167,7 +162,7 @@ function buildUnified(source){
  const workspace=html.slice(nativeStart,nativeEnd);
  html=html.slice(0,nativeStart)+reference.replace('<div id="refNative"></div>',()=>'<div id="refNative">'+workspace+'</div>')+html.slice(nativeEnd);
  html=html.replace('</head>','<link rel="stylesheet" href="tauri-reference-shell.css"><link rel="stylesheet" href="tauri-reference-detail.css"></head>');
- const modules=['unified-original','unified-horizontal-bars','native-errors','native-period-selection','app-status','analysis-summary','unified-base','sql-row-scroll','unified-coverage','unified-management','unified-reports','native-metric-kinds','unified-extended','unified-analytics','reference-calendar','reference-detail','reference-results','reference-filters','reference-desktop','unified-app','updates'];
+ const modules=['unified-original','unified-horizontal-bars','native-errors','native-period-selection','app-status','analysis-summary','unified-base','sql-row-scroll','unified-coverage','unified-management','database-backups','unified-reports','native-metric-kinds','unified-extended','unified-analytics','reference-calendar','reference-detail','reference-results','reference-filters','reference-desktop','unified-app','updates'];
  html=html.replace('</body>',modules.map(name=>'<script src="tauri-'+name+'.js"></script>').join('\n')+'\n</body>');
  return {html,script};
 }

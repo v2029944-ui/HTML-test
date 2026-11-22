@@ -1,4 +1,4 @@
-use std::{ffi::OsString, os::windows::ffi::OsStrExt};
+use std::{ffi::OsString, os::windows::ffi::OsStrExt, sync::OnceLock};
 use windows::{
     core::{Result, BSTR, HSTRING, PCWSTR},
     Win32::{
@@ -18,8 +18,8 @@ use windows::{
                 SetCurrentProcessExplicitAppUserModelID,
             },
             WindowsAndMessaging::{
-                LoadImageW, SendMessageW, ICON_BIG, IMAGE_ICON, LR_DEFAULTSIZE, LR_SHARED,
-                WM_SETICON,
+                GetSystemMetrics, LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON,
+                LR_DEFAULTCOLOR, LR_DEFAULTSIZE, LR_SHARED, SM_CXSMICON, SM_CYSMICON, WM_SETICON,
             },
         },
     },
@@ -29,25 +29,44 @@ pub fn set_process_identity(identifier: &str) -> Result<()> {
     unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(identifier)) }
 }
 
-// Tao sets ICON_SMALL from the configured window icon. The module owns ICON_BIG.
-pub fn set_large_icon(hwnd: HWND) -> Result<()> {
+pub fn set_window_icons(hwnd: HWND) -> Result<()> {
     let resource = tauri::utils::platform::WINDOWS_APP_ICON_RESOURCE_ID;
     unsafe {
         let module = GetModuleHandleW(None)?;
-        let icon = LoadImageW(
+        let name = PCWSTR(resource as usize as *const u16);
+        let big = LoadImageW(
             Some(module.into()),
-            PCWSTR(resource as usize as *const u16),
+            name,
             IMAGE_ICON,
             0,
             0,
             LR_DEFAULTSIZE | LR_SHARED,
         )?;
-        SendMessageW(
-            hwnd,
-            WM_SETICON,
-            Some(WPARAM(ICON_BIG as usize)),
-            Some(LPARAM(icon.0 as isize)),
-        );
+        // The small frame has its own artwork. LR_SHARED can reuse a previously
+        // loaded size, so keep one separate small handle for the process lifetime.
+        static SMALL: OnceLock<Result<isize>> = OnceLock::new();
+        let small = SMALL
+            .get_or_init(|| {
+                LoadImageW(
+                    Some(module.into()),
+                    name,
+                    IMAGE_ICON,
+                    GetSystemMetrics(SM_CXSMICON),
+                    GetSystemMetrics(SM_CYSMICON),
+                    LR_DEFAULTCOLOR,
+                )
+                .map(|icon| icon.0 as isize)
+            })
+            .as_ref()
+            .map_err(Clone::clone)?;
+        for (kind, icon) in [(ICON_SMALL, *small), (ICON_BIG, big.0 as isize)] {
+            SendMessageW(
+                hwnd,
+                WM_SETICON,
+                Some(WPARAM(kind as usize)),
+                Some(LPARAM(icon)),
+            );
+        }
     }
     Ok(())
 }
@@ -70,7 +89,7 @@ pub fn configure_relaunch(hwnd: HWND, identifier: &str) -> Result<()> {
     let mut display = OsString::from("@");
     display.push(&exe);
     display.push(",-101"); // STRINGTABLE in build.rs
-    let ico = exe.with_file_name("analysis-bars-blue.ico");
+    let ico = exe.with_file_name("analysis-reports.ico");
     let icon = if ico.is_file() {
         let mut path = ico.into_os_string();
         path.push(",0");

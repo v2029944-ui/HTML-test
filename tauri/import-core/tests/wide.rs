@@ -812,6 +812,57 @@ fn month_totals_remain_controls_and_blank_pairs_are_not_zeroes() {
 }
 
 #[test]
+fn named_month_cannot_be_replaced_by_a_manual_day_or_week() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("month.xlsx");
+    let mut data: Vec<_> = rows().into_iter().map(|row| row[..3].to_vec()).collect();
+    data[0][1] = "Март 2026";
+    book(&path, &data, "", "xl/worksheets/sheet1.xml");
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut stage = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+    let mut cfg = WideOptions { kind: "month".into(), ..Default::default() };
+    assert_eq!(stage.convert_wide(&cfg, cancel.clone(), |_| {}).unwrap().reports, 1);
+
+    for kind in ["day", "week"] {
+        cfg.kind = kind.into();
+        cfg.start = Some("2026-03-02".into());
+        assert!(stage.convert_wide(&cfg, cancel.clone(), |_| {}).is_err(), "{kind}");
+        let previous = stage.report_page(0, 1).unwrap().remove(0);
+        assert_eq!((previous.kind.as_str(), previous.start.as_str(), previous.end.as_str()),
+                   ("month", "2026-03-01", "2026-03-31"));
+    }
+}
+
+#[test]
+fn split_day_and_month_keep_the_date_under_a_merged_month_heading() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("split.xlsx");
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+
+    for (month, day_row) in [("Март 2026", vec!["", "2"]), ("2026-03", vec!["", "", "2"])] {
+        let mut data: Vec<_> = rows().into_iter().map(|row| row[..3].to_vec()).collect();
+        data[0][1] = month;
+        data.insert(1, day_row);
+        book(&path, &data, r#"<mergeCells><mergeCell ref="B1:C1"/></mergeCells>"#,
+             "xl/worksheets/sheet1.xml");
+        let mut stage = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+        let mut cfg = WideOptions::default();
+        for (kind, last_day) in [("day", "2026-03-02"), ("week", "2026-03-08")] {
+            cfg.kind = kind.into();
+            assert_eq!(stage.convert_wide(&cfg, cancel.clone(), |_| {}).unwrap().reports, 1);
+            let report = stage.report_page(0, 1).unwrap().remove(0);
+            assert_eq!((report.kind.as_str(), report.start.as_str(), report.end.as_str()),
+                       (kind, "2026-03-02", last_day));
+        }
+        cfg.kind = "month".into();
+        assert!(stage.convert_wide(&cfg, cancel.clone(), |_| {}).is_err());
+        assert_eq!(stage.report_page(0, 1).unwrap()[0].start, "2026-03-02");
+    }
+}
+
+#[test]
 fn week_range_cannot_be_shortened_or_silently_accepted_as_a_month() {
     let temp = tempfile::tempdir().unwrap();
     let area = StageArea::open(temp.path().join("stage")).unwrap();

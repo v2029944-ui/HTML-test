@@ -146,3 +146,14 @@
   #refNative .chart-mode-line > label {width:100%;min-width:0}
 }
 #sharedWorkspaceStatus, #sharedWorkspaceMessage {overflow-wrap:anywhere}
+
+#refNative .database-destination {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+#refNative .database-destination strong {display:block}
+#refNative .database-sources {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,20rem),1fr));gap:12px;margin:16px 0}
+#refNative .database-source {padding:16px;border:1px solid var(--border);border-radius:var(--radius-panel,14px)}
+#refNative .database-source[data-selected="true"] {border-color:var(--accent)}
+#refNative .database-selection {font-weight:700;color:var(--muted)}
+#refNative .database-source[data-selected="true"] .database-selection {color:var(--accent)}
+#refNative #databases p {overflow-wrap:anywhere}
+#refNative #databases [hidden] {display:none!important}
+#refNative .database-help summary {cursor:pointer}

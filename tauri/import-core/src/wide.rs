@@ -153,6 +153,12 @@ struct Parts {
     month: u32,
     day: u32,
 }
+struct ColumnDate {
+    parts: Parts,
+    row: u32,
+    col: u32,
+    month_only: bool,
+}
 struct Day {
     pair: Pair,
     parts: Parts,
@@ -671,7 +677,8 @@ impl Stage<'_> {
         date1904: bool,
         p: &Patterns,
         cancel: &AtomicBool,
-    ) -> Result<Option<(Parts, u32, u32)>> {
+    ) -> Result<Option<ColumnDate>> {
+        let mut month = None;
         let mut st = self.header_rows(sheet, info.header, col)?;
         let mut rows = st.query(params![sheet, info.header, col])?;
         while let Some(r) = rows.next()? {
@@ -679,7 +686,12 @@ impl Stage<'_> {
             let row: u32 = r.get(0)?;
             if let Some((v, kind, styled)) = self.header_value(sheet, row, col, true)? {
                 if let Some(parts) = period_header_date(&v, &kind, styled, date1904, period_kind, p)? {
-                    return Ok(Some((parts, row, col)));
+                    return Ok(Some(ColumnDate { parts, row, col, month_only: false }));
+                }
+                if month.is_none() && period_kind != "detect-day" {
+                    if let Some(parts) = month_header_date(&v, &kind, p)? {
+                        month = Some(ColumnDate { parts, row, col, month_only: true });
+                    }
                 }
             }
         }
@@ -700,16 +712,15 @@ impl Stage<'_> {
             while let Some(h) = hr.next()? {
                 check_cancel(cancel)?;
                 let n: u32 = h.get(0)?;
-                if let Some(v) = self.header_value(sheet, n, col, false)? {
-                    if let Some(parts) =
-                        date_parts(&format!("{day} {}", v.0), "inlineStr", false, false, p)?
-                    {
-                        return Ok(Some((parts, row, col)));
+                if let Some((label, kind, _)) = self.header_value(sheet, n, col, false)? {
+                    if let Some(mut parts) = month_header_date(&label, &kind, p)? {
+                        parts.day = day.parse()?;
+                        return Ok(Some(ColumnDate { parts, row, col, month_only: false }));
                     }
                 }
             }
         }
-        Ok(None)
+        Ok(month)
     }
     fn pair_date(
         &self,
@@ -723,25 +734,32 @@ impl Stage<'_> {
     ) -> Result<Option<(Parts, u32, u32)>> {
         let a = self.column_date(sheet, i, pair.q, period_kind, date1904, p, cancel)?;
         let b = self.column_date(sheet, i, pair.a, period_kind, date1904, p, cancel)?;
-        match (a, b) {
-            (None, x) | (x, None) => Ok(x),
-            (Some((mut a, r, c)), Some((b, _, _))) => {
-                if a.day != b.day
-                    || a.month != b.month
-                    || matches!((a.year,b.year),(Some(x),Some(y))if x!=y)
-                    || matches!((a.year,b.suffix),(Some(x),Some(y))if x%100!=y)
-                    || matches!((b.year,a.suffix),(Some(x),Some(y))if x%100!=y)
-                    || matches!((a.suffix,b.suffix),(Some(x),Some(y))if x!=y)
-                {
-                    return Err(fail("quantity and amount header dates conflict"));
-                }
-                if a.year.is_none() {
-                    a.year = b.year;
-                }
-                a.suffix = a.suffix.or(b.suffix);
-                Ok(Some((a, r, c)))
+        // A merged month can cover both metrics while only one names the day.
+        let (mut selected, other) = match (a, b) {
+            (Some(a), Some(b)) if a.month_only && !b.month_only => (b, Some(a)),
+            (Some(a), b) => (a, b),
+            (None, Some(b)) => (b, None),
+            (None, None) => return Ok(None),
+        };
+        if let Some(other) = other {
+            let a = &mut selected.parts;
+            let b = other.parts;
+            if (!other.month_only && a.day != b.day)
+                || a.month != b.month
+                || matches!((a.year,b.year),(Some(x),Some(y))if x!=y)
+                || matches!((a.year,b.suffix),(Some(x),Some(y))if x%100!=y)
+                || matches!((b.year,a.suffix),(Some(x),Some(y))if x%100!=y)
+                || matches!((a.suffix,b.suffix),(Some(x),Some(y))if x!=y)
+            {
+                return Err(fail("quantity and amount header dates conflict"));
             }
+            a.year = a.year.or(b.year);
+            a.suffix = a.suffix.or(b.suffix);
         }
+        if selected.month_only && period_kind != "month" {
+            return Err(fail("В заголовке указан месяц. Проверьте период отчёта."));
+        }
+        Ok(Some((selected.parts, selected.row, selected.col)))
     }
     /// Uses the local calendar date, matching browser reportToday().
     pub fn convert_wide(
@@ -1606,6 +1624,26 @@ pub(crate) fn typed_excel_date(value: &str) -> Option<NaiveDate> {
     // Preserve the calendar date written in the workbook without converting the offset to UTC.
     NaiveDate::parse_from_str(&ISO.captures(value)?[1], "%Y-%m-%d").ok()
 }
+fn month_header_date(value: &str, cell_kind: &str, patterns: &Patterns) -> Result<Option<Parts>> {
+    if !matches!(cell_kind, "s" | "str" | "inlineStr") {
+        return Ok(None);
+    }
+    let text = value.trim();
+    let bytes = text.as_bytes();
+    if bytes.len() == 7 && bytes[4] == b'-'
+        && bytes[..4].iter().chain(&bytes[5..]).all(u8::is_ascii_digit)
+    {
+        let first = parse_start(&format!("{text}-01"))?;
+        return Ok(Some(Parts {
+            year: Some(first.year()),
+            suffix: None,
+            month: first.month(),
+            day: 1,
+        }));
+    }
+    date_parts(&format!("1 {text}"), "inlineStr", false, false, patterns)
+}
+
 fn period_header_date(
     value: &str, cell_kind: &str, styled: bool, date1904: bool,
     period_kind: &str, patterns: &Patterns,
@@ -1615,16 +1653,6 @@ fn period_header_date(
     }
     if period_kind == "detect-day" || !matches!(cell_kind, "s" | "str" | "inlineStr") { return Ok(None); }
     let text = value.trim();
-    if text.len() == 7 && text.as_bytes()[4] == b'-' && text.bytes().enumerate().all(|(i,c)| i==4 || c.is_ascii_digit()) {
-            if period_kind != "month" { return Err(fail("В заголовке указан месяц. Проверьте период отчёта.")); }
-            let first = parse_start(&format!("{text}-01"))?;
-            return Ok(Some(Parts { year: Some(first.year()), suffix: None, month: first.month(), day: 1 }));
-    }
-    if period_kind == "month" {
-        if let Some(parts) = date_parts(&format!("1 {text}"), "inlineStr", false, false, patterns)? {
-            return Ok(Some(parts));
-        }
-    }
     static RANGE: LazyLock<Regex> = LazyLock::new(|| Regex::new(
         r"(?i)^(?:(?:отч[её]тный\s+)?период\s*[:=]?\s*)?(?:с\s+)?(\d{4}-\d{2}-\d{2}|\d{1,2}[./]\d{1,2}[./]\d{4})\s*(?:по|[–—-])\s*(\d{4}-\d{2}-\d{2}|\d{1,2}[./]\d{1,2}[./]\d{4})$"
     ).unwrap());

@@ -29,11 +29,11 @@ function setPeriodInput(id,kind,date){
  window.referenceCalendar?.syncField?.(input);
 }
 function activate(name){
- if(!['dashboard','changes','upload','groups','storage'].includes(name))name='dashboard';
+ if(!['dashboard','changes','upload','groups','databases','storage'].includes(name))name='dashboard';
  const menu=$('managementNav'),returnFocus=menu.open&&menu.contains(document.activeElement);
  document.querySelectorAll('.tabs .tab').forEach(tab=>{const active=tab.dataset.view===name;tab.classList.toggle('active',active);if(active)tab.setAttribute('aria-current','page');else tab.removeAttribute('aria-current');});
  document.querySelectorAll('.view').forEach(view=>view.classList.toggle('active',view.id===name));
- $('managementToggle').classList.toggle('active',name==='upload'||name==='groups'||name==='storage');
+ $('managementToggle').classList.toggle('active',name==='upload'||name==='groups'||name==='databases'||name==='storage');
  menu.open=false;if(returnFocus)$('managementToggle').focus();
  for(const fn of views.get(name)||[])Promise.resolve().then(()=>fn()).catch(error=>O.notice(error.message||String(error),true));
  O.redrawCharts();return name;
