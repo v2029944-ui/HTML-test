@@ -127,6 +127,37 @@ public static class AnalizIcon {
      return Copy(icon);
    }finally{if(icon!=IntPtr.Zero)DestroyIcon(icon);}
  }
+ [DllImport("user32.dll",SetLastError=true)]
+ static extern IntPtr CreateIconFromResourceEx(byte[] data,uint length,bool icon,uint version,int width,int height,uint flags);
+ public static Bitmap FromIcoFrame(string path,int size){
+   using(var reader=new System.IO.BinaryReader(System.IO.File.OpenRead(path))){
+     if(reader.ReadUInt16()!=0||reader.ReadUInt16()!=1)throw new Exception("Invalid ICO header: "+path);
+     int count=reader.ReadUInt16();
+     for(int i=0;i<count;i++){
+       int w=reader.ReadByte(),h=reader.ReadByte();
+       reader.BaseStream.Seek(6,System.IO.SeekOrigin.Current);
+       uint length=reader.ReadUInt32(),offset=reader.ReadUInt32();
+       if((w==0?256:w)!=size||(h==0?256:h)!=size)continue;
+       if((long)offset+length>reader.BaseStream.Length)throw new Exception("Truncated ICO frame: "+size);
+       reader.BaseStream.Position=offset;
+       var data=reader.ReadBytes(checked((int)length));
+       Bitmap image;
+       if(data.Length>=8&&BitConverter.ToUInt32(data,0)==0x474e5089u&&BitConverter.ToUInt32(data,4)==0x0a1a0a0du){
+         // .NET Framework Icon(file,size).ToBitmap() can treat embedded PNG as DIB.
+         using(var stream=new System.IO.MemoryStream(data))
+         using(var png=new Bitmap(stream)){image=new Bitmap(png);}
+       }else{
+         // Give Windows just this DIB, with its own size and no rescaling.
+         IntPtr icon=CreateIconFromResourceEx(data,length,true,0x00030000,0,0,0);
+         if(icon==IntPtr.Zero)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+         try{image=Copy(icon);}finally{DestroyIcon(icon);}
+       }
+       if(image.Width!=size||image.Height!=size){image.Dispose();throw new Exception("Wrong ICO frame dimensions: "+size);}
+       return image;
+     }
+     throw new Exception("Missing ICO frame: "+size);
+   }
+ }
  public static Bitmap FromWindow(IntPtr hwnd,int kind){
    for(int attempt=0;attempt<20;attempt++){
      IntPtr icon;
@@ -262,11 +293,7 @@ function Check-StartMenu($name,$exe,$record){
     if($info.target -ne $exe -or $info.appId -ne 'local.analiz.rabot.tauri'){throw 'Start menu link target or AppUserModelID differs'}
     if($info.icon -ne $icon -or $info.iconIndex -ne 0){throw "Start menu calls a different icon: $($info.icon),$($info.iconIndex)"}
     foreach($size in @(16,32,48,64,128,256)){
-        $frame=[Drawing.Icon]::new($icon,$size,$size)
-        try{
-            if($frame.Width -ne $size -or $frame.Height -ne $size){throw "Missing ${size}px ICO frame"}
-            Check-Bitmap ($frame.ToBitmap()) ($name+"-installed-"+$size)
-        }finally{$frame.Dispose()}
+        Check-Bitmap ([AnalizIcon]::FromIcoFrame($icon,$size)) ($name+"-installed-"+$size)
     }
     Check-Bitmap ([AnalizIcon]::FromFile($icon)) ($name+'-installed-ico')
     Check-ShortcutIcon $shortcut ($name+'-start-menu')
