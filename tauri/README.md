@@ -2,11 +2,11 @@
 
 Основная платформа — Windows x64, Tauri 2 и системный WebView2. Личные данные хранятся в SQLite в папке «Документы/Анализ работ». При подключении к общей папке компьютеры обмениваются проверенными снимками отчётов. Автономный [`index.html`](../index.html) остаётся самостоятельной браузерной версией.
 
-## Выпуск 1.10.0 для Windows x64
+## Выпуск 1.11.0 для Windows x64
 
-[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.10.0/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.10.0/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.10.0](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.10.0)
+[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.11.0/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.11.0/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.11.0](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.11.0)
 
-Обновление до 1.10.0 доступно через «Настройки → Проверить обновления». [Ход разработки и оставшиеся задачи](../docs/ROADMAP.md).
+Перед обновлением сохраните резервную копию SQLite в настройках установленной версии. Если у сотрудников общая база, обновите приложение на каждом компьютере. Обновление до 1.11.0 доступно через «Настройки → Проверить обновления». [Ход разработки и оставшиеся задачи](../docs/ROADMAP.md).
 
 ## Общая база сотрудников
 

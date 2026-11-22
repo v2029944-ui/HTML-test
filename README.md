@@ -1,12 +1,12 @@
 # Анализ работ — Tauri для Windows
 
-## Выпуск 1.10.1 для Windows x64
+## Выпуск 1.11.0 для Windows x64
 
-[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.10.1/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.10.1/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.10.1](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.10.1)
+[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.11.0/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.11.0/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.11.0](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.11.0)
 
-Обновление до 1.10.1 доступно через «Настройки → Проверить обновления». [Ход разработки и оставшиеся задачи](docs/ROADMAP.md).
+Обновление до 1.11.0 доступно через «Настройки → Проверить обновления». [Ход разработки и оставшиеся задачи](docs/ROADMAP.md).
 
-В 1.10.0 сотрудники могут работать с одной базой отчётов через сетевую папку. [Подключение сотрудников](tauri/README.md#общая-база-сотрудников-в-версии-1100)
+В 1.11.0 дневные, недельные и месячные отчёты можно загружать с единым списком работ или с отдельным списком на каждый период. Перед сохранением видно, какая база выбрана. Личную и общую базы можно переключать в разделе «Управление → Базы данных». [Подключение сотрудников](tauri/README.md#общая-база-сотрудников)
 
 ## История выпуска 1.7.0
 
