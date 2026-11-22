@@ -28,6 +28,25 @@ function mount(overrides={}){
 }
 const text=e=>[e.textContent||'',...e.children.map(x=>typeof x==='object'?text(x):'')].join(' ');
 const flush=()=>new Promise(r=>setImmediate(r));
+test('both Excel previews show workbook cells independently of imported rows', async () => {
+ for (const format of ['legacy', 'daily-wide']) {
+  const preview = async () => ({
+   reviewToken: 'a'.repeat(64), reportCount: 1, rowCount: 2, processedCellCount: 12345
+  });
+  const ui = mount({
+   chooseWideXlsx: async () => '/tmp/cells.xlsx',
+   nativeLegacyImportPreview: preview, nativeWideImportPreview: preview
+  });
+  await ui.nodes.excelFile.click();
+  ui.nodes.importFormat.value = format;
+  await ui.nodes.importFormat.fire('change');
+  await ui.nodes.inspectFile.click();
+  const cards = ui.nodes.importPreview.querySelectorAll('*').filter(el => el.className === 'kpi');
+  const values = Object.fromEntries(cards.map(el => [el.children[1].textContent, el.children[0].textContent]));
+  assert.equal(values['Строк работ'], '2', format);
+  assert.equal(values['Обработано ячеек в книге'], (12345).toLocaleString('ru-RU'), format);
+ }
+});
 test('wide import selects multiple named sheets and keeps legacy component identifiers',async()=>{
  const previews=[];const ui=mount({chooseWideXlsx:async()=>'/tmp/quarters.xlsx',nativeImportSheets:async()=>[
   {name:'Первый квартал',component:'xl/worksheets/sheet1.xml'},
@@ -336,11 +355,11 @@ test('saved auto rule uses native format for daily and ordinary books through ch
   if(entry==='chooser')await ui.nodes.excelFile.click();else await ui.window.unifiedReports.openSource('/excel/two.xlsx');
   assert.equal(calls[0].rule,rule);assert.equal(ui.nodes.importFormat.value,dailyWide?'daily-wide':'legacy');
   await ui.nodes.inspectFile.click();assert.equal(calls[1].format,dailyWide?'daily-wide':'legacy');
-  if(dailyWide){assert.deepEqual(Array.from(calls[1].options.sheets),[]);assert.equal(calls[1].options.year,null);}else{assert.equal(calls[1].options.sheet,'xl/second.xml');assert.equal(calls[1].options.kind,'week');assert.equal(calls[1].options.start,'2024-02-05');}
+  if(dailyWide){assert.deepEqual(Array.from(calls[1].options.sheets),['Second']);assert.equal(calls[1].options.kind,'week');assert.equal(calls[1].options.year,null);}else{assert.equal(calls[1].options.sheet,'xl/second.xml');assert.equal(calls[1].options.kind,'week');assert.equal(calls[1].options.start,'2024-02-05');}
  }
 });
 test('auto-rule detection failure cannot silently choose legacy or retain an older review',async()=>{
- const ui=mount({chooseWideXlsx:async()=>'/excel/a.xlsx',nativeImportFolderContext:async()=>({folder:'/excel',name:'a.xlsx',revision:1,nativeSignature:'sig',rule:{format:'auto',type:'week',start:'2024-01-01',sheet:'Дни'}})});await ui.nodes.excelFile.click();assert.match(ui.nodes.unifiedImportStatus.textContent,/распознавание формата/);assert.equal(ui.nodes.inspectFile.disabled,true);assert.equal(ui.nodes.saveImport.disabled,true);assert.equal(ui.nodes.importPreview.children.length,0);
+ const ui=mount({chooseWideXlsx:async()=>'/excel/a.xlsx',nativeImportFolderContext:async()=>({folder:'/excel',name:'a.xlsx',revision:1,nativeSignature:'sig',rule:{format:'auto',type:'week',start:'2024-01-01',sheet:'Дни'}})});await ui.nodes.excelFile.click();assert.match(ui.nodes.unifiedImportStatus.textContent,/однозначно определить структуру/);assert.equal(ui.nodes.inspectFile.disabled,true);assert.equal(ui.nodes.saveImport.disabled,true);assert.equal(ui.nodes.importPreview.children.length,0);
 });
 
 test('a local workbook can be reviewed and saved when enumeration of the connected folder is unavailable',async()=>{
@@ -652,4 +671,48 @@ test('a pending native review cannot repopulate the form after a same-revision r
  await ui.nodes.excelFile.click();const pending=ui.nodes.inspectFile.click();await flush();
  ui.snapshot(null);ui.snapshot();preview.resolve(importReview);await pending;
  assert.equal(ui.nodes.saveImport.disabled,true);assert.match(ui.nodes.unifiedImportStatus.textContent,/изменились/);
+});
+
+test('each report period supports both layouts and keeps the selected kind in preview',async()=>{
+ for(const kind of ['day','week','month']){
+  const calls=[];
+  const ui=mount({chooseWideXlsx:async()=>'/tmp/paired.xlsx',
+   nativeImportSheets:async()=>[{name:'Работы',component:'sheet.xml',layout:'daily-wide'}],
+   nativeWideImportPreview:async(_,options)=>{calls.push(['shared',options]);return importReview;},
+   nativeLegacyImportPreview:async(_,options)=>{calls.push(['blocks',options]);return importReview;}});
+  await ui.nodes.excelFile.click();
+  assert.equal(ui.nodes.importFormat.value,'daily-wide');
+  await changeImportField(ui,'importType',kind);
+  assert.equal(ui.nodes.importType.disabled,false);
+  await changeImportField(ui,kind==='month'?'importMonth':'importWeek',kind==='month'?'2024-02':'2024-02-01');
+  await ui.nodes.inspectFile.click();
+  await changeImportField(ui,'importFormat','legacy');
+  assert.equal(ui.nodes.saveImport.disabled,true);
+  await ui.nodes.inspectFile.click();
+  assert.deepEqual(calls.map(([layout,options])=>[layout,options.kind,options.start]),[
+   ['shared',kind,'2024-02-01'],['blocks',kind,'2024-02-01']]);
+ }
+});
+
+test('ambiguous or mixed Excel layouts require an explicit choice and allow manual override',async()=>{
+ for(const layouts of [[null],['legacy','daily-wide']]){
+  const ui=mount({chooseWideXlsx:async()=>'/tmp/ambiguous.xlsx',
+   nativeImportSheets:async()=>layouts.map((layout,i)=>({name:'Лист '+i,component:'sheet'+i,layout}))});
+  await ui.nodes.excelFile.click();
+  assert.equal(ui.nodes.importFormat.value,'');assert.equal(ui.nodes.inspectFile.disabled,true);
+  await changeImportField(ui,'importFormat','legacy');
+  assert.equal(ui.nodes.inspectFile.disabled,false);
+  await ui.nodes.inspectFile.click();assert.equal(ui.nodes.saveImport.disabled,false);
+ }
+});
+
+test('a classic multi-sheet daily calendar supersedes the ordinary branch of a saved auto rule',async()=>{
+ const rule={format:'auto',type:'week',start:'2031-01-08',sheet:'Second'},calls=[];
+ const ui=mount({chooseWideXlsx:async()=>'/tmp/quarters.xlsx',
+  nativeImportFolderContext:async()=>({folder:'/tmp',name:'quarters.xlsx',revision:1,nativeSignature:'current',rule}),nativeImportSheets:async()=>['Q1','Q2','Q3','Q4'].map(name=>({name,component:name+'.xml',layout:'daily-wide',dailyWide:true,classicDaily:true})),
+  nativeWideImportPreview:async(_,options)=>{calls.push(options);return importReview;}});
+ await ui.nodes.excelFile.click();
+ assert.equal(ui.nodes.importFormat.value,'daily-wide');assert.equal(ui.nodes.importType.value,'day');
+ await ui.nodes.inspectFile.click();
+ assert.equal(calls[0].kind,'day');assert.equal(calls[0].start,null);assert.deepEqual(Array.from(calls[0].sheets),[]);
 });

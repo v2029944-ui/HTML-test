@@ -228,7 +228,8 @@ impl super::Rule {
             let inc=|v:u32|v.checked_add(1).ok_or_else(||"Excel coordinate overflow".to_string());
             mappings.insert(name.clone(),analiz_import_core::WideMapping{work_col:inc(m.work_col)?,header_row:inc(m.header_row)?,first_day_col:inc(m.first_day_col)?,total_count_col:m.total_count_col.map(inc).transpose()?,total_amount_col:m.total_amount_col.map(inc).transpose()?});
         }
-        Ok(analiz_import_core::WideOptions{year:self.year.map(i32::from),sheets:self.sheets.clone().unwrap_or_default(),mappings,organizations,sequential_periods:BTreeMap::new()})
+        Ok(analiz_import_core::WideOptions{kind:self.kind.clone(),
+            start:(!self.start.is_empty()).then(||self.start.clone()),year:self.year.map(i32::from),sheets:self.sheets.clone().unwrap_or_default(),mappings,organizations,sequential_periods:BTreeMap::new()})
     }
     pub fn native_legacy_sheet(&self,book:&[(String,String)])->Result<String,String> {
         if !self.sheet.is_empty(){return book.iter().find(|(name,_)|name==&self.sheet).map(|(_,component)|component.clone()).ok_or_else(||"Выбранный лист Excel не найден.".into());}

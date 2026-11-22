@@ -709,6 +709,10 @@ impl PreparedImport<'_> {
     pub fn row_count(&self) -> u64 {
         self.rows
     }
+    /// Explicit worksheet cells read from the entire workbook, including stored empty cells.
+    pub fn processed_cell_count(&self) -> u64 {
+        self.stage.stats.cells
+    }
     pub fn validate_source_and_database(&self, cancel: &AtomicBool) -> Result<()> {
         if self.stage.current_source_hash(cancel)? != self.stage.bound_hash
         {
@@ -875,11 +879,18 @@ fn validate_provenance_and_zero(
     let Some(p) = provenance else {
         return Ok(false);
     };
-    if p.source_format != "daily-wide"
+    let valid_period = match p.source_format.as_str() {
+        "daily-wide" => info.kind == "day" && info.start == info.end,
+        "period-pairs" if matches!(info.kind.as_str(), "week" | "month") => {
+            chrono::NaiveDate::parse_from_str(&info.start, "%Y-%m-%d").ok()
+                .and_then(|start| crate::wide::shared_period_end(start, &info.kind).ok())
+                .is_some_and(|end| end.to_string() == info.end)
+        }
+        _ => false,
+    };
+    if !valid_period
         || p.sheet_name.is_empty()
         || p.sheet_name.len() > 65536
-        || info.kind != "day"
-        || info.start != info.end
         || !(1..=1024).contains(&p.source_block)
         || !valid_date(&p.coverage.start)
         || !valid_date(&p.coverage.end)

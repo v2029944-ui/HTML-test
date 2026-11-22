@@ -150,20 +150,21 @@ test('save Excel rule only after explicit source selection and valid date',async
  assert.equal(panel.calls.some(x=>x==='load_data'||x==='read_excel'||x==='save_data'),false);
 });
 
-test('wide import rule accepts day only, optional year and no first period',async()=>{
+test('shared import rule retains the selected period, optional year and blank first date',async()=>{
  const file={name:'year.xlsx',size:10,nativeSignature:'10:1:1',tooLarge:false};
  const panel=mount({listing:{folder:'C:/Excel',revision:23,files:[file],rules:{}}});
  await panel.window.nativeFolderReady;
  const e=panel.nodes;
  e.sourceFolderRows.children[0].children[3].children[1].events.click();
- e.sourceRuleFormat.value='daily-wide';e.sourceRuleFormat.events.change();
- assert.equal(e.sourceRuleType.value,'day');
- assert.equal(e.sourceRuleType.disabled,true);
- assert.equal(e.sourceRuleStart.disabled,true);
+ e.sourceRuleFormat.value='period-pairs';e.sourceRuleFormat.events.change();
+ assert.equal(e.sourceRuleType.value,'week');
+ assert.equal(e.sourceRuleType.disabled,false);
+ assert.equal(e.sourceRuleStart.disabled,false);
  e.sourceRuleYear.value='2024';
  await e.sourceRuleSave.events.click();
  const saved=panel.calls.find(x=>x.kind==='rule');
- assert.equal(saved.rule.type,'day');
+ assert.equal(saved.rule.type,'week');
+ assert.equal(saved.rule.format,'period-pairs');
  assert.equal(saved.rule.start,'');
  assert.equal(saved.rule.year,2024);
  assert.equal(saved.rule.sheet,'');

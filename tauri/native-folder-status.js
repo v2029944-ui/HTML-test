@@ -41,10 +41,10 @@ function lock(){
   refresh.disabled=busy||changing;
   const enabled=!!selected&&!busy&&!changing;
   fields.format.disabled=!enabled;
-  fields.type.disabled=!enabled||fields.format.value==='daily-wide';
-  fields.start.disabled=!enabled||fields.format.value==='daily-wide';
-  fields.sheet.disabled=!enabled||fields.format.value==='daily-wide';
-  fields.year.disabled=!enabled||fields.format.value!=='daily-wide';
+  fields.type.disabled=!enabled;
+  fields.start.disabled=!enabled;
+  fields.sheet.disabled=!enabled||['daily-wide','period-pairs'].includes(fields.format.value);
+  fields.year.disabled=!enabled||!['daily-wide','period-pairs'].includes(fields.format.value);
   fields.save.disabled=!enabled;
 }
 function invalidate(message='Выберите файл из списка, чтобы настроить правило.'){
@@ -76,7 +76,7 @@ function openEditor(file,rule){
   }
   selected={name:file.name,signature:file.nativeSignature,folder,revision};
   fields.file.textContent='Файл: '+file.name;
-  fields.format.value=['auto','legacy','daily-wide'].includes(rule?.format)?rule.format:'legacy';
+  fields.format.value=rule?.format==='daily-wide'?'period-pairs':['auto','legacy','period-pairs'].includes(rule?.format)?rule.format:'legacy';
   fields.type.value=['day','week','month'].includes(rule?.type)?rule.type:'week';
   fields.start.value=rule?.start||'';
   fields.sheet.value=rule?.sheet||'';
@@ -91,13 +91,14 @@ function isoDate(value){
   return Number.isFinite(date.getTime())&&date.toISOString().slice(0,10)===value;
 }
 function makeRule(){
-  const format=fields.format.value,wide=format==='daily-wide';
-  const type=wide?'day':fields.type.value;
-  const start=wide?'':fields.start.value;
+  const wide=['daily-wide','period-pairs'].includes(fields.format.value);
+  const type=fields.format.value==='daily-wide'?'day':fields.type.value;
+  const start=fields.start.value;
+  const format=wide?(type==='day'&&!start?'daily-wide':'period-pairs'):fields.format.value;
   const sheet=wide?'':fields.sheet.value.trim();
-  if(!['auto','legacy','daily-wide'].includes(format)||!['day','week','month'].includes(type))
+  if(!['auto','legacy','daily-wide','period-pairs'].includes(format)||!['day','week','month'].includes(type))
     throw Error('Выбран неизвестный формат или тип отчёта.');
-  if(!wide&&(!isoDate(start)||(type==='month'&&!start.endsWith('-01'))))
+  if((!wide||start)&&(!isoDate(start)||(type==='month'&&!start.endsWith('-01'))))
     throw Error('Укажите корректную дату начала. Для месяцев выбирайте первое число месяца.');
   if(sheet.length>120)throw Error('Название листа слишком длинное.');
   const result={type,start,sheet,format};

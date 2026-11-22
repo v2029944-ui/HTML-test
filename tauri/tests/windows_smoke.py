@@ -432,6 +432,9 @@ def import_year(page, workbook, confirmations):
     expect(page.locator('#unifiedAcceptQuality')).not_to_be_visible()
     page.locator('#sourceFolderRows tr').filter(has_text=workbook.name).get_by_role('button',name='Открыть для проверки '+workbook.name,exact=True).click()
     wait_for_text(page,'#excelFileStatus',workbook.name)
+    page.locator('#importType').select_option('day')
+    if page.locator('#editImportLayout').is_visible():
+        page.locator('#editImportLayout').click()
     page.locator('#importFormat').select_option('daily-wide')
     set_calendar_field(page, 'dailyYear', '2024')
     metadata=api(page,'nativeImportSheets',str(workbook))
@@ -490,6 +493,7 @@ def check_dated_quarters_preview(page,temporary):
     assert all_quarters['reportCount']==365,all_quarters
     second=api(page,'nativeWideImportPreview',str(source),options|{'sheets':['Q2']})
     assert second['reportCount']==91 and second['sampleReports'][0]['start']=='2023-04-01',second
+    assert second['processedCellCount']==all_quarters['processedCellCount']>all_quarters['rowCount']
     assert api(page,'nativeRevision')==before
 
 
@@ -697,6 +701,7 @@ def check_source_evidence(page, temporary, output):
     options={'year':2020,'sheets':[],'mappings':{},'organizations':snapshot['org_names']}
     preview=api(page,'nativeWideImportPreview',str(source),options)
     assert preview['reportCount']==1 and preview['rowCount']==0 and preview['conflicts']['new_reports']==1,preview
+    assert preview['processedCellCount']==23,preview
     flags={'replaceExact':False,'acceptCrossType':False,'acceptQuality':False}
     assert_rejected(lambda:api(page,'nativeWideImportApply',str(source),options,preview['reviewToken'],flags),
                     'Source gaps bypassed explicit quality acknowledgment','quality')
@@ -1282,7 +1287,8 @@ def check_folder_rule_and_revocation(page, workbook, confirmations):
     assert {file['name'] for file in listing['files']}=={workbook.name}
     row=page.locator('#sourceFolderRows tr').filter(has_text=workbook.name)
     row.get_by_role('button',name='Настроить правило для '+workbook.name,exact=True).click()
-    page.locator('#sourceRuleFormat').select_option('daily-wide')
+    page.locator('#sourceRuleType').select_option('day')
+    page.locator('#sourceRuleFormat').select_option('period-pairs')
     page.locator('#sourceRuleYear').fill('2024')
     confirmations.cancel_then_accept(page.locator('#sourceRuleSave'),
         f'Сохранить правило для «{workbook.name}»?')
