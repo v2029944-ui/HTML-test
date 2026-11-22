@@ -88,8 +88,11 @@ class DesktopTablePager(unittest.TestCase):
         expect(rows).to_have_count(1)
         expect(rows.first).to_contain_text('Другая работа')
         self.assertEqual(p.evaluate('reads.at(-1)'),[0,'Другая работа'])
-        expect(nav.locator('[data-page-total]')).to_have_text('из 1')
-        expect(choose).to_be_disabled()
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 1–1 из 1')
+        expect(nav.locator('.sql-pager-controls')).to_be_hidden()
+        search.fill('')
+        expect(nav.locator('.sql-pager-controls')).to_be_visible()
+        expect(choose).to_be_enabled()
 
     def test_large_direct_chooser_escape_validation_failure_retry_and_focus_in_dialog(self):
         p=self.page
@@ -253,11 +256,9 @@ class DesktopTablePager(unittest.TestCase):
               return {total_rows:total,next:offset+limit<total?String(offset+limit):null,
               rows:Array.from({length:Math.min(limit,total-offset)},(_,i)=>({key:String(search?93:offset+i),kind:'work',name:'Работа '+(search?93:offset+i)}))};
             }},revision:1,snapshot:snap,onSnapshot(fn){this.updateSnapshot=fn},notice:t=>{window.lastNotice=t}};
-          window.referenceDesktop={dialog(title,anchor){const dialog=document.querySelector('#sheet'),
-            root=document.querySelector('#dialogBody');root.replaceChildren();dialog.showModal();return root;}};
           window.referenceResults={beginScopeChange(){},failScopeChange(message){throw Error(message);},refresh:scope=>window.testScope=scope};
         }""")
-        for name in ['native-period-selection','reference-calendar','reference-filters']:
+        for name in ['native-period-selection','reference-calendar','reference-desktop','reference-filters']:
             p.add_script_tag(path=str(TAURI/(name+'.js')))
         p.evaluate('referenceFilters.init()')
         p.wait_for_function('window.testScope?.revision===1')

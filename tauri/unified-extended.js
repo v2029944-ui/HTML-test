@@ -462,11 +462,10 @@ async function patterns(mode,index=0,paging=false){
   const root=$(name+'Results');if(!page.rows.length)root.append(UI.el('p','Нет услуг по выбранным фильтрам.','muted small'));
   if(mode==='usual')for(const metric of usualMetrics){const rows=page.rows.map(row=>{const m=row[metric];return [row.key?itemButton(row,{...s,from:page.baseline_from,to:s.to}):row.name,fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent),UI.el('span',usualLabels[m.status]||m.status,m.status==='high'?'numeric-rise':m.status==='low'?'numeric-fall':'')];});UI.table(root,metric,'Среднее: '+sampleCaption(page.baseline_from,page.baseline_to,s.displayType)+'. Анализ: '+sampleCaption(page.current_from,page.current_to,s.displayType),['Услуга / группа','Среднее раньше','Сейчас','Отклонение','Отклонение, %','Оценка'],rows,{
    headerHelp:[
-    'Отмеченная работа, группа или итог по всем выбранным работам.',
+    null,
     'Для суммы и количества / объёма берётся среднее по полным предыдущим интервалам. Для отношения суммы к количеству / объёму суммарная стоимость делится на суммарное количество за эти интервалы.',
-    'Значение за анализируемый интервал. При неполном отчёте значение недоступно.',
-    'Значение сейчас минус среднее раньше. Положительное отклонение означает рост, отрицательное — снижение.',
-    'Отклонение / модуль среднего раньше × 100%. При нулевой базе процент недоступен.',
+    null, null,
+    null,
     'Для оценки нужны два или более полных предыдущих интервала. Отклонение отмечается при достижении порога, а при нулевой базе — при любом ненулевом изменении.'
    ],
    csvContext:fullExport(task,req,'usual',metric,{options:opts,window:windowSize}),csvRows:page.rows.map(row=>{const m=row[metric];return [entryLabel(row),m.base,m.current,m.delta,m.percent,usualLabels[m.status]||m.status];})});}
@@ -571,7 +570,15 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
  for(const name of Object.keys(localPeriods))$(name+'PeriodReset')?.addEventListener('click',()=>resetLocalPeriod(name));
  $('changesType')?.addEventListener('change',updatePeriodOverrides);
  $('changesMethod')?.addEventListener('change',updatePeriodOverrides);
- checkboxList('changesMetrics',[['count','Количество / объём'],['amount','Сумма']],changeMetrics,()=>changes());checkboxList('usualMetrics',Object.entries(titles),usualMetrics,()=>patterns('usual'));
+ checkboxList('changesMetrics',[['count','Количество / объём'],['amount','Сумма']],changeMetrics,()=>changes());
+ const metricOptions=Object.entries(titles);
+ const updateMetricCount=()=>{
+  if(!window.unifiedOriginal?.renderMultiFilter)return;
+  const label=$('usualMetrics').querySelector('.multi-selected-label');
+  label.textContent='Выбрано '+usualMetrics.size+' из '+metricOptions.length;
+ };
+ checkboxList('usualMetrics',metricOptions,usualMetrics,()=>{updateMetricCount();patterns('usual');});
+ updateMetricCount();
  bind(['changesMethod','changesFrom','changesTo','changesMode','changesDirection','changesSort'],'change',()=>{invalidate('changes');changes();});
  bind(['changesPercent','changesCountMin','changesAmountMin','changesSearch'],'input',()=>{explainSensitivity();describeActiveFilters();schedule('changes',changes);});
  $('changesType').addEventListener('change',()=>{changesKind=value('changesType');for(const id of ['changesFrom','changesTo'])setDate(id,changesKind,scope?.to||new Date().toISOString().slice(0,10),true);invalidate('changes');changes();});

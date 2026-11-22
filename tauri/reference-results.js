@@ -187,7 +187,8 @@ function sensitivity(anchor){
   const field=el('input'),caption=el('label',text+' ');field.type='number';field.min='0';field.step='any';field.required=true;field.value=String(n);
   caption.append(field);root.append(caption);fields.push(field);
  }
- root.append(el('p','Сильное изменение должно достигнуть процентного и абсолютного порогов. Рост числа не означает улучшение эффективности.','mut'),button('Применить',()=>{
+ root.append(el('p','Сильное изменение должно достигнуть процентного и абсолютного порогов. Рост числа не означает улучшение эффективности.','mut'));
+ window.referenceDesktop.setDialogApply(button('Применить',()=>{
   const invalid=fields.find(field=>!field.value.trim()||!Number.isFinite(Number(field.value))||Number(field.value)<0);
   if(invalid){invalid.focus?.();invalid.reportValidity?.();return;}
   percent=Number(slider.value);[minCount,minAmount]=fields.map(field=>Number(field.value));

@@ -297,7 +297,10 @@ def native_select(client, path, kind, step):
 
 def connect_shared(client, folder, *, cancel_first=False):
     page = client.page
-    navigate(page, 'storage')
+    navigate(page, 'upload')
+    panel = page.locator('#sharedWorkspacePanel')
+    if not panel.evaluate('element => element.open'):
+        panel.locator('summary').click()
     trigger = page.locator('#sharedWorkspaceConnect')
     if cancel_first:
         before = client.state()

@@ -86,6 +86,14 @@ def check_control_layout(page):
           }
         }
       }
+      const sheet = document.querySelector('#sheet[open]');
+      const apply = sheet?.querySelector('form .filter-apply');
+      if (visible(apply) && innerWidth >= 720) {
+        const cancel = sheet.querySelector('form button:not(.filter-apply)');
+        if (!visible(cancel) || !close(rect(cancel).top, rect(apply).top) ||
+            rect(apply).bottom > Math.min(rect(sheet).bottom, innerHeight) + tolerance)
+          errors.push(['Применить', 'dialog actions must stay together inside the viewport']);
+      }
       const metric = document.querySelector('#reportShell [data-measure]');
       if (visible(metric)) {
         for (const next of document.querySelectorAll('#reportShell .filter-options [data-pick]')) {

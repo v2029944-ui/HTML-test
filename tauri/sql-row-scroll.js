@@ -17,6 +17,7 @@ function paint(state){
  const {options,pages,previous,next,choose,range,total,nav}=state;
  const {index,size,count}=options;
  const page=pages?index+1:0,locked=Boolean(state.pending);
+ state.bar.hidden=pages<=1;
  previous.setAttribute('aria-disabled',String(locked||page<=1));
  next.setAttribute('aria-disabled',String(locked||page>=pages));
  choose.setAttribute('aria-disabled',String(locked||pages<=1));
@@ -101,7 +102,7 @@ function create(root){
  choose.append(value);choose.setAttribute('aria-haspopup','dialog');choose.setAttribute('aria-controls',menu.id);choose.setAttribute('aria-expanded','false');
  choose.popoverTargetElement=menu;
  bar.append(previous,choose,total,next);nav.append(bar,range,error,menu);
- const state={nav,root,previous,next,choose,range,total,error,menu,input,value,choices,ranges,pages:0,pending:null,options:null};
+ const state={nav,bar,root,previous,next,choose,range,total,error,menu,input,value,choices,ranges,pages:0,pending:null,options:null};
  previous.onclick=()=>navigate(state,state.options.index-1,previous);next.onclick=()=>navigate(state,state.options.index+1,next);
  choose.onclick=event=>{
   event.preventDefault();

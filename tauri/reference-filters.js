@@ -198,7 +198,7 @@ function chooseOrgs(anchor){
   if(!items.length)list.append(make('p',orgNames.length?'Совпадений нет.':'Список пуст.'));
   all.textContent=query.value.trim()?'Выбрать найденные':'Выбрать все';all.disabled=none.disabled=!items.length;update();
  }
- query.oninput=draw;const apply=button('Применить',()=>{if(!opened||opened!==snapshot){UI.notice('Данные изменились. Откройте выбор повторно.',true);close(box);return;}close(box);setOrganizations([...selected]);});apply.className='filter-apply';box.append(apply);draw();if(!query.hidden)query.focus();
+ query.oninput=draw;const apply=button('Применить',()=>{if(!opened||opened!==snapshot){UI.notice('Данные изменились. Откройте выбор повторно.',true);close(box);return;}close(box);setOrganizations([...selected]);});window.referenceDesktop.setDialogApply(apply);draw();if(!query.hidden)query.focus();
 }
 function chooseWorks(anchor){
  const {box,query,actions,list,count,pages}=listShell('Работы в подробной аналитике',anchor,'Выбор применяется к подробной аналитике. В сводке учитываются все работы.');
@@ -214,7 +214,7 @@ function chooseWorks(anchor){
  });
  const clear=button('Снять выбор',()=>{if(query.value.trim()&&!everything){for(const row of rows)selected.delete(row.key);}else{everything=false;selected.clear();}draw();});
  actions.append(all,clear,count);
- const apply=button('Применить',()=>{if(!opened||opened!==snapshot){UI.notice('Данные изменились. Откройте выбор повторно.',true);close(box);return;}close(box);setWorks(everything,selected);});apply.className='filter-apply';box.append(apply);
+ const apply=button('Применить',()=>{if(!opened||opened!==snapshot){UI.notice('Данные изменились. Откройте выбор повторно.',true);close(box);return;}close(box);setWorks(everything,selected);});window.referenceDesktop.setDialogApply(apply);
  function draw(){
   list.replaceChildren();update();
   const search=Boolean(query.value.trim());all.textContent=search?(matchingTotal>limit?'Выбрать показанные':'Выбрать найденные'):'Выбрать все';
@@ -343,8 +343,17 @@ function init(){
  for(const [value,text] of baselines){const option=make('option',text);option.value=value;compare.append(option);}
  compare.onchange=()=>{if(compare.value==='custom'){compare.value=rule;chooseDate('base',compare);}else{rule=compare.value;publish();}};
  const fold=one('.filter-fold');fold.open=!matchMedia('(max-width:680px)').matches;
- const syncHeight=()=>document.getElementById('refRoot').style.setProperty('--sticky-filter-height',Math.ceil(panel.getBoundingClientRect().height)+'px');
- new ResizeObserver(syncHeight).observe(panel);
+ const summary=one('.filter-fold > summary');
+ const syncHeight=()=>{
+  const visibleHeight=summary.getBoundingClientRect().height;
+  document.getElementById('refRoot').style.setProperty('--sticky-filter-height',Math.ceil(visibleHeight)+'px');
+  panel.style.setProperty('--filter-scroll-away',Math.max(0,panel.offsetHeight-summary.offsetHeight-2)+'px');
+ };
+ const sizeObserver=new ResizeObserver(syncHeight);
+ sizeObserver.observe(panel);sizeObserver.observe(summary);
+ fold.ontoggle=()=>{
+  if(fold.open && panel.getBoundingClientRect().top<0)panel.scrollIntoView({block:'start'});
+ };
  many('[data-filter=type] button').forEach((b,i)=>b.onclick=()=>setKind(kinds[i]));
  many('[data-filter=mode] button').forEach((b,i)=>b.onclick=()=>{mode=i?'range':'single';dates(from,to);publish();});
  many('[data-date]').forEach(b=>b.onclick=()=>chooseDate(b.dataset.date,b));

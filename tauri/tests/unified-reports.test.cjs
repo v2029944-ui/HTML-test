@@ -125,7 +125,7 @@ test('quality date fields, individual saved periods and all-period reset match t
  await ui.refresh();
  const {qualityPeriod:period,qualityFrom:from,qualityTo:to}=ui.nodes;
  await ui.nodes.reports.querySelectorAll('button').find(b=>b.textContent==='Контроль качества').click();await flush();
- assert.equal(ui.nodes.qualitySummary.textContent,'Найдено: 0. Отсутствие замечаний само по себе не подтверждает полноту.');
+ assert.equal(ui.nodes.qualitySummary.textContent,'Замечаний по выбранным условиям нет. Отсутствие замечаний само по себе не подтверждает полноту.');
  assert.deepEqual([from.value,to.value,calls.at(-1).from,calls.at(-1).to],Array(4).fill('2024-02-26'));
  from.value='2024-02-01';await from.fire('change');await flush();
  assert.equal(calls.at(-1).from,'2024-02-01');assert.equal(period.children[0].textContent,'Диапазон по датам');

@@ -40,6 +40,14 @@
       label = connection + ' · ' + state.folder +
         (Number.isSafeInteger(state.generation) ? ' · версия ' + state.generation : '');
     } else label = state ? personal : 'Не удалось определить активную базу.';
+    const mode = node('sharedWorkspaceMode');
+    const summary = state?.mode === 'personal' ? 'Личная база' :
+      state?.pending ? 'Общая база · сохранение ожидает отправки' :
+      state?.mode === 'shared' ? (state.available ? 'Общая база подключена' : 'Общая база недоступна') : 'База не определена';
+    if (mode.textContent !== summary) {
+      mode.textContent = summary;
+      if (!state?.available || state.pending) node('sharedWorkspacePanel').open = true;
+    }
     if (status.textContent !== label) status.textContent = label;
     const detail = error || (state?.error ? statusMessage(state.error) : '');
     if (message.textContent !== detail) message.textContent = detail;
@@ -127,6 +135,12 @@
   async function init() {
     if (ready) return;
     ready = true;
+    node('sharedWorkspaceShortcut').addEventListener('click', () => {
+      window.referenceDesktop.openPanel('upload');
+      node('sharedWorkspacePanel').open = true;
+      node('sharedWorkspaceHeading').focus();
+      node('sharedWorkspaceHeading').scrollIntoView({block:'nearest'});
+    });
     node('sharedWorkspaceConnect').addEventListener('click', connect);
     node('sharedWorkspaceDiscard').addEventListener('click', discard);
     node('sharedWorkspaceRetry').addEventListener('click', () => check(true));

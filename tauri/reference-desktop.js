@@ -25,12 +25,18 @@
     heading.id = 'refDialogTitle';
     heading.textContent = title;
     body.replaceChildren(heading);
+    sheet.querySelector('form .filter-apply')?.remove();
     sheet.setAttribute('aria-labelledby', heading.id);
     if (!sheet.open) {
       dialogOpener = anchor || document.activeElement;
       sheet.showModal();
     }
     return body;
+  }
+
+  function setDialogApply(action) {
+    action.classList.add('filter-apply');
+    byId('sheet').querySelector('form').append(action);
   }
 
   function disclosures() {
@@ -169,5 +175,5 @@
     navigate('s1');
   }
 
-  window.referenceDesktop = Object.freeze({init, dialog, openPanel, navigate});
+  window.referenceDesktop = Object.freeze({init, dialog, setDialogApply, openPanel, navigate});
 })();

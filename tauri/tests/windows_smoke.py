@@ -1604,7 +1604,7 @@ def run():
                 report['checks'].append('SQLite online backup quick-check, no overwrite, and atomic 366-report replacement with a verified pre-import backup')
                 navigate(page,'upload')
                 page.locator('#unifiedUploadQuality').click()
-                wait_for_text(page,'#qualitySummary','Найдено:',90_000)
+                wait_for_text(page,'#qualitySummary','Отсутствие замечаний само по себе не подтверждает полноту',90_000)
                 assert page.locator('#qualityTable tbody tr').count()<=50
                 expect(page.locator('#qualitySummary')).to_be_visible()
                 expect(page.locator('#uploadedReports > summary')).to_be_hidden()
