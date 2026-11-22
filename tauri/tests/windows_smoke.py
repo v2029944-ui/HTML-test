@@ -495,6 +495,40 @@ def check_dated_quarters_preview(page,temporary):
     assert api(page,'nativeRevision')==before
 
 
+def clear_report_confirmation(page, confirmations, count, *, accept=False, drafts=None):
+    trigger = page.locator('#clearReports')
+    dialog = page.get_by_role('dialog', name='Удалить все импортированные отчёты?', exact=True)
+    cancel = dialog.get_by_role('button', name='Отмена', exact=True)
+    revision = confirmations.revision()
+    before = drafts() if drafts else None
+    actions = ['enter', 'cancel', 'close', 'escape']
+    if accept:
+        actions.append('delete')
+    for index, action in enumerate(actions):
+        if index:
+            trigger.press('Enter')
+        else:
+            trigger.click()
+        expect(dialog).to_be_visible()
+        expect(cancel).to_be_focused()
+        expect(dialog).to_contain_text('Личная база на этом компьютере.')
+        expect(dialog).to_contain_text(f'Отчётов к удалению: {count}.')
+        expect(dialog).to_contain_text('Группы останутся.')
+        assert confirmations.revision() == revision
+        if action in ('enter', 'escape'):
+            page.keyboard.press('Enter' if action == 'enter' else 'Escape')
+        elif action == 'cancel':
+            cancel.click()
+        else:
+            dialog.get_by_role('button', name='Удалить отчёты' if action == 'delete' else 'Закрыть', exact=True).click()
+        expect(dialog).to_have_count(0)
+        if action != 'delete':
+            expect(trigger).to_be_focused()
+            assert confirmations.revision() == revision
+            if drafts:
+                assert drafts() == before
+
+
 def check_cancelled_management_confirmations(page, confirmations):
     """Exercise only cancellation on the runner's populated synthetic database."""
     before=api(page,'nativeSettingsBootstrap')
@@ -515,8 +549,7 @@ def check_cancelled_management_confirmations(page, confirmations):
         'Изменить названия подразделений во всех отчётах и справочнике? '
         'Сначала будет создана резервная копия SQLite.',drafts=drafts)
     fields.first.fill(original)
-    confirmations.cancel_only(page.locator('#clearReports'),
-        'Удалить все импортированные отчёты? Группы останутся.',drafts=drafts)
+    clear_report_confirmation(page,confirmations,before['reports'],drafts=drafts)
     for removed in ('Создать отдельную восстановленную копию',
                     'Восстановить при следующем запуске',
                     'Отменить запланированное восстановление'):
@@ -1223,9 +1256,9 @@ def check_delete_without_backup(page, temporary, confirmations):
     assert_rejected(lambda:api(page,'nativeDeleteReport',revision,rows[1]['id']),
                     'An old single-delete selection was accepted','stale storage revision')
     navigate(page,'storage')
-    clear_revision=api(page,'nativeSettingsBootstrap')['revision']
-    confirmations.cancel_then_accept(page.locator('#clearReports'),
-                                    'Удалить все импортированные отчёты? Группы останутся.')
+    clear_snapshot=api(page,'nativeSettingsBootstrap')
+    clear_revision=clear_snapshot['revision']
+    clear_report_confirmation(page,confirmations,clear_snapshot['reports'],accept=True)
     wait_for_app_state(page,
         "typeof window.unifiedUI.snapshot?.reports==='number' && window.unifiedUI.snapshot.reports===0",
         'Confirmed report clearing',90_000)

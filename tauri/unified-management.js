@@ -128,7 +128,45 @@ function init(){
  file('catalogFile',async expected=>{const source=await api.chooseXlsx();if(!source)return;const review=await api.unifiedCatalogPreview(expected,source);if(!valid(expected))throw Error('База изменилась. Повторите импорт.');if(!await confirmAction(expected,'Добавить услуги из Excel? Найдено: '+review.catalog+'.'))return;await mutate(expected,()=>api.unifiedCatalogApply(expected,source,review.hash,true),'Справочник добавлен.');});
  function organizationFields(){const root=$('organizationFields');root.replaceChildren();orgInput.replaceChildren();const none=el('option','Без подразделения');none.value='';orgInput.append(none);for(const [i,name] of U.state.settings.orgNames.entries()){const label=el('label','Подразделение '+(i+1)),input=el('input');input.value=name;input.dataset.org=i;label.append(input);root.append(label);const option=el('option',name);option.value=name;orgInput.append(option);}}
  bind('saveOrganizations',guard(async expected=>{const names=Array.from($('organizationFields').querySelectorAll('input'),n=>n.value.trim());const normalize=s=>s.toLowerCase().replace(/[.,;:]+$/,'').replace(/\s+/g,' ');if(names.length!==4||names.some(n=>!n)||new Set(names.map(normalize)).size!==4)throw Error('Нужны четыре непустых разных названия подразделений.');if(!await confirmAction(expected,'Изменить названия подразделений во всех отчётах и справочнике? Сначала будет создана резервная копия SQLite.'))return;const destination=await api.chooseSqliteBackupPath('analiz-before-rename.sqlite3');if(!destination)return;await mutate(expected,()=>api.unifiedRenameOrganizations(expected,names,destination),'Названия сохранены. Резервная копия создана.');}));
- bind('clearReports',guard(async expected=>{const question=window.sharedWorkspace?.state?.mode==='shared'?'Удалить все импортированные отчёты из общей базы для всех пользователей? Группы останутся.':'Удалить все импортированные отчёты? Группы останутся.';if(!await confirmAction(expected,question))return;await mutate(expected,()=>api.unifiedClearReports(expected),'Отчёты удалены.');}));
+ const clearReports=$('clearReports');
+ function confirmClearReports(workspace,reports){
+  const dialog=el('dialog'),heading=el('h2','Удалить все импортированные отчёты?');
+  dialog.id='clearReportsDialog';heading.id='clearReportsHeading';dialog.setAttribute('aria-labelledby',heading.id);
+  const header=el('div',null,'clear-reports-header'),close=el('button','×','button secondary');
+  close.type='button';close.setAttribute('aria-label','Закрыть');header.append(heading,close);
+  const shared=workspace.mode==='shared';
+  const location=el('p',shared?'Общая база · '+workspace.folder:'Личная база на этом компьютере.');
+  const details=el('p','Отчётов к удалению: '+reports+'. '+(shared?'Они будут удалены для всех пользователей общей базы. ':'')+'Группы останутся.');
+  location.id='clearReportsLocation';details.id='clearReportsDetails';dialog.setAttribute('aria-describedby',location.id+' '+details.id);
+  const actions=el('div',null,'actions'),cancel=el('button','Отмена','button secondary'),remove=el('button','Удалить отчёты','button danger-button');
+  cancel.type='button';remove.type='button';cancel.autofocus=true;
+  actions.append(cancel,remove);dialog.append(header,location,details,actions);
+  const host=clearReports.closest('dialog[open]')||clearReports.closest('#refNative')||document.body;
+  return new Promise((resolve,reject)=>{
+   let accepted=false;
+   close.addEventListener('click',()=>dialog.close());
+   cancel.addEventListener('click',()=>dialog.close());
+   remove.addEventListener('click',()=>{accepted=true;dialog.close();});
+   dialog.addEventListener('cancel',event=>{event.preventDefault();dialog.close();});
+   dialog.addEventListener('close',()=>{dialog.remove();resolve(accepted);},{once:true});
+   host.append(dialog);
+   try{dialog.showModal();cancel.focus();}catch(error){dialog.remove();reject(error);}
+  });
+ }
+ bind('clearReports',async()=>{
+  if(busy||!valid(revision))return;
+  await guard(async expected=>{
+   const snapshot=U.snapshot,workspace=window.sharedWorkspace?.state;
+   if(!workspace?.available||workspace.pending||!snapshot||snapshot.revision!==expected||
+      !Number.isSafeInteger(snapshot.reports)||snapshot.reports<0)throw Error('Не удалось проверить активную базу и число отчётов. Обновите данные.');
+   if(snapshot.reports===0){U.notice('В этой базе нет импортированных отчётов.');return;}
+   if(!await confirmClearReports(workspace,snapshot.reports))return;
+   if(!valid(expected)||U.snapshot!==snapshot||window.sharedWorkspace.state?.workspace_token!==workspace.workspace_token)
+    throw Error('База изменилась. Повторите действие.');
+   await mutate(expected,()=>api.unifiedClearReports(expected),'Отчёты удалены.');
+  })();
+  if(!clearReports.disabled&&(!document.activeElement||document.activeElement===document.body))clearReports.focus({preventScroll:true});
+ });
  bind('exportBackup',guard(async()=>{const destination=await api.chooseSqliteBackupPath('analiz-backup.sqlite3');if(!destination)return;await api.nativeBackupSqlite(destination);U.notice('Проверенная резервная копия SQLite сохранена.');}));
  $('exportBackup').title='Сохранить проверенную резервную копию SQLite';$('clearReports').title='Удалить загруженные отчёты после подтверждения';$('importBackup').accept='.sqlite3';const backupPanel=$('importBackup').parentNode.parentNode.parentNode,restoreStatus=el('p','','muted small');backupPanel.append(restoreStatus);function restoreMessage(text){restoreStatus.textContent=text;}
  file('importBackup',async()=>{const source=await api.chooseRestoreBackupPath();if(!source){if(!restore)restoreMessage('Выбор отменён.');return;}restore=null;restoreMessage('Проверка резервной копии…');const preview=await api.nativeRestorePreview(source);if(!preview||!/^[a-f0-9]{64}$/i.test(preview.verification)||!Number.isSafeInteger(preview.reportCount)||preview.reportCount<0)throw Error('Не удалось подтвердить целостность резервной копии.');restore={source,verification:preview.verification};restoreMessage('Копия проверена. Отчётов: '+preview.reportCount+'. Рабочая база не изменена.');});
