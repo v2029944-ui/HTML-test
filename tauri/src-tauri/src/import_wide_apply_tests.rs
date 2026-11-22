@@ -919,3 +919,47 @@ fn wide_manual_partial_anchor_replacement_rolls_back_predeleted_nonanchor() {
     assert_eq!(storage.load().unwrap(),before);assert_eq!(storage.revision().unwrap(),revision);assert!(storage.committed_import(manual.operation_id()).unwrap().is_none());
     assert_eq!(storage.connect().unwrap().query_row("SELECT COUNT(*) FROM report_source_diagnostic_links",[],|r|r.get::<_,i64>(0)).unwrap(),3);
 }
+
+#[test]
+fn weekly_and_monthly_shared_pairs_persist_to_sqlite_after_review_only() {
+    for mode in [ImportMode::Manual, ImportMode::Folder] {
+        for (kind, end) in [("week", "2024-02-07"), ("month", "2024-02-29")] {
+            let root = tempfile::tempdir().unwrap();
+            let source = root.path().join("period.xlsx");
+            fixture_at(&source, 1, false, false, false, "2024-02-01", "Работа");
+            let area = StageArea::open(root.path().join("stage")).unwrap();
+            let cancel = Arc::new(AtomicBool::new(false));
+            let mut stage = area.ingest(&source, Limits::default(), &cancel, |_| {}).unwrap();
+            let options = WideOptions { kind: kind.into(), ..Default::default() };
+            stage.convert_wide(&options, cancel.clone(), |_| {}).unwrap();
+            let prepared = stage.prepare_with_mode(mode, &cancel, |_| {}).unwrap();
+            let live = root.path().join("live");
+            let store = Storage::new(live.clone()).unwrap();
+            store.revision().unwrap();
+            let before = store.load().unwrap();
+            let review = store.preview_import(&prepared).unwrap();
+            assert_eq!(store.load().unwrap(), before);
+            let job = ImportJob::new();
+            job.cancel();
+            assert!(store.apply_import(&prepared, &review, ImportConfirmation::default(), &job, |_| {}).is_err());
+            assert_eq!(store.load().unwrap(), before);
+            let apply = || store.apply_import(&prepared, &review, ImportConfirmation::default(), &ImportJob::new(), |_| {}).unwrap();
+            let receipt = apply();
+            assert_eq!(receipt.rows, 1);
+            assert_eq!(apply(), receipt);
+            let reopened = Storage::new(live).unwrap();
+            let saved = reopened.load().unwrap();
+            let reports = saved["reports"].as_array().unwrap();
+            assert_eq!(reports.len(), 1);
+            let report = &reports[0];
+            assert_eq!(report["type"], kind);
+            assert_eq!(report["start"], "2024-02-01");
+            assert_eq!(report["end"], end);
+            assert_eq!(report["sourceFormat"], "period-pairs");
+            assert_eq!(report["sourceCoverage"], json!({"start": "2024-02-01", "end": end}));
+            assert_eq!(report["count"], 1.0);
+            assert_eq!(report["amount"], 2.0);
+            assert_eq!(reopened.aggregate(receipt.revision, &ReadFilter::default()).unwrap().rows, 1);
+        }
+    }
+}
