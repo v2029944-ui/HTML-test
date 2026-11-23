@@ -1132,7 +1132,8 @@ def check_extended(page):
     expect(page.locator('#structurePanel')).to_be_hidden()
     for control,result in (('usualPanel','usualCoverage'),('regularityPanel','regularityCoverage')):
         navigate(page,control)
-        wait_for_text(page,f'#{result}','Полных периодов:',90_000)
+        expected='Полных исторических окон:' if control=='usualPanel' else 'Полных периодов анализа:'
+        wait_for_text(page,f'#{result}',expected,90_000)
     navigate(page,'changes')
     expect(page.locator('#changes .detail-date-scope')).to_contain_text('29.02.2024')
     expect(page.locator('#changesToCalendar')).to_be_hidden()
