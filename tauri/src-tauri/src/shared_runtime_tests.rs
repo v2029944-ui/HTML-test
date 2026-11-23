@@ -543,3 +543,32 @@ fn personal_transfer_keeps_linked_wide_records_together_and_rebuilds_rows() {
     let links:i64=conn.query_row("SELECT COUNT(*) FROM report_source_diagnostic_links WHERE report_id='wide-child' AND anchor_id='wide-parent'",[],|r|r.get(0)).unwrap();
     assert_eq!(links,1);
 }
+
+#[test]
+fn personal_transfer_does_not_block_different_report_types_with_overlapping_dates() {
+    let (_root, runtime) = runtime_fixture();
+    let personal = runtime.status().unwrap();
+    runtime.execute(Some(&personal.workspace_token), Access::Write, |store| {
+        store.save(data("individual-day"))
+    }).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let shared = connect(&runtime, folder.path());
+    runtime.execute(Some(&shared.workspace_token), Access::Write, |store| {
+        store.save(json!({"reports":[{
+            "id":"existing-week","type":"week","start":"2024-02-26",
+            "end":"2024-03-03","rows":[]
+        }],"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}}))
+    }).unwrap();
+    let page = runtime.preview_personal_transfer(Some(&shared.workspace_token), 0).unwrap();
+    assert_eq!(page.rows.len(), 1);
+    assert_eq!(page.rows[0].status, "ready");
+    runtime.apply_personal_transfer(
+        Some(&shared.workspace_token), page.source_revision, page.target_revision,
+        vec!["individual-day".into()],
+    ).unwrap();
+    let ids = read(&runtime, &shared.workspace_token)["reports"].as_array()
+        .unwrap().iter().map(|r|r["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(&"existing-week".to_string()));
+    assert!(ids.contains(&"individual-day".to_string()));
+}
