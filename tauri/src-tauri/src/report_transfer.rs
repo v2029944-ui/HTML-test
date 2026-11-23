@@ -157,6 +157,22 @@ impl Storage {
             if let Some(object) = json.as_object_mut() {
                 object.remove("desktopFolder");
             }
+            // Some old personal reports used an absolute workbook path as
+            // their provenance label. The network recipient only needs its
+            // filename; never transfer private local folder paths.
+            let source_name = source_name.and_then(|raw| {
+                let name = raw.rsplit(['/', '\\']).next()?.trim().to_owned();
+                (!name.is_empty() && !name.contains(':')).then_some(name)
+            });
+            if let Some(object) = json.as_object_mut() {
+                if let Some(Value::String(value)) = object.get_mut("desktopSource") {
+                    if let Some(clean) = source_name.as_ref() {
+                        *value = clean.clone();
+                    } else {
+                        object.remove("desktopSource");
+                    }
+                }
+            }
             let mut links = source.prepare(
                 "SELECT anchor_id FROM report_source_diagnostic_links WHERE report_id=?1"
             ).map_err(err)?;
