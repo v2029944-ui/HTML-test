@@ -27,6 +27,7 @@ function fixture(initial=personal) {
     }
     if(name==='shared_workspace_transfer_preview'){
       assert.equal(args.workspaceToken,scenario.server.workspace_token);
+      if(typeof scenario.transferPreview==='function')return scenario.transferPreview(args.page);
       return scenario.transferPreview||{sourceRevision:7,targetRevision:3,totalReports:2,pageIndex:args.page,pageSize:25,hasNext:false,rows:[
         {id:'local-new',reportType:'day',start:'2024-02-28',end:'2024-02-28',status:'ready',sourceName:'import.xlsx'},
         {id:'local-conflict',reportType:'day',start:'2024-02-29',end:'2024-02-29',status:'conflict',sourceName:'previous.xlsx'}
@@ -161,4 +162,37 @@ test('transfer is unavailable in personal mode or while network publication is p
   assert.equal(f.calls.filter(x=>x.name==='shared_workspace_transfer_preview').length,0);
   assert.equal(f.node('personalTransferPanel').hidden,mode.mode==='personal');
  }
+});
+
+test('personal transfer can select across pages while respecting the 25-record batch limit',async()=>{
+ const f=fixture(team);await f.window.sharedWorkspace.init();
+ f.scenario.transferPreview=page=>({
+  sourceRevision:7,targetRevision:3,totalReports:26,pageIndex:page,pageSize:25,
+  hasNext:page===0,initializesOrganizations:false,
+  rows:page===0?[{id:'work-1',reportType:'day',start:'2024-01-01',end:'2024-01-01',status:'ready'}]:
+    [{id:'work-2',reportType:'day',start:'2024-01-02',end:'2024-01-02',status:'ready'}]
+ });
+ await f.click('personalTransferPreview');
+ await f.click('personalTransferSelectAll');
+ assert.match(f.node('personalTransferSummary').textContent,/выбрано: 1/);
+ await f.click('personalTransferNext');
+ assert.match(f.node('personalTransferSummary').textContent,/выбрано: 1/);
+ await f.click('personalTransferSelectAll');
+ assert.match(f.node('personalTransferSummary').textContent,/выбрано: 2/);
+ f.scenario.accept=true;
+ await f.click('personalTransferApply');
+ assert.deepEqual(Array.from(f.scenario.transferApplied.selectedIds),['work-1','work-2']);
+});
+test('server-side organization incompatibility disables the affected report',async()=>{
+ const f=fixture(team);await f.window.sharedWorkspace.init();
+ f.scenario.transferPreview={sourceRevision:7,targetRevision:3,totalReports:1,pageIndex:0,pageSize:25,
+  hasNext:false,organizationWarning:'Названия подразделений различаются.',
+  rows:[{id:'private-a',reportType:'day',start:'2024-02-28',end:'2024-02-28',status:'organization_conflict'}]
+ };
+ await f.click('personalTransferPreview');
+ assert.match(f.node('personalTransferSummary').textContent,/подразделений различаются/);
+ assert.match(f.node('personalTransferList').children[0].textContent,/Подразделение отсутствует/);
+ assert.equal(f.node('personalTransferApply').disabled,true);
+ await f.click('personalTransferSelectAll');
+ assert.equal(f.node('personalTransferApply').disabled,true);
 });
