@@ -79,3 +79,33 @@ pub async fn shared_workspace_discard_pending(
     .await
     .map_err(|e| e.to_string())?
 }
+
+#[tauri::command]
+pub async fn shared_workspace_transfer_preview(
+    app: tauri::AppHandle,
+    workspace_token: String,
+    page: usize,
+) -> Result<crate::storage::TransferPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Runtime>().preview_personal_transfer(Some(&workspace_token), page)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn shared_workspace_transfer_apply(
+    app: tauri::AppHandle,
+    workspace_token: String,
+    source_revision: i64,
+    target_revision: i64,
+    selected_ids: Vec<String>,
+) -> Result<crate::storage::TransferReceipt, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<Runtime>().apply_personal_transfer(
+            Some(&workspace_token), source_revision,target_revision,selected_ids
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

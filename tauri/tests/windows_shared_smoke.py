@@ -295,7 +295,7 @@ def native_select(client, path, kind, step):
         time.sleep(.05)
 
 
-def connect_shared(client, folder, *, cancel_first=False):
+def connect_shared(client, folder, *, cancel_first=False, reports=0):
     page = client.page
     navigate(page, 'upload')
     page.locator('#sharedWorkspaceShortcut').click()
@@ -312,9 +312,9 @@ def connect_shared(client, folder, *, cancel_first=False):
         assert client.state() == before, 'Cancelling shared selection changed personal data/mode'
     trigger.click()
     native_select(client, folder, 'folder', 'connect-' + client.name)
-    page.wait_for_function('''folder => window.sharedWorkspace.state?.mode==='shared'
+    page.wait_for_function('''reports => window.sharedWorkspace.state?.mode==='shared'
       && window.sharedWorkspace.state.available && !window.sharedWorkspace.busy
-      && window.unifiedUI.snapshot?.reports===0''', arg=str(folder), timeout=90_000)
+      && window.unifiedUI.snapshot?.reports===reports''', arg=reports, timeout=90_000)
     state = client.state()
     assert windows_path(state['folder']) == windows_path(folder), state
     expect(page.locator('#sharedWorkspaceStatus')).to_contain_text('Общая база подключена')
@@ -323,7 +323,7 @@ def connect_shared(client, folder, *, cancel_first=False):
     page.screenshot(path=str(client.output / ('shared-smb-' + client.name + '-connected.png')))
 
 
-def preview_xlsx(client, workbook):
+def preview_xlsx(client, workbook, *, year=2024, report_count=366):
     page = client.page
     page.locator('#refImport').click()
     page.locator('#excelFile').click()
@@ -333,10 +333,10 @@ def preview_xlsx(client, workbook):
     if page.locator('#editImportLayout').is_visible():
         page.locator('#editImportLayout').click()
     page.locator('#importFormat').select_option('daily-wide')
-    set_calendar_field(page, 'dailyYear', '2024')
+    set_calendar_field(page, 'dailyYear', str(year))
     page.locator('#inspectFile').click()
     wait_for_text(page, '#unifiedImportStatus', 'Проверка завершена', 120_000)
-    assert page.locator('#importPreview .kpi').first.locator('strong').inner_text() == '366'
+    assert page.locator('#importPreview .kpi').first.locator('strong').inner_text() == str(report_count)
     for field in ('unifiedAcceptQuality', 'unifiedAcceptOverlap'):
         acknowledgement = page.locator('#' + field)
         if acknowledgement.is_visible():
@@ -349,6 +349,57 @@ def summary(client):
     assert (result['reports'], result['rows'], result['amount']) == (366, 1464, 7320), result
     assert client.page.evaluate('window.unifiedOriginal.state.reports.length') == 0
     return result
+
+
+def verify_personal_transfer(writer, reader, folder, root, previous_generation):
+    workbook = root / 'synthetic-personal-year.xlsx'
+    workbook.write_bytes(wide_xlsx(2025))
+    source_hash = file_hash(workbook)
+    preview_xlsx(writer, workbook, year=2025, report_count=365)
+    prompt = 'Повторно проверить Excel и атомарно сохранить 365 отчётов'
+    writer.page.locator('#saveImport').click()
+    dialog, owner = writer.confirmations.find_dialog(prompt)
+    writer.confirmations.answer(dialog, owner, prompt, 1)
+    wait_for_text(writer.page, '#unifiedImportStatus', 'Сохранено отчётов: 365', 120_000)
+    with closing(sqlite3.connect(writer.personal_file.as_uri() + '?mode=ro', uri=True)) as source:
+        personal_before = list(source.iterdump())
+    connect_shared(writer, folder, reports=366)
+    before = generations(folder)
+    page = writer.page
+    page.locator('#personalTransferPreview').click()
+    expect(page.locator('#personalTransferSummary')).to_contain_text('Личная база: 365 отчётов')
+    page.locator('#personalTransferSelectAll').click()
+    expect(page.locator('#personalTransferSummary')).to_contain_text('выбрано: 25 из 25')
+    apply = page.locator('#personalTransferApply')
+    prompt = 'Добавить 25 отчётов в общую базу?'
+    apply.click()
+    dialog, owner = writer.confirmations.find_dialog(prompt)
+    writer.confirmations.answer(dialog, owner, prompt, 2)
+    expect(apply).to_be_enabled()
+    assert generations(folder) == before
+    apply.click()
+    dialog, owner = writer.confirmations.find_dialog(prompt)
+    writer.confirmations.answer(dialog, owner, prompt, 1)
+    result = page.locator('#personalTransferResult')
+    expect(result).to_contain_text('Перенесено отчётов: 25', timeout=120_000)
+    reader.page.wait_for_function('''generation => window.unifiedUI.snapshot?.reports === 391
+        && window.sharedWorkspace.state?.generation === generation + 1''',
+        arg=previous_generation, timeout=120_000)
+    assert writer.state()['generation'] == previous_generation + 1
+    after = generations(folder)
+    assert len(after) == len(before) + 1 and all(after.get(name) == facts for name, facts in before.items())
+    snapshot = api(reader.page, 'nativeSettingsBootstrap')
+    totals = api(reader.page, 'managementReportSummary', snapshot['revision'], {'report_type': 'day'})
+    assert (totals['reports'], totals['rows'], totals['amount']) == (391, 1564, 7820), totals
+    backups = list(writer.root.rglob('shared-before-personal-transfer-*.sqlite3'))
+    assert len(backups) == 1, backups
+    with closing(sqlite3.connect(backups[0].as_uri() + '?mode=ro', uri=True)) as backup:
+        assert backup.execute('PRAGMA integrity_check').fetchone() == ('ok',)
+        assert backup.execute('SELECT COUNT(*) FROM reports').fetchone() == (366,)
+    with closing(sqlite3.connect(writer.personal_file.as_uri() + '?mode=ro', uri=True)) as source:
+        assert list(source.iterdump()) == personal_before
+    assert file_hash(workbook) == source_hash
+    return totals
 
 
 def run():
@@ -389,6 +440,14 @@ def run():
                 assert a.process.pid != b.process.pid and a.data != b.data
                 connect_shared(a, folder, cancel_first=True)
                 connect_shared(b, folder)
+                # The new native report transfer must be visible only in the
+                # connected team, and opening a preview never publishes a share.
+                transfer_button=a.page.locator('#personalTransferPreview')
+                expect(a.page.locator('#personalTransferPanel')).to_be_visible()
+                transfer_button.click()
+                expect(a.page.locator('#personalTransferSummary')).to_contain_text('Личная база: 0 отчётов', timeout=90_000)
+                expect(a.page.locator('#personalTransferApply')).to_be_disabled()
+                assert not a.page.locator('#personalTransferList .personal-transfer-row').count()
                 baseline = generations(folder)
                 generation = a.state()['generation']
                 assert b.state()['generation'] == generation
@@ -467,6 +526,8 @@ def run():
                 assert summary(a)['reports'] == 366
                 assert api(b.page, 'nativeSettingsBootstrap')['reports'] == 0
                 note('reader-returned-to-original-empty-personal-base')
+                totals = verify_personal_transfer(b, a, folder, root, generation + 1)
+                note('selected-personal-reports-transferred-with-verified-backup', totals=totals)
         # windows_test_workspace has now released its profile-specific workers.
         for port in (9231, 9232, 9234, 9235):
             wait_for_webview_shutdown(port)

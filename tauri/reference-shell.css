@@ -436,6 +436,13 @@
 }
 .date-shifts svg {display:block;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-width:1.6}
 .report-dates .report-date-values {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-items:start;min-width:0}
+/* Baseline shortcuts use the existing compact controls and wrap in sidebar/mobile layouts. */
+.report-dates [data-base-card] .baseline-quick-actions {display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0;margin-block:3px 0}
+:is(#s1,#s2,#sharedHeader,#reportShell) .report-dates [data-base-card] .baseline-quick-actions .chip {flex:1 1 auto;min-width:0;min-height:28px;padding:3px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);font:600 var(--date-label-font)/1.25 var(--date-family,system-ui,sans-serif);cursor:pointer;white-space:normal}
+:is(#s1,#s2,#sharedHeader,#reportShell) .report-dates [data-base-card] .baseline-quick-actions .chip[aria-pressed="true"] {background:var(--selected);border-color:var(--accent);color:var(--text)}
+:is(#s1,#s2,#sharedHeader,#reportShell) .report-dates [data-base-card] .baseline-quick-actions .chip:disabled {opacity:.5;cursor:not-allowed}
+:is(#s1,#s2,#sharedHeader,#reportShell) .report-dates [data-base-card] .baseline-quick-actions .chip:focus-visible {outline:2px solid var(--focus);outline-offset:2px}
+
 .report-dates.single-date .report-date-values {grid-template-columns:minmax(0,1fr)}
 .report-dates .date-label-pair {display:grid;gap:3px;min-width:0}
 .report-dates .date-label-pair[hidden],.report-dates .date-range-caption[hidden] {display:none}
@@ -489,8 +496,8 @@
 @media (min-width:701px) {
   @supports (grid-template-rows:subgrid) {
     .report-filter .report-dates {row-gap:5px}
-    .report-filter .report-date-card {display:grid;grid-row:span 3;grid-template-rows:subgrid;row-gap:5px}
-    .report-filter .single-date .report-date-card {grid-row:span 2}
+    .report-filter .report-date-card {display:grid;grid-row:span 4;grid-template-rows:subgrid;row-gap:5px}
+    .report-filter .single-date .report-date-card {grid-row:span 3}
   }
 }
 @media (max-width:700px) {
@@ -1142,3 +1149,50 @@ body:has(#refRoot)>footer {display:none}
  #refNative .upload-layout:has(#importPreview:not(:empty)):has(#desktopSource[hidden]) #uploadReviewCard {grid-column:2;grid-row:1 / span 2}
  #refNative .upload-layout:has(#importPreview:not(:empty)):has(#desktopSource[hidden]) #uploadParameterCard {grid-column:1;grid-row:2}
 }
+
+/* Safe report transfer between personal and shared SQLite workspaces. */
+#personalTransferPanel .personal-transfer-list {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));
+  gap:7px;
+  margin:12px 0;
+  max-height:430px;
+  overflow-y:auto;
+}
+#personalTransferPanel .personal-transfer-row {
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  min-width:0;
+  padding:10px 12px;
+  border:1px solid var(--border,#394451);
+  border-radius:9px;
+  background:var(--surface,#1b222c);
+  color:var(--text,#e8edf3);
+  font-size:12px;
+  line-height:1.5;
+  overflow-wrap:anywhere;
+  cursor:pointer;
+}
+#personalTransferPanel .personal-transfer-row input {
+  flex:none;
+  margin-top:3px;
+  accent-color:var(--accent,#f5c542);
+}
+#personalTransferPanel .personal-transfer-conflict {
+  opacity:.67;
+  cursor:not-allowed;
+}
+#personalTransferPanel #personalTransferSummary,
+#personalTransferPanel #personalTransferResult {margin-block:10px;overflow-wrap:anywhere}
+#personalTransferPanel .actions {flex-wrap:wrap}
+@media(max-width:560px) {
+  #personalTransferPanel .actions button {flex:1 1 145px;min-height:38px}
+  #personalTransferPanel .personal-transfer-list {grid-template-columns:minmax(0,1fr)}
+}
+
+/* Adjacent history is a main Changes action, not a duplicate detail tab. */
+#toolsPage .tool-tabs[hidden] {display:none!important}
+#s2 .changes-header-actions {display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end;min-width:0}
+#s2 .changes-header-actions .btn {white-space:normal;min-height:36px;max-width:100%}
+@media(max-width:680px){#s2 .changes-header-actions {width:100%;justify-content:flex-start}#s2 .changes-header-actions .btn {flex:1 1 auto}}

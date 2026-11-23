@@ -5,6 +5,7 @@
   const analyticPanels = ['chartPanel', 'structurePanel', 'comparison', 'usualPanel', 'regularityPanel'];
   let active = null;
   let chartMode = 'line';
+  let singlePeriodChart = false;
   let previousChart = null;
 
   let attached = false;
@@ -82,11 +83,17 @@
         if (active === 'chartPanel') { chartMode = button.dataset.chart; chartButtons(); }
       });
     }
-    state.chart = chartMode;
+    const single = singlePeriodChart || window.referenceFilters?.scope?.overviewMode === 'single';
+    const line = group.querySelector('[data-reference-line]');
+    line.hidden = single;
+    line.disabled = single;
+    line.title = single ? 'Для линейного графика выберите несколько периодов' : '';
+    const displayMode = single && chartMode === 'line' ? 'bar' : chartMode;
+    state.chart = displayMode;
     const orientation = $('chartOrientation').closest('label');
-    orientation.classList.toggle('ref-hide-orientation', chartMode !== 'bar');
+    orientation.classList.toggle('ref-hide-orientation', displayMode !== 'bar');
     for (const button of group.querySelectorAll('button')) {
-      const selected = (button.dataset.chart || 'line') === chartMode;
+      const selected = (button.dataset.chart || 'line') === displayMode;
       button.setAttribute('aria-pressed', String(selected));
       button.classList.toggle('active', selected);
     }
@@ -206,13 +213,14 @@
     if (attached) return;
     attached = true;
     $('refNative').addEventListener('keydown', closeNested);
-    window.unifiedUI.onScope(() => { if (active) scopeLine(active); if(active==='comparison')compareDates(); });
+    window.unifiedUI.onScope(() => { if (active) scopeLine(active); if(active==='chartPanel') { singlePeriodChart=false; chartButtons(); } if(active==='comparison')compareDates(); });
   }
 
   function show(key) {
     if(active && active!==key)window.unifiedExtended.leaveDetail();
     if (key === 'chartPanel' && active !== 'chartPanel') {
       previousChart = window.unifiedUI.state.chart;
+      singlePeriodChart = false;
       chartButtons();
     } else if (key !== 'chartPanel' && previousChart !== null) {
       window.unifiedUI.state.chart = previousChart;
@@ -259,6 +267,11 @@
   }
 
   window.referenceDetail = Object.freeze({init, show, hide, currentComparison,
+    setChartPeriodCount(count) {
+      if (active !== 'chartPanel') return;
+      singlePeriodChart = count <= 1;
+      chartButtons();
+    },
     refreshChartCaption() { if (active === 'chartPanel') scopeLine(active); },
     refreshOverviewCaption() { if (active === 'overviewPanel') scopeLine(active); },
     get active() { return active; }});
