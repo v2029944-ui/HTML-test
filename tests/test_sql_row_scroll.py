@@ -159,6 +159,10 @@ class DesktopTablePager(unittest.TestCase):
         nav=p.locator('[data-sql-pager=rows]');choose=nav.locator('[data-page-action=choose]')
         choose.click();numbers=nav.locator('[data-page-number]')
         expect(numbers).to_have_count(200)
+        first, second = numbers.nth(0).bounding_box(), numbers.nth(1).bounding_box()
+        self.assertAlmostEqual(first['x'], second['x'], delta=1)
+        self.assertAlmostEqual(first['width'], second['width'], delta=1)
+        self.assertGreaterEqual(second['y'], first['y'] + first['height'])
         nav.locator('[data-page-number="7"]').click()
         expect(nav.locator('[data-page-range]')).to_have_text('Позиции 7–7 из 200')
         choose.click();choices=nav.locator('.sql-page-choices')
@@ -242,7 +246,8 @@ class DesktopTablePager(unittest.TestCase):
         self.assertEqual(p.evaluate('calls'),[0,4,0])
 
     def load_reference_filters(self):
-        p=self.page;p.set_content((TAURI/'reference-shell.html').read_text())
+        p=self.page
+        p.set_content((TAURI/'reference-shell.html').read_text() + '<select id="appearanceFilterPlacement"></select>')
         p.add_style_tag(path=str(TAURI/'reference-shell.css'))
         self.assets()
         p.evaluate("""()=>{
