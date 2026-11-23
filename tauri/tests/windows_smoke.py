@@ -862,7 +862,11 @@ def check_filtered_zero_chart(page, temporary, output):
     assert page.evaluate("window.unifiedUI.state.chart === 'bar'")
 
     viewport=page.viewport_size
-    initial=page.evaluate("({theme:document.documentElement.dataset.theme,size:document.documentElement.dataset.uiSize})")
+    initial=page.evaluate("""() => ({
+        theme:document.documentElement.dataset.theme,size:document.documentElement.dataset.uiSize,
+        rootTheme:document.getElementById('refRoot').dataset.theme,
+        rootSize:document.getElementById('refRoot').dataset.uiSize
+    })""")
     try:
         for width,height in ((390,844),(720,749),(1028,749),(1440,900)):
             page.set_viewport_size({'width':width,'height':height})
@@ -872,6 +876,9 @@ def check_filtered_zero_chart(page, temporary, output):
                         const root=document.documentElement;
                         root.dataset.theme=options.theme;
                         root.dataset.uiSize=options.size;
+                        const app=document.getElementById('refRoot');
+                        app.dataset.theme=options.theme;
+                        app.dataset.uiSize=options.size;
                     }''', {'theme':theme,'size':size})
                     geometry=page.evaluate('''() => {
                       const root=document.querySelector('#chartPanel');
@@ -896,7 +903,12 @@ def check_filtered_zero_chart(page, temporary, output):
                             assert item['scroll']<=item['width']+2,(width,size,theme,item)
             # Capture the entire visible chart panel, including legend and plot,
             # not just the control strip. The screenshots are attached to CI.
-            page.evaluate("() => { document.documentElement.dataset.theme='light'; document.documentElement.dataset.uiSize='standard'; }")
+            page.evaluate("""() => {
+                document.documentElement.dataset.theme='light';
+                document.documentElement.dataset.uiSize='standard';
+                document.getElementById('refRoot').dataset.theme='light';
+                document.getElementById('refRoot').dataset.uiSize='standard';
+            }""")
             if width in (390,720,1440):
                 page.locator('#chartPanel').screenshot(path=str(output/f'windows-chart-single-{width}.png'))
     finally:
@@ -904,6 +916,9 @@ def check_filtered_zero_chart(page, temporary, output):
         page.evaluate('''previous => {
             document.documentElement.dataset.theme=previous.theme;
             document.documentElement.dataset.uiSize=previous.size;
+            const root=document.getElementById('refRoot');
+            root.dataset.theme=previous.rootTheme;
+            root.dataset.uiSize=previous.rootSize;
         }''',initial)
     filters.locator('[data-filter="mode"]').get_by_role('button', name='Диапазон', exact=True).click()
     page.wait_for_function("() => window.referenceFilters.scope?.overviewMode === 'range'", timeout=90_000)
