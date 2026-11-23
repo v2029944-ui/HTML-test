@@ -23,13 +23,17 @@
   <section class="report-date-card" aria-labelledby="sum-base-title" data-base-card>
     <div class="report-date-heading">
       <h3 class="date-group-title" id="sum-base-title">Базовый период</h3>
-      <button type="button" class="filter-base-edit" aria-haspopup="dialog" aria-label="Изменить базовый период">Изменить</button>
+      <button type="button" class="filter-base-edit" aria-haspopup="dialog" aria-label="Выбрать начало базового периода">Выбрать даты</button>
     </div>
     <div class="report-date-values">
-      <div class="date-label-pair"><span class="date-section-label" data-base-start-label>С</span><span class="date-field-readout" data-base-start></span></div>
-      <div class="date-label-pair" data-base-end-field><span class="date-section-label">По</span><span class="date-field-readout" data-base-end></span></div>
+      <div class="date-label-pair"><span class="date-section-label" data-base-start-label>С</span><button type="button" class="date-field-trigger date-field-baseline" data-base-start aria-haspopup="dialog" title="Изменить начало базового периода"></button></div>
+      <div class="date-label-pair" data-base-end-field><span class="date-section-label">По</span><button type="button" class="date-field-trigger date-field-baseline" data-base-end aria-haspopup="dialog" title="Изменить конец базового периода"></button></div>
     </div>
     <small class="date-range-caption" data-base-duration></small>
+    <div class="baseline-quick-actions" role="group" aria-label="Быстрый выбор базы сравнения">
+      <button type="button" class="chip" data-baseline-quick="prev" title="Равный по длительности интервал непосредственно перед текущим">Предыдущий</button>
+      <button type="button" class="chip" data-baseline-quick="year" title="Аналогичный календарный период год назад">Год назад</button>
+    </div>
   </section>
   <section class="report-date-card" aria-labelledby="sum-current-title" data-current-card>
     <div class="report-date-heading">
@@ -47,7 +51,7 @@
   </section>
 </div>
 <div class="filter-options">
-<label class="lbl">Показатель<select class="sel" data-measure=""><option value="amount">Сумма</option><option value="count">Количество / объём</option></select></label>
+<label class="lbl" title="Применяется к сводке и анализу изменений. Подробные графики имеют собственный выбор показателей.">Показатель сводки / изменений<select class="sel" data-measure="" aria-description="Подробные графики имеют собственный выбор показателей"><option value="amount">Сумма</option><option value="count">Количество / объём</option></select></label>
 <label class="lbl">Подразделения<button aria-haspopup="dialog" class="filter-picker" data-pick="orgs" type="button">Все подразделения</button></label>
 <label class="lbl">Работы в детализации<button aria-haspopup="dialog" class="filter-picker" data-pick="works" type="button">Все работы</button></label>
 </div>
@@ -107,7 +111,7 @@
 <div class="title-row">
 <div><h1 style="margin:0 0 4px;font-size:30px">Анализ изменений</h1>
 <p class="report-range"></p></div>
-<button class="btn ghost">Как читать результаты?</button>
+<div class="changes-header-actions"><button type="button" class="btn secondary" id="referenceAdjacentHistory" title="Изменения каждой работы между последовательными периодами, с фильтрами и экспортом">История соседних периодов</button><button class="btn ghost">Как читать результаты?</button></div>
 </div><section aria-label="Сводка изменений" class="kind-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px">
 <button class="kpi"><div class="mut" style="font-size:13px;font-weight:600">Значительный рост</div><div class="num up" data-count="" style="font-size:36px;font-weight:700;margin:8px 0 4px">—</div><div class="mut" style="font-size:12px">работа × подразделение</div></button>
 <button class="kpi"><div class="mut" style="font-size:13px;font-weight:600">Значительное снижение</div><div class="num down" data-count="" style="font-size:36px;font-weight:700;margin:8px 0 4px">—</div><div class="mut" style="font-size:12px">работа × подразделение</div></button>
