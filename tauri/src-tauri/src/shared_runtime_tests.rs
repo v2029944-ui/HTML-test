@@ -502,3 +502,44 @@ fn personal_transfer_publishes_to_a_second_client_without_reimporting_excel() {
     let fresh=second.sync().unwrap();
     assert_eq!(read(&second,&fresh.workspace_token)["reports"][0]["id"],"from-excel");
 }
+
+#[test]
+fn personal_transfer_keeps_linked_wide_records_together_and_rebuilds_rows() {
+    let (_root,runtime)=runtime_fixture();
+    let initial=runtime.status().unwrap();
+    runtime.execute(Some(&initial.workspace_token),Access::Write,|s|s.save(json!({
+        "reports":[
+            {"id":"wide-parent","type":"day","start":"2024-03-01","end":"2024-03-01","rows":[
+                {"organization":"A","work":"Ремонт форсунок","count":2.5,"amount":300.75}
+            ]},
+            {"id":"wide-child","type":"day","start":"2024-03-01","end":"2024-03-01","rows":[
+                {"organization":"B","work":"Ремонт ТНВД","count":3,"amount":390}
+            ]}
+        ],"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}
+    }))).unwrap();
+    {
+        let state=runtime.state.lock().unwrap();
+        state.personal.connect().unwrap().execute(
+            "INSERT INTO report_source_diagnostic_links(report_id,anchor_id) VALUES('wide-child','wide-parent')",[]
+        ).unwrap();
+    }
+    let folder=tempfile::tempdir().unwrap();
+    let shared=connect(&runtime,folder.path());
+    let preview=runtime.preview_personal_transfer(Some(&shared.workspace_token),0).unwrap();
+    assert_eq!(preview.rows.len(),2);
+    assert!(runtime.apply_personal_transfer(
+        Some(&shared.workspace_token),preview.source_revision,preview.target_revision,
+        vec!["wide-child".into()]
+    ).unwrap_err().contains("Связанные диагностические"));
+    assert_eq!(runtime.status().unwrap().generation,Some(0));
+    runtime.apply_personal_transfer(
+        Some(&shared.workspace_token),preview.source_revision,preview.target_revision,
+        vec!["wide-child".into(),"wide-parent".into()]
+    ).unwrap();
+    let state=runtime.state.lock().unwrap();
+    let conn=state.checkout.as_ref().unwrap().storage.connect().unwrap();
+    let n:i64=conn.query_row("SELECT COUNT(*) FROM report_rows WHERE report_id IN ('wide-child','wide-parent')",[],|r|r.get(0)).unwrap();
+    assert_eq!(n,2);
+    let links:i64=conn.query_row("SELECT COUNT(*) FROM report_source_diagnostic_links WHERE report_id='wide-child' AND anchor_id='wide-parent'",[],|r|r.get(0)).unwrap();
+    assert_eq!(links,1);
+}
