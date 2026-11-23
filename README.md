@@ -1,10 +1,10 @@
 # Анализ работ — Tauri для Windows
 
-## Выпуск 1.11.1 для Windows x64
+## Выпуск 1.12.0 для Windows x64
 
-[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.11.1/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.11.1/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.11.1](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.11.1)
+[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.0/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.0/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.12.0](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.12.0)
 
-Обновление до 1.11.1 доступно через «Настройки → Проверить обновления». [Ход разработки и оставшиеся задачи](docs/ROADMAP.md).
+Обновление до 1.12.0 доступно через «Настройки → Проверить обновления». [Ход разработки и оставшиеся задачи](docs/ROADMAP.md).
 
 В «Настройки → Оформление» доступны пять масштабов интерфейса (80%, 90%, 100%, около 115% и около 130%). В окне шириной от 1280 пикселей фильтр можно закрепить слева. При переключении вкладок подробной аналитики, разделов отчётов и года в календаре сохраняется положение страницы. [Подключение сотрудников](tauri/README.md#общая-база-сотрудников)
 
