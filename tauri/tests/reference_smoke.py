@@ -437,7 +437,8 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         panel('chartPanel')
         sections = [('Состав работ', 'structurePanel'), ('Сравнение', 'comparison'),
                     ('Отклонения', 'usualPanel'), ('Частота', 'regularityPanel'),
-                    ('Итоги и рейтинги', 'overviewPanel'), ('Соседние периоды', 'changes'), ('Динамика', 'chartPanel')]
+                    ('Динамика', 'chartPanel')]
+        assert page.locator('#toolsPage .tool-tabs button').count() == 5
         for title, target in sections:
             check_position = switch_in_place(page.locator('#toolsPage .tool-tabs').get_by_role('button', name=title, exact=True),
                                              keyboard=target == 'comparison')
@@ -614,14 +615,15 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         focused(settings)
 
         if has_reports:
-            page.locator('#sharedHeader .main-nav button').first.click()
-            analytics = page.locator('#refAnalytics')
-            analytics.click()
-            page.locator('.tool-tabs [data-section="overviewPanel"]').click()
-            panel('overviewPanel')
-            record('09-rankings', page.locator('#overviewPanel'))
-            page.locator('.tool-tabs [data-section="changes"]').click()
-            expect(page.locator('#changes')).to_be_visible()
+            # No duplicate summary in the detail tabs. Adjacent-period history
+            # is available directly from the primary Changes screen.
+            page.locator('#sharedHeader .main-nav button').nth(1).click()
+            expect(page.locator('#s2')).to_be_visible()
+            history_button=page.locator('#referenceAdjacentHistory')
+            expect(history_button).to_be_visible()
+            history_button.click()
+            panel('changes')
+            expect(page.locator('#toolsPage .tool-tabs')).to_be_hidden()
             latest = page.evaluate('''() => window.desktopAPI.unifiedPeriodOptions(
               window.unifiedUI.revision, 'day', null, null, 1)''')['max']
             assert latest, 'The real daily import must provide a latest report date'
@@ -639,7 +641,9 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
             expect(work).to_be_visible(timeout=TIMEOUT)
             history_close(work, 'changeDetails', 'changeDetailContent', 'closeChangeDetails', '09-native-change-history')
             panel('changes')
-            close_panel(analytics)
+            record('09-adjacent-history', page.locator('#changes'))
+            close_panel(history_button)
+            page.locator('#sharedHeader .main-nav button').first.click()
         settings.click()
         panel('storage')
         settings.click()
