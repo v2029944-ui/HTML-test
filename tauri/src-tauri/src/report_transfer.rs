@@ -13,6 +13,8 @@ use std::{
 
 const TRANSFER_PAGE: usize = 25;
 const MAX_REPORT_BYTES: usize = 16 * 1024 * 1024;
+// Batch JSON is decoded and indexed in one transaction; cap cumulative input.
+const MAX_BATCH_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -227,6 +229,7 @@ impl Storage {
 
         // Validate all selected records before taking the target backup or writing.
         let mut batch = Vec::with_capacity(selected_ids.len());
+        let mut batch_bytes = 0usize;
         for id in selected_ids {
             let row: Option<(String,String,String,Option<String>,Vec<u8>)> = source.query_row(
                 "SELECT report_type,period_start,period_end,source_name,CAST(json AS BLOB) FROM reports WHERE id=?1",
@@ -238,6 +241,10 @@ impl Storage {
             }
             if bytes.len() > MAX_REPORT_BYTES {
                 return Err(format!("Отчёт {id} слишком велик для выборочного переноса (16 МиБ)."));
+            }
+            batch_bytes = batch_bytes.checked_add(bytes.len()).ok_or("Размер переносимых отчётов слишком велик.")?;
+            if batch_bytes > MAX_BATCH_BYTES {
+                return Err("Выбранные отчёты превышают 64 МиБ. Выберите меньше отчётов и повторите перенос.".into());
             }
             if overlap(&dest,id,&kind,&start,&end)? {
                 return Err(format!("Период отчёта {id} уже представлен в общей базе. Ничего не изменено."));
