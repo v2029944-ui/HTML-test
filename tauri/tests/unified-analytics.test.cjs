@@ -12,9 +12,10 @@ test('generated Tauri charts use readable patterns and bars for a single departm
  assert.match(built,/bar=state\.chart==='bar'\|\|periods\.length===1/);
  assert.match(built,/pattern=svgEl\('pattern',\{id,width:8,height:8,patternUnits:'userSpaceOnUse'\}\)/);
  assert.match(built,/svgEl\('circle',\{cx:4,cy:4,r:2\.2,fill:color\}\)/);
- assert.ok(generated.html.includes('<option value="selected">Отмеченные работы / группы</option>'));
- assert.ok(generated.html.includes('<option value="separate">Отдельно — исходные числа</option>'));
- assert.ok(generated.html.includes('<option value="combined">Вместе — % от максимума</option>'));
+ assert.ok(generated.html.includes('<option value="organizations">Подразделения</option>'));
+ assert.ok(generated.html.includes('<option value="selected">Отмеченные</option>'));
+ assert.ok(generated.html.includes('<option value="separate">Отдельно (значения)</option>'));
+ assert.ok(generated.html.includes('<option value="combined">Вместе (% макс.)</option>'));
 });
 class Element{
  constructor(tag='div',text=''){this.tagName=tag.toUpperCase();this.children=[];this._text=text??'';this.value='';this.dataset={};this.listeners={};this.hidden=false;this.open=false;this.checked=false;this.classList={toggle(){}};}
