@@ -550,6 +550,8 @@ impl Stage<'_> {
         let mut work = BTreeMap::<u32, BTreeSet<u32>>::new();
         let mut pairs = BTreeMap::<u32, Vec<u32>>::new();
         let mut totals = BTreeMap::<u32, u32>::new();
+        let mut quantity_columns = BTreeMap::<u32, Vec<u32>>::new();
+        let mut amount_rows = BTreeSet::new();
         let mut quantity = None;
         while let Some(row) = rows.next()? {
             let r: u32 = row.get(0)?;
@@ -562,6 +564,8 @@ impl Stage<'_> {
             if quantity == Some((r, c - 1)) && p.amount.is_match(&value) {
                 pairs.entry(r).or_default().push(c - 1);
             }
+            if p.quantity.is_match(&value) { quantity_columns.entry(r).or_default().push(c); }
+            if p.amount.is_match(&value) { amount_rows.insert(r); }
             quantity = p.quantity.is_match(&value).then_some((r, c));
         }
         let mut hint = None;
@@ -578,7 +582,43 @@ impl Stage<'_> {
             if next.is_none() || hint.is_some_and(|prior| Some(prior) != next) { return Ok(None); }
             hint = next;
         }
-        Ok(hint)
+        if hint.is_some() { return Ok(hint); }
+        // Count-only sheets have a work-name column and dated quantity columns,
+        // but *no* amount column. Do not reinterpret the following date's
+        // quantity as an amount: the numeric result would be plausible and wrong.
+        let date1904 = self.uses_1904_epoch()?;
+        let never_cancel = AtomicBool::new(false);
+        for (header, columns) in quantity_columns {
+            if header <= 1 || columns.len() < 2 || amount_rows.contains(&header) {
+                continue;
+            }
+            let Some(labels) = work.get(&header) else { continue; };
+            if labels.len() != 1 { continue; }
+            let work_col = *labels.iter().next().unwrap();
+            if work_col >= columns[0] || !columns.windows(2).all(|pair| pair[1] == pair[0] + 1) {
+                continue;
+            }
+            let info = Info { work: work_col, header, pairs: Vec::new(), totals: None };
+            let mut dated = 0usize;
+            let mut previous = None;
+            for col in columns {
+                // A final "Итого" column may also be labelled "Количество";
+                // it is not a dated observation.
+                let Some(date) = self.column_date(sheet, &info, col, "detect-day",
+                    date1904, &p, &never_cancel)? else { continue; };
+                if date.month_only { continue; }
+                let parts = date.parts;
+                let Some(day) = parts.year.and_then(|year|
+                    NaiveDate::from_ymd_opt(year, parts.month, parts.day)) else { continue; };
+                if previous.is_some_and(|old| day <= old) {
+                    return Err(fail("Даты в столбцах «Количество» повторяются или идут не по порядку."));
+                }
+                previous = Some(day);
+                dated += 1;
+            }
+            if dated >= 2 { return Ok(Some("count-only")); }
+        }
+        Ok(None)
     }
 
     /// Old auto rules apply their kind and start to ordinary blocks. A shared
