@@ -46,11 +46,11 @@ pub struct TransferReceipt {
     pub backup_path: String,
 }
 
-fn overlap(conn: &rusqlite::Connection, id: &str, start: &str, end: &str) -> Result<bool, String> {
+fn overlap(conn: &rusqlite::Connection, id: &str, kind: &str, start: &str, end: &str) -> Result<bool, String> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM reports
-          WHERE id=?1 OR (period_start<=?2 AND period_end>=?3))",
-        params![id, end, start], |r| r.get(0),
+          WHERE id=?1 OR (report_type=?2 AND period_start<=?3 AND period_end>=?4))",
+        params![id, kind, end, start], |r| r.get(0),
     ).map_err(err)
 }
 
@@ -95,7 +95,7 @@ impl Storage {
         let mut rows = Vec::new();
         for row in iter {
             let mut row = row.map_err(err)?;
-            row.status = if overlap(&dest,&row.id,&row.start,&row.end)? { "conflict" } else { "ready" }.into();
+            row.status = if overlap(&dest,&row.id,&row.report_type,&row.start,&row.end)? { "conflict" } else { "ready" }.into();
             rows.push(row);
         }
         Ok(TransferPreview {
@@ -141,7 +141,7 @@ impl Storage {
             if bytes.len() > MAX_REPORT_BYTES {
                 return Err(format!("Отчёт {id} слишком велик для выборочного переноса (16 МиБ)."));
             }
-            if overlap(&dest,id,&start,&end)? {
+            if overlap(&dest,id,&kind,&start,&end)? {
                 return Err(format!("Период отчёта {id} уже представлен в общей базе. Ничего не изменено."));
             }
             let mut json: Value = serde_json::from_slice(&bytes).map_err(err)?;
@@ -201,7 +201,7 @@ impl Storage {
         // Recheck every conflict BEFORE inserting any selected report. Multiple
         // source reports from the SAME period are allowed in one verified batch.
         for item in &batch {
-            if overlap(&tx,&item.id,&item.start,&item.end)? {
+            if overlap(&tx,&item.id,&item.kind,&item.start,&item.end)? {
                 return Err("Общая база изменилась или содержит конфликт. Повторите предпросмотр.".into());
             }
         }
