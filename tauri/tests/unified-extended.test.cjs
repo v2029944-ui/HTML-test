@@ -309,19 +309,19 @@ test('reference comparison uses exact shared intervals and excludes unavailable 
  f.window.referenceDetail.active='storage';await assert.rejects(exportView.export(),/изменились/);assert.equal(exports.length,1);
 });
 
-test('reference regularity sends the chosen calendar-day baseline and never calculates an empty sample as all organizations',async()=>{
+test('reference regularity retains incomplete organizations and matches the chosen monthly unit',async()=>{
  const calls=[];
  const f=fixture({
-  nativeAnalysisOrganizations:async()=>[{org:'A',complete:false,missing:1}],
-  unifiedPatternPage:async(...args)=>{calls.push(args);return {rows:[],total_rows:0};}
+  nativeAnalysisOrganizations:async()=>{throw Error('Do not exclude entire organization');},
+  unifiedPatternPage:async(...args)=>{calls.push(args);return {rows:[],total_rows:0,used:0,expected:1,previous_used:1,current_complete:false};}
  });
  f.window.referenceDetail={active:'regularityPanel'};
  f.publish({from:'2024-02-01',to:'2024-02-29',displayType:'month',baseFrom:'2023-02-01',baseTo:'2023-02-28'});
  f.nodes.get('regularityPanel').open=true;f.nodes.get('regularityPanel').dispatch('toggle');await settle();
- assert.equal(calls.length,0);assert.match(f.nodes.get('regularityCoverage').textContent,/Нет сопоставимых подразделений/);
- f.UI.api.nativeAnalysisOrganizations=async()=>[{org:'A',complete:true,missing:0}];
- f.nodes.get('regularityPanel').dispatch('toggle');await settle();
- assert.equal(calls.length,1);assert.equal(calls[0][0].displayType,'day');assert.deepEqual({...calls[0][3].baseline},{from:'2023-02-01',to:'2023-02-28'});
+ assert.equal(calls.length,1);
+ assert.equal(calls[0][0].displayType,'month');
+ assert.deepEqual({...calls[0][3].baseline},{from:'2023-02-01',to:'2023-02-28'});
+ assert.match(f.nodes.get('regularityCoverage').textContent,/Полных периодов анализа: 0 из 1/);
 });
 
 test('reference comparison and its CSV use the same three of four organizations for either incomplete interval and zero base',async()=>{
@@ -553,4 +553,29 @@ test('adjacent change table and leader keep a rounded-zero change neutral and id
  assert.equal(direction.textContent,'≈ без изменений');assert.equal(direction.className,'');
  const leader=f.nodes.get('changesSummary').children.at(-1);
  assert.match(leader.textContent,/Ремонт \(группа\)/);assert.equal(leader.children[1].className,'');
+});
+
+test('contribution detail respects the selected work scope used by its parent comparison',async()=>{
+ const contributions=[],period={complete:true,periods:1,missing:0,total:{count:3,amount:30,average:10}};
+ const f=fixture({
+  nativeAnalysisOrganizations:async()=>[{org:'A',...period}],
+  nativeAnalysisCompare:async()=>({summary:{before:period,after:period}}),
+  unifiedComparisonWindow:async()=>({rows:[],total_rows:0}),
+  nativeCompositionPageAtPage:async request=>{
+   contributions.push(request);
+   return {rows:[],total_rows:0,baseComplete:true,currentComplete:true,check:{sum:0,delta:0,reconciled:true}};
+  }
+ });
+ f.window.referenceDetail={active:'comparison',currentComparison:()=>({
+  before:{from:'2024-01-01',to:'2024-01-01'},after:{from:'2024-01-02',to:'2024-01-02'}
+ })};
+ f.publish();f.nodes.get('contributions').open=true;
+ await f.window.unifiedExtended.openComparison();await settle();
+ assert.ok(contributions.length);
+ assert.deepEqual(Array.from(contributions[0].selectedNames),['Work']);
+ assert.match(f.nodes.get('contributionCheck').textContent,/отмеченные работы/);
+ f.publish({allNames:true,selectedNames:[],selectedKeys:[]});
+ await f.window.unifiedExtended.openComparison();await settle();
+ assert.deepEqual(Array.from(contributions.at(-1).selectedNames),[]);
+ assert.match(f.nodes.get('contributionCheck').textContent,/все работы/);
 });
