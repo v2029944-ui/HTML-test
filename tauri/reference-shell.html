@@ -15,15 +15,22 @@
 <summary><strong>Периоды и фильтры</strong><span class="filter-summary"></span></summary>
 <div class="filter-content">
 <div class="filter-periods">
-<div class="lbl">Тип периода<div aria-label="Тип периода" class="seg" data-filter="type" role="group"><button>День</button><button>Неделя</button><button>Месяц</button><button>Год</button></div></div>
-<div class="lbl">Режим<div aria-label="Режим выбора периода" class="seg" data-filter="mode" role="group"><button>Один период</button><button>Диапазон</button></div></div>
+<label class="lbl">Период<select class="sel" data-period-selection>
+  <optgroup label="Один период">
+    <option value="day:single">День</option><option value="week:single">Неделя</option>
+    <option value="month:single">Месяц</option><option value="year:single">Год</option>
+  </optgroup>
+  <optgroup label="Диапазон периодов">
+    <option value="day:range">Диапазон дней</option><option value="week:range" selected>Диапазон недель</option>
+    <option value="month:range">Диапазон месяцев</option><option value="year:range">Диапазон лет</option>
+  </optgroup>
+</select></label>
 <div class="lbl"><label for="sum-base">База сравнения</label><select class="sel ref-baseline" data-compare="" id="sum-base"></select></div>
 </div>
 <div class="report-dates unified-date-scope">
   <section class="report-date-card" aria-labelledby="sum-base-title" data-base-card>
     <div class="report-date-heading">
       <h3 class="date-group-title" id="sum-base-title">Базовый период</h3>
-      <button type="button" class="filter-base-edit" aria-haspopup="dialog" aria-label="Выбрать начало базового периода">Выбрать даты</button>
     </div>
     <div class="report-date-values">
       <div class="date-label-pair"><span class="date-section-label" data-base-start-label>С</span><button type="button" class="date-field-trigger date-field-baseline" data-base-start aria-haspopup="dialog" title="Изменить начало базового периода"></button></div>

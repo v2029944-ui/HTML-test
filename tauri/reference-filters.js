@@ -4,7 +4,6 @@
 const C=window.referenceCalendar,UI=window.unifiedUI;
 const kinds=['day','week','month','year'];
 const baselines=[['prev','Предыдущий равный период'],['prevWeek','Прошлая неделя'],['prevMonth','Прошлый месяц'],['year','Тот же период год назад'],['custom','Свой период…']];
-const calendarMonth=new Intl.DateTimeFormat('ru-RU',{month:'long',year:'numeric',timeZone:'UTC'});
 const plural=new Intl.PluralRules('ru');
 const panel=document.getElementById('reportShell');
 const one=selector=>panel.querySelector(selector),many=selector=>[...panel.querySelectorAll(selector)];
@@ -114,17 +113,14 @@ function chooseDate(target,anchor){
   publish();
  }});
 }
-function fieldGroups(selector,active,options){
- many(selector+' button').forEach((b,i)=>{const on=active===options[i];b.classList.toggle('on',on);b.setAttribute('aria-pressed',String(on));});
-}
 function paint(lo,hi){
  const range=mode==='range',caption=interval(from,to);
- fieldGroups('[data-filter="type"]',kind,kinds);fieldGroups('[data-filter="mode"]',mode,['single','range']);
+ one('[data-period-selection]').value=kind+':'+mode;
  one('.report-dates').classList.toggle('single-date',!range);
  for(const key of ['[data-start-label]','[data-base-start-label]'])one(key).textContent=range?'С':'Период';
  for(const key of ['[data-end-field]','[data-base-end-field]','[data-base-duration]','.period-duration'])one(key).hidden=!range;
  const current=one('[data-date=start]'),end=one('[data-date=end]');
- current.textContent=range?C.stamp(from):kind==='year'?from.slice(0,4):kind==='month'?calendarMonth.format(C.dateOf(from)):caption;
+ current.textContent=range?C.stamp(from):caption;
  end.textContent=C.stamp(to);current.setAttribute('aria-label',(range?'Начало диапазона':'Выбрать период')+', '+current.textContent);end.setAttribute('aria-label','Конец диапазона, '+end.textContent);
  one('.period-duration').textContent=range?duration(from,to):'';
  const baseStart=one('[data-base-start]'),baseEnd=one('[data-base-end]');
@@ -311,7 +307,7 @@ async function readBounds(snap){
 function setBoundsPending(busy){
  boundsPending=busy;
  const blocked=busy||boundsFailed||!snapshot;
- for(const b of [...many('[data-date]'),...many('[data-shift]'),...many('[data-filter=mode] button'),...many('[data-baseline-quick]'),one('.filter-base-edit'),one('[data-base-start]'),one('[data-base-end]'),one('[data-compare]')])b.disabled=blocked;
+ for(const b of [...many('[data-date]'),...many('[data-shift]'),one('[data-period-selection]'),...many('[data-baseline-quick]'),one('[data-base-start]'),one('[data-base-end]'),one('[data-compare]')])b.disabled=blocked;
  if(blocked)for(const b of many('.quick-actions button'))b.disabled=true;
  const retry=one('[data-retry-periods]');retry.hidden=!boundsFailed;retry.disabled=busy;
  for(const id of [...detailPanels,'analyticsDetails','changeDetails']){
@@ -337,15 +333,20 @@ function reset(){
  allNames=true;nameRows.clear();orgs=new Set(orgNames);allOrgs=true;
  dates(latestDay||today());return boundsPending&&snapshot?readBounds(snapshot):publish();
 }
-function setKind(value){
- if(kind===value)return;
- kind=value;
- if(kind==='year')source='daily';
- if(!allowRule(rule))rule='prev';
- if(custom)custom=filterPeriod(custom)[0];
- customEnd=null;
+function setPeriodSelection(value){
+ const [unit,selectionMode]=value.split(':');
+ if(!kinds.includes(unit)||!['single','range'].includes(selectionMode)||boundsPending||boundsFailed)return;
+ const unitChanged=kind!==unit;
+ if(!unitChanged&&mode===selectionMode)return;
+ kind=unit;mode=selectionMode;
+ if(unitChanged){
+  if(kind==='year')source='daily';
+  if(!allowRule(rule))rule='prev';
+  if(custom)custom=filterPeriod(custom)[0];
+  customEnd=null;
+ }
  dates(from,to);
- if(snapshot&&(source==='imported'||boundsPending))return readBounds(snapshot);
+ if(unitChanged&&snapshot&&source==='imported')return readBounds(snapshot);
  return publish();
 }
 function sourceChanged(){
@@ -453,11 +454,9 @@ function init(){
  compare.onchange=()=>{if(compare.value==='custom'){compare.value=rule;chooseDate('base',compare);}else{rule=compare.value;customEnd=null;publish();}};
  for(const button of many('[data-baseline-quick]'))button.onclick=()=>{if(!allowRule(button.dataset.baselineQuick))return;rule=button.dataset.baselineQuick;customEnd=null;publish();};
  initPlacement();
- many('[data-filter=type] button').forEach((b,i)=>b.onclick=()=>setKind(kinds[i]));
- many('[data-filter=mode] button').forEach((b,i)=>b.onclick=()=>{mode=i?'range':'single';dates(from,to);publish();});
+ const period=one('[data-period-selection]');period.onchange=()=>setPeriodSelection(period.value);
  many('[data-date]').forEach(b=>b.onclick=()=>chooseDate(b.dataset.date,b));
  many('[data-shift]').forEach(b=>b.onclick=()=>shift(Number(b.dataset.shift)));
- const edit=one('.filter-base-edit');edit.onclick=()=>chooseDate('base',edit);
  const start=one('[data-base-start]'),end=one('[data-base-end]');
  start.onclick=()=>chooseDate('base',start);end.onclick=()=>chooseDate('baseEnd',end);
  const measure=one('[data-measure]');measure.onchange=()=>setMetric(measure.value);

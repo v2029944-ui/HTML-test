@@ -12,7 +12,7 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect
 from reference_control_layout import check_control_layout
 from reference_shell_layout import check_filter_placement, check_shell_layout
 from reference_table_help import check_table_help
-from reference_data_smoke import choose_calendar_date
+from reference_data_smoke import choose_calendar_date, select_filter_period
 from shared_period_controls import common_period
 
 
@@ -418,8 +418,10 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         page.locator('#unifiedYearDetails > summary').click()
         year_trigger = page.locator('#dailyYear + .ref-calendar-field')
         calendar(year_trigger, '05-wide-year', 'years')
-        page.locator('#importFormat').select_option('legacy')
-        page.locator('#importType').select_option('day')
+        layout.select_option('legacy')
+        for kind in ('week', 'month', 'day'):
+            page.locator('#importType').select_option(kind)
+            expect(layout.locator('option[value="legacy"]')).to_have_text('Свои для каждого периода')
         date_trigger = page.locator('#importWeek + .ref-calendar-field')
         calendar(date_trigger, '06-import-day', 'days')
         record('07-import', page.locator('#toolsPage'))
@@ -671,15 +673,11 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         fold = page.locator('#reportShell details')
         if not fold.evaluate('(node) => node.open'):
             fold.locator(':scope > summary').click()
-        types = page.locator('#reportShell [data-filter="type"]')
-        modes = page.locator('#reportShell [data-filter="mode"]')
-        types.get_by_role('button', name='День', exact=True).click()
-        modes.get_by_role('button', name='Диапазон', exact=True).click()
+        select_filter_period(fold, 'День', 'range')
         calendar(page.locator('#reportShell [data-date="start"]'), '10-shared-day', 'days', commit=True)
         for name, mode in [('Неделя', 'days'), ('Месяц', 'months'), ('Год', 'years')]:
-            types.get_by_role('button', name=name, exact=True).click()
+            select_filter_period(fold, name, 'range')
             calendar(page.locator('#reportShell [data-date="start"]'), '11-shared-' + mode + '-' + name, mode)
-        calendar(page.locator('#reportShell .filter-base-edit'), '12-baseline', 'years')
         base_start=page.locator('#reportShell [data-base-start]')
         base_end=page.locator('#reportShell [data-base-end]')
         expect(base_start).to_be_visible()

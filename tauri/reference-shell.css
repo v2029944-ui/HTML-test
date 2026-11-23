@@ -133,15 +133,14 @@
 .filter-date .btn::before{content:'';display:inline-block;vertical-align:-2px;width:13px;height:13px;margin-right:6px;background:currentColor;opacity:.72;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.8'%3E%3Crect x='3.5' y='5.5' width='17' height='15' rx='2'/%3E%3Cpath d='M7.5 3v5m9-5v5M4 10.5h16'/%3E%3C/svg%3E") center/contain no-repeat}
 .report-filter .filter-dates button.filter-shift{font-size:21px!important}
 .filter-dates .period-duration{grid-column:2/-2}
-.report-filter :is(.filter-base-note,.period-duration,.filter-base-edit){margin:0;font-size:11px;color:#adbbca;font-variant-numeric:tabular-nums;line-height:1.35;font-weight:450}
-:is(#s1,#s2,#sharedHeader,#reportShell) .report-filter .filter-base-edit{align-self:start;border:0;padding:0;background:none;color:var(--filter-accent);font-size:11px;cursor:pointer;text-align:left}
+.report-filter :is(.filter-base-note,.period-duration){margin:0;font-size:11px;color:#adbbca;font-variant-numeric:tabular-nums;line-height:1.35;font-weight:450}
 .filter-shortcuts,.quick-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .filter-shortcuts{padding-top:10px;border-top:1px solid #34404d;color:#afbdcb;font-size:12px;gap:6px 12px}
 :is(#s1,#s2,#sharedHeader,#reportShell) .report-filter .chip,:is(#s1,#s2,#sharedHeader,#reportShell) .filter-threshold{min-height:29px;padding:4px 10px;border-radius:6px;border:1px solid #394659;background:#232c37;font:inherit;color:#d1dce8;cursor:pointer}
 :is(#s1,#s2,#sharedHeader,#reportShell) .report-filter .chip:hover,:is(#s1,#s2,#sharedHeader,#reportShell) .filter-threshold:hover{background:#303c4a}
 :is(#s1,#s2,#sharedHeader,#reportShell) .report-filter .chip[aria-pressed="true"]{border-color:#847145;color:#f2d575;background:#2d2a22}
 :is(#s1,#s2,#sharedHeader,#reportShell) .report-filter .filter-reset{margin-left:auto;border:0;background:transparent;padding:5px 2px;color:#c3cfdb;font:inherit;cursor:pointer;min-height:29px}
-.filter-base-edit:hover,.filter-reset:hover{text-decoration:underline}
+.filter-reset:hover{text-decoration:underline}
 .filter-sensitivity{gap:8px}
 #sheet .filter-list-dialog{display:grid;gap:12px}
 #sheet .filter-list-dialog p{margin:0}
@@ -424,12 +423,6 @@
 .report-dates .report-date-heading {min-height:24px;justify-content:space-between}
 .report-date-heading .date-group-title {margin:0}
 .report-dates .date-shifts {gap:4px;flex:none}
-:is(#s1,#s2,#sharedHeader,#reportShell) .report-dates .report-date-heading .filter-base-edit {
-  display:inline-flex;align-items:center;justify-content:center;align-self:auto;min-height:24px;
-  padding:0 4px;line-height:1.2;font-family:inherit;font-size:13px;font-weight:600;
-  background:transparent;border:0;border-radius:6px;color:#ffda71;cursor:pointer;
-}
-:is(#s1,#s2,#sharedHeader,#reportShell) .report-dates .report-date-heading .filter-base-edit:hover {background:#373324;text-decoration:none}
 :is(#s1,#s2,#sharedHeader,#reportShell) .report-dates .date-shifts .filter-shift {
   display:grid;place-items:center;flex:none;width:26px!important;min-width:26px!important;
   height:24px;min-height:24px;padding:0;box-sizing:border-box;border-radius:7px;line-height:1;
@@ -672,7 +665,6 @@
 }
 .period-calendar {font-size:var(--picker-font,13px)}
 .report-dates .report-date-card {border-radius:8px}
-:is(#s1,#s2,#sharedHeader,#reportShell) .report-dates .report-date-heading .filter-base-edit {font:600 var(--date-label-font)/1.2 var(--date-family)}
 
 
 
@@ -1045,10 +1037,10 @@ body:has(#refRoot)>footer {display:none}
 #reportShell .report-dates .date-group-title {color:var(--text,#e8edf4)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader,#toolsPage,#sheet,.period-calendar) {color:var(--text);background:var(--bg)}
 #refRoot[data-theme="light"] :is(.app-header,.tools-column header) {background:var(--surface)!important;border-color:var(--border)}
-#refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader) :is(.card,.kpi,.sel,.btn,.filter-picker,.filter-shift,.chip,.change-metrics button,.filter-threshold,.filter-base-edit,.filter-reset) {color:var(--text);border-color:var(--field-border);background:var(--surface)}
+#refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader) :is(.card,.kpi,.sel,.btn,.filter-picker,.filter-shift,.chip,.change-metrics button,.filter-threshold,.filter-reset) {color:var(--text);border-color:var(--field-border);background:var(--surface)}
 #refRoot[data-theme="light"] #reportShell .filter-summary {color:var(--muted)}
 #refRoot[data-theme="light"] :is(#s1,#s2) .report-range a[href="#reportShell"] {color:var(--accent)}
-#refRoot[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) :is(.app-header nav button[aria-current="page"],.app-header nav button:hover,.filter-base-edit,.analytics-trigger,.edit-dates-link) {color:var(--accent)}
+#refRoot[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) :is(.app-header nav button[aria-current="page"],.app-header nav button:hover,.analytics-trigger,.edit-dates-link) {color:var(--accent)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) :is(button.pri,button.on,button[aria-pressed="true"]:not(.kpi)) {background:var(--accent-fill);color:var(--on-accent)}
 #refRoot[data-theme="light"] :is(#s1,#s2) :is(th,.quality-notice) {background:var(--subtle)!important;border-color:var(--border)!important;color:var(--text)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#reportShell) :is(.lbl,.mut,.metric-name,.leader-name,.metric-delta.neutral,.quality-notice span,.insight-card p,.excluded-orgs,.match-note,.table-empty,.table-empty strong) {color:var(--muted)!important}

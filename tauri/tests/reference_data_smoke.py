@@ -131,6 +131,11 @@ def _check_trend_exports(page, scratch, scope, evidence):
     evidence['csv']['referenceTrendCsv'] = checks
 
 
+def select_filter_period(container, unit, mode):
+    units = {'День': 'day', 'Неделя': 'week', 'Месяц': 'month', 'Год': 'year'}
+    container.locator('[data-period-selection]').select_option(f'{units[unit]}:{mode}')
+
+
 def choose_calendar_date(page, trigger, value):
     trigger.click()
     dialog = page.locator('dialog.period-calendar[open]')
@@ -200,9 +205,7 @@ def check_reference_data(page, output):
 
     def select_period(unit, start, end=None, baseline='prev'):
         fold()
-        page.locator('#reportShell [data-filter="type"]').get_by_role('button', name=unit, exact=True).click()
-        page.locator('#reportShell [data-filter="mode"]').get_by_role(
-            'button', name='Диапазон' if end else 'Один период', exact=True).click()
+        select_filter_period(page.locator('#reportShell'), unit, 'range' if end else 'single')
         choose_calendar_date(page, page.locator('#reportShell [data-date="start"]'), start)
         settled()
         if end:
