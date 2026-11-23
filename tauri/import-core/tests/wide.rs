@@ -908,3 +908,37 @@ fn classic_auto_rule_requires_daily_evidence_and_accepts_late_headers() {
         assert_eq!(stage.classic_daily_workbook(&stage.sheet_names().unwrap(), &organizations, &cancel).unwrap(), classic);
     }
 }
+
+#[test]
+fn dated_quantity_only_columns_are_not_treated_as_amount_columns() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("quantities.xlsx");
+    let rows = vec![
+        vec!["Подразделение", "05.01.2026", "06.01.2026", "07.01.2026", "Итого"],
+        vec!["Работа, № по каталогу", "Количество", "Количество", "Количество", "Количество"],
+        vec!["СМУ16", "1", "2", "3", "6"],
+        vec!["Работа A", "1", "2", "3", "6"],
+    ];
+    book(&path, &rows, "", "xl/worksheets/sheet1.xml");
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut stage = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+    let sheet = stage.sheet_names().unwrap().pop().unwrap().1;
+    // Format discovery must work before wide_setup has created date_styles.
+    assert_eq!(stage.worksheet_layout(&sheet).unwrap(), Some("count-only"));
+    let error = stage.convert_wide(&WideOptions::default(), cancel, |_| {}).unwrap_err().to_string();
+    assert!(error.contains("только «Количество»"), "{error}");
+    assert!(error.contains("Данные не сохранены"), "{error}");
+}
+
+#[test]
+fn paired_quantity_and_amount_headers_keep_the_existing_daily_layout() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("paired.xlsx");
+    book(&path, &rows(), MERGES, "xl/worksheets/sheet1.xml");
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let stage = area.ingest(&path, Limits::default(), &cancel, |_| {}).unwrap();
+    let sheet = stage.sheet_names().unwrap().pop().unwrap().1;
+    assert_eq!(stage.worksheet_layout(&sheet).unwrap(), Some("daily-wide"));
+}
