@@ -9,6 +9,6 @@ fn main() {
     let total = store.aggregate(revision, &ReadFilter::default()).unwrap();
     println!(
         "revision={revision} indexed_rows={rows} aggregate_rows={} amount={}",
-        total.rows, total.amount
+        total.rows, total.amount.map_or_else(|| "unknown".into(), |amount| amount.to_string())
     );
 }

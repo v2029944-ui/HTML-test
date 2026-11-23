@@ -74,7 +74,7 @@ fn main() {
         .analysis_changes_summary(rev, &scope, &changes)
         .unwrap();
     assert_eq!(totals.rows, n);
-    assert_eq!(totals.amount.current, (2 * n) as f64);
+    assert_eq!(totals.amount.unwrap().current, (2 * n) as f64);
     assert_eq!(
         store
             .analysis_changes_page(rev, &scope, &changes, None, 1)

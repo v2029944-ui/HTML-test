@@ -45,7 +45,7 @@ pub struct ReportInfo {
     pub kind: String,
     pub row_count: u64,
     pub count: f64,
-    pub amount: f64,
+    pub amount: Option<f64>,
     pub has_mismatch: bool,
 }
 #[derive(Debug, Serialize)]
@@ -54,7 +54,7 @@ pub struct ReportRow {
     pub organization: String,
     pub work: String,
     pub count: f64,
-    pub amount: f64,
+    pub amount: Option<f64>,
     pub source_row: u32,
     pub work_cell: String,
     pub count_cell: String,
@@ -101,8 +101,8 @@ impl Serialize for ReportIssue {
         .collect();
         let comparison = self
             .actual_count
-            .zip(self.actual_amount)
-            .filter(|(c, a)| c.is_finite() && a.is_finite())
+            .filter(|count| count.is_finite())
+            .filter(|_| self.actual_amount.is_none_or(f64::is_finite))
             .filter(|_| {
                 [self.expected_count, self.expected_amount]
                     .into_iter()
@@ -110,14 +110,14 @@ impl Serialize for ReportIssue {
                     .all(f64::is_finite)
             });
         let (expected, actual) = match comparison {
-            Some((count, amount)) => (
+            Some(count) => (
                 Some(Numbers {
                     count: self.expected_count,
                     amount: self.expected_amount,
                 }),
                 Some(Numbers {
                     count: Some(count),
-                    amount: Some(amount),
+                    amount: self.actual_amount,
                 }),
             ),
             None => (None, None),
@@ -193,7 +193,7 @@ impl Serialize for ReportTotal {
 pub struct ReportOrganization {
     pub organization: String,
     pub count: f64,
-    pub amount: f64,
+    pub amount: Option<f64>,
 }
 pub(crate) const SCHEMA:&str="CREATE TABLE IF NOT EXISTS converted_reports(ordinal INTEGER PRIMARY KEY,id TEXT UNIQUE,sheet TEXT,kind TEXT,start TEXT,end TEXT,row_count INTEGER,count REAL,amount REAL,has_mismatch INTEGER,header_row INTEGER,work_col INTEGER,count_col INTEGER,amount_col INTEGER);
  CREATE TABLE IF NOT EXISTS converted_rows(report_id TEXT,row_index INTEGER,organization TEXT,work TEXT,count REAL,amount REAL,source_row INTEGER,work_cell TEXT,count_cell TEXT,amount_cell TEXT,PRIMARY KEY(report_id,row_index)) WITHOUT ROWID;
@@ -470,6 +470,7 @@ impl Stage<'_> {
                     id: &id,
                     active: None,
                     by_org: [(0., 0.); 4],
+                    amount_missing: [false; 4],
                     present: [0; 4],
                     present_count: 0,
                     rows: 0,
@@ -547,14 +548,14 @@ impl Stage<'_> {
                     if context.present[j] != 0 {
                         context.db.execute(
                             "INSERT INTO converted_organizations VALUES(?1,?2,?3,?4,?5)",
-                            params![id, context.present[j], cfg.organizations[j], q, a],
+                            params![id, context.present[j], cfg.organizations[j], q, (!context.amount_missing[j]).then_some(a)],
                         )?;
                     }
                 }
                 if !round(context.sum.0, 6).is_finite() || !round(context.sum.1, 2).is_finite() {
                     return Err(fail("Итог не помещается в числовой диапазон."));
                 }
-                context.db.execute("UPDATE converted_reports SET row_count=?2,count=?3,amount=?4,has_mismatch=?5 WHERE id=?1",params![id,context.rows,round(context.sum.0,6),round(context.sum.1,2),context.mismatch])?;
+                context.db.execute("UPDATE converted_reports SET row_count=?2,count=?3,amount=?4,has_mismatch=?5 WHERE id=?1",params![id,context.rows,round(context.sum.0,6),context.amount().map(|amount| round(amount,2)),context.mismatch])?;
                 summary.reports += 1;
                 summary.rows += context.rows;
                 summary.issues += context.issues;
@@ -723,9 +724,10 @@ fn detect(db: &Connection, sheet: &str) -> Result<Vec<TripleMapping>> {
 struct Active {
     org: usize,
     count: f64,
-    amount: f64,
+    amount: Option<f64>,
     row: u32,
     unchecked: bool,
+    amount_missing: bool,
     actual: (f64, f64),
 }
 struct Context<'a> {
@@ -735,6 +737,7 @@ struct Context<'a> {
     id: &'a str,
     active: Option<Active>,
     by_org: [(f64, f64); 4],
+    amount_missing: [bool; 4],
     present: [u64; 4],
     present_count: u64,
     rows: u64,
@@ -746,6 +749,10 @@ struct Context<'a> {
     daily: bool,
 }
 impl Context<'_> {
+    fn amount(&self) -> Option<f64> {
+        (!self.amount_missing.contains(&true)).then_some(self.sum.1)
+    }
+
     fn issue(
         &mut self,
         kind: &str,
@@ -753,8 +760,8 @@ impl Context<'_> {
         row: Option<u32>,
         org: Option<usize>,
         cells: (Option<String>, Option<String>, Option<String>),
-        expected: Option<(f64, f64)>,
-        actual: Option<(f64, f64)>,
+        expected: Option<(f64, Option<f64>)>,
+        actual: Option<(f64, Option<f64>)>,
         skipped: bool,
     ) -> Result<()> {
         self.issues += 1;
@@ -771,9 +778,9 @@ impl Context<'_> {
                 cells.1,
                 cells.2,
                 expected.map(|x| x.0),
-                expected.map(|x| x.1),
+                expected.and_then(|x| x.1),
                 actual.map(|x| x.0),
-                actual.map(|x| x.1),
+                actual.and_then(|x| x.1),
                 skipped.then_some(true)
             ],
         )?;
@@ -785,7 +792,9 @@ impl Context<'_> {
                 return Ok(());
             }
             let actual = a.actual;
-            if (actual.0 - a.count).abs() > 0.001 || (actual.1 - a.amount).abs() > 0.03 {
+            if (actual.0 - a.count).abs() > 0.001
+                || (!a.amount_missing && a.amount.is_some_and(|amount| (actual.1 - amount).abs() > 0.03))
+            {
                 self.mismatch = true;
                 self.issue(
                     "mismatch",
@@ -798,7 +807,7 @@ impl Context<'_> {
                         Some(cell(self.m.amount_col, a.row)),
                     ),
                     Some((a.count, a.amount)),
-                    Some(actual),
+                    Some((actual.0, (!a.amount_missing).then_some(actual.1))),
                     false,
                 )?;
             }
@@ -811,17 +820,19 @@ impl Context<'_> {
             self.present[org] = self.present_count;
         }
     }
-    fn add(&mut self, row: u32, work: &str, q: f64, a: f64) -> Result<()> {
+    fn add(&mut self, row: u32, work: &str, q: f64, a: Option<f64>) -> Result<()> {
         let active = self.active.as_mut().ok_or_else(|| fail("No active organization"))?;
         active.actual.0 += q;
-        active.actual.1 += a;
+        active.amount_missing |= a.is_none();
+        active.actual.1 += a.unwrap_or_default();
         let org = active.org;
         let block = active.actual;
         self.rows += 1;
         self.sum.0 += q;
-        self.sum.1 += a;
+        self.sum.1 += a.unwrap_or_default();
         self.by_org[org].0 += q;
-        self.by_org[org].1 += a;
+        self.by_org[org].1 += a.unwrap_or_default();
+        self.amount_missing[org] |= a.is_none();
         self.mark_present(org);
         if [
             self.sum.0,
@@ -851,6 +862,18 @@ impl Context<'_> {
                 cell(self.m.amount_col, row)
             ],
         )?;
+        if a.is_none() {
+            self.issue(
+                "warning",
+                "Сумма не указана: количество учтено",
+                Some(row),
+                Some(org),
+                (None, None, Some(cell(self.m.amount_col, row))),
+                None,
+                None,
+                false,
+            )?;
+        }
         Ok(())
     }
     fn process(&mut self, row: u32, values: &[Option<String>; 3]) -> Result<bool> {
@@ -877,9 +900,10 @@ impl Context<'_> {
                 .is_some_and(|s| !s.trim_matches(js_space).is_empty())
         };
         let blank_pair = !raw_present(1) && !raw_present(2);
+        let usable_count = q.filter(|_| a.is_some() || !raw_present(2));
         if work.is_empty() {
             if let (Some(q), Some(a), Some(_)) = (q, a, active) {
-                self.add(row, &format!("[Без названия — строка {row}]"), q, a)?;
+                self.add(row, &format!("[Без названия — строка {row}]"), q, Some(a))?;
                 self.issue(
                     "empty-name",
                     "Название работы пустое; строка включена с временным названием",
@@ -945,7 +969,7 @@ impl Context<'_> {
                         false,
                     )?;
                 } else if (self.sum.0 - q.unwrap()).abs() > 0.001
-                    || (self.sum.1 - a.unwrap()).abs() > 0.03
+                    || self.amount().is_some_and(|sum| (sum - a.unwrap()).abs() > 0.03)
                 {
                     self.mismatch = true;
                     self.issue(
@@ -958,8 +982,8 @@ impl Context<'_> {
                             Some(cell(self.m.count_col, row)),
                             Some(cell(self.m.amount_col, row)),
                         ),
-                        Some((q.unwrap(), a.unwrap())),
-                        Some(self.sum),
+                        Some((q.unwrap(), a)),
+                        Some((self.sum.0, self.amount())),
                         false,
                     )?;
                 }
@@ -978,23 +1002,37 @@ impl Context<'_> {
                 self.active = Some(Active {
                     org,
                     count: 0.,
-                    amount: 0.,
+                    amount: None,
                     row,
                     unchecked: true,
+                    amount_missing: false,
                     actual: (0., 0.),
                 });
                 return Ok(false);
             }
-            if let (Some(q), Some(a)) = (q, a) {
+            if let Some(q) = usable_count {
                 self.active = Some(Active {
                     org,
                     count: q,
                     amount: a,
                     row,
                     unchecked: false,
+                    amount_missing: false,
                     actual: (0., 0.),
                 });
                 self.mark_present(org);
+                if a.is_none() {
+                    self.issue(
+                        "warning",
+                        "В итоге подразделения сумма не указана",
+                        Some(row),
+                        Some(org),
+                        bad_cells,
+                        None,
+                        None,
+                        false,
+                    )?;
+                }
                 self.totals += 1;
                 self.db.execute(
                     "INSERT INTO converted_totals VALUES(?1,?2,'org',?3,?4,?5,?6)",
@@ -1018,7 +1056,7 @@ impl Context<'_> {
         if self.daily && blank_pair {
             return Ok(false);
         }
-        if let (Some(q), Some(a)) = (q, a) {
+        if let Some(q) = usable_count {
             if active.is_some() {
                 self.add(row, work, q, a)?;
             } else {
@@ -1102,6 +1140,7 @@ pub(crate) fn convert_day(
         id,
         active: None,
         by_org: [(0., 0.); 4],
+        amount_missing: [false; 4],
         present: [0; 4],
         present_count: 0,
         rows: 0,
@@ -1174,7 +1213,7 @@ pub(crate) fn convert_day(
         if context.present[j] != 0 {
             context.db.execute(
                 "INSERT INTO converted_organizations VALUES(?1,?2,?3,?4,?5)",
-                params![id, context.present[j], cfg.organizations[j], q, a],
+                params![id, context.present[j], cfg.organizations[j], q, (!context.amount_missing[j]).then_some(a)],
             )?;
         }
     }
@@ -1187,7 +1226,7 @@ pub(crate) fn convert_day(
             id,
             context.rows,
             round(context.sum.0, 6),
-            round(context.sum.1, 2),
+            context.amount().map(|amount| round(amount, 2)),
             context.mismatch
         ],
     )?;

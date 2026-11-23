@@ -661,7 +661,7 @@ fn apply_in_connection_inner(
             for row in page {
                 if row.row_index != rows + 1
                     || !row.count.is_finite()
-                    || !row.amount.is_finite()
+                    || row.amount.is_some_and(|amount| !amount.is_finite())
                     || row.organization.len() > 65536
                     || row.work.len() > 65536
                 {

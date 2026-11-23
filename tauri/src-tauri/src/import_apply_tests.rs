@@ -95,6 +95,51 @@ pub(super) fn original(storage: &Storage) -> Value {
     data
 }
 #[test]
+fn blank_amount_survives_transaction_backup_and_reindex() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("blank.xlsx");
+    let mut zip = ZipWriter::new(fs::File::create(&source).unwrap());
+    zip.start_file("xl/worksheets/sheet1.xml", SimpleFileOptions::default()).unwrap();
+    zip.write_all(r#"<worksheet><sheetData>
+      <row r="2"><c r="A2" t="inlineStr"><is><t>СМУ16</t></is></c><c r="B2"><v>9</v></c></row>
+      <row r="3"><c r="A3" t="inlineStr"><is><t>Без суммы</t></is></c><c r="B3"><v>7</v></c></row>
+      <row r="4"><c r="A4" t="inlineStr"><is><t>Нулевая сумма</t></is></c><c r="B4"><v>2</v></c><c r="C4"><v>0</v></c></row>
+      </sheetData></worksheet>"#.as_bytes()).unwrap();
+    zip.finish().unwrap();
+    let area = StageArea::open(root.path().join("stage")).unwrap();
+    let input = prepared(&area, &source, "day", "2026-11-01");
+    let store = Storage::new(root.path().join("live")).unwrap();
+    store.load().unwrap();
+    let preview = store.preview_import(&input).unwrap();
+    let confirmation = ImportConfirmation { accept_quality: true, ..Default::default() };
+    let receipt = store.apply_import(&input, &preview, confirmation, &ImportJob::new(), |_| {}).unwrap();
+    assert_eq!(receipt.rows, 2);
+    let data = store.load().unwrap();
+    let report = &data["reports"][0];
+    let id = report["id"].as_str().unwrap();
+    assert_eq!(report["rows"][0]["count"], 7.0);
+    assert!(report["rows"][0]["amount"].is_null());
+    assert_eq!(report["rows"][1]["amount"], 0.0);
+
+    let verify = |store: &Storage, revision| {
+        let sum = store.aggregate(revision, &ReadFilter::default()).unwrap();
+        assert_eq!((sum.rows, sum.count, sum.amount, sum.weighted_average), (2, 9.0, None, None));
+    };
+    verify(&store, receipt.revision);
+    store.analysis_index_report(id, receipt.revision).unwrap();
+    store.index_report(id, receipt.revision).unwrap();
+    verify(&store, receipt.revision);
+    let copy = root.path().join("backup.sqlite3");
+    store.backup_sqlite(&copy).unwrap();
+    let db = Connection::open(copy).unwrap();
+    let amounts: (Option<f64>, Option<f64>) = db.query_row(
+        "SELECT MIN(amount), MAX(CASE WHEN count=7 THEN amount END) FROM report_rows",
+        [], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).unwrap();
+    assert_eq!(amounts, (Some(0.0), None));
+}
+
+#[test]
 fn prepared_preview_apply_roundtrip_backup_and_receipt() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("данные.xlsx");
@@ -593,7 +638,7 @@ fn preparation_holds_one_private_conversion_snapshot() {
             .aggregate(receipt.revision, &ReadFilter::default())
             .unwrap()
             .amount,
-        2000.0
+        Some(2000.0)
     );
 }
 #[test]

@@ -29,6 +29,22 @@ pub(super) fn check_metadata_bounds(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+pub(super) fn allow_missing_amount(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch("
+        DROP TRIGGER read_model_report_insert;
+        DROP TRIGGER read_model_report_update;
+        DROP TRIGGER read_model_report_delete;
+        CREATE TABLE report_rows_v2 (
+          report_id TEXT NOT NULL, row_index INTEGER NOT NULL,
+          organization TEXT NOT NULL, work TEXT NOT NULL,
+          count REAL NOT NULL, amount REAL,
+          PRIMARY KEY(report_id,row_index)) WITHOUT ROWID;
+        INSERT INTO report_rows_v2 SELECT report_id,row_index,organization,work,count,amount FROM report_rows;
+        DROP TABLE report_rows;
+        ALTER TABLE report_rows_v2 RENAME TO report_rows;
+    ").map_err(err)
+}
+
 pub(super) fn initialize(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS storage_revision (
@@ -40,7 +56,7 @@ pub(super) fn initialize(conn: &Connection) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS report_rows (
           report_id TEXT NOT NULL, row_index INTEGER NOT NULL,
           organization TEXT NOT NULL, work TEXT NOT NULL,
-          count REAL NOT NULL, amount REAL NOT NULL,
+          count REAL NOT NULL, amount REAL,
           PRIMARY KEY(report_id,row_index)) WITHOUT ROWID;
         CREATE INDEX IF NOT EXISTS report_rows_by_work ON report_rows(work,organization,report_id);
         CREATE TRIGGER IF NOT EXISTS read_model_report_insert AFTER INSERT ON reports BEGIN
@@ -111,14 +127,14 @@ pub struct IndexedRow {
     pub organization: String,
     pub work: String,
     pub count: f64,
-    pub amount: f64,
+    pub amount: Option<f64>,
 }
 #[derive(Debug, Serialize)]
 pub struct Aggregate {
     pub rows: i64,
     pub count: f64,
-    pub amount: f64,
-    /// SUM(amount) / SUM(count), None when the denominator is zero.
+    pub amount: Option<f64>,
+    /// SUM(amount) / SUM(count) when all amounts are known and count is nonzero.
     pub weighted_average: Option<f64>,
 }
 
@@ -207,14 +223,15 @@ struct IndexInputRow {
     organization: String,
     work: String,
     count: f64,
-    amount: f64,
+    #[serde(deserialize_with = "Deserialize::deserialize")]
+    amount: Option<f64>,
 }
 impl IndexInputRow {
     fn validate(&self) -> Result<(), String> {
         if self.organization.len() > MAX_TOKEN_BYTES
             || self.work.len() > MAX_TOKEN_BYTES
             || !self.count.is_finite()
-            || !self.amount.is_finite()
+            || self.amount.is_some_and(|n| !n.is_finite())
         {
             return Err("Invalid index row: finite numbers and <=64 KiB labels required.".into());
         }
@@ -408,7 +425,11 @@ pub(super) fn index_value(tx: &Transaction<'_>, id: &str, report: &Value) -> Res
                 .into(),
             work: value["work"].as_str().ok_or("Missing work")?.into(),
             count: value["count"].as_f64().ok_or("Invalid count")?,
-            amount: value["amount"].as_f64().ok_or("Invalid amount")?,
+            amount: match value.get("amount") {
+                Some(Value::Null) => None,
+                Some(amount) => Some(amount.as_f64().ok_or("Invalid amount")?),
+                None => return Err("Missing amount".into()),
+            },
         };
         row.validate()?;
         stmt.execute(params![
@@ -450,7 +471,7 @@ impl Storage {
         }
         let _guard = self.gate.lock().map_err(err)?;
         let mut conn = self.connect()?;
-        conn.execute_batch("CREATE TEMP TABLE row_stage(row_index INTEGER PRIMARY KEY, organization TEXT NOT NULL, work TEXT NOT NULL, count REAL NOT NULL, amount REAL NOT NULL);
+        conn.execute_batch("CREATE TEMP TABLE row_stage(row_index INTEGER PRIMARY KEY, organization TEXT NOT NULL, work TEXT NOT NULL, count REAL NOT NULL, amount REAL);
             PRAGMA temp.cache_size=-2048;") .map_err(err)?;
         let tx = conn.transaction().map_err(err)?;
         check_revision(&tx, expected_revision)?;
@@ -602,13 +623,13 @@ impl Storage {
         check_revision(&tx, expected_revision)?;
         check_metadata_bounds(&tx)?;
         check_index(&tx, filter)?;
-        let (rows,count,amount):(i64,f64,f64)=tx.query_row(&format!("SELECT COUNT(*),COALESCE(SUM(x.count),0),COALESCE(SUM(x.amount),0) FROM report_rows x JOIN reports r ON r.id=x.report_id WHERE {predicate}"),rusqlite::params_from_iter(values),|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
+        let (rows,count,amount):(i64,f64,Option<f64>)=tx.query_row(&format!("SELECT COUNT(*),COALESCE(SUM(x.count),0),CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END FROM report_rows x JOIN reports r ON r.id=x.report_id WHERE {predicate}"),rusqlite::params_from_iter(values),|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
         let average = if count == 0.0 {
             None
         } else {
-            Some(amount / count)
+            amount.map(|amount| amount / count)
         };
-        if !count.is_finite() || !amount.is_finite() || average.is_some_and(|n| !n.is_finite()) {
+        if !count.is_finite() || amount.is_some_and(|n| !n.is_finite()) || average.is_some_and(|n| !n.is_finite()) {
             return Err("Aggregate numeric overflow".into());
         }
         Ok(Aggregate {

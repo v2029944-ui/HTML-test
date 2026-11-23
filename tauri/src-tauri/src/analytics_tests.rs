@@ -82,6 +82,42 @@ fn prepare(store: &Storage, data: &Value) -> i64 {
     rev
 }
 #[test]
+fn missing_money_preserves_quantity_in_ranges_comparisons_and_exports() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    data["reports"][1]["rows"][0]["amount"] = Value::Null;
+    let rev = prepare(&store, &data);
+    let all = scope(&store, rev, "day", &["A"], None);
+    let range = |day: &str| RangeQuery { from: day.into(), to: day.into() };
+    let before = range("2024-02-28");
+    let after = range("2024-02-29");
+    let current = store.analysis_range_summary(rev, &all, &after).unwrap();
+    assert!(current.complete);
+    assert_eq!(current.total.count, Some(4.0));
+    assert_eq!(current.total.amount, None);
+    assert_eq!(current.total.average, None);
+    let filtered = scope(&store, rev, "day", &["A"], Some(&["zero"]));
+    let zero = store.analysis_range_summary(rev, &filtered, &after).unwrap();
+    assert_eq!(zero.total.amount, Some(0.0));
+
+    let compare = ComparisonQuery { before, after: after.clone(), min_count: 0., min_amount: 0., percent: 0. };
+    let comparison = store.analysis_comparison_summary(rev, &all, &compare).unwrap();
+    assert_eq!(comparison.count.unwrap().delta, 4.0);
+    assert!(comparison.amount.is_none());
+    let csv = dir.path().join("range.csv");
+    store.analysis_export_range(rev, &all, &after, None, &csv).unwrap();
+    let exported = fs::read_to_string(csv).unwrap();
+    assert!(exported.lines().any(|line|line.contains("Group") && line.ends_with(r#";"4";"";"";"true""#)), "{exported}");
+
+    let matrix = store.quality_matrix_page(rev, "day", &after.from, &after.to, &["A".into()]).unwrap();
+    let cell = &matrix.rows[0].cells[0];
+    assert!(cell.available);
+    assert_eq!((cell.count, cell.amount), (Some(4.0), None));
+    assert!(!cell.numeric_zero);
+}
+
+#[test]
 fn real_js_ranges_changes_full_pages_exports() {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();
@@ -595,7 +631,7 @@ fn changes_complete_scalars_and_gap_pages_include_later_pairs() {
     };
     assert_eq!(sum.count.base, total("count", "base"));
     assert_eq!(sum.count.current, total("count", "current"));
-    assert_eq!(sum.amount.delta, total("amount", "delta"));
+    assert_eq!(sum.amount.unwrap().delta, total("amount", "delta"));
     let pairs = store
         .analysis_change_pair_page(rev, &s, &q, true, None, 1)
         .unwrap();
@@ -1513,7 +1549,7 @@ fn daily_week_changes_use_complete_weeks_and_ignore_imported_totals() {
         (&"2024-01-01".into(), &"2024-01-08".into())
     );
     assert_eq!(
-        (item.count.base, item.count.current, item.amount.current),
+        (item.count.base, item.count.current, item.amount.as_ref().unwrap().current),
         (0., -7., 77.)
     );
     assert_eq!(item.count.percent, None);
@@ -1865,6 +1901,48 @@ fn initialized_wal_reads_do_not_require_the_writer_lock() {
     let read=store.revision();
     writer.execute_batch("ROLLBACK").unwrap();
     assert_eq!(read.unwrap(),rev,"opening a ready WAL database must not perform schema writes");
+}
+
+#[test]
+fn schema_v1_preserves_indexed_rows_and_report_metadata_when_allowing_null_amounts() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("reports.sqlite3");
+    let c = rusqlite::Connection::open(&path).unwrap();
+    c.execute_batch("
+        PRAGMA user_version=1;
+        CREATE TABLE reports(id TEXT PRIMARY KEY,report_type TEXT NOT NULL,period_start TEXT NOT NULL,period_end TEXT NOT NULL,source_name TEXT,json TEXT NOT NULL);
+        INSERT INTO reports VALUES('old','day','2024-01-01','2024-01-01',NULL,'{}');
+        CREATE TABLE storage_revision(singleton INTEGER PRIMARY KEY,revision INTEGER NOT NULL);
+        INSERT INTO storage_revision VALUES(1,7);
+        CREATE TABLE report_row_index(report_id TEXT PRIMARY KEY,row_count INTEGER NOT NULL);
+        INSERT INTO report_row_index VALUES('old',1);
+        CREATE TABLE report_rows(report_id TEXT NOT NULL,row_index INTEGER NOT NULL,organization TEXT NOT NULL,work TEXT NOT NULL,count REAL NOT NULL,amount REAL NOT NULL,PRIMARY KEY(report_id,row_index)) WITHOUT ROWID;
+        INSERT INTO report_rows VALUES('old',0,'A','work',2,12);
+        CREATE TABLE management_report_meta(report_id TEXT PRIMARY KEY,amount REAL NOT NULL,saved_amount REAL,warnings INTEGER NOT NULL,shared_source_artifact INTEGER NOT NULL);
+        INSERT INTO management_report_meta VALUES('old',12,12,0,0);
+        CREATE TRIGGER read_model_report_insert AFTER INSERT ON reports BEGIN DELETE FROM report_rows WHERE report_id=NEW.id; END;
+        CREATE TRIGGER read_model_report_update AFTER UPDATE ON reports BEGIN DELETE FROM report_rows WHERE report_id=OLD.id; END;
+        CREATE TRIGGER read_model_report_delete AFTER DELETE ON reports BEGIN DELETE FROM report_rows WHERE report_id=OLD.id; END;
+        CREATE TRIGGER management_report_insert AFTER INSERT ON reports BEGIN DELETE FROM management_report_meta WHERE report_id=NEW.id; END;
+        CREATE TRIGGER management_report_update AFTER UPDATE ON reports BEGIN DELETE FROM management_report_meta WHERE report_id=OLD.id; END;
+        CREATE TRIGGER management_report_delete AFTER DELETE ON reports BEGIN DELETE FROM management_report_meta WHERE report_id=OLD.id; END;
+    ").unwrap();
+    drop(c);
+
+    let c = super::new_connection(&path).unwrap();
+    let state = c.query_row(
+        "SELECT r.json,x.count,x.amount,m.amount,i.row_count,(SELECT revision FROM storage_revision)
+         FROM reports r JOIN report_rows x ON x.report_id=r.id JOIN management_report_meta m ON m.report_id=r.id
+         JOIN report_row_index i ON i.report_id=r.id",
+        [],
+        |row| Ok((row.get::<_,String>(0)?,row.get::<_,f64>(1)?,row.get::<_,f64>(2)?,
+                  row.get::<_,f64>(3)?,row.get::<_,i64>(4)?,row.get::<_,i64>(5)?)),
+    ).unwrap();
+    assert_eq!(state, ("{}".into(),2.0,12.0,12.0,1,7));
+    c.execute_batch("UPDATE report_rows SET amount=NULL; UPDATE management_report_meta SET amount=NULL;").unwrap();
+    assert_eq!(c.query_row("PRAGMA integrity_check", [], |row|row.get::<_,String>(0)).unwrap(), "ok");
+    c.execute("DELETE FROM reports WHERE id='old'", []).unwrap();
+    assert_eq!(c.query_row("SELECT (SELECT count(*) FROM report_rows)+(SELECT count(*) FROM management_report_meta)", [], |row|row.get::<_,i64>(0)).unwrap(), 0);
 }
 
 #[test]

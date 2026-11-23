@@ -137,7 +137,7 @@ pub struct ManagementReport {
     pub end: String,
     pub source_name: Option<String>,
     pub rows: i64,
-    pub amount: f64,
+    pub amount: Option<f64>,
     pub saved_amount: Option<f64>,
     pub warnings: i64,
     pub organizations: i64,
@@ -154,7 +154,7 @@ impl ManagementReport {
 pub struct ManagementReportSummary {
     pub reports: i64,
     pub rows: i64,
-    pub amount: f64,
+    pub amount: Option<f64>,
     pub warnings: i64,
     pub first: Option<String>,
     pub latest: Option<String>,
@@ -238,7 +238,7 @@ impl Storage {
             "CREATE TEMP TABLE management_org_stage(ordinal INTEGER PRIMARY KEY,org TEXT);",
         )
         .map_err(err)?;
-        job.run(&c,||{let tx=c.unchecked_transaction().map_err(err)?;check_revision(&tx,rev)?;check_metadata_bounds(&tx)?;let indexed:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM report_row_index WHERE report_id=?1)",[id],|r|r.get(0)).map_err(err)?;if !indexed{return Err("Raw report index missing; run index_report before metadata indexing".into())}let rowid:i64=tx.query_row("SELECT rowid FROM reports WHERE id=?1",[id],|r|r.get(0)).map_err(err)?;let raw=tx.blob_open("main","reports","json",rowid,true).map_err(err)?;let bounded=read_model::TokenBounded::new(JobRead{inner:raw,job});let mut de=serde_json::Deserializer::from_reader(BufReader::with_capacity(8192,bounded));let(saved,warnings,shared)=Meta{c:&tx,job}.deserialize(&mut de).map_err(err)?;de.end().map_err(err)?;drop(de);let amount:Option<f64>=tx.query_row("SELECT SUM(amount) FROM report_rows WHERE report_id=?1",[id],|r|r.get(0)).map_err(err)?;let rows:i64=tx.query_row("SELECT row_count FROM report_row_index WHERE report_id=?1",[id],|r|r.get(0)).map_err(err)?;let amount=if rows==0{0.}else{num(amount.ok_or("Report numeric overflow")?)?};tx.execute("DELETE FROM management_report_orgs WHERE report_id=?1",[id]).map_err(err)?;tx.execute("INSERT INTO management_report_orgs SELECT ?1,ordinal,org FROM temp.management_org_stage",[id]).map_err(err)?;tx.execute("INSERT INTO management_report_meta VALUES(?1,?2,?3,?4,?5) ON CONFLICT(report_id) DO UPDATE SET amount=excluded.amount,saved_amount=excluded.saved_amount,warnings=excluded.warnings,shared_source_artifact=excluded.shared_source_artifact",params![id,amount,saved,warnings,shared]).map_err(err)?;job.finish(tx)})
+        job.run(&c,||{let tx=c.unchecked_transaction().map_err(err)?;check_revision(&tx,rev)?;check_metadata_bounds(&tx)?;let indexed:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM report_row_index WHERE report_id=?1)",[id],|r|r.get(0)).map_err(err)?;if !indexed{return Err("Raw report index missing; run index_report before metadata indexing".into())}let rowid:i64=tx.query_row("SELECT rowid FROM reports WHERE id=?1",[id],|r|r.get(0)).map_err(err)?;let raw=tx.blob_open("main","reports","json",rowid,true).map_err(err)?;let bounded=read_model::TokenBounded::new(JobRead{inner:raw,job});let mut de=serde_json::Deserializer::from_reader(BufReader::with_capacity(8192,bounded));let(saved,warnings,shared)=Meta{c:&tx,job}.deserialize(&mut de).map_err(err)?;de.end().map_err(err)?;drop(de);let amount:Option<f64>=tx.query_row("SELECT CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END FROM report_rows WHERE report_id=?1",[id],|r|r.get(0)).map_err(err)?;let amount=amount.map(num).transpose()?;tx.execute("DELETE FROM management_report_orgs WHERE report_id=?1",[id]).map_err(err)?;tx.execute("INSERT INTO management_report_orgs SELECT ?1,ordinal,org FROM temp.management_org_stage",[id]).map_err(err)?;tx.execute("INSERT INTO management_report_meta VALUES(?1,?2,?3,?4,?5) ON CONFLICT(report_id) DO UPDATE SET amount=excluded.amount,saved_amount=excluded.saved_amount,warnings=excluded.warnings,shared_source_artifact=excluded.shared_source_artifact",params![id,amount,saved,warnings,shared]).map_err(err)?;job.finish(tx)})
     }
     pub fn management_report_summary(
         &self,
@@ -248,7 +248,7 @@ impl Storage {
         let mut c = self.management_connect()?;
         let tx = c.transaction().map_err(err)?;
         ready(&tx, rev, f)?;
-        let sql=format!("SELECT COUNT(*),COALESCE(SUM(i.row_count),0),CASE WHEN COUNT(*)=0 THEN 0 ELSE SUM(m.amount) END,COALESCE(SUM(m.warnings),0),MIN(r.period_start),MAX(r.period_start),COUNT(DISTINCT r.period_start) FROM reports r JOIN management_report_meta m ON m.report_id=r.id JOIN report_row_index i ON i.report_id=r.id WHERE {FILTER}");
+        let sql=format!("SELECT COUNT(*),COALESCE(SUM(i.row_count),0),CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(m.amount)=COUNT(*) THEN SUM(m.amount) END,COALESCE(SUM(m.warnings),0),MIN(r.period_start),MAX(r.period_start),COUNT(DISTINCT r.period_start) FROM reports r JOIN management_report_meta m ON m.report_id=r.id JOIN report_row_index i ON i.report_id=r.id WHERE {FILTER}");
         let out = tx
             .query_row(
                 &sql,
@@ -266,7 +266,7 @@ impl Storage {
                 },
             )
             .map_err(err)?;
-        num(out.amount)?;
+        out.amount.map(num).transpose()?;
         Ok(out)
     }
     pub fn management_report_page(

@@ -189,10 +189,10 @@ fn matrix_cell(
     }
     cell.available = exact_valid == 1 && cell.duplicate_reports == 0 && cell.overlap_reports == 0;
     if cell.available {
-        let (count,amount,activity):(f64,f64,bool)=c.query_row("SELECT coalesce(sum(count),0.0),coalesce(sum(amount),0.0),coalesce(max(count<>0 OR amount<>0),0) FROM report_rows WHERE report_id=?1 AND organization=?2",params![usable.unwrap(),org],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
+        let (count,amount,activity):(f64,Option<f64>,bool)=c.query_row("SELECT coalesce(sum(count),0.0),CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,coalesce(max(count<>0 OR amount IS NULL OR amount<>0),0) FROM report_rows WHERE report_id=?1 AND organization=?2",params![usable.unwrap(),org],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
         cell.count = Some(finite(count)?);
-        cell.amount = Some(finite(amount)?);
-        cell.numeric_zero = count == 0. && amount == 0.;
+        cell.amount = amount.map(finite).transpose()?;
+        cell.numeric_zero = count == 0. && amount == Some(0.);
         cell.has_activity = activity;
     }
     Ok(cell)

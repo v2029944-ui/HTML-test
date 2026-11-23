@@ -200,7 +200,7 @@ fn significant_change_filter_matches_the_indicator_and_csv_respects_metric_order
     o.direction="significant-up".into();
     let selected=store.unified_changes_page(rev,&scope,&q,None,&o,None).unwrap();
     assert_eq!(selected.total_rows,summary.grown);
-    assert!(selected.rows.iter().all(|r|r.amount.significant && !r.amount.small_base && r.amount.delta>0.));
+    assert!(selected.rows.iter().all(|r|r.amount.as_ref().is_some_and(|m|m.significant && !m.small_base && m.delta>0.)));
     let dest=dir.path().join("amount.csv");
     store.unified_changes_csv(rev,&scope,&q,None,&o,&dest).unwrap();
     let csv=std::fs::read_to_string(dest).unwrap();

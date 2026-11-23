@@ -43,6 +43,31 @@ fn row(org: &str, work: &str, count: f64, amount: f64) -> Value {
     json!({"organization":org,"work":work,"count":count,"amount":amount})
 }
 #[test]
+fn missing_amount_keeps_the_work_in_both_metric_views() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut partial = row("A", "Work", 7., 0.);
+    partial["amount"] = Value::Null;
+    let revision = prepare(&store, vec![
+        report("base", "2024-01-01", json!([row("A", "Work", 2., 20.)])),
+        report("current", "2024-01-10", json!([partial])),
+    ]);
+    let mut q = request(revision);
+    q.to = q.from.clone();
+    let amount = store.reference_changes(&q).unwrap();
+    let work = &amount.rows[0];
+    assert_eq!((work.before, work.after, work.delta), (Some(20.), None, None));
+    assert!(amount.leader.is_none());
+    assert_eq!(amount.significant, 0);
+
+    q.metric = "count".into();
+    let count = store.reference_changes(&q).unwrap();
+    let work = &count.rows[0];
+    assert_eq!((work.before, work.after, work.delta), (Some(2.), Some(7.), Some(5.)));
+    assert_eq!(count.counts.up, 1);
+}
+
+#[test]
 fn independent_unequal_intervals_require_complete_org_coverage_and_keep_real_works() {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();
@@ -95,10 +120,10 @@ fn independent_unequal_intervals_require_complete_org_coverage_and_keep_real_wor
     let work = result.rows.iter().find(|r| r.name == "Work").unwrap();
     assert_eq!(
         (work.before, work.after, work.delta, work.percent),
-        (100., 150., 50., Some(50.))
+        (Some(100.), Some(150.), Some(50.), Some(50.))
     );
     let new = result.rows.iter().find(|r| r.name == "New").unwrap();
-    assert_eq!((new.before, new.after, new.percent), (0., 40., None));
+    assert_eq!((new.before, new.after, new.percent), (Some(0.), Some(40.), None));
     assert_eq!(
         (
             result.counts.up,
@@ -381,7 +406,7 @@ fn comparable_sample_and_totals_match_overview_changes_comparison_and_exports() 
             assert_eq!(comparison.summary.before.total.amount,Some(before));assert_eq!(comparison.summary.after.total.amount,Some(210.));
             let measure=comparison.summary.amount.as_ref().unwrap();assert_eq!(measure.delta,210.-before);assert_eq!(measure.percent.is_none(),zero_base);
             assert_eq!(window.rows.len(),1);assert_eq!(window.rows[0].amount.as_ref().unwrap().base,before);assert_eq!(window.rows[0].amount.as_ref().unwrap().current,210.);
-            assert_eq!(changes.rows.iter().map(|row|row.before).sum::<f64>(),before);assert_eq!(changes.rows.iter().map(|row|row.after).sum::<f64>(),210.);
+            assert_eq!(changes.rows.iter().map(|row|row.before.unwrap()).sum::<f64>(),before);assert_eq!(changes.rows.iter().map(|row|row.after.unwrap()).sum::<f64>(),210.);
             Ok(())
         }).unwrap();
         let summary=dir.path().join("summary.csv");let change_csv=dir.path().join("changes.csv");store.reference_summary_csv(&q,&summary).unwrap();store.reference_changes_csv(&q,&change_csv).unwrap();
@@ -413,7 +438,7 @@ fn all_work_summary_and_changes_are_explicitly_separate_from_selected_detail_gro
     let dir=tempdir().unwrap();let store=Storage::new(dir.path().into()).unwrap();
     let revision=prepare(&store,vec![report("base","2024-01-01",json!([row("A","Work",1.,10.),row("A","Other",9.,90.),row("A","Independent",100.,1000.)])),report("now","2024-01-10",json!([row("A","Work",2.,20.),row("A","Other",18.,180.),row("A","Independent",200.,2000.)]))]);
     let mut q=request(revision);q.to=q.from.clone();q.organizations=vec!["A".into()];
-    let changes=store.reference_changes(&q).unwrap();assert_eq!(changes.rows.iter().map(|row|row.before).sum::<f64>(),1100.);assert_eq!(changes.rows.iter().map(|row|row.after).sum::<f64>(),2200.);
+    let changes=store.reference_changes(&q).unwrap();assert_eq!(changes.rows.iter().map(|row|row.before.unwrap()).sum::<f64>(),1100.);assert_eq!(changes.rows.iter().map(|row|row.after.unwrap()).sum::<f64>(),2200.);
     store.reference_scope(&q,|scope| {
         let filter=store.analysis_filter_create(revision,"names")?;store.analysis_filter_append(revision,&filter,&["Combined".into()])?;store.analysis_filter_seal(revision,&filter)?;
         let selected=AnalysisScope{report_type:scope.report_type.clone(),organizations:scope.organizations.clone(),names:Some(filter.clone())};

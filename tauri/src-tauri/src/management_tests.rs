@@ -322,7 +322,7 @@ fn management_real_js_goldens_full_counts_search_navigation_and_unknown_nodes() 
     let total = s.management_report_summary(rev, &f).unwrap();
     assert_eq!(
         (total.reports, total.rows, total.amount, total.periods),
-        (2, 2, 60., 2)
+        (2, 2, Some(60.), 2)
     );
     let second_page = s.management_report_window(rev, &f, 1, 1).unwrap();
     assert_eq!(second_page.total_rows, 2);

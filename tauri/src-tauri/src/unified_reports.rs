@@ -269,7 +269,7 @@ mod folder_rule_tests {
   let rule:super::super::Rule=serde_json::from_value(json!({"format":"daily-wide","type":"day","start":"","sheet":"","year":2024,"sheets":["Отчёт"],"mappings":{"Отчёт":{"workCol":0,"headerRow":1,"firstDayCol":1}}})).unwrap();
   let options=rule.native_wide_options(["A".into(),"B".into(),"C".into(),"D".into()]).unwrap();let area=analiz_import_core::StageArea::open(d.path().join("stage")).unwrap();let cancel=Arc::new(AtomicBool::new(false));let mut stage=area.ingest(&source,analiz_import_core::Limits::default(),&cancel,|_|{}).unwrap();
   assert_eq!(rule.native_legacy_sheet(&stage.sheet_names().unwrap()).unwrap(),"xl/worksheets/custom.xml");
-  let detected=stage.detect_wide(&options,cancel.clone()).unwrap();assert_eq!(detected[0].name,"Отчёт");stage.convert_wide(&options,cancel,|_|{}).unwrap();let reports=stage.report_page(0,50).unwrap();assert_eq!(reports.len(),1);assert_eq!(reports[0].start,"2024-01-01");assert_eq!(reports[0].count,2.);assert_eq!(reports[0].amount,20.);
+  let detected=stage.detect_wide(&options,cancel.clone()).unwrap();assert_eq!(detected[0].name,"Отчёт");stage.convert_wide(&options,cancel,|_|{}).unwrap();let reports=stage.report_page(0,50).unwrap();assert_eq!(reports.len(),1);assert_eq!(reports[0].start,"2024-01-01");assert_eq!(reports[0].count,2.);assert_eq!(reports[0].amount,Some(20.));
  }
 
 }
