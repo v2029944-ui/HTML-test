@@ -6,6 +6,18 @@ const path=require('node:path');
 const script=fs.readFileSync(path.join(__dirname,'../unified-analytics.js'),'utf8');
 const coverageScript=fs.readFileSync(path.join(__dirname,'../unified-coverage.js'),'utf8');
 const original=fs.readFileSync(path.join(__dirname,'../../index.html'),'utf8');
+const {buildUnified}=require('../unified-build.cjs');
+test('generated Tauri charts use readable patterns and bars for a single department period',()=>{
+ const generated=buildUnified(original),built=generated.script;
+ assert.match(built,/bar=state\.chart==='bar'\|\|periods\.length===1/);
+ assert.match(built,/pattern=svgEl\('pattern',\{id,width:8,height:8,patternUnits:'userSpaceOnUse'\}\)/);
+ assert.match(built,/svgEl\('circle',\{cx:4,cy:4,r:2\.2,fill:color\}\)/);
+ assert.ok(generated.html.includes('<option value="organizations">Подразделения</option>'));
+ assert.ok(generated.html.includes('<option value="all">Все работы</option>'));
+ assert.ok(generated.html.includes('<option value="selected">Отмеченные</option>'));
+ assert.ok(generated.html.includes('<option value="separate">Отдельно (значения)</option>'));
+ assert.ok(generated.html.includes('<option value="combined">Вместе (% макс.)</option>'));
+});
 class Element{
  constructor(tag='div',text=''){this.tagName=tag.toUpperCase();this.children=[];this._text=text??'';this.value='';this.dataset={};this.listeners={};this.hidden=false;this.open=false;this.checked=false;this.classList={toggle(){}};}
  append(...children){this.children.push(...children);}replaceChildren(...children){this.children=children;this._text='';}
@@ -45,9 +57,23 @@ test('dashboard uses bounded aggregates, publishes exact selected names, and pri
  f.nodes.get('selectAll').dispatch('click');assert.equal(f.published.at(-1).allNames,true);assert.equal(f.published.at(-1).selectedNames.length,0);await settle();
 });
 test('confirmed zero filtering keeps missing points and does not change overview totals',async()=>{
- const points=[{start:'2024-01-01',periods:1,missing:1,total:{count:null,amount:null,average:null}},{start:'2024-01-02',periods:1,missing:0,total:{count:0,amount:0,average:null}}];
+ const points=[{start:'2024-01-01',periods:1,missing:1,total:{count:null,amount:null,average:null}},{start:'2024-01-02',periods:1,missing:0,has_activity:true,total:{count:0,amount:0,average:null}}];
  const f=fixture({nativeAnalysisTimeline:async()=>({granularity:'period',points}),nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points})});await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();assert.equal(f.draws.at(-1)[4].data[0],null);assert.equal(f.draws.at(-1)[4].data[1].get('work:W').count,0);
  const overview=f.nodes.get('overviewKpis').textContent;f.nodes.get('hideEmptyPeriods').checked=true;f.nodes.get('hideEmptyPeriods').dispatch('change');await settle();assert.equal(f.draws.at(-1)[0].length,1);assert.equal(f.draws.at(-1)[4].data[0],null);assert.equal(f.nodes.get('overviewKpis').textContent,overview);
+ assert.deepEqual(Array.from(f.draws.at(-1)[4].hiddenPeriods,p=>p.start),['2024-01-02']);
+});
+test('a complete zero stays hidden even if a source reports activity, while non-zero amount stays visible',async()=>{
+ const points=[
+  {start:'2024-01-01',periods:1,missing:0,has_activity:true,total:{count:0,amount:15,average:null}},
+  {start:'2024-01-02',periods:1,missing:0,has_activity:true,total:{count:0,amount:0,average:null}},
+ ];
+ const f=fixture({nativeAnalysisTimeline:async()=>({granularity:'period',points}),nativeWorkTimeline:async()=>({granularity:'period',points})});
+ const seen=[];f.window.referenceDetail={active:'chartPanel',setChartPeriodCount:n=>seen.push(n)};
+ await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ f.nodes.get('hideEmptyPeriods').checked=true;f.nodes.get('hideEmptyPeriods').dispatch('change');await settle();
+ assert.equal(f.draws.at(-1)[0].length,1);
+ assert.equal(f.draws.at(-1)[4].data[0].get('work:W').amount,15);
+ assert.equal(seen.at(-1),1);
  assert.deepEqual(Array.from(f.draws.at(-1)[4].hiddenPeriods,p=>p.start),['2024-01-02']);
 });
 test('hiding every reported period explains the empty chart and retains table export',async()=>{
@@ -342,7 +368,7 @@ test('the reference weekly chart requests daily observations without changing th
  assert.equal(f.calls.filter(c=>c.key==='nativeAnalysisTimeline').length,before);
 });
 
-test('reference trend CSV captures all selected names and cancelling activity remains visible across pages',async()=>{
+test('reference trend CSV retains selected names when a confirmed zero with activity is hidden',async()=>{
  const saved=[],points=[{start:'2024-01-01',periods:1,missing:0,has_activity:true,total:{count:0,amount:0,average:null}}];
  const f=fixture({
   nativeAnalysisTimeline:async()=>({granularity:'period',points}),
@@ -355,7 +381,9 @@ test('reference trend CSV captures all selected names and cancelling activity re
  f.nodes.get('selectAll').dispatch('click');f.nodes.get('hideEmptyPeriods').checked=true;
  f.buttons.find(button=>button.dataset.chart==='table').dispatch('click');await settle();
  const table=f.tables.findLast(t=>t.root==='dataTable'&&t.metric==='amount');
- assert.ok(table);assert.equal(table.rows[0].length,2);
+ // The activity flag is not a nonzero quantity/amount. The day is hidden;
+ // its absence must not suppress CSV export or the full name selection.
+ assert.ok(table);assert.equal(table.rows[0].length,1);
  await table.options.csvContext.export();
  assert.deepEqual([...saved[0][0].selectedNames],[]);assert.deepEqual([...saved[0][1].metrics],['amount']);
  assert.equal(saved[0][1].table,'works');assert.equal(saved[0][1].hideEmpty,true);assert.equal(saved[0][2],'/tmp/view.csv');

@@ -38,6 +38,9 @@ pub mod shared_folder;
 
 #[path = "backup.rs"]
 mod backup;
+#[path = "report_transfer.rs"]
+mod report_transfer;
+pub use report_transfer::{TransferPreview, TransferReceipt, TransferRow};
 #[path = "recovery.rs"]
 mod recovery;
 pub use recovery::RestorePreview;

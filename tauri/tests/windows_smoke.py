@@ -294,7 +294,27 @@ def wait_for_app_state(page, expression, description, timeout_ms=30_000):
 def navigate(page, section):
     """Open a desktop section by the same visible buttons as the installed user."""
     key = 'overviewPanel' if section == 'dashboard' else section
+    # The detailed toolbar no longer duplicates Summary and Adjacent History.
+    # Keep the legacy summary SQL route available for deeper regression checks
+    # while entering the preserved history through its real visible button.
+    if key == 'overviewPanel':
+        page.locator('#sharedHeader .main-nav button').first.click()
+        page.evaluate("""() => window.referenceDesktop.openPanel(
+            'overviewPanel', document.getElementById('refAnalytics'))""")
+        expect(page.locator('#refNative')).to_have_attribute('data-panel','overviewPanel')
+        expect(page.locator('#overviewPanel')).to_be_visible()
+        return
+    if key == 'changes':
+        page.locator('#sharedHeader .main-nav button').nth(1).click()
+        page.locator('#referenceAdjacentHistory').click()
+        expect(page.locator('#refNative')).to_have_attribute('data-panel','changes')
+        expect(page.locator('#changes')).to_be_visible()
+        return
     tab = page.locator(f'.tool-tabs [data-section="{key}"]')
+    if not tab.is_visible() and page.locator('#toolsPage').is_visible() and page.locator('#toolsPage .tool-tabs').is_hidden():
+        # Old internal comparison/summary routes hide the five-tab strip.
+        # Close that route before reopening the genuine navigation bar.
+        page.locator('#backBtn').click()
     if not tab.is_visible():
         if key in ('upload', 'groups', 'databases', 'storage'):
             page.locator('#refImport' if key == 'upload' else '#refSettings').click()
@@ -849,6 +869,83 @@ def check_filtered_zero_chart(page, temporary, output):
     expect(table).to_contain_text('03.01.2019')
     expect(table).not_to_contain_text('02.01.2019')
 
+    # A single selected period cannot form a line, and responsive chart
+    # controls must remain usable in every theme and compact UI size.
+    page.locator('#chartPanel [data-reference-line]').click()
+    if not filters.evaluate('node => node.open'):
+        filters.locator(':scope > summary').click()
+    filters.locator('[data-filter="mode"]').get_by_role('button', name='Один период', exact=True).click()
+    page.wait_for_function("() => window.referenceFilters.scope?.overviewMode === 'single'", timeout=90_000)
+    line=page.locator('#chartPanel [data-reference-line]')
+    expect(line).to_be_hidden(timeout=90_000)
+    expect(page.locator('#chartPanel [data-chart="bar"]')).to_have_attribute('aria-pressed', 'true')
+    assert page.evaluate("window.unifiedUI.state.chart === 'bar'")
+
+    # CDP-attached installed WebView2 can expose no Playwright viewport.
+    viewport=page.viewport_size or page.evaluate('({width:innerWidth,height:innerHeight})')
+    initial=page.evaluate("""() => ({
+        theme:document.documentElement.dataset.theme,size:document.documentElement.dataset.uiSize,
+        rootTheme:document.getElementById('refRoot').dataset.theme,
+        rootSize:document.getElementById('refRoot').dataset.uiSize
+    })""")
+    try:
+        for width,height in ((390,844),(720,749),(1028,749),(1440,900)):
+            page.set_viewport_size({'width':width,'height':height})
+            for size in ('standard','90','80'):
+                for theme in ('light','dark'):
+                    page.evaluate('''options => {
+                        const root=document.documentElement;
+                        root.dataset.theme=options.theme;
+                        root.dataset.uiSize=options.size;
+                        const app=document.getElementById('refRoot');
+                        app.dataset.theme=options.theme;
+                        app.dataset.uiSize=options.size;
+                    }''', {'theme':theme,'size':size})
+                    geometry=page.evaluate('''() => {
+                      const root=document.querySelector('#chartPanel');
+                      const groups=['.chart-view-controls','.chart-mode-line',
+                          '.chart-mode-controls','#chartsContainer','.chart-legend'];
+                      const visible=node=>node&&node.getClientRects().length>0;
+                      const overflow=groups.map(query=>{
+                        const node=root.querySelector(query);
+                        if(!visible(node)) return null;
+                        // Horizontal SVG plotting regions intentionally scroll;
+                        // their *outer* containers and controls must not.
+                        return {query,width:node.clientWidth,scroll:node.scrollWidth,
+                          right:node.getBoundingClientRect().right};
+                      }).filter(Boolean);
+                      return {page:document.documentElement.scrollWidth,
+                        viewport:document.documentElement.clientWidth,
+                        overflow,hiddenLine:!visible(root.querySelector('[data-reference-line]'))};
+                    }''')
+                    assert geometry['hiddenLine'] and geometry['page']<=geometry['viewport']+2, (width,size,theme,geometry)
+                    for item in geometry['overflow']:
+                        if item['query'] in ('.chart-view-controls','.chart-mode-line','.chart-mode-controls','.chart-legend'):
+                            assert item['scroll']<=item['width']+2,(width,size,theme,item)
+            # Capture the entire visible chart panel, including legend and plot,
+            # not just the control strip. The screenshots are attached to CI.
+            page.evaluate("""() => {
+                document.documentElement.dataset.theme='light';
+                document.documentElement.dataset.uiSize='standard';
+                document.getElementById('refRoot').dataset.theme='light';
+                document.getElementById('refRoot').dataset.uiSize='standard';
+            }""")
+            if width in (390,720,1440):
+                page.locator('#chartPanel').screenshot(path=str(output/f'windows-chart-single-{width}.png'))
+    finally:
+        page.set_viewport_size(viewport)
+        page.evaluate('''previous => {
+            document.documentElement.dataset.theme=previous.theme;
+            document.documentElement.dataset.uiSize=previous.size;
+            const root=document.getElementById('refRoot');
+            root.dataset.theme=previous.rootTheme;
+            root.dataset.uiSize=previous.rootSize;
+        }''',initial)
+    filters.locator('[data-filter="mode"]').get_by_role('button', name='Диапазон', exact=True).click()
+    page.wait_for_function("() => window.referenceFilters.scope?.overviewMode === 'range'", timeout=90_000)
+    expect(line).to_be_visible(timeout=90_000)
+    expect(line).to_have_attribute('aria-pressed', 'true')
+
 
 def check_omitted_detail_evidence(page, temporary, output):
     source=temporary/'omitted-detail.xlsx';original=omitted_detail_xlsx();source.write_bytes(original)
@@ -1132,7 +1229,8 @@ def check_extended(page):
     expect(page.locator('#structurePanel')).to_be_hidden()
     for control,result in (('usualPanel','usualCoverage'),('regularityPanel','regularityCoverage')):
         navigate(page,control)
-        wait_for_text(page,f'#{result}','Полных периодов:',90_000)
+        expected='Полных исторических окон:' if control=='usualPanel' else 'Полных периодов анализа:'
+        wait_for_text(page,f'#{result}',expected,90_000)
     navigate(page,'changes')
     expect(page.locator('#changes .detail-date-scope')).to_contain_text('29.02.2024')
     expect(page.locator('#changesToCalendar')).to_be_hidden()

@@ -389,6 +389,14 @@ def run():
                 assert a.process.pid != b.process.pid and a.data != b.data
                 connect_shared(a, folder, cancel_first=True)
                 connect_shared(b, folder)
+                # The new native report transfer must be visible only in the
+                # connected team, and opening a preview never publishes a share.
+                transfer_button=a.page.locator('#personalTransferPreview')
+                expect(a.page.locator('#personalTransferPanel')).to_be_visible()
+                transfer_button.click()
+                expect(a.page.locator('#personalTransferSummary')).to_contain_text('Личная база: 0 отчётов', timeout=90_000)
+                expect(a.page.locator('#personalTransferApply')).to_be_disabled()
+                assert not a.page.locator('#personalTransferList .personal-transfer-row').count()
                 baseline = generations(folder)
                 generation = a.state()['generation']
                 assert b.state()['generation'] == generation

@@ -27,6 +27,23 @@
       <p>При импорте файла выберите Excel, проверьте результат и подтвердите сохранение. Папка Excel служит источником файлов. Если в этом сеансе включён автоимпорт, новые отчёты, прошедшие проверку, сохраняются в выбранную базу автоматически. Замены и файлы с замечаниями требуют ручной проверки.</p>
     </details>
   </div>
+  <section class="panel" id="personalTransferPanel" hidden aria-label="Перенос личных отчётов в общую базу">
+    <h2>Перенос отчётов из личной базы</h2>
+    <p class="muted">Отчёты остаются в личной базе. В общую добавляются только выбранные записи без пересечения дат с уже существующими. Группы, справочник и настройки не переносятся. Перед записью создаётся проверенная резервная копия общей SQLite.</p>
+    <div class="actions">
+      <button id="personalTransferPreview" type="button" class="button secondary">Проверить личные отчёты</button>
+      <button id="personalTransferSelectAll" type="button" class="button secondary" hidden>Выбрать новые на странице</button>
+      <button id="personalTransferApply" type="button" class="button" hidden disabled>Перенести выбранные</button>
+    </div>
+    <p id="personalTransferSummary" role="status" aria-live="polite"></p>
+    <div id="personalTransferList" class="personal-transfer-list" aria-label="Доступные отчёты для переноса"></div>
+    <div id="personalTransferPager" class="actions" hidden>
+      <button id="personalTransferPrev" type="button" class="button secondary">Предыдущая</button>
+      <span id="personalTransferPage" class="muted"></span>
+      <button id="personalTransferNext" type="button" class="button secondary">Следующая</button>
+    </div>
+    <p id="personalTransferResult" role="status" aria-live="polite" class="muted"></p>
+  </section>
   <section class="panel"><h2>Резервная копия</h2>
     <p id="storageModeInfo" class="muted">Копия SQLite включает отчёты, группы, справочник и настройки выбранной базы.</p>
     <div class="actions"><button id="exportBackup" type="button" class="button secondary">Сохранить копию активной базы</button>
