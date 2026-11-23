@@ -450,8 +450,12 @@ fn personal_reports_transfer_only_after_review_and_leave_source_unchanged() {
     let team_data = read(&runtime,&shared.workspace_token);
     assert_eq!(team_data["reports"].as_array().unwrap().len(),2);
     assert!(team_data["reports"][0].get("desktopFolder").is_none());
+    assert_eq!(team_data["settings"]["orgNames"],json!(["A","B","C","D"]),
+        "a new empty team must inherit the organization names needed for its first reports");
+    assert_eq!(team_data["settings"]["groups"],json!([]),
+        "personal group definitions must not be published implicitly");
     let post = runtime.preview_personal_transfer(Some(&shared.workspace_token),0).unwrap();
-    assert!(post.rows.iter().all(|r|r.status=="conflict"));
+    assert!(post.rows.iter().all(|r|r.status=="duplicate"));
     assert!(runtime.apply_personal_transfer(
         Some(&shared.workspace_token),post.source_revision,post.target_revision,
         vec!["local-day-1".into()]
@@ -571,4 +575,76 @@ fn personal_transfer_does_not_block_different_report_types_with_overlapping_date
     assert_eq!(ids.len(), 2);
     assert!(ids.contains(&"existing-week".to_string()));
     assert!(ids.contains(&"individual-day".to_string()));
+}
+
+#[test]
+fn personal_transfer_blocks_an_unknown_organization_without_changing_team_data() {
+    let (_root, runtime) = runtime_fixture();
+    let personal = runtime.status().unwrap();
+    runtime.execute(Some(&personal.workspace_token), Access::Write, |store| {
+        store.save(json!({"reports":[{"id":"local-a","type":"day",
+            "start":"2024-02-28","end":"2024-02-28",
+            "rows":[{"organization":"A","work":"Ремонт","count":1,"amount":100}]
+        }],"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}}))
+    }).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let team = connect(&runtime, folder.path());
+    runtime.execute(Some(&team.workspace_token), Access::Write, |store| {
+        store.save(json!({"reports":[{"id":"team-x","type":"day",
+            "start":"2024-03-01","end":"2024-03-01","rows":[]
+        }],"settings":{"orgNames":["X","Y","Z","W"],"groups":[],"catalog":[]}}))
+    }).unwrap();
+    let before = runtime.status().unwrap().generation;
+    let preview = runtime.preview_personal_transfer(Some(&team.workspace_token), 0).unwrap();
+    assert_eq!(preview.rows[0].status,"organization_conflict");
+    assert!(preview.organization_warning.is_some());
+    let error = runtime.apply_personal_transfer(
+        Some(&team.workspace_token), preview.source_revision, preview.target_revision,
+        vec!["local-a".into()]
+    ).unwrap_err();
+    assert!(error.contains("Подразделение"),"{error}");
+    assert_eq!(runtime.status().unwrap().generation,before);
+    let data = read(&runtime,&team.workspace_token);
+    assert_eq!(data["reports"].as_array().unwrap().len(),1);
+    assert_eq!(data["settings"]["orgNames"],json!(["X","Y","Z","W"]));
+}
+
+#[test]
+fn personal_wide_source_anchor_can_be_moved_before_linked_followup_batch() {
+    let (_root,runtime)=runtime_fixture();
+    let personal=runtime.status().unwrap();
+    runtime.execute(Some(&personal.workspace_token),Access::Write,|s|s.save(json!({
+        "reports":[
+          {"id":"source-anchor","type":"day","start":"2024-04-01","end":"2024-04-01",
+           "rows":[{"organization":"A","work":"Контроль","count":1,"amount":1}]},
+          {"id":"linked-day","type":"day","start":"2024-04-02","end":"2024-04-02",
+           "rows":[{"organization":"A","work":"Контроль","count":1,"amount":1}]}
+        ],"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}
+    }))).unwrap();
+    {
+        let state=runtime.state.lock().unwrap();
+        state.personal.connect().unwrap().execute(
+            "INSERT INTO report_source_diagnostic_links(report_id,anchor_id) VALUES('linked-day','source-anchor')",[]
+        ).unwrap();
+    }
+    let folder=tempfile::tempdir().unwrap();
+    let team=connect(&runtime,folder.path());
+    let first=runtime.preview_personal_transfer(Some(&team.workspace_token),0).unwrap();
+    runtime.apply_personal_transfer(
+        Some(&team.workspace_token),first.source_revision,first.target_revision,
+        vec!["source-anchor".into()]
+    ).unwrap();
+    let second=runtime.preview_personal_transfer(Some(&team.workspace_token),0).unwrap();
+    assert_eq!(second.rows.iter().find(|r|r.id=="source-anchor").unwrap().status,"duplicate");
+    runtime.apply_personal_transfer(
+        Some(&team.workspace_token),second.source_revision,second.target_revision,
+        vec!["linked-day".into()]
+    ).unwrap();
+    let state=runtime.state.lock().unwrap();
+    let connection=state.checkout.as_ref().unwrap().storage.connect().unwrap();
+    let refs:i64=connection.query_row(
+        "SELECT count(*) FROM report_source_diagnostic_links WHERE report_id='linked-day' AND anchor_id='source-anchor'",
+        [],|r|r.get(0)
+    ).unwrap();
+    assert_eq!(refs,1);
 }
