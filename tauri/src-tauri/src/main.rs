@@ -4,7 +4,7 @@
 mod windows_taskbar;
 mod storage;
 mod native_shared_runtime;
-use native_shared_runtime::{shared_workspace_status,shared_workspace_choose_folder,shared_workspace_connect,shared_workspace_sync,shared_workspace_disconnect,shared_workspace_discard_pending};
+use native_shared_runtime::{shared_workspace_status,shared_workspace_choose_folder,shared_workspace_connect,shared_workspace_sync,shared_workspace_disconnect,shared_workspace_discard_pending,shared_workspace_transfer_preview,shared_workspace_transfer_apply};
 mod native_import;
 mod native_management;
 mod native_advanced_analysis;
@@ -1803,6 +1803,8 @@ fn main() {
             shared_workspace_sync,
             shared_workspace_disconnect,
             shared_workspace_discard_pending,
+            shared_workspace_transfer_preview,
+            shared_workspace_transfer_apply,
             reference_changes,
             reference_changes_csv,
             reference_changes_print,
