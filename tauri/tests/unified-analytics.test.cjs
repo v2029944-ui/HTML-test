@@ -76,6 +76,20 @@ test('a complete zero stays hidden even if a source reports activity, while non-
  assert.equal(seen.at(-1),1);
  assert.deepEqual(Array.from(f.draws.at(-1)[4].hiddenPeriods,p=>p.start),['2024-01-02']);
 });
+test('work chart keeps a zero-total day with nonzero work on another page',async()=>{
+ const point={start:'2024-01-01',periods:1,missing:0,has_activity:true,total:{count:0,amount:0,average:null}};
+ const f=fixture({
+  nativeAnalysisTimeline:async()=>({granularity:'day',points:[point],zero_buckets_with_nonzero_works:[point.start]}),
+  nativeWorkTimeline:async()=>({granularity:'day',points:[point]})
+ });
+ await f.bootstrap();
+ f.nodes.get('advancedAnalytics').open=true;
+ f.nodes.get('hideEmptyPeriods').checked=true;
+ f.nodes.get('advancedAnalytics').dispatch('toggle');
+ await settle();
+ assert.equal(f.draws.at(-1)?.[0].length,1);
+});
+
 test('hiding every reported period explains the empty chart and retains table export',async()=>{
  const points=[{start:'2024-01-01',periods:1,missing:0,has_activity:false,total:{count:0,amount:0,average:null}}];
  const timeline=async()=>({granularity:'period',points});
@@ -387,6 +401,7 @@ test('reference trend CSV retains selected names when a confirmed zero with acti
  await table.options.csvContext.export();
  assert.deepEqual([...saved[0][0].selectedNames],[]);assert.deepEqual([...saved[0][1].metrics],['amount']);
  assert.equal(saved[0][1].table,'works');assert.equal(saved[0][1].hideEmpty,true);assert.equal(saved[0][2],'/tmp/view.csv');
+ assert.equal(saved[0][1].matchChart,true);
  f.window.referenceDetail.active='regularityPanel';
  await assert.rejects(table.options.csvContext.export(),/изменились/);assert.equal(saved.length,1);
 });

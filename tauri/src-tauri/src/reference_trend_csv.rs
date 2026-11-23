@@ -23,6 +23,9 @@ pub struct TrendCsvOptions {
     pub table: TrendTable,
     pub metrics: Vec<TrendMetric>,
     pub hide_empty: bool,
+    /// Use the displayed chart's aggregate-zero rule for the date axis.
+    #[serde(default)]
+    pub match_chart: bool,
 }
 // Use the same range aggregates as the organization page; summing a second
 // time after grouping into buckets can change the displayed rounding.
@@ -107,10 +110,16 @@ impl Storage {
             super::unified_analytics::presentation_functions(&tx)?;
             super::unified_analytics::create_name_catalog(&tx,scope.names.is_none())?;
         }
-        // Missing buckets remain visible; cancelling positive and negative entries
-        // also remain visible even when both their aggregate measures equal zero.
-        let visible="(?1=0 OR b.active<>0 OR b.missing<>0)";
-        let hide=options.hide_empty;
+        let hide = options.hide_empty;
+        let visible = if hide && options.match_chart {
+            tx.execute_batch("CREATE INDEX trend_series_by_label ON trend_series(label);").map_err(err)?;
+            let nonzero_total = if works { "b.qty<>0 OR b.money IS NOT 0 OR " } else { "" };
+            format!("(?1=0 OR b.missing<>0 OR {nonzero_total} EXISTS(
+                SELECT 1 FROM trend_series s WHERE s.label=b.label AND (s.qty<>0 OR s.money IS NOT 0)))")
+        } else {
+            // Standalone exports preserve activity even when its totals cancel.
+            "(?1=0 OR b.active<>0 OR b.missing<>0)".into()
+        };
         let mut axis = tx.prepare(&format!(
             "SELECT label, first_start, last_start FROM trend_buckets b WHERE {visible} ORDER BY label"
         )).map_err(err)?;
@@ -178,6 +187,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn chart_export_keeps_nonzero_works_that_offset_each_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Storage::new(dir.path().join("data")).unwrap();
+        let row = |work: &str, n: f64| json!({"organization":"A","work":work,"count":n,"amount":n*10.});
+        store.save(json!({
+            "reports":[
+                {"id":"cross","type":"day","start":"2024-01-01","end":"2024-01-01","organizations":["A"],
+                    "rows":[row("Positive",1.),row("Negative",-1.)]},
+                {"id":"same","type":"day","start":"2024-01-02","end":"2024-01-02","organizations":["A"],
+                    "rows":[row("Positive",1.),row("Positive",-1.)]}
+            ],
+            "settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}
+        })).unwrap();
+        let rev = store.revision().unwrap();
+        for id in ["cross","same"] {
+            store.analysis_index_report(id, rev).unwrap();
+        }
+        store.analysis_index_settings(rev).unwrap();
+        let orgs = store.analysis_filter_create(rev, "organizations").unwrap();
+        store.analysis_filter_append(rev,&orgs,&["A".into()]).unwrap();
+        store.analysis_filter_seal(rev,&orgs).unwrap();
+        let scope = AnalysisScope { report_type: "day".into(), organizations: orgs, names: None };
+        let range = RangeQuery { from: "2024-01-01".into(), to: "2024-01-03".into() };
+        let timeline = store.analysis_timeline_grouped(rev,&scope,&range,Some("day")).unwrap();
+        assert_eq!(timeline.zero_buckets_with_nonzero_works, ["2024-01-01"]);
+        assert_eq!(timeline.points[2].missing,1);
+
+        let csv = dir.path().join("chart.csv");
+        let options = TrendCsvOptions {
+            table: TrendTable::Works, metrics: vec![TrendMetric::Count],
+            hide_empty: true, match_chart: true
+        };
+        store.reference_trend_csv(rev,&scope,&range,Some("day"),&options,&csv).unwrap();
+        let content = fs::read_to_string(&csv).unwrap();
+        assert!(content.starts_with("\u{feff}\"Работа / группа\";\"2024-01-01\";\"2024-01-03\"\r\n"));
+        assert!(content.lines().any(|line|line == r#""Negative";"-1";"""#));
+        assert!(content.lines().any(|line|line == r#""Positive";"1";"""#));
+    }
+
+    #[test]
     fn trend_exports_all_names_including_groups_preserves_cancellation_missing_and_observed_zero() {
         let dir = tempfile::tempdir().unwrap();
         let store = Storage::new(dir.path().join("data")).unwrap();
@@ -200,7 +249,7 @@ mod tests {
         let q=RangeQuery{from:"2024-01-01".into(),to:"2024-01-04".into()};
         let scope=AnalysisScope{report_type:"day".into(),organizations:orgs,names:None};
         let csv=dir.path().join("works.csv");
-        let options=TrendCsvOptions{table:TrendTable::Works,metrics:vec![TrendMetric::Amount],hide_empty:true};
+        let options=TrendCsvOptions{table:TrendTable::Works,metrics:vec![TrendMetric::Amount],hide_empty:true,match_chart:false};
         store.reference_trend_csv(rev,&scope,&q,Some("day"),&options,&csv).unwrap();
         let content=fs::read_to_string(&csv).unwrap();
         assert_eq!(content.lines().count(),54); // Header, total and 52 distinct series.
@@ -211,14 +260,30 @@ mod tests {
         assert!(!content.contains("\"Work 01\""));
         assert!(store.reference_trend_csv(rev,&scope,&q,None,&options,&csv).is_err());
         assert_eq!(content,fs::read_to_string(csv).unwrap());
+        let chart_csv = dir.path().join("chart-works.csv");
+        let chart_options = TrendCsvOptions { match_chart: true, ..options };
+        store.reference_trend_csv(rev, &scope, &q, Some("day"), &chart_options, &chart_csv).unwrap();
+        let chart = fs::read_to_string(chart_csv).unwrap();
+        assert!(chart.starts_with("\u{feff}\"Работа / группа\";\"2024-01-01\";\"2024-01-03\"\r\n"));
+        assert!(chart.lines().any(|line| line == r#""Work 52";"52";"""#));
         let points=store.analysis_timeline_grouped(rev,&scope,&q,Some("day")).unwrap().points;
         assert!(!points[1].has_activity && points[3].has_activity);
         let orgcsv=dir.path().join("orgs.csv");
-        let options=TrendCsvOptions{table:TrendTable::Organizations,metrics:vec![TrendMetric::Amount,TrendMetric::Count],hide_empty:false};
+        let options=TrendCsvOptions{table:TrendTable::Organizations,metrics:vec![TrendMetric::Amount,TrendMetric::Count],hide_empty:false,match_chart:false};
         store.reference_trend_csv(rev,&scope,&q,Some("day"),&options,&orgcsv).unwrap();
         let content=fs::read_to_string(orgcsv).unwrap();
         assert!(content.contains("\"B\";\"Сумма\";\"0\";\"0\";\"\";\"0\""));
         assert!(content.contains("\"A\";\"Количество / объём\";\"53\";\"0\";\"1\";\"0\""));
+        let org_chart_csv = dir.path().join("chart-organizations.csv");
+        let org_chart_options = TrendCsvOptions {
+            table: TrendTable::Organizations, metrics: options.metrics.clone(),
+            hide_empty: true, match_chart: true
+        };
+        store.reference_trend_csv(rev, &scope, &q, Some("day"), &org_chart_options, &org_chart_csv).unwrap();
+        let chart = fs::read_to_string(org_chart_csv).unwrap();
+        assert!(chart.starts_with("\u{feff}\"Подразделение\";\"Показатель\";\"2024-01-01\";\"2024-01-03\"\r\n"));
+        assert!(chart.lines().any(|line| line == r#""A";"Количество / объём";"53";"1""#));
+        assert!(chart.lines().any(|line| line == r#""B";"Количество / объём";"0";"""#));
         let dest=dir.path().join("org-totals.csv");
         let options=TrendCsvOptions{table:TrendTable::OrganizationTotals,..options};
         store.reference_trend_csv(rev,&scope,&q,Some("day"),&options,&dest).unwrap();
@@ -255,7 +320,7 @@ mod tests {
                 (&work.points[0].first_start,&work.points[0].last_start),
             ] { assert_eq!((start.as_str(),stop.as_str()),(first,last)); }
             let path = dir.path().join(format!("{kind}.csv"));
-            let options = TrendCsvOptions {table:TrendTable::Organizations,metrics:vec![TrendMetric::Amount],hide_empty:false};
+            let options = TrendCsvOptions {table:TrendTable::Organizations,metrics:vec![TrendMetric::Amount],hide_empty:false,match_chart:false};
             store.reference_trend_csv(rev,&scope,&range,None,&options,&path).unwrap();
             let csv = fs::read_to_string(path).unwrap();
             let header = csv.lines().next().unwrap();
@@ -298,7 +363,7 @@ mod tests {
         assert!(selectable.has_omitted_names);
         assert_eq!(selectable.rows.len(),1);
         assert_eq!(selectable.rows[0].name,"Уборка");
-        let options = TrendCsvOptions {table:TrendTable::Works,metrics:vec![TrendMetric::Amount],hide_empty:false};
+        let options = TrendCsvOptions {table:TrendTable::Works,metrics:vec![TrendMetric::Amount],hide_empty:false,match_chart:false};
         let destination = dir.path().join("all.csv");
         store.reference_trend_csv(rev,&scope,&range,Some("day"),&options,&destination).unwrap();
         let csv = fs::read_to_string(destination).unwrap();

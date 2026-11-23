@@ -222,7 +222,7 @@ function chartInterval(s){const to=s.source==='daily'?s.to:O.periodEnd(s.to,s.di
 function plotSection(root,metric,title=titles[metric]){const section=UI.el('section',null,'metric-chart'),plot=UI.el('div',null,'metric-plot');section.append(UI.el('h3',title),plot);root.append(section);return plot;}
 function chartExport(scope,isCurrent,table,metrics){
  if(window.referenceDetail?.active!=='chartPanel')return null;
- const req=UI.request(scope),options={table,metrics:[...metrics],hideEmpty:$('hideEmptyPeriods').checked};
+ const req=UI.request(scope),options={table,metrics:[...metrics],hideEmpty:$('hideEmptyPeriods').checked,matchChart:true};
  const valid=()=>isCurrent()&&window.referenceDetail?.active==='chartPanel';
  return {export:async()=>{
   if(!valid())throw Error('Параметры графика изменились. Повторите расчёт.');
@@ -257,7 +257,8 @@ async function renderCharts(index=seriesIndex,paging=false){
   if(!isCurrent())return;
   for(let i=4;i<rows.length;i+=4){const batch=await Promise.all(rows.slice(i,i+4).map(row=>api.nativeWorkTimeline(revision,s.type,s.from,s.to,s.organizations,null,row.key,null,s.source==='daily'?s.displayType:null,s.selectedNames)));if(!isCurrent())return;series.push(...batch);}
   if(series.some(item=>item.granularity!==totals.granularity||item.points.length!==totals.points.length||item.points.some((p,i)=>p.start!==totals.points[i].start)))throw Error('Несовпадающие границы SQL-серий. Повторите расчёт.');
-  const keep=totals.points.map((p,i)=>!$('hideEmptyPeriods').checked||!confirmedZero(p)||series.some(item=>!confirmedZero(item.points[i]))),points=totals.points.filter((p,i)=>keep[i]),periods=descriptors(points,totals.granularity,s);
+  const nonzeroWorkBuckets=new Set(totals.zero_buckets_with_nonzero_works);
+  const keep=totals.points.map(p=>!$('hideEmptyPeriods').checked||!confirmedZero(p)||nonzeroWorkBuckets.has(p.start)),points=totals.points.filter((p,i)=>keep[i]),periods=descriptors(points,totals.granularity,s);
   const hiddenPeriods=descriptors(totals.points.filter((_,i)=>!keep[i]),totals.granularity,s);
   window.referenceDetail?.setChartPeriodCount?.(points.length);
   const data=points.map((p,i)=>{if(p.missing!==0)return null;const index=totals.points.indexOf(p);return new Map(rows.map((row,j)=>[row.key,series[j].points[index].missing===0?series[j].points[index].total:{count:null,amount:null,average:null}]));});
