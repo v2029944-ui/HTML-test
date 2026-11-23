@@ -586,8 +586,6 @@ impl Stage<'_> {
         // Count-only sheets have a work-name column and dated quantity columns,
         // but *no* amount column. Do not reinterpret the following date's
         // quantity as an amount: the numeric result would be plausible and wrong.
-        let date1904 = self.uses_1904_epoch()?;
-        let never_cancel = AtomicBool::new(false);
         for (header, columns) in quantity_columns {
             if header <= 1 || columns.len() < 2 || amount_rows.contains(&header) {
                 continue;
@@ -598,18 +596,22 @@ impl Stage<'_> {
             if work_col >= columns[0] || !columns.windows(2).all(|pair| pair[1] == pair[0] + 1) {
                 continue;
             }
-            let info = Info { work: work_col, header, pairs: Vec::new(), totals: None };
             let mut dated = 0usize;
             let mut previous = None;
             for col in columns {
-                // A final "Итого" column may also be labelled "Количество";
-                // it is not a dated observation.
-                let Some(date) = self.column_date(sheet, &info, col, "detect-day",
-                    date1904, &p, &never_cancel)? else { continue; };
-                if date.month_only { continue; }
-                let parts = date.parts;
+                // Read dates from the previous header row without touching the
+                // date-style staging table: worksheet_layout is also used
+                // before wide_setup by automatic format discovery.
+                let raw: Option<(String,String)> = self.db.query_row(
+                    &format!("SELECT {},c.kind FROM cells c LEFT JOIN strings s ON c.kind='s' AND s.id=CAST(c.value AS INTEGER) WHERE c.sheet=?1 AND c.row_num=?2 AND c.col_num=?3",resolved()),
+                    params![sheet, header - 1, col],
+                    |r| Ok((r.get::<_, Option<String>>(0)?.unwrap_or_default(),r.get(1)?))
+                ).optional()?;
+                let Some((value, kind)) = raw else { continue };
+                // The final "Итого" count column has no dated header.
+                let Some(parts) = date_parts(&value, &kind, false, false, &p)? else { continue };
                 let Some(day) = parts.year.and_then(|year|
-                    NaiveDate::from_ymd_opt(year, parts.month, parts.day)) else { continue; };
+                    NaiveDate::from_ymd_opt(year, parts.month, parts.day)) else { continue };
                 if previous.is_some_and(|old| day <= old) {
                     return Err(fail("Даты в столбцах «Количество» повторяются или идут не по порядку."));
                 }
