@@ -301,6 +301,9 @@ fn with_legacy_prepared<T>(
     let cancelled=Arc::new(AtomicBool::new(false));
     let mut stage=area.ingest(path,Limits::default(),&cancelled,|_|{})
         .map_err(|e|e.to_string())?;
+    if stage.worksheet_layout(&options.sheet).map_err(|e|e.to_string())? == Some("count-only") {
+        return Err("Этот Excel содержит даты и столбцы только «Количество». Для такого формата отсутствующая сумма не должна считаться нулём. Стандартный импорт не выполнен.".into());
+    }
     stage.convert_legacy(&options,&cancelled,|_|{})
         .map_err(|e|e.to_string())?;
     let prepared=stage.prepare(&cancelled,|_|{})
