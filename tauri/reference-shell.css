@@ -1142,3 +1142,44 @@ body:has(#refRoot)>footer {display:none}
  #refNative .upload-layout:has(#importPreview:not(:empty)):has(#desktopSource[hidden]) #uploadReviewCard {grid-column:2;grid-row:1 / span 2}
  #refNative .upload-layout:has(#importPreview:not(:empty)):has(#desktopSource[hidden]) #uploadParameterCard {grid-column:1;grid-row:2}
 }
+
+/* Safe report transfer between personal and shared SQLite workspaces. */
+#personalTransferPanel .personal-transfer-list {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));
+  gap:7px;
+  margin:12px 0;
+  max-height:430px;
+  overflow-y:auto;
+}
+#personalTransferPanel .personal-transfer-row {
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  min-width:0;
+  padding:10px 12px;
+  border:1px solid var(--border,#394451);
+  border-radius:9px;
+  background:var(--surface,#1b222c);
+  color:var(--text,#e8edf3);
+  font-size:12px;
+  line-height:1.5;
+  overflow-wrap:anywhere;
+  cursor:pointer;
+}
+#personalTransferPanel .personal-transfer-row input {
+  flex:none;
+  margin-top:3px;
+  accent-color:var(--accent,#f5c542);
+}
+#personalTransferPanel .personal-transfer-conflict {
+  opacity:.67;
+  cursor:not-allowed;
+}
+#personalTransferPanel #personalTransferSummary,
+#personalTransferPanel #personalTransferResult {margin-block:10px;overflow-wrap:anywhere}
+#personalTransferPanel .actions {flex-wrap:wrap}
+@media(max-width:560px) {
+  #personalTransferPanel .actions button {flex:1 1 145px;min-height:38px}
+  #personalTransferPanel .personal-transfer-list {grid-template-columns:minmax(0,1fr)}
+}
