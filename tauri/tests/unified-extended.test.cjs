@@ -234,6 +234,7 @@ test('department comparison dynamics include selected organizations beyond eight
   }
  });
  f.UI.drawChart=(...args)=>plots.push(args);f.UI.snapshot.org_names=organizations;
+ f.nodes.get('comparisonDynamics').open=true;
  f.publish({organizations});f.nodes.get('comparisonMode').value='organizations';f.nodes.get('comparisonBaseOrg').value='Org 0';
  f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
  const chart=plots.filter(args=>args[4].orientation).at(-1);
@@ -578,4 +579,24 @@ test('contribution detail respects the selected work scope used by its parent co
  await f.window.unifiedExtended.openComparison();await settle();
  assert.deepEqual(Array.from(contributions.at(-1).selectedNames),[]);
  assert.match(f.nodes.get('contributionCheck').textContent,/все работы/);
+});
+
+test('department comparison fetches its duplicate historical charts only when expanded',async()=>{
+ let trendReads=0;
+ const values=[{org:'A',complete:true,missing:0,total:{count:5,amount:10,average:2}}];
+ const f=fixture({
+  nativeAnalysisOrganizations:async()=>values,
+  unifiedOrganizationWorkWindow:async()=>({rows:[],total_rows:0}),
+  nativeOrganizationTrends:async()=>{
+   trendReads++;
+   return {granularity:'period',series:[{organization:'A',points:[{start:'2024-01-02',missing:0,total:{count:5,amount:10,average:2}}]}]};
+  }
+ });
+ f.publish({allNames:true,selectedNames:[],selectedKeys:[]});
+ f.nodes.get('comparisonMode').value='organizations';f.nodes.get('comparisonBaseOrg').value='A';
+ await f.window.unifiedExtended.openComparison();await settle();
+ assert.equal(trendReads,0);
+ const details=f.nodes.get('comparisonDynamics');
+ details.open=true;details.dispatch('toggle');await settle();
+ assert.equal(trendReads,1);
 });
