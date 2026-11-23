@@ -356,7 +356,7 @@ test('the reference weekly chart requests daily observations without changing th
  assert.equal(f.calls.filter(c=>c.key==='nativeAnalysisTimeline').length,before);
 });
 
-test('reference trend CSV captures all selected names and cancelling activity remains visible across pages',async()=>{
+test('reference trend CSV retains selected names when a confirmed zero with activity is hidden',async()=>{
  const saved=[],points=[{start:'2024-01-01',periods:1,missing:0,has_activity:true,total:{count:0,amount:0,average:null}}];
  const f=fixture({
   nativeAnalysisTimeline:async()=>({granularity:'period',points}),
@@ -369,7 +369,9 @@ test('reference trend CSV captures all selected names and cancelling activity re
  f.nodes.get('selectAll').dispatch('click');f.nodes.get('hideEmptyPeriods').checked=true;
  f.buttons.find(button=>button.dataset.chart==='table').dispatch('click');await settle();
  const table=f.tables.findLast(t=>t.root==='dataTable'&&t.metric==='amount');
- assert.ok(table);assert.equal(table.rows[0].length,2);
+ // The activity flag is not a nonzero quantity/amount. The day is hidden;
+ // its absence must not suppress CSV export or the full name selection.
+ assert.ok(table);assert.equal(table.rows[0].length,1);
  await table.options.csvContext.export();
  assert.deepEqual([...saved[0][0].selectedNames],[]);assert.deepEqual([...saved[0][1].metrics],['amount']);
  assert.equal(saved[0][1].table,'works');assert.equal(saved[0][1].hideEmpty,true);assert.equal(saved[0][2],'/tmp/view.csv');
