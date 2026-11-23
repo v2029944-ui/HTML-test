@@ -255,3 +255,39 @@ test('filter placement stays on this device and falls back to the top in a narro
   assert.equal(narrow.one('#appearanceFilterPlacement').value,'side');
   assert.equal(narrow.controls.atSide(),false);
 });
+
+
+test('baseline dates can be edited separately without changing the current period', async () => {
+  const {controls,one,draft,panel} = await fixture();
+  const current=[controls.scope.from,controls.scope.to];
+  one('[data-base-start]').onclick();
+  const start=draft();
+  assert.equal(start.title,'Начало базового периода');
+  start.apply('2026-10-05','week');
+  assert.equal(controls.scope.baseFrom,'2026-10-05');
+  assert.equal(controls.scope.baseTo,'2026-10-11');
+  one('[data-base-end]').onclick();
+  const end=draft();
+  assert.equal(end.title,'Конец базового периода');
+  end.apply('2026-10-26','week');
+  assert.equal(controls.scope.baseFrom,'2026-10-05');
+  assert.equal(controls.scope.baseTo,'2026-11-01');
+  assert.deepEqual([controls.scope.from,controls.scope.to],current);
+  assert.equal(one('[data-compare]').value,'custom');
+  end.apply('2026-09-14','week');
+  assert.equal(controls.scope.baseTo,'2026-11-01','invalid earlier end must not overwrite prior range');
+  const select=one('[data-compare]');select.value='prev';select.onchange();
+  assert.notEqual(controls.scope.baseTo,'2026-11-01');
+});
+
+test('baseline manual end supports leap February while keeping a single month intact', async () => {
+  const {controls,one,panel,open,draft}=await fixture();
+  panel.querySelectorAll('[data-filter=mode] button')[0].onclick();
+  panel.querySelectorAll('[data-filter=type] button')[2].onclick();
+  open().apply('2025-02-01','month');
+  one('[data-base-start]').onclick();draft().apply('2024-01-01','month');
+  panel.querySelectorAll('[data-filter=mode] button')[1].onclick();
+  one('[data-base-end]').onclick();draft().apply('2024-02-01','month');
+  assert.equal(controls.scope.baseFrom,'2024-01-01');
+  assert.equal(controls.scope.baseTo,'2024-02-29');
+});
