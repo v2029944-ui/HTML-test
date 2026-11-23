@@ -336,8 +336,6 @@ function init(){
  function formatChanged(){
   const layout=$('importFormat').value,wide=layout==='daily-wide',kind=$('importType').value;
   const example={day:'два дня',week:'две недели',month:'два месяца'}[kind]||'два периода';
-  const separateLabel={day:'Свои для каждого дня',week:'Свои для каждой недели',month:'Свои для каждого месяца'};
-  for(const option of $('importFormat').children)if(option.value==='legacy')option.textContent=separateLabel[kind]||'Свои для каждого периода';
   if($('importLayoutSummary')&&!$('importLayoutSummary').hidden)layoutSummary(true);
   const hint=$('importLayoutHint');
   if(hint)hint.textContent=wide?'Названия работ указаны один раз слева. Например, за '+example+' справа идут две пары «Количество / Сумма». Если в файле один период без даты, укажите начало вручную.':layout==='legacy'?'За '+example+' в таблице два набора «Работа / Количество / Сумма». В каждом наборе могут быть свои работы.':'Посмотрите на заголовки Excel. Названия работ указаны один раз слева или повторяются для каждого периода?';

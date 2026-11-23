@@ -16,7 +16,7 @@ from reference_smoke import check_reference
 from reference_catalog import check_reference_catalog
 from reference_import_flow import check_reference_import_flow
 from reference_window_size import set_client_width
-from reference_data_smoke import check_reference_data, choose_calendar_date
+from reference_data_smoke import check_reference_data, choose_calendar_date, select_filter_period
 from reference_gallery import write_reference_gallery
 from reference_print_probe import probe_reference_print
 from reference_print_changes import check_print_all_changes
@@ -754,8 +754,7 @@ def open_daily_overview(page, stamp):
     filters=page.locator('#reportShell .filter-fold')
     if not filters.evaluate('node => node.open'):
         filters.locator(':scope > summary').click()
-    filters.locator('[data-filter="type"]').get_by_role('button',name='День',exact=True).click()
-    filters.locator('[data-filter="mode"]').get_by_role('button',name='Один период',exact=True).click()
+    select_filter_period(filters, 'День', 'single')
     choose_calendar_date(page,filters.locator('[data-date="start"]'),stamp)
     wait_for_app_state(page,'window.referenceFilters.scope?.displayFrom==='+json.dumps(stamp),'Shared day selected')
     navigate(page,'dashboard')
@@ -847,7 +846,7 @@ def check_filtered_zero_chart(page, temporary, output):
     filters=page.locator('#reportShell .filter-fold')
     if not filters.evaluate('n=>n.open'):
         filters.locator(':scope > summary').click()
-    filters.locator('[data-filter="mode"]').get_by_role('button',name='Диапазон',exact=True).click()
+    select_filter_period(filters, 'День', 'range')
     choose_calendar_date(page,filters.locator('[data-date="start"]'),'2019-01-01')
     choose_calendar_date(page,filters.locator('[data-date="end"]'),'2019-01-03')
     navigate(page,'chartPanel')
@@ -874,7 +873,7 @@ def check_filtered_zero_chart(page, temporary, output):
     page.locator('#chartPanel [data-reference-line]').click()
     if not filters.evaluate('node => node.open'):
         filters.locator(':scope > summary').click()
-    filters.locator('[data-filter="mode"]').get_by_role('button', name='Один период', exact=True).click()
+    select_filter_period(filters, 'День', 'single')
     page.wait_for_function("() => window.referenceFilters.scope?.overviewMode === 'single'", timeout=90_000)
     line=page.locator('#chartPanel [data-reference-line]')
     expect(line).to_be_hidden(timeout=90_000)
@@ -941,7 +940,7 @@ def check_filtered_zero_chart(page, temporary, output):
             root.dataset.theme=previous.rootTheme;
             root.dataset.uiSize=previous.rootSize;
         }''',initial)
-    filters.locator('[data-filter="mode"]').get_by_role('button', name='Диапазон', exact=True).click()
+    select_filter_period(filters, 'День', 'range')
     page.wait_for_function("() => window.referenceFilters.scope?.overviewMode === 'range'", timeout=90_000)
     expect(line).to_be_visible(timeout=90_000)
     expect(line).to_have_attribute('aria-pressed', 'true')

@@ -22,8 +22,7 @@ async function fixture(storage = new Map(), width = 1440) {
   const panel = one('#reportShell');
   panel.querySelector = selector => selector === '#referenceSource' ? one('.filter-periods').options[0].options[0] : one(selector);
   panel.querySelectorAll = selector => {
-    const n = {'[data-filter="type"] button':4, '[data-filter="mode"] button':2,
-      '[data-filter=type] button':4, '[data-filter=mode] button':2, '[data-date]':2, '[data-shift]':2}[selector] || 0;
+    const n = {'[data-date]':2, '[data-shift]':2}[selector] || 0;
     if (!lists.has(selector)) lists.set(selector, Array.from({length:n}, element));
     return lists.get(selector);
   };
@@ -70,12 +69,13 @@ async function fixture(storage = new Map(), width = 1440) {
   panel.querySelectorAll('[data-shift]')[1].dataset.shift='1';
   controls.init();await ui.configure({revision:1,org_names:['A']});
   const source = async val=>{const n=panel.querySelector('#referenceSource');n.value=val;n.onchange();await new Promise(r=>setImmediate(r));};
-  return {controls, calls, ui, source, seen, one, panel, choices, window, findInDialog, checkboxInDialog, draft:()=>draft, open:()=>{date.onclick();return draft;}};
+  const selectPeriod=value=>{const n=one('[data-period-selection]');n.value=value;return n.onchange();};
+  return {selectPeriod, controls, calls, ui, source, seen, one, panel, choices, window, findInDialog, checkboxInDialog, draft:()=>draft, open:()=>{date.onclick();return draft;}};
 }
 
 test('an imported week and its comparison base can use different saved weekdays', async () => {
-  const {controls,source,open,one,panel,draft} = await fixture();
-  panel.querySelectorAll('[data-filter=mode] button')[0].onclick();
+  const {controls,source,open,one,selectPeriod,draft} = await fixture();
+  selectPeriod('week:single');
   await source('imported');
   const d=open(), candidates=await d.weeksForDay('2026-11-07');
   assert.deepEqual(candidates.map(x=>x.start),['2026-11-04','2026-11-06']);
@@ -91,8 +91,8 @@ test('an imported week and its comparison base can use different saved weekdays'
 });
 
 test('year-ago monthly scope and CSV keys describe the whole leap February', async () => {
-  const {controls,panel,source,one}=await fixture();
-  panel.querySelectorAll('[data-filter=type] button')[2].onclick();
+  const {controls,selectPeriod,source,one}=await fixture();
+  selectPeriod('month:range');
   await source('imported');
   const compare=one('[data-compare]');compare.value='year';compare.onchange();
   assert.equal(controls.scope.displayBaseTo,'2024-02-29');
@@ -195,16 +195,15 @@ test('all works can be restored when no names are eligible for individual select
 });
 
 test('calendar-month comparisons from daily reports include the leap day in the comparison month', async () => {
-  const {controls,panel,open,one}=await fixture();
-  panel.querySelectorAll('[data-filter=mode] button')[0].onclick();
-  panel.querySelectorAll('[data-filter=type] button')[2].onclick();
+  const {controls,selectPeriod,open,one}=await fixture();
+  selectPeriod('month:single');
   open().apply('2025-02-01','month');
   const compare=one('[data-compare]');compare.value='year';compare.onchange();
   assert.equal(controls.scope.from,'2025-02-01');
   assert.equal(controls.scope.to,'2025-02-28');
   assert.equal(controls.scope.baseFrom,'2024-02-01');
   assert.equal(controls.scope.baseTo,'2024-02-29');
-  panel.querySelectorAll('[data-filter=type] button')[0].onclick();
+  selectPeriod('day:single');
   open().apply('2025-02-28','day');
   assert.equal(controls.scope.baseTo,'2024-02-28');
 });
@@ -281,20 +280,19 @@ test('baseline dates can be edited separately without changing the current perio
 });
 
 test('baseline manual end supports leap February while keeping a single month intact', async () => {
-  const {controls,one,panel,open,draft}=await fixture();
-  panel.querySelectorAll('[data-filter=mode] button')[0].onclick();
-  panel.querySelectorAll('[data-filter=type] button')[2].onclick();
+  const {controls,one,selectPeriod,open,draft}=await fixture();
+  selectPeriod('month:single');
   open().apply('2025-02-01','month');
   one('[data-base-start]').onclick();draft().apply('2024-01-01','month');
-  panel.querySelectorAll('[data-filter=mode] button')[1].onclick();
+  selectPeriod('month:range');
   one('[data-base-end]').onclick();draft().apply('2024-02-01','month');
   assert.equal(controls.scope.baseFrom,'2024-01-01');
   assert.equal(controls.scope.baseTo,'2024-02-29');
 });
 
 test('editing imported weekly baseline end keeps the actual report weekday', async () => {
-  const {controls,panel,source,open,one,draft}=await fixture();
-  panel.querySelectorAll('[data-filter=mode] button')[0].onclick();
+  const {controls,selectPeriod,source,open,one,draft}=await fixture();
+  selectPeriod('week:single');
   await source('imported');
   open().apply('2026-11-07','week','2026-11-04');
   one('[data-base-start]').onclick();
@@ -307,4 +305,19 @@ test('editing imported weekly baseline end keeps the actual report weekday', asy
   assert.equal(controls.scope.displayBaseTo,'2026-11-24');
   end.apply('2026-11-16','week','2026-11-16');
   assert.equal(controls.scope.displayBaseTo,'2026-11-24','a different weekday must not corrupt the baseline');
+});
+
+test('one selection applies the year and single-period mode and shows actual dates for both sides', async () => {
+  const {controls, selectPeriod, one, seen, open}=await fixture();
+  const before=seen.length;
+  selectPeriod('year:single');
+  assert.equal(seen.length,before+1);
+  assert.equal(controls.scope.displayType,'year');
+  assert.equal(controls.scope.overviewMode,'single');
+  open().apply('2025-01-01','year');
+  assert.equal(one('[data-base-start]').textContent,'02.01 — 31.12.2024');
+  assert.equal(one('[data-date=start]').textContent,'01.01 — 31.12.2025');
+  const compare=one('[data-compare]');
+  compare.value='year';compare.onchange();
+  assert.equal(one('[data-base-start]').textContent,'01.01 — 31.12.2024');
 });
