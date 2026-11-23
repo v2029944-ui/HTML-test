@@ -1142,3 +1142,9 @@ body:has(#refRoot)>footer {display:none}
  #refNative .upload-layout:has(#importPreview:not(:empty)):has(#desktopSource[hidden]) #uploadReviewCard {grid-column:2;grid-row:1 / span 2}
  #refNative .upload-layout:has(#importPreview:not(:empty)):has(#desktopSource[hidden]) #uploadParameterCard {grid-column:1;grid-row:2}
 }
+
+/* Adjacent history is a main Changes action, not a duplicate detail tab. */
+#toolsPage .tool-tabs[hidden] {display:none!important}
+#s2 .changes-header-actions {display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end;min-width:0}
+#s2 .changes-header-actions .btn {white-space:normal;min-height:36px;max-width:100%}
+@media(max-width:680px){#s2 .changes-header-actions {width:100%;justify-content:flex-start}#s2 .changes-header-actions .btn {flex:1 1 auto}}
