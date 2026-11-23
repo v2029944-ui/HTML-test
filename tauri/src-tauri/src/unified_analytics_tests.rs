@@ -1,9 +1,13 @@
 use super::*;
 use tempfile::tempdir;
 fn fixture() -> (tempfile::TempDir, Storage, i64, AnalysisScope) {
+    fixture_with_works(75)
+}
+
+fn fixture_with_works(works: usize) -> (tempfile::TempDir, Storage, i64, AnalysisScope) {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().join("store")).unwrap();
-    let reports:Vec<Value>=(0..2).map(|day|json!({"id":format!("d{day}"),"type":"day","start":format!("2024-01-0{}",day+1),"end":format!("2024-01-0{}",day+1),"organizations":["A"],"rows":(0..75).map(|i|json!({"organization":"A","work":if i==74 {"ЯРКАЯ услуга".into()}else{format!("Работа {i:02}")},"count":if i==0 {-1.}else{(day+1) as f64},"amount":if i==0 {-10.}else if i==1 {0.}else{((day+1)*10+i) as f64}})).collect::<Vec<_>>()})).collect();
+    let reports:Vec<Value>=(0..2).map(|day|json!({"id":format!("d{day}"),"type":"day","start":format!("2024-01-0{}",day+1),"end":format!("2024-01-0{}",day+1),"organizations":["A"],"rows":(0..works).map(|i|json!({"organization":"A","work":if i==74 {"ЯРКАЯ услуга".into()}else{format!("Работа {i:02}")},"count":if i==0 {-1.}else{(day+1) as f64},"amount":if i==0 {-10.}else if i==1 {0.}else{((day+1)*10+i) as f64}})).collect::<Vec<_>>()})).collect();
     store
         .save(json!({"reports":reports,"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}}))
         .unwrap();
@@ -108,6 +112,30 @@ fn options() -> UnifiedChangeOptions {
         sort: "name".into(),
     }
 }
+#[test]
+fn large_adjacent_search_keeps_filtered_totals_with_bounded_sql_work() {
+    let (_dir, store, revision, scope) = fixture_with_works(4000);
+    let conn = store.connect().unwrap();
+    workspace(&conn, revision, &scope).unwrap();
+    let mut options = options();
+    options.search = "Работа 1".into();
+    let query = query();
+
+    // Count SQLite instructions instead of timing a particular runner.
+    let mut ticks = 0;
+    conn.progress_handler(1000, Some(move || {
+        ticks += 1;
+        ticks >= 8000
+    }));
+    prepare_unified(&conn, &scope, &query, None, &options)
+        .expect("adjacent-period search exceeded its SQLite instruction budget");
+    let summary = changes_summary(&conn, &query).unwrap();
+    assert_eq!(summary.rows, 1110);
+    assert_eq!(summary.count.base, 1110.);
+    assert_eq!(summary.count.current, 2220.);
+    assert_eq!(count_sql(&conn, "SELECT count(*) FROM unified_visible").unwrap(), 1110);
+}
+
 #[test]
 fn direct_sql_pages_seek_without_cursor_walk_and_keep_filtered_totals() {
     let (_dir, store, revision, scope) = fixture();
