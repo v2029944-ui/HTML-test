@@ -6,6 +6,13 @@ const path=require('node:path');
 const script=fs.readFileSync(path.join(__dirname,'../unified-analytics.js'),'utf8');
 const coverageScript=fs.readFileSync(path.join(__dirname,'../unified-coverage.js'),'utf8');
 const original=fs.readFileSync(path.join(__dirname,'../../index.html'),'utf8');
+const {buildUnified}=require('../unified-build.cjs');
+test('generated Tauri charts use readable patterns and bars for a single department period',()=>{
+ const built=buildUnified(original).script;
+ assert.match(built,/bar=state\.chart==='bar'\|\|periods\.length===1/);
+ assert.match(built,/pattern=svgEl\('pattern',\{id,width:8,height:8,patternUnits:'userSpaceOnUse'\}\)/);
+ assert.match(built,/svgEl\('circle',\{cx:4,cy:4,r:2\.2,fill:color\}\)/);
+});
 class Element{
  constructor(tag='div',text=''){this.tagName=tag.toUpperCase();this.children=[];this._text=text??'';this.value='';this.dataset={};this.listeners={};this.hidden=false;this.open=false;this.checked=false;this.classList={toggle(){}};}
  append(...children){this.children.push(...children);}replaceChildren(...children){this.children=children;this._text='';}
