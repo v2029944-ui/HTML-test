@@ -191,34 +191,36 @@
     node('personalTransferPage').textContent='Страница '+(page.pageIndex+1);
     const availableRows=page.rows.filter(row=>row.status==='ready');
     summary.textContent='Личная база: '+page.totalReports+' отчётов · новых на этой странице: '+
-      availableRows.length+' · выбрано: '+selectedTransferIds.size;
+      availableRows.length+' · выбрано: '+selectedTransferIds.size+' из 25 за один перенос.'+
+      (page.organizationWarning?' '+page.organizationWarning:'');
     applyButton.disabled=!available||!selectedTransferIds.size;
-    allButton.disabled=!available||!availableRows.length;
+    allButton.disabled=!available||!availableRows.length||selectedTransferIds.size>=25;
     const list=node('personalTransferList');
     if(!list?.replaceChildren||typeof document.createElement!=='function')return;
     list.replaceChildren();
     for(const entry of page.rows){
       const label=document.createElement('label');
-      label.className='personal-transfer-row'+(entry.status==='conflict'?' personal-transfer-conflict':'');
+      label.className='personal-transfer-row'+(entry.status!=='ready'?' personal-transfer-conflict':'');
       const cb=document.createElement('input');
-      cb.type='checkbox';cb.disabled=!available||entry.status!=='ready';
+      cb.type='checkbox';cb.disabled=!available||entry.status!=='ready'||(!selectedTransferIds.has(entry.id)&&selectedTransferIds.size>=25);
       cb.checked=selectedTransferIds.has(entry.id);
       cb.addEventListener('change',()=>{
-        if(cb.checked)selectedTransferIds.add(entry.id);
+        if(cb.checked){if(selectedTransferIds.size>=25){cb.checked=false;return;}selectedTransferIds.add(entry.id);}
         else selectedTransferIds.delete(entry.id);
         renderTransfer();
       });
       const text=document.createElement('span');
       text.textContent=[entry.reportType,entry.start===entry.end?entry.start:entry.start+' — '+entry.end,
         entry.sourceName||'Импортированный отчёт',
-        entry.status==='conflict'?'Конфликт дат — перенос недоступен':'Можно перенести'].join(' · ');
+        entry.status==='conflict'?'Конфликт идентификатора или периода — перенос недоступен':
+        entry.status==='organization_conflict'?'Подразделение отсутствует в общей базе — перенос недоступен':'Можно перенести'].join(' · ');
       label.title=entry.id;
       label.append(cb,text);
       list.append(label);
     }
   }
 
-  async function previewTransfer(pageIndex=0){
+  async function previewTransfer(pageIndex=0,resetSelection=false){
     if(busy||state?.mode!=='shared'||!state.available||state.pending||
        window.tauriOperations?.updating||window.tauriOperations?.saves)return;
     const token=state.workspace_token;
@@ -228,7 +230,8 @@
       if(token!==state?.workspace_token)throw Error('Общая база изменилась. Повторите проверку.');
       if(!preview||!Array.isArray(preview.rows)||!Number.isSafeInteger(preview.sourceRevision)||
          !Number.isSafeInteger(preview.targetRevision))throw Error('Список отчётов недостоверен.');
-      selectedTransferIds.clear();
+      const prior=transfer?.preview;
+      if(resetSelection||!prior||prior.sourceRevision!==preview.sourceRevision||prior.targetRevision!==preview.targetRevision)selectedTransferIds.clear();
       transfer={token,preview};
     }catch(error){transfer=null;selectedTransferIds.clear();transferMessage(statusMessage(error));}
     finally{busy=false;render();schedule();}
@@ -240,9 +243,9 @@
     const {token,preview}=transfer;
     if(token!==state.workspace_token){transferMessage('Общая база изменилась. Повторите проверку.');return;}
     const ids=[...selectedTransferIds];
-    if(ids.some(id=>!preview.rows.some(row=>row.id===id&&row.status==='ready'))){
-      transferMessage('Список выбранных отчётов устарел. Повторите проверку.');return;
-    }
+    if(ids.length>25){transferMessage('За один перенос можно выбрать не более 25 отчётов.');return;}
+    // Entries selected on earlier pages were marked ready; Rust rechecks
+    // every ID and both revisions before writing.
     if(!await window.confirm('Добавить '+ids.length+' отчётов в общую базу? Личная база не изменится. Перед переносом будет сохранена проверенная копия общей базы.'))return;
     if(token!==state?.workspace_token)return;
     busy=true;render();transferMessage('');
@@ -258,7 +261,9 @@
         '. Личная база сохранена без изменений.');
     }catch(error){
       transfer=null;selectedTransferIds.clear();
-      transferMessage(statusMessage(error)+' Проверьте общую базу и повторите предпросмотр перед новым переносом.');
+      // Network failure may leave an already prepared generation pending.
+      transferMessage(statusMessage(error)+' Не повторяйте перенос до проверки состояния публикации общей базы.');
+      try{await apply(await raw('shared_workspace_status'),true);}catch{/* no connection: retain warning */}
     }finally{busy=false;render();schedule();}
   }
 
@@ -271,11 +276,11 @@
     node('sharedWorkspaceConnect').addEventListener('click', connect);
     node('sharedWorkspaceDiscard').addEventListener('click', discard);
     node('sharedWorkspaceRetry').addEventListener('click', () => check(true));
-    node('personalTransferPreview')?.addEventListener('click',()=>previewTransfer(0));
+    node('personalTransferPreview')?.addEventListener('click',()=>previewTransfer(0,true));
     node('personalTransferPrev')?.addEventListener('click',()=>previewTransfer(Math.max(0,(transfer?.preview.pageIndex||0)-1)));
     node('personalTransferNext')?.addEventListener('click',()=>previewTransfer((transfer?.preview.pageIndex||0)+1));
     node('personalTransferSelectAll')?.addEventListener('click',()=>{
-      for(const row of transfer?.preview.rows||[])if(row.status==='ready')selectedTransferIds.add(row.id);
+      for(const row of transfer?.preview.rows||[])if(row.status==='ready'&&selectedTransferIds.size<25)selectedTransferIds.add(row.id);
       renderTransfer();
     });
     node('personalTransferApply')?.addEventListener('click',applyTransfer);
