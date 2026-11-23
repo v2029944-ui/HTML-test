@@ -861,7 +861,8 @@ def check_filtered_zero_chart(page, temporary, output):
     expect(page.locator('#chartPanel [data-chart="bar"]')).to_have_attribute('aria-pressed', 'true')
     assert page.evaluate("window.unifiedUI.state.chart === 'bar'")
 
-    viewport=page.viewport_size
+    # CDP-attached installed WebView2 can expose no Playwright viewport.
+    viewport=page.viewport_size or page.evaluate('({width:innerWidth,height:innerHeight})')
     initial=page.evaluate("""() => ({
         theme:document.documentElement.dataset.theme,size:document.documentElement.dataset.uiSize,
         rootTheme:document.getElementById('refRoot').dataset.theme,
