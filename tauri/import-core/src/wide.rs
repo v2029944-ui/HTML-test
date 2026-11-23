@@ -824,6 +824,20 @@ impl Stage<'_> {
         let result = (|| {
             let p = Patterns::new();
             self.wide_setup(&cancel)?;
+            // Refuse unsupported count-only books *before* the conversion
+            // transaction. The old wide detector expects quantity/amount pairs
+            // and otherwise could omit these sheets or mis-map the next day.
+            for (name, path) in self.sheet_names()? {
+                if (cfg.sheets.is_empty() || cfg.sheets.contains(&name))
+                    && self.worksheet_layout(&path)? == Some("count-only")
+                {
+                    return Err(fail(&format!(
+                        "Лист «{name}» содержит дневные столбцы только «Количество», без «Суммы». \
+                         Импорт этого формата ещё не поддерживается. Данные не сохранены: \
+                         отсутствующую сумму нельзя подменять нулём или количеством следующего дня."
+                    )));
+                }
+            }
             self.db.execute_batch(report_stage::SCHEMA)?;
             self.db.execute_batch("BEGIN IMMEDIATE;DELETE FROM converted_reports;DELETE FROM converted_rows;DELETE FROM converted_issues;DELETE FROM converted_totals;DELETE FROM converted_organizations;DELETE FROM wide_provenance;DELETE FROM wide_source_issues;DELETE FROM wide_days;DELETE FROM manifest WHERE name='conversion_complete';")?;
             let book = self.sheet_names()?;
