@@ -3,6 +3,8 @@
   'use strict';
   const raw = (name, args = {}) => window.__TAURI__.core.invoke(name, args);
   let state = null, bootstrap = null, ready = false, timer = null, busy = false;
+  let transfer = null;
+  const selectedTransferIds = new Set();
   const statusMessage = error => window.analizUserError ? window.analizUserError(error) : error?.message || String(error);
 
   function accepted(result) {
@@ -62,6 +64,7 @@
     node('sharedWorkspaceRetry').disabled = busy;
     node('sharedWorkspaceDiscard').hidden = !state?.pending;
     node('sharedWorkspaceDiscard').disabled = busy;
+    renderTransfer();
   }
 
   function schedule() {
@@ -72,6 +75,7 @@
   async function apply(result, force = false) {
     const previous = state;
     state = accepted(result);
+    if (previous?.workspace_token !== state.workspace_token) { transfer = null; selectedTransferIds.clear(); }
     if (previous && (previous.workspace_token !== state.workspace_token || (previous.available && !state.available))) {
       window.nativeFolderAutoImport?.forgetWorkspaceSession();
     }
@@ -152,6 +156,109 @@
     finally { busy = false; render(error); schedule(); }
   }
 
+  function transferMessage(message) {
+    const output=node('personalTransferResult');
+    if(output)output.textContent=message;
+  }
+
+  function renderTransfer() {
+    const panel=node('personalTransferPanel');
+    if(!panel)return;
+    const shared=state?.mode==='shared';
+    panel.hidden=!shared;
+    if(!shared)return;
+    const available=Boolean(state.available&&!state.pending&&!busy&&!window.tauriOperations?.updating);
+    node('personalTransferPreview').disabled=!available;
+    const next=node('personalTransferNext'),previous=node('personalTransferPrev');
+    const applyButton=node('personalTransferApply'),allButton=node('personalTransferSelectAll');
+    const pager=node('personalTransferPager'),summary=node('personalTransferSummary');
+    const page=transfer?.preview;
+    const hasPage=Boolean(page);
+    allButton.hidden=!hasPage;
+    applyButton.hidden=!hasPage;
+    pager.hidden=!hasPage||page.totalReports<=page.pageSize;
+    if(!hasPage){
+      applyButton.disabled=true;
+      summary.textContent='';
+      node('personalTransferList').replaceChildren?.();
+      return;
+    }
+    previous.disabled=!available||page.pageIndex===0;
+    next.disabled=!available||!page.hasNext;
+    node('personalTransferPage').textContent='Страница '+(page.pageIndex+1);
+    const availableRows=page.rows.filter(row=>row.status==='ready');
+    summary.textContent='Личная база: '+page.totalReports+' отчётов · новых на этой странице: '+
+      availableRows.length+' · выбрано: '+selectedTransferIds.size;
+    applyButton.disabled=!available||!selectedTransferIds.size;
+    allButton.disabled=!available||!availableRows.length;
+    const list=node('personalTransferList');
+    if(!list?.replaceChildren||typeof document.createElement!=='function')return;
+    list.replaceChildren();
+    for(const entry of page.rows){
+      const label=document.createElement('label');
+      label.className='personal-transfer-row'+(entry.status==='conflict'?' personal-transfer-conflict':'');
+      const cb=document.createElement('input');
+      cb.type='checkbox';cb.disabled=!available||entry.status!=='ready';
+      cb.checked=selectedTransferIds.has(entry.id);
+      cb.addEventListener('change',()=>{
+        if(cb.checked)selectedTransferIds.add(entry.id);
+        else selectedTransferIds.delete(entry.id);
+        renderTransfer();
+      });
+      const text=document.createElement('span');
+      text.textContent=[entry.reportType,entry.start===entry.end?entry.start:entry.start+' — '+entry.end,
+        entry.sourceName||'Импортированный отчёт',
+        entry.status==='conflict'?'Конфликт дат — перенос недоступен':'Можно перенести'].join(' · ');
+      label.title=entry.id;
+      label.append(cb,text);
+      list.append(label);
+    }
+  }
+
+  async function previewTransfer(pageIndex=0){
+    if(busy||state?.mode!=='shared'||!state.available||state.pending||
+       window.tauriOperations?.updating||window.tauriOperations?.saves)return;
+    const token=state.workspace_token;
+    busy=true;render();transferMessage('');
+    try{
+      const preview=await raw('shared_workspace_transfer_preview',{workspaceToken:token,page:pageIndex});
+      if(token!==state?.workspace_token)throw Error('Общая база изменилась. Повторите проверку.');
+      if(!preview||!Array.isArray(preview.rows)||!Number.isSafeInteger(preview.sourceRevision)||
+         !Number.isSafeInteger(preview.targetRevision))throw Error('Список отчётов недостоверен.');
+      selectedTransferIds.clear();
+      transfer={token,preview};
+    }catch(error){transfer=null;selectedTransferIds.clear();transferMessage(statusMessage(error));}
+    finally{busy=false;render();schedule();}
+  }
+
+  async function applyTransfer(){
+    if(busy||!transfer||!selectedTransferIds.size||
+       state?.mode!=='shared'||!state.available||state.pending)return;
+    const {token,preview}=transfer;
+    if(token!==state.workspace_token){transferMessage('Общая база изменилась. Повторите проверку.');return;}
+    const ids=[...selectedTransferIds];
+    if(ids.some(id=>!preview.rows.some(row=>row.id===id&&row.status==='ready'))){
+      transferMessage('Список выбранных отчётов устарел. Повторите проверку.');return;
+    }
+    if(!await window.confirm('Добавить '+ids.length+' отчётов в общую базу? Личная база не изменится. Перед переносом будет сохранена проверенная копия общей базы.'))return;
+    if(token!==state?.workspace_token)return;
+    busy=true;render();transferMessage('');
+    try{
+      const receipt=await raw('shared_workspace_transfer_apply',{
+        workspaceToken:token,sourceRevision:preview.sourceRevision,
+        targetRevision:preview.targetRevision,selectedIds:ids
+      });
+      transfer=null;selectedTransferIds.clear();
+      await apply(await raw('shared_workspace_status'),true);
+      transferMessage('Перенесено отчётов: '+receipt.imported+
+        '. Резервная копия общей базы: '+receipt.backupPath+
+        '. Личная база сохранена без изменений.');
+    }catch(error){
+      transfer=null;selectedTransferIds.clear();
+      transferMessage(statusMessage(error)+' Проверьте общую базу и повторите предпросмотр перед новым переносом.');
+    }finally{busy=false;render();schedule();}
+  }
+
   async function init() {
     if (ready) return;
     ready = true;
@@ -161,6 +268,14 @@
     node('sharedWorkspaceConnect').addEventListener('click', connect);
     node('sharedWorkspaceDiscard').addEventListener('click', discard);
     node('sharedWorkspaceRetry').addEventListener('click', () => check(true));
+    node('personalTransferPreview')?.addEventListener('click',()=>previewTransfer(0));
+    node('personalTransferPrev')?.addEventListener('click',()=>previewTransfer(Math.max(0,(transfer?.preview.pageIndex||0)-1)));
+    node('personalTransferNext')?.addEventListener('click',()=>previewTransfer((transfer?.preview.pageIndex||0)+1));
+    node('personalTransferSelectAll')?.addEventListener('click',()=>{
+      for(const row of transfer?.preview.rows||[])if(row.status==='ready')selectedTransferIds.add(row.id);
+      renderTransfer();
+    });
+    node('personalTransferApply')?.addEventListener('click',applyTransfer);
     window.addEventListener('pagehide', () => { ready = false; clearTimeout(timer); }, {once:true});
     try { await initial(); render(); }
     catch (failure) { render(statusMessage(failure)); }
