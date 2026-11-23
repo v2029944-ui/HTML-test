@@ -875,8 +875,6 @@ fn sql_timeline_preserves_missing_and_zero_amounts_without_loading_history() {
 
 #[test]
 fn daily_trend_and_csv_leave_an_invalid_day_empty_between_valid_days() {
-    use super::analytics::{TrendCsvOptions, TrendMetric, TrendTable};
-
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();
     let row = |count: f64| json!({"organization":"A","work":"Work","count":count,"amount":count*10.0});
@@ -912,7 +910,9 @@ fn daily_trend_and_csv_leave_an_invalid_day_empty_between_valid_days() {
     assert!(quality.rows[0].cells[2].numeric_zero);
 
     let dest = dir.path().join("days.csv");
-    let options = TrendCsvOptions { table: TrendTable::Works, metrics: vec![TrendMetric::Count], hide_empty: false };
+    let options = serde_json::from_value(json!({
+        "table": "works", "metrics": ["count"], "hideEmpty": false
+    })).unwrap();
     store.reference_trend_csv(revision, &selected, &dates, Some("day"), &options, &dest).unwrap();
     let csv = fs::read_to_string(dest).unwrap();
     assert!(csv.lines().any(|line|line == r#""Work";"2,5";"";"0";"3""#), "{csv}");
