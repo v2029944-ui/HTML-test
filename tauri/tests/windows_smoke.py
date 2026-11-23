@@ -849,6 +849,65 @@ def check_filtered_zero_chart(page, temporary, output):
     expect(table).to_contain_text('03.01.2019')
     expect(table).not_to_contain_text('02.01.2019')
 
+    # A single selected period cannot form a line, and responsive chart
+    # controls must remain usable in every theme and compact UI size.
+    page.locator('#chartPanel [data-reference-line]').click()
+    if not filters.evaluate('node => node.open'):
+        filters.locator(':scope > summary').click()
+    filters.locator('[data-filter="mode"]').get_by_role('button', name='Один период', exact=True).click()
+    page.wait_for_function("() => window.referenceFilters.scope?.overviewMode === 'single'", timeout=90_000)
+    line=page.locator('#chartPanel [data-reference-line]')
+    expect(line).to_be_hidden(timeout=90_000)
+    expect(page.locator('#chartPanel [data-chart="bar"]')).to_have_attribute('aria-pressed', 'true')
+    assert page.evaluate("window.unifiedUI.state.chart === 'bar'")
+
+    viewport=page.viewport_size
+    initial=page.evaluate("({theme:document.documentElement.dataset.theme,size:document.documentElement.dataset.uiSize})")
+    try:
+        for width,height in ((390,844),(720,749),(1028,749),(1440,900)):
+            page.set_viewport_size({'width':width,'height':height})
+            for size in ('standard','90','80'):
+                for theme in ('light','dark'):
+                    page.evaluate('''options => {
+                        const root=document.documentElement;
+                        root.dataset.theme=options.theme;
+                        root.dataset.uiSize=options.size;
+                    }''', {'theme':theme,'size':size})
+                    geometry=page.evaluate('''() => {
+                      const root=document.querySelector('#chartPanel');
+                      const groups=['.chart-view-controls','.chart-mode-line',
+                          '.chart-mode-controls','#chartsContainer','.chart-legend'];
+                      const visible=node=>node&&node.getClientRects().length>0;
+                      const overflow=groups.map(query=>{
+                        const node=root.querySelector(query);
+                        if(!visible(node)) return null;
+                        // Horizontal SVG plotting regions intentionally scroll;
+                        // their *outer* containers and controls must not.
+                        return {query,width:node.clientWidth,scroll:node.scrollWidth,
+                          right:node.getBoundingClientRect().right};
+                      }).filter(Boolean);
+                      return {page:document.documentElement.scrollWidth,
+                        viewport:document.documentElement.clientWidth,
+                        overflow,hiddenLine:!visible(root.querySelector('[data-reference-line]'))};
+                    }''')
+                    assert geometry['hiddenLine'] and geometry['page']<=geometry['viewport']+2, (width,size,theme,geometry)
+                    for item in geometry['overflow']:
+                        if item['query'] in ('.chart-view-controls','.chart-mode-line','.chart-mode-controls','.chart-legend'):
+                            assert item['scroll']<=item['width']+2,(width,size,theme,item)
+            # Screenshots make regressions in narrow controls and legends reviewable.
+            page.evaluate("() => { document.documentElement.dataset.theme='light'; document.documentElement.dataset.uiSize='standard'; }")
+            page.locator('#chartPanel .chart-mode-line').screenshot(path=str(output/f'windows-chart-single-controls-{width}.png'))
+    finally:
+        page.set_viewport_size(viewport)
+        page.evaluate('''previous => {
+            document.documentElement.dataset.theme=previous.theme;
+            document.documentElement.dataset.uiSize=previous.size;
+        }''',initial)
+    filters.locator('[data-filter="mode"]').get_by_role('button', name='Диапазон', exact=True).click()
+    page.wait_for_function("() => window.referenceFilters.scope?.overviewMode === 'range'", timeout=90_000)
+    expect(line).to_be_visible(timeout=90_000)
+    expect(line).to_have_attribute('aria-pressed', 'true')
+
 
 def check_omitted_detail_evidence(page, temporary, output):
     source=temporary/'omitted-detail.xlsx';original=omitted_detail_xlsx();source.write_bytes(original)
