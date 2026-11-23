@@ -166,7 +166,10 @@
     if(!panel)return;
     const shared=state?.mode==='shared';
     panel.hidden=!shared;
-    if(!shared)return;
+    if(!shared){
+      node('personalTransferPreview').disabled=true;
+      return;
+    }
     const available=Boolean(state.available&&!state.pending&&!busy&&!window.tauriOperations?.updating);
     node('personalTransferPreview').disabled=!available;
     const next=node('personalTransferNext'),previous=node('personalTransferPrev');
