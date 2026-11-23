@@ -40,7 +40,7 @@ pub struct TransferPreview {
     pub organization_warning: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferReceipt {
     pub imported: usize,
@@ -205,7 +205,7 @@ impl Storage {
         let mut batch = Vec::with_capacity(selected_ids.len());
         for id in selected_ids {
             let row: Option<(String,String,String,Option<String>,Vec<u8>)> = source.query_row(
-                "SELECT report_type,period_start,period_end,source_name,json FROM reports WHERE id=?1",
+                "SELECT report_type,period_start,period_end,source_name,CAST(json AS BLOB) FROM reports WHERE id=?1",
                 [id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)),
             ).optional().map_err(err)?;
             let (kind,start,end,source_name,bytes) = row.ok_or("Отчёт отсутствует в личной базе. Повторите проверку.")?;
