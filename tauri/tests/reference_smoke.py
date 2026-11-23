@@ -486,9 +486,18 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                 expect(chart.locator('[data-chart="table"]')).to_have_attribute('aria-pressed', 'true')
                 expect(orientation).to_have_count(0)
                 assert abs(mode_row.bounding_box()['height'] - bar_height) <= 1
-                chart.locator('[data-reference-line]').click()
-                expect(chart.locator('[data-reference-line]')).to_have_attribute('aria-pressed', 'true')
-                expect(orientation).to_have_count(0)
+                line = chart.locator('[data-reference-line]')
+                if line.is_visible() and line.is_enabled():
+                    line.click()
+                    expect(line).to_have_attribute('aria-pressed', 'true')
+                    expect(orientation).to_have_count(0)
+                else:
+                    # One selected period cannot show a time-series line.
+                    expect(line).to_be_hidden()
+                    expect(line).to_be_disabled()
+                    chart.locator('[data-chart="bar"]').click()
+                    expect(chart.locator('[data-chart="bar"]')).to_have_attribute('aria-pressed', 'true')
+                    expect(orientation).to_be_visible()
                 assert abs(mode_row.bounding_box()['height'] - bar_height) <= 1
             if target == 'usualPanel' and has_reports:
                 work = page.locator('#usualResults .service-link').first
@@ -534,7 +543,12 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                         original_layout = layout.input_value()
                         chart = page.locator('#chartPanel')
                         layout.select_option('combined')
-                        for mode, direction in [('line', None), ('bar', 'vertical'), ('bar', 'horizontal')]:
+                        modes = [('bar', 'vertical'), ('bar', 'horizontal')]
+                        if chart.locator('[data-reference-line]').is_visible():
+                            modes.insert(0, ('line', None))
+                        else:
+                            expect(chart.locator('[data-reference-line]')).to_be_disabled()
+                        for mode, direction in modes:
                             chart.locator('[data-reference-line]' if mode == 'line' else '[data-chart="bar"]').click()
                             if direction:
                                 page.locator('#chartOrientation').select_option(direction)
@@ -564,7 +578,10 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                                 assert results['scroll'] <= 1 and results['legendScroll'] <= 1, results
                             inventory.append({'step': step + '-geometry', **results})
                         page.locator('#chartOrientation').select_option('vertical')
-                        chart.locator('[data-reference-line]').click()
+                        if chart.locator('[data-reference-line]').is_visible():
+                            chart.locator('[data-reference-line]').click()
+                        else:
+                            chart.locator('[data-chart="bar"]').click()
                         layout.select_option(original_layout)
                     record('08-department-totals', page.locator('#toolsPage'))
                 table_help('#chartOrgTotals .metric-table', '08-department-totals-table-help')
