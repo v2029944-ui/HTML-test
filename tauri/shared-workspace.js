@@ -248,22 +248,31 @@
     // Entries selected on earlier pages were marked ready; Rust rechecks
     // every ID and both revisions before writing.
     if(!await window.confirm('Добавить '+ids.length+' отчётов в общую базу? Личная база не изменится. Перед переносом будет сохранена проверенная копия общей базы.'))return;
-    if(token!==state?.workspace_token)return;
+    if(token!==state?.workspace_token||state.pending||!state.available||
+       window.tauriOperations?.updating||window.tauriOperations?.saves)return;
     busy=true;render();transferMessage('');
+    let receipt=null;
     try{
-      const receipt=await raw('shared_workspace_transfer_apply',{
+      receipt=await raw('shared_workspace_transfer_apply',{
         workspaceToken:token,sourceRevision:preview.sourceRevision,
         targetRevision:preview.targetRevision,selectedIds:ids
       });
       transfer=null;selectedTransferIds.clear();
-      await apply(await raw('shared_workspace_status'),true);
+      // Publication is already confirmed by Rust at this point. A failed UI
+      // refresh must never be presented as a failed transfer or invite retries.
+      let refreshError='';
+      try{await apply(await raw('shared_workspace_status'),true);}
+      catch(error){refreshError=' Не удалось обновить экран: '+statusMessage(error)+'. Откройте «Базы данных» повторно.';}
       transferMessage('Перенесено отчётов: '+receipt.imported+
         '. Резервная копия общей базы: '+receipt.backupPath+
-        '. Личная база сохранена без изменений.');
+        '. Личная база сохранена без изменений.'+refreshError);
     }catch(error){
       transfer=null;selectedTransferIds.clear();
-      // Network failure may leave an already prepared generation pending.
-      transferMessage(statusMessage(error)+' Не повторяйте перенос до проверки состояния публикации общей базы.');
+      // A failed publication may already be staged in the private journal.
+      const publicationUncertain=/публикац|не подтвержден|синхрониз|сети/i.test(statusMessage(error));
+      transferMessage(statusMessage(error)+(publicationUncertain
+        ?' Не повторяйте перенос до проверки состояния публикации общей базы.'
+        :' Исправьте причину и заново проверьте отчёты перед переносом.'));
       try{await apply(await raw('shared_workspace_status'),true);}catch{/* no connection: retain warning */}
     }finally{busy=false;render();schedule();}
   }
