@@ -523,7 +523,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                     if has_reports:
                         saved_size = page.evaluate('({width:innerWidth,height:innerHeight})')
                         try:
-                            for width in (720, 1028):
+                            for width in (320, 390, 720, 1028):
                                 page.set_viewport_size({'width': width, 'height': 749})
                                 check_shell_layout(page, chart=True)
                                 record(f'08-chart-controls-{width}', page.locator('#chartPanel .chart-view-controls'))
