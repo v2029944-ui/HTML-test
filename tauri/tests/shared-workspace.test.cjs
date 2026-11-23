@@ -191,7 +191,7 @@ test('server-side organization incompatibility disables the affected report',asy
  };
  await f.click('personalTransferPreview');
  assert.match(f.node('personalTransferSummary').textContent,/подразделений различаются/);
- assert.match(f.node('personalTransferList').children[0].textContent,/Подразделение отсутствует/);
+ assert.match(f.node('personalTransferList').children[0].children[1].textContent,/Подразделение отсутствует/);
  assert.equal(f.node('personalTransferApply').disabled,true);
  await f.click('personalTransferSelectAll');
  assert.equal(f.node('personalTransferApply').disabled,true);
