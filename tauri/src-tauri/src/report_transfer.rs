@@ -40,7 +40,7 @@ pub struct TransferPreview {
     pub organization_warning: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TransferReceipt {
     pub imported: usize,
