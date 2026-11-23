@@ -436,6 +436,13 @@
 }
 .date-shifts svg {display:block;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round;stroke-width:1.6}
 .report-dates .report-date-values {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-items:start;min-width:0}
+/* Baseline shortcuts use the existing compact controls and wrap in sidebar/mobile layouts. */
+.report-dates [data-base-card] .baseline-quick-actions {display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0;margin-block:3px 0}
+:is(#s1,#s2,#sharedHeader,#reportShell) .report-dates [data-base-card] .baseline-quick-actions .chip {flex:1 1 auto;min-width:0;min-height:28px;padding:3px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--text);font:600 var(--date-label-font)/1.25 var(--date-family,system-ui,sans-serif);cursor:pointer;white-space:normal}
+:is(#s1,#s2,#sharedHeader,#reportShell) .report-dates [data-base-card] .baseline-quick-actions .chip[aria-pressed="true"] {background:var(--selected);border-color:var(--accent);color:var(--text)}
+:is(#s1,#s2,#sharedHeader,#reportShell) .report-dates [data-base-card] .baseline-quick-actions .chip:disabled {opacity:.5;cursor:not-allowed}
+:is(#s1,#s2,#sharedHeader,#reportShell) .report-dates [data-base-card] .baseline-quick-actions .chip:focus-visible {outline:2px solid var(--focus);outline-offset:2px}
+
 .report-dates.single-date .report-date-values {grid-template-columns:minmax(0,1fr)}
 .report-dates .date-label-pair {display:grid;gap:3px;min-width:0}
 .report-dates .date-label-pair[hidden],.report-dates .date-range-caption[hidden] {display:none}
