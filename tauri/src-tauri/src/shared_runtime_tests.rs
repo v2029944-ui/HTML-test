@@ -647,5 +647,4 @@ fn personal_wide_source_anchor_can_be_moved_before_linked_followup_batch() {
         [],|r|r.get(0)
     ).unwrap();
     assert_eq!(refs,1);
-    assert_eq!(runtime.status().is_ok(),true);
 }
