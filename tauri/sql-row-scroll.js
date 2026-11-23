@@ -80,10 +80,11 @@ function showChoices(state){
 }
 function positionMenu({menu,choose}){
  // Position against the visible viewport, including when hosted by a dialog.
- const rect=choose.getBoundingClientRect(),width=menu.offsetWidth,height=menu.offsetHeight;
+ const rect=choose.getBoundingClientRect(),{width,height}=menu.getBoundingClientRect();
+ const zoom=menu.currentCSSZoom||1;
  const below=rect.bottom+4;
- menu.style.left=Math.max(4,Math.min(rect.left,document.documentElement.clientWidth-width-4))+'px';
- menu.style.top=Math.max(4,below+height<=innerHeight?below:rect.top-height-4)+'px';
+ menu.style.left=Math.max(4,Math.min(rect.left,document.documentElement.clientWidth-width-4))/zoom+'px';
+ menu.style.top=Math.max(4,below+height<=innerHeight?below:rect.top-height-4)/zoom+'px';
 }
 function create(root){
  const nav=element('nav'),bar=element('div'),previous=button('previous','Предыдущая страница','‹');

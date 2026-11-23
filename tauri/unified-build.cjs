@@ -33,6 +33,40 @@ function buildUnified(source){
  const chartPoint="if(raw===null){flush();return;}";
  if(!script.includes(chartPoint))throw Error('Original chart point marker changed');
  script=script.replace(chartPoint,"if(!Number.isFinite(raw)){flush();return;}");
+ // Use the actual desktop plot width in SVG coordinates. Scaling a fixed
+ // 760px viewBox up to a wide window also magnifies its height and labels.
+ const plotGeometry=[
+  ['height=phone?310:350','height=phone?250:280'],
+  ['Math.max(760,periods.length*Math.max(110,bar?shown.length*18:110))','Math.max(root.clientWidth||0,left+right+periods.length*Math.max(90,bar?shown.length*18:0))'],
+  ['+bottom:phone?325:370','+bottom:phone?260:300'],
+  ['Math.max(800,periods.length*Math.max(116,bar?series.length*19:116))','Math.max(root.clientWidth||0,left+right+periods.length*Math.max(90,bar?series.length*19:0))']
+ ];
+ for(const [original,replacement] of plotGeometry){
+  if(!script.includes(original))throw Error('Original chart geometry changed: '+original);
+  script=script.replace(original,replacement);
+ }
+ // An inline sentence per date collides with its neighbors. Keep the
+ // period-specific explanation in a keyboard-accessible disclosure below.
+ const pointNotice=script.indexOf('    const customNotice=chartPointNotice(data[i]');
+ const noteStart=script.indexOf("      const note=svgEl('text'",pointNotice);
+ const noteEnd=script.indexOf('svg.append(note);',noteStart);
+ const appendChart='  svg.append(...numberMarks);root.append(svg);';
+ if(pointNotice<0||noteStart<0||noteEnd<0||!script.includes(appendChart)||!script.includes('  const missingRanges=[];'))throw Error('Original chart notice markup changed');
+ script=script.slice(0,noteStart)+`      const description=displayPeriod(p)+' · '+message;
+      const note=svgEl('text',{x:px(i),y:height-13,'text-anchor':'middle',fill:'var(--warning)','font-size':13,
+        tabindex:0,'aria-label':description,'aria-describedby':'chartTooltip'},'!');
+      note.dataset.chartTooltip=description;
+      note.append(svgEl('title',{},description));
+      periodNotices.push(description);
+      `+script.slice(noteEnd);
+ script=script.replace('  const missingRanges=[];','  const missingRanges=[],periodNotices=[];')
+  .replace(appendChart,appendChart+`
+  if(periodNotices.length){
+    const details=elem('details',null,'chart-period-notices'),list=elem('ul');
+    details.append(elem('summary','! Замечания по периодам ('+periodNotices.length+')'),list);
+    for(const description of periodNotices)list.append(elem('li',description));
+    root.append(details);
+  }`);
  const seriesStart=script.indexOf('  if(pages>1){',script.indexOf('function drawChart('));
  const seriesEnd=script.indexOf('  const seriesColor=',seriesStart);
  if(seriesStart<0||seriesEnd<0||!script.slice(seriesStart,seriesEnd).includes('Видимые серии графика'))throw Error('Original chart series control changed');
@@ -66,10 +100,16 @@ function buildUnified(source){
  script+='notice=(message,error)=>window.showDesktopNotice(message,error);\n';
  script+='window.unifiedOriginal=Object.freeze({state,$,el:elem,notice,fmt:formatMetric,fmtNumber,averageQuantityReason,chartNiceScale,chartTickLabel,drawChart,drawDepartments:drawDepartmentMultiChart,makeTable,tableCsvButton,initTheme,initChartTooltip,redrawCharts,renderMultiFilter,periodEnd,shiftPeriod,displayDay,displayPeriod,metricTitle,departmentChartTitle,chartRenders});\n';
  let html=source.replace(/<script>[\s\S]*?<\/script>/g,'');
+ // Extend the shared preference only in the installed application.
+ const compactSizes=['80','90'];
+ script+=`\nUI_SIZES.unshift(...${JSON.stringify(compactSizes)});\n`;
+ const sizeSelect='<select id="appearanceSize">';
+ if(!html.includes(sizeSelect))throw Error('Missing desktop scale selector');
+ html=html.replace(sizeSelect,sizeSelect+compactSizes.map(size=>`<option value="${size}">${size}%</option>`).join(''));
  const importFields=/<label>Формат Excel<select id="importFormat">[\s\S]*?<\/label>\s*<label>Тип отчётов<select id="importType">[\s\S]*?<\/label>/;
  if(!importFields.test(html))throw Error('Original Excel period and layout fields changed');
  html=html.replace(importFields,`<label>Период отчёта<select id="importType"><option value="day">День</option><option value="week" selected>Неделя</option><option value="month">Месяц</option></select></label>
-          <div class="import-layout-control"><label id="importLayoutLabel">Показатели в Excel<select id="importFormat" aria-describedby="importLayoutHint"><option value="">Выберите структуру…</option><option value="daily-wide">Единый список показателей</option><option value="legacy">Свои показатели для каждого периода</option></select></label>
+          <div class="import-layout-control"><label id="importLayoutLabel">Показатели в Excel<select id="importFormat" aria-describedby="importLayoutHint"><option value="">Выберите структуру…</option><option value="daily-wide">Единый список показателей</option><option value="legacy">Свои для каждого периода</option></select></label>
           <div id="importLayoutSummary" hidden><span>Показатели в Excel</span><strong id="importLayoutName"></strong><button id="editImportLayout" type="button" class="button secondary" aria-controls="importFormat">Изменить</button></div>
           <p id="importLayoutHint" class="muted small" aria-live="polite"></p></div>`);
  html=html.replace('Выберите отчётные листы. Итоги квартала или года проверяются отдельно и не становятся дополнительным днём. При неоднозначной шапке укажите год и ручные столбцы; пустые дни не заменяются нулями.', 'Приложение сверит значения с итогами Excel. Пустой период останется пропуском.');
@@ -136,13 +176,22 @@ function buildUnified(source){
  html=html.slice(0,relocated)+'      '+structure+'\n      '+html.slice(relocated);
 
  html=html.replace('</head>','<meta name="analiz-unified-sql" content="true"><link rel="stylesheet" href="tauri-app-status.css"><link rel="stylesheet" href="tauri-unified.css"><link rel="stylesheet" href="tauri-sql-row-scroll.css"><script src="tauri-shared-workspace.js"></script><script src="tauri-bridge.js"></script></head>');
+ const filterSetting='<label><span id="filterPlacementLabel">Расположение фильтра</span><select id="appearanceFilterPlacement" aria-labelledby="filterPlacementLabel" aria-describedby="filterPlacementHint">'+
+  '<option value="top">Сверху</option><option value="side">Слева</option></select>'+
+  '<small class="muted" id="filterPlacementHint">В узком окне фильтр располагается сверху.</small></label>';
+ const designLabel='<label>Дизайн<select id="appearanceDesign">';
+ if(!html.includes(designLabel))throw Error('Missing desktop appearance settings');
+ html=html.replace(designLabel,filterSetting+designLabel);
  const storageView='<section id="storage" class="view">';
  const uploadView='<section id="upload" class="view">';
  if(!html.includes(storageView)||!html.includes(uploadView))throw Error('Missing desktop management view');
  const backupStart=html.indexOf('<div class="panel"><h2>Резервная копия</h2>');
  const backupEnd=html.indexOf('<div class="panel danger">',backupStart);
  if(backupStart<0||backupEnd<backupStart)throw Error('Missing desktop backup controls');
- html=html.slice(0,backupStart)+html.slice(backupEnd);
+ const appInfo='<section id="onlineUpdates" class="panel" aria-labelledby="appInfoHeading">'+
+  '<div class="app-info-heading"><h2 id="appInfoHeading">Приложение и обновления</h2>'+
+  '<span id="appVersion" class="app-version" role="status"></span></div></section>';
+ html=html.slice(0,backupStart)+appInfo+html.slice(backupEnd);
  html=html.replace(storageView,()=>fs.readFileSync(path.join(__dirname,'database-panel.html'),'utf8')+storageView);
  html=html.replace(uploadView,uploadView+
   '<div class="panel database-destination" id="sharedWorkspacePanel"><div>Отчёты сохраняются в выбранную базу <strong id="sharedWorkspaceMode" role="status">Проверка подключения…</strong></div>'+

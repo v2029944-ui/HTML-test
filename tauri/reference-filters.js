@@ -333,6 +333,93 @@ function sourceChanged(){
  userDates=false;latestType=null;
  if(snapshot)void readBounds(snapshot);else publish();
 }
+// A single disclosure owns the controls in both layouts. When it is pinned
+// above a scrolled report, keep its existing space in the document while it
+// expands or collapses; the same report row remains under the pointer.
+function atSide(){
+ return getComputedStyle(panel).getPropertyValue('--filter-at-side').trim()==='1';
+}
+function keepFilterSpace(){
+ if(atSide() || panel.hasAttribute('data-floating') || window.scrollY===0 || panel.getBoundingClientRect().top>0.5)return;
+ panel.style.setProperty('--filter-slot', panel.offsetHeight+'px');
+ panel.setAttribute('data-floating','');
+}
+function openFilters(){
+ const fold=one('.filter-fold');
+ keepFilterSpace();
+ panel.removeAttribute('data-auto-folded');
+ fold.open=true;
+ fold.querySelector('summary').focus({preventScroll:true});
+}
+function closeFilters(){
+ const fold=one('.filter-fold');
+ if(fold.open)keepFilterSpace();
+ panel.removeAttribute('data-auto-folded');
+ fold.open=false;
+}
+function initPlacement(){
+ const root=document.getElementById('refRoot'),fold=one('.filter-fold'),summary=one('.filter-fold > summary');
+ const placement=document.getElementById('appearanceFilterPlacement');
+ const layoutKey='analiz.desktop.filterPlacement';
+ function fitSidebar(){
+  const gap=Math.ceil(Math.max(0,panel.getBoundingClientRect().top));
+  panel.style.setProperty('--filter-top-gap',gap+'px');
+ }
+ function releaseSpace(){
+  if(panel.hasAttribute('data-auto-folded'))fold.open=true;
+  panel.removeAttribute('data-auto-folded');
+  panel.removeAttribute('data-floating');
+  panel.style.removeProperty('--filter-slot');
+ }
+ function display(value){
+  const layout=value==='side'?'side':'top';
+  placement.value=layout;
+  root.dataset.filterPlacement=layout;
+  releaseSpace();
+  if(atSide())fold.open=true;
+ }
+ let initial='top';
+ try{initial=window.localStorage.getItem(layoutKey);}catch{/* Storage may be unavailable. */}
+ fold.open=!matchMedia('(max-width:680px)').matches;
+ display(initial);
+ placement.onchange=()=>{
+  display(placement.value);
+  try{window.localStorage.setItem(layoutKey,placement.value);}
+  catch{UI.notice('Расположение фильтра изменено на этот сеанс. Сохранить настройку на устройстве не удалось.');}
+ };
+ summary.addEventListener('click',event=>{
+  // One click also opens a partly scrolled-away filter.
+  const reveal=fold.open && !atSide() && !panel.hasAttribute('data-floating') && panel.getBoundingClientRect().top < -1;
+  keepFilterSpace();
+  panel.removeAttribute('data-auto-folded');
+  if(reveal)event.preventDefault();
+ });
+ // When the initial inline controls leave the viewport, only the summary
+ // remains. Leave a focused input or an explicitly opened pinned panel alone.
+ function updatePinnedState(){
+  if(atSide()){fitSidebar();return;}
+  if(!fold.open || panel.hasAttribute('data-floating') || (document.activeElement!==summary && panel.contains(document.activeElement)))return;
+  const bounds=panel.getBoundingClientRect();
+  if(bounds.top>=0 || bounds.bottom>summary.getBoundingClientRect().height+4)return;
+  keepFilterSpace();
+  panel.setAttribute('data-auto-folded','');
+  fold.open=false;
+ }
+ window.addEventListener('scroll',updatePinnedState,{passive:true});
+ const headerObserver=new IntersectionObserver(([entry])=>{if(entry.isIntersecting)releaseSpace();});
+ headerObserver.observe(document.getElementById('sharedHeader'));
+ const sizeObserver=new ResizeObserver(()=>{
+  if(atSide() && panel.hasAttribute('data-floating'))releaseSpace();
+  // viewport units and DOMRect use window coordinates; panel height is in its own CSS pixels.
+  panel.style.setProperty('--filter-zoom',panel.currentCSSZoom || Number(getComputedStyle(panel).zoom) || 1);
+  const summaryHeight=Math.ceil(summary.getBoundingClientRect().height)+'px';
+  panel.style.setProperty('--filter-heading-height',summaryHeight);
+  panel.style.setProperty('--filter-scroll-away',Math.max(0,panel.offsetHeight-summary.offsetHeight-2)+'px');
+  root.style.setProperty('--sticky-filter-height',atSide()?'0px':summaryHeight);
+  updatePinnedState();
+ });
+ sizeObserver.observe(summary);sizeObserver.observe(panel);sizeObserver.observe(root);
+}
 function init(){
  if(initialized)return;
  initialized=true;dates(today());
@@ -342,18 +429,7 @@ function init(){
  const compare=one('[data-compare]');compare.replaceChildren();
  for(const [value,text] of baselines){const option=make('option',text);option.value=value;compare.append(option);}
  compare.onchange=()=>{if(compare.value==='custom'){compare.value=rule;chooseDate('base',compare);}else{rule=compare.value;publish();}};
- const fold=one('.filter-fold');fold.open=!matchMedia('(max-width:680px)').matches;
- const summary=one('.filter-fold > summary');
- const syncHeight=()=>{
-  const visibleHeight=summary.getBoundingClientRect().height;
-  document.getElementById('refRoot').style.setProperty('--sticky-filter-height',Math.ceil(visibleHeight)+'px');
-  panel.style.setProperty('--filter-scroll-away',Math.max(0,panel.offsetHeight-summary.offsetHeight-2)+'px');
- };
- const sizeObserver=new ResizeObserver(syncHeight);
- sizeObserver.observe(panel);sizeObserver.observe(summary);
- fold.ontoggle=()=>{
-  if(fold.open && panel.getBoundingClientRect().top<0)panel.scrollIntoView({block:'start'});
- };
+ initPlacement();
  many('[data-filter=type] button').forEach((b,i)=>b.onclick=()=>setKind(kinds[i]));
  many('[data-filter=mode] button').forEach((b,i)=>b.onclick=()=>{mode=i?'range':'single';dates(from,to);publish();});
  many('[data-date]').forEach(b=>b.onclick=()=>chooseDate(b.dataset.date,b));
@@ -369,5 +445,5 @@ function init(){
  if(UI.snapshot)void configure(UI.snapshot);
 }
 function refresh(){syncFields?.();return publish();}
-window.referenceFilters=Object.freeze({init,refresh,setMetric,setOrganizations,setWorks,openImportedPeriod,syncDetails,get scope(){return scope;}});
+window.referenceFilters=Object.freeze({init,refresh,openFilters,closeFilters,atSide,setMetric,setOrganizations,setWorks,openImportedPeriod,syncDetails,get scope(){return scope;}});
 })();

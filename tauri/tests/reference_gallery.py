@@ -9,6 +9,8 @@ def write_reference_gallery(output, revision, webview):
         ('Сводка за полный период', 'reference-data-01-complete-current-and-base.png'),
         ('Частичные данные', 'reference-data-03-partial-adjacent-year.png'),
         ('Пустой интервал', 'reference-data-04-empty-not-zero.png'),
+        ('Верхний фильтр, раскрытый над отчётом', 'reference-reports-18-filter-top-open.png'),
+        ('Боковой фильтр', 'reference-reports-18-filter-side.png'),
         ('Анализ изменений', 'reference-data-02-unequal-interval-changes.png'),
         ('Календарь', 'reference-reports-10-shared-day-draft.png'),
         ('Динамика', 'reference-reports-08-analytics-chartPanel.png'),

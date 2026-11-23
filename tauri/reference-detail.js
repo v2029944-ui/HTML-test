@@ -40,14 +40,8 @@
       line.className = 'detail-date-scope';
       const edit = document.createElement('button');
       edit.type = 'button';
-      edit.textContent = 'Изменить выше';
-      edit.onclick = () => {
-        const fold = document.querySelector('#reportShell .filter-fold');
-        fold.open = true;
-        const toggle = fold.querySelector('summary');
-        toggle.focus({preventScroll:true});
-        fold.scrollIntoView({block:'start'});
-      };
+      edit.textContent = 'Изменить период';
+      edit.onclick = () => window.referenceFilters.openFilters();
       line.append(document.createElement('span'), document.createElement('span'), edit);
       (panel.querySelector(':scope > summary, :scope > .sectionbar, :scope > h2') || panel.firstElementChild).after(line);
     }

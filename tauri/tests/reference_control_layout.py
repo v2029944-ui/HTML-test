@@ -30,6 +30,43 @@ def check_control_layout(page):
           }
         }
       }
+      const parameterGrid = document.querySelector('#uploadParameterCard > .import-grid');
+      if (visible(parameterGrid)) {
+        const rowFields = [];
+        for (const group of parameterGrid.children) {
+          const field = [...group.querySelectorAll('select,.ref-calendar-field')].find(visible);
+          if (!field) continue;
+          for (const {groupTop,fieldTop} of rowFields) {
+            if (close(groupTop,rect(group).top) && !close(fieldTop,rect(field).top))
+              errors.push([field.id,'import fields with adjacent captions start at different heights']);
+          }
+          rowFields.push({groupTop:rect(group).top,fieldTop:rect(field).top});
+          if (field.tagName === 'SELECT' && CSS.supports('appearance','base-select')) {
+            const style = getComputedStyle(field);
+            if (!style.display.includes('flex') || style.alignItems !== 'center')
+              errors.push([field.id,'closed select does not center its text']);
+          }
+        }
+      }
+      const quality = document.querySelector('#qualityTable table');
+      if (visible(quality)) {
+        for (const cell of quality.querySelectorAll('th, tbody tr:first-child td:first-child')) {
+          const text = document.createRange(); text.selectNodeContents(cell.firstChild);
+          if (text.getClientRects().length > 1) errors.push([cell.innerText,'wrapped quality header or report period']);
+          const help = cell.querySelector('.table-help-button');
+          if (help && rect(help).top >= text.getBoundingClientRect().bottom)
+            errors.push([cell.innerText,'help button below its column heading']);
+        }
+      }
+      const reportButtons = document.querySelector('#reports .calendar-source');
+      if (visible(reportButtons)) {
+        const actions = [...reportButtons.querySelectorAll('button')];
+        const quality = actions.find(button => button.textContent === 'Контроль качества');
+        const remove = actions.find(button => button.textContent === 'Удалить отчёт');
+        if (visible(quality) && visible(remove) &&
+            Math.max(rect(remove).left-rect(quality).right, rect(remove).top-rect(quality).bottom) < 3)
+          errors.push(['report actions','no gap between the quality and delete buttons']);
+      }
       const fields = [...document.querySelectorAll('#refNative label > .ref-calendar-field')];
       for (const field of fields) {
         if (!visible(field)) continue;

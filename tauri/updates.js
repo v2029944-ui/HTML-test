@@ -1,18 +1,17 @@
 (async function onlineUpdates(){
   'use strict';
   await window.appReady;
-  const tauri=window.__TAURI__,settings=document.getElementById('storage'),main=document.getElementById('refRoot')||document.querySelector('main');
-  if(!tauri?.updater||!settings||!main)return;
+  const tauri=window.__TAURI__,panel=document.getElementById('onlineUpdates'),main=document.getElementById('refRoot')||document.querySelector('main');
+  if(!tauri?.updater||!panel||!main)return;
   const deferredKey='work-reports-update-deferred-v1',operations=window.tauriOperations;
   let busy=false,update=null;
-  const panel=elem('section',null,'panel');panel.id='onlineUpdates';
-  panel.append(elem('h2','Обновление программы'),elem('p','Новая версия скачивается и устанавливается только после подтверждения. Отчёты и настройки сохраняются. Программа закроется на время установки.','muted small'));
+  panel.append(elem('p','Новая версия скачивается и устанавливается только после подтверждения. Отчёты и настройки сохраняются. Программа закроется на время установки.','muted small'));
   const status=elem('p','Проверка доступности обновлений…','muted small');status.id='appUpdateStatus';
   status.setAttribute('role','status');status.setAttribute('aria-live','polite');
   const actions=elem('div',null,'actions');
   const button=(id,text,style='secondary')=>{const b=elem('button',text,'button '+style);b.id=id;b.type='button';return b;};
   const check=button('checkAppUpdate','Проверить обновления'),install=button('installAppUpdate','Обновить','primary'),notes=button('appUpdateWhatsNew','Что нового');
-  install.hidden=notes.hidden=true;actions.append(check,notes,install);panel.append(status,actions);settings.append(panel);
+  install.hidden=notes.hidden=true;actions.append(check,notes,install);panel.append(status,actions);
   const banner=elem('section',null,'panel update-notice');banner.id='appUpdateNotice';banner.hidden=true;banner.setAttribute('aria-label','Доступно обновление программы');
   const title=elem('h2');title.id='appUpdateNoticeTitle';title.setAttribute('role','status');title.setAttribute('aria-live','polite');
   const bannerActions=elem('div',null,'actions'),bannerNotes=button('noticeWhatsNew','Что нового'),later=button('deferAppUpdate','Позже'),bannerInstall=button('noticeInstallUpdate','Обновить','primary');

@@ -35,7 +35,7 @@ function setBusy(id,busy){
  for(const node of root?.querySelectorAll(selectors)||[])node.inert=busy;
  for(const node of root?.querySelectorAll('button')||[])if(node.textContent.includes('Печать')){node.inert=busy;node.disabled=busy||!(id==='#s1'?summaryData:changeData);}
 }
-function captions(s,roots=['#s1','#s2']){for(const root of roots){const n=$(root+' .report-range');if(!n)continue;n.replaceChildren(el('span',s?visibleRange(s):'Выберите периоды и подразделения'));if(s){n.append(el('span','Сравнение с '+baseRange(s)),el('span','Все работы'));const a=el('a','Изменить выше');a.href='#reportShell';a.addEventListener('click',()=>{const fold=$('#reportShell .filter-fold');if(fold)fold.open=true;});n.append(a);}}}
+function captions(s,roots=['#s1','#s2']){for(const root of roots){const n=$(root+' .report-range');if(!n)continue;n.replaceChildren(el('span',s?visibleRange(s):'Выберите периоды и подразделения'));if(s){n.append(el('span','Сравнение с '+baseRange(s)),el('span','Все работы'));const a=el('a','Изменить период');a.href='#reportShell';a.addEventListener('click',event=>{event.preventDefault();window.referenceFilters.openFilters();});n.append(a);}}}
 function summaryCards(values,comparison,comparable,totalOrganizations){
  const cards=all('#s1 .metric-card');for(const [i,metric]of ['amount','count','average'].entries()){
   const card=cards[i];if(!card)continue;card.querySelector('.metric-name').textContent=titles[metric];card.querySelector('.metric-value').textContent=fmt(values?.[metric],metric);

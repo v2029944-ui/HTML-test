@@ -9,7 +9,7 @@ async function fixture({configured=true,available=true,deferred='',storageFailur
     set id(value){ids[value]=this;} setAttribute(k,v){this[k]=v;} getAttribute(k){return this[k];} append(...nodes){this.children.push(...nodes);} prepend(...nodes){this.children.unshift(...nodes);} showModal(){this.open=true;} close(){this.open=false;}
     addEventListener(name,fn){this.listeners[name]=fn;}
   }
-  ids.storage=new Node('section');ids.managementToggle=new Node('summary');const main=new Node('main');main.inert=false;const saved=new Map(deferred?[['work-reports-update-deferred-v1',deferred]]:[]);
+  ids.onlineUpdates=new Node('section');ids.managementToggle=new Node('summary');const main=new Node('main');main.inert=false;const saved=new Map(deferred?[['work-reports-update-deferred-v1',deferred]]:[]);
   let downloads=0,checks=0,closed=0,error=null,approved=false;
   const update={version,body:'Изменения <script>bad()</script>',currentVersion:'0.1.0',close:async()=>closed++,downloadAndInstall:async onEvent=>{
     downloads++;if(error)throw error;

@@ -5,14 +5,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-async function fixture() {
+async function fixture(storage = new Map(), width = 1440) {
   const elements = new Map();
   const lists = new Map();
   function element() {
-    return {value:'',dataset:{}, options: [], style: {setProperty() {}}, classList: {toggle() {}},
+    return {value:'',dataset:{}, options: [], style: {setProperty() {},removeProperty() {}}, classList: {toggle() {}},
       append(...children) { this.options.push(...children); }, replaceChildren(...children) { this.options = children; },
       isConnected: true, focus() {}, closest() {return {close(){}};},
-      setAttribute() {}, removeAttribute() {}, getBoundingClientRect() { return {height: 40}; },
+      addEventListener() {}, hasAttribute() {return false;}, setAttribute() {}, removeAttribute() {}, getBoundingClientRect() { return {height: 40}; },
     };
   }
   function one(selector) {
@@ -30,7 +30,7 @@ async function fixture() {
   const document = {createElement: element, getElementById: id => id === 'refNative' ? null : one('#'+id)};
   const calls = [], seen = [];
   const weeks = ['2026-11-04','2026-11-06','2026-11-16'];
-  const window = {referenceResults: {beginScopeChange() {},failScopeChange() {},refresh(scope) {seen.push(scope);}}};
+  const window = {addEventListener() {}, referenceResults: {beginScopeChange() {},failScopeChange() {},refresh(scope) {seen.push(scope);}}};
   const choices=[{key:'group:1',kind:'group',name:'Ремонт'},{key:'work:p',kind:'work',name:'Покраска'}];
   let dialog;
   window.referenceDesktop={dialog(){dialog=element();return dialog;},setDialogApply(action){dialog.append(action);}};
@@ -56,7 +56,10 @@ async function fixture() {
       return {max: {day:'2026-11-29',week:'2026-11-16',month:'2025-02-01'}[kind]};
     }
   }};
-  const ctx={window,document,matchMedia:()=>({matches:false}),ResizeObserver:class {observe(){}}};
+  window.localStorage={getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)};
+  const getComputedStyle=()=>({getPropertyValue:()=>width>=1280 && one('#refRoot').dataset.filterPlacement==='side'?'1':''});
+  const observer=class {observe(){}};
+  const ctx={window,document,getComputedStyle,matchMedia:()=>({matches:width<=680}),ResizeObserver:observer,IntersectionObserver:observer};
   const run = name => vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../'+name+'.js'),'utf8'),ctx);
   run('reference-calendar');
   let draft;
@@ -235,4 +238,20 @@ test('reflecting works already applied in overview preserves its local metric ch
   await controls.setWorks(true,new Map());
   assert.equal(updates.length,1);
   assert.equal(updates[0].allNames,true);
+});
+
+test('filter placement stays on this device and falls back to the top in a narrow window', async () => {
+  const storage=new Map();
+  const wide=await fixture(storage);
+  const picker=wide.one('#appearanceFilterPlacement');
+  assert.equal(picker.value,'top');
+  const before=wide.controls.scope;
+  picker.value='side';
+  picker.onchange();
+  assert.equal(wide.controls.scope,before);
+  assert.equal(wide.controls.atSide(),true);
+  assert.equal((await fixture(storage)).controls.atSide(),true);
+  const narrow=await fixture(storage,720);
+  assert.equal(narrow.one('#appearanceFilterPlacement').value,'side');
+  assert.equal(narrow.controls.atSide(),false);
 });

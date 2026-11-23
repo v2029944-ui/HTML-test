@@ -135,8 +135,9 @@ function openCalendar({anchor, title, initial, unit='day', allowed, variants, al
   let left=rect.left,bottom=rect.bottom,top=rect.top;
   if(frame){const outer=frame.getBoundingClientRect(),scale=outer.width/frame.offsetWidth;left=outer.left+rect.left*scale;bottom=outer.top+rect.bottom*scale;top=outer.top+rect.top*scale}
   const w=document.documentElement.clientWidth||innerWidth,h=innerHeight,box=dialog.getBoundingClientRect();
-  dialog.style.left=Math.max(8,Math.min(left,w-box.width-8))+'px';
-  dialog.style.top=Math.max(8,Math.min(bottom+6+box.height<=h-8?bottom+6:top-box.height-6,h-box.height-8))+'px';
+  const zoom=dialog.currentCSSZoom||1;
+  dialog.style.left=Math.max(8,Math.min(left,w-box.width-8))/zoom+'px';
+  dialog.style.top=Math.max(8,Math.min(bottom+6+box.height<=h-8?bottom+6:top-box.height-6,h-box.height-8))/zoom+'px';
  }
  const variantRow=make('div');variantRow.className='cal-types';
  if(variants)for(const [kind,dates] of variants){

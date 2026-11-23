@@ -10,6 +10,7 @@
   };
   const management = ['upload', 'groups', 'databases', 'storage'];
   let active = 's1', panel = '', panelOpener = null, dialogOpener = null;
+  let panelChange = 0;
   let returnPanel = null;
   function button(text, action) {
     const result = document.createElement('button');
@@ -57,6 +58,7 @@
     window.referenceDetail.hide();
     panel = '';
     byId('toolsPage').hidden = true;
+    byId('toolsPage').style.removeProperty('min-block-size');
     delete byId('refNative').dataset.panel;
     disclosures();
     if (restoreFocus && panelOpener?.isConnected) panelOpener.focus({preventScroll: true});
@@ -65,23 +67,26 @@
   function openPanel(key, opener) {
     if (!Object.hasOwn(sections, key)) return;
     const tools = byId('toolsPage'), nav = tools.querySelector('.tool-tabs');
+    const change = ++panelChange;
     if (byId('sheet').open) byId('sheet').close();
     if (opener) {
       returnPanel = panel && tools.contains(opener) ? {key: panel, opener} : null;
       if (!returnPanel) panelOpener = opener;
-      byId('reportShell').querySelector('.filter-fold').open = false;
+      if (!window.referenceFilters.atSide()) window.referenceFilters.closeFilters();
     }
     panel = key;
     tools.hidden = false;
     byId('refNative').dataset.panel = key;
     const manage = management.includes(key);
     const allowed = Object.keys(sections).filter(item => management.includes(item) === manage);
-    nav.replaceChildren(...allowed.map(item => {
-      const tab = button(sections[item], () => openPanel(item));
-      tab.dataset.section = item;
-      tab.setAttribute('aria-pressed', String(item === key));
-      return tab;
-    }));
+    if (nav.firstElementChild?.dataset.section !== allowed[0]) {
+      nav.replaceChildren(...allowed.map(item => {
+        const tab = button(sections[item], () => openPanel(item));
+        tab.dataset.section = item;
+        return tab;
+      }));
+    }
+    for (const tab of nav.children) tab.setAttribute('aria-pressed', String(tab.dataset.section === key));
     byId('toolsTitle').textContent = manage ? 'Управление' : 'Подробная аналитика';
     window.unifiedUI.activate(manage || key === 'changes' ? key : 'dashboard');
     window.referenceDetail.show(key);
@@ -93,7 +98,7 @@
       // Collapsing filters changes the sticky offset in ResizeObserver. Scroll
       // after that layout rather than retaining the expanded filter height.
       requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (panel === key) tools.scrollIntoView({block:'start'});
+        if (panel === key && change === panelChange) tools.scrollIntoView({block:'start'});
       }));
     }
   }
@@ -115,6 +120,21 @@
 
   function init() {
     const root = byId('refRoot'), tools = byId('toolsPage');
+    // A short tab, or an empty calendar while its SQL request is pending,
+    // otherwise shortens the document and clamps the user's scroll position.
+    tools.addEventListener('click', event => {
+      if (!event.target.closest('.tool-tabs button, #unifiedUploadNav button, #calendarPrev, #calendarNext, #referenceReportYear, #reportCalendar button, #calendarDetails button')) return;
+      const rect = tools.getBoundingClientRect();
+      const scale = rect.height / tools.offsetHeight;
+      if (scale > 0) tools.style.minBlockSize = Math.ceil(Math.max(0, innerHeight - rect.top) / scale) + 'px';
+    }, true);
+    const native = byId('refNative');
+    let plotWidth = 0;
+    new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width;
+      if (width > 0 && width !== plotWidth) window.unifiedOriginal.redrawCharts(native);
+      plotWidth = width;
+    }).observe(native);
     const sheet = byId('sheet'), header = byId('sharedHeader');
     // Visibility, native modality and focus are owned by HTMLDialogElement.
     sheet.addEventListener('close', () => {
@@ -135,8 +155,9 @@
       if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog:modal')) return;
       const disclosure = event.target.closest?.('details[open]');
       if (disclosure && root.contains(disclosure) && !disclosure.matches('#advancedAnalytics,#structurePanel,#usualPanel,#regularityPanel')) {
-        disclosure.open = false;
-        disclosure.querySelector(':scope > summary')?.focus();
+        if (disclosure.matches('.filter-fold')) window.referenceFilters.closeFilters();
+        else disclosure.open = false;
+        disclosure.querySelector(':scope > summary')?.focus({preventScroll:true});
         event.preventDefault();
       } else if (panel && tools.contains(event.target)) {
         closePanel();
@@ -144,7 +165,6 @@
       }
     });
 
-    byId('storage').prepend(byId('appVersion'));
     const notices=document.createElement('div');
     notices.className='desktop-notices';
     notices.append(byId('flash'),byId('appActivity'));
