@@ -337,12 +337,17 @@ async function departmentComparison(task,index){
    perName.push(...batch);
   }
  }
- const trends=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(0,8),null,s.source==='daily'?s.displayType:null,s.selectedNames);
- if(!task.valid())return;
- for(let offset=8;offset<s.organizations.length;offset+=8){
-  const page=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(offset,offset+8),null,s.source==='daily'?s.displayType:null,s.selectedNames);
+ // Render the optional overlapping trend only after its disclosure is opened.
+ const showDynamics=$('comparisonDynamics').open;
+ let trends=null;
+ if(showDynamics){
+  trends=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(0,8),null,s.source==='daily'?s.displayType:null,s.selectedNames);
   if(!task.valid())return;
-  trends.series.push(...page.series);
+  for(let offset=8;offset<s.organizations.length;offset+=8){
+   const page=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(offset,offset+8),null,s.source==='daily'?s.displayType:null,s.selectedNames);
+   if(!task.valid())return;
+   trends.series.push(...page.series);
+  }
  }
  reset();
  if(reference){sampleNote($('comparisonCoverage'),sample,true);$('comparisonBaseOrg').replaceChildren(...included.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));$('comparisonBaseOrg').value=baseOrg;}
@@ -359,9 +364,11 @@ async function departmentComparison(task,index){
   UI.drawChart([{type:s.displayType,start:s.from,end:visibleEnd(s)}],new Set(s.organizations),metric,plot,{chart:'bar',seriesType:'organizations',categories:s.organizations,data:[new Map(organizations.map(o=>[o.org,o.total]))]});
  }
  if(workPage){task.s.index=index;addBoundedPager($('comparisonTable'),task.s,perName,i=>comparison(i,true),workPage.total_rows);}
- const first=trends.series?.[0]?.points||[],periods=window.analysisSummary.timelinePeriods(first,trends.granularity,s,periodEnd);
- const data=first.map((p,i)=>new Map(trends.series.map(series=>[series.organization,series.points[i]?.missing===0?series.points[i].total:{count:null,amount:null,average:null}])));
- for(const metric of chosen){const plot=UI.el('div',null,'metric-plot');$('comparisonDynamicsPlots').append(UI.el('h3',titles[metric]+' · '+caption(range)),plot);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'bar',orientation:orientation(),seriesType:'organizations',categories:s.organizations,data});}
+ if(showDynamics&&trends&&$('comparisonDynamics').open){
+  const first=trends.series?.[0]?.points||[],periods=window.analysisSummary.timelinePeriods(first,trends.granularity,s,periodEnd);
+  const data=first.map((p,i)=>new Map(trends.series.map(series=>[series.organization,series.points[i]?.missing===0?series.points[i].total:{count:null,amount:null,average:null}])));
+  for(const metric of chosen){const plot=UI.el('div',null,'metric-plot');$('comparisonDynamicsPlots').append(UI.el('h3',titles[metric]+' · '+caption(range)),plot);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'bar',orientation:orientation(),seriesType:'organizations',categories:s.organizations,data});}
+ }
 }
 async function contributions(index=0,paging=false){
  const input=slot('comparison').captured;
@@ -565,6 +572,7 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
  const dateIds=['changesFrom','changesTo','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','structureBase','structureCurrent','usualPeriod'];for(const id of dateIds){for(const event of ['input','change'])$(id)?.addEventListener(event,()=>{$(id).dataset.unifiedTouched='true';updatePeriodOverrides();});}
  for(const id of ['periodComparisonScope','comparisonScope'])$(id)?.addEventListener('change',()=>{$(id).dataset.unifiedTouched='true';updatePeriodOverrides();});
  $('comparisonMode').addEventListener('change',updatePeriodOverrides);
+ $('comparisonDynamics').addEventListener('toggle',()=>{if($('comparisonDynamics').open&&value('comparisonMode')==='organizations'&&scope)void comparison();});
  for(const name of Object.keys(localPeriods))$(name+'PeriodReset')?.addEventListener('click',()=>resetLocalPeriod(name));
  $('changesType')?.addEventListener('change',updatePeriodOverrides);
  $('changesMethod')?.addEventListener('change',updatePeriodOverrides);
