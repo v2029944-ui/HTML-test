@@ -35,7 +35,7 @@ fn pages_aggregate_and_backup() {
             total.amount,
             total.weighted_average
         ),
-        (3, 10.0, 100.0, Some(10.0))
+        (3, 10.0, Some(100.0), Some(10.0))
     );
     let only_a = ReadFilter {
         organizations: vec!["A".into()],
@@ -242,7 +242,7 @@ fn index_write_failure_rolls_back_reports_revision_settings_and_rows() {
     assert_eq!(store.load().unwrap(), data());
     assert_eq!(
         store.aggregate(rev, &ReadFilter::default()).unwrap().amount,
-        100.0
+        Some(100.0)
     );
 }
 
@@ -264,7 +264,7 @@ fn scalar_filter_page_and_numeric_limits_fail_explicitly() {
         end: Some("2026-11-08".into()),
         ..ReadFilter::default()
     };
-    assert_eq!(store.aggregate(rev, &filter).unwrap().amount, 70.0);
+    assert_eq!(store.aggregate(rev, &filter).unwrap().amount, Some(70.0));
     let conn = Connection::open(store.db_path()).unwrap();
     let mut huge = data()["reports"][0].clone();
     huge["metadata"] = json!("x".repeat(65537));

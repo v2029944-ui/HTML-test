@@ -45,9 +45,23 @@ fn count(c: &Connection, table: &str) -> Result<i64, String> {
     c.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
         .map_err(err)
 }
+pub(super) fn allow_missing_amount(c: &Connection) -> Result<(), String> {
+    c.execute_batch("
+        DROP TRIGGER management_report_insert;
+        DROP TRIGGER management_report_update;
+        DROP TRIGGER management_report_delete;
+        CREATE TABLE management_report_meta_v2 (
+          report_id TEXT PRIMARY KEY, amount REAL, saved_amount REAL,
+          warnings INTEGER NOT NULL, shared_source_artifact INTEGER NOT NULL);
+        INSERT INTO management_report_meta_v2 SELECT report_id,amount,saved_amount,warnings,shared_source_artifact FROM management_report_meta;
+        DROP TABLE management_report_meta;
+        ALTER TABLE management_report_meta_v2 RENAME TO management_report_meta;
+    ").map_err(err)
+}
+
 pub(super) fn initialize(c: &Connection) -> Result<(), String> {
     tree::schema(c)?;
-    c.execute_batch("CREATE TABLE IF NOT EXISTS management_report_meta(report_id TEXT PRIMARY KEY,amount REAL NOT NULL,saved_amount REAL,warnings INTEGER NOT NULL,shared_source_artifact INTEGER NOT NULL);
+    c.execute_batch("CREATE TABLE IF NOT EXISTS management_report_meta(report_id TEXT PRIMARY KEY,amount REAL,saved_amount REAL,warnings INTEGER NOT NULL,shared_source_artifact INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS management_report_orgs(report_id TEXT,ordinal INTEGER,org TEXT,PRIMARY KEY(report_id,ordinal)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS management_report_org_lookup ON management_report_orgs(org,report_id);
 CREATE TRIGGER IF NOT EXISTS management_settings_insert AFTER INSERT ON kv WHEN NEW.name='settings' BEGIN DELETE FROM management_settings;END;

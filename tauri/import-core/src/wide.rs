@@ -1353,7 +1353,10 @@ impl Stage<'_> {
         let mut work = String::new();
         let (mut q, mut a) = (String::new(), String::new());
         let mut sum = (0., 0.);
-        let finish = |row, work: &str, q: &str, a: &str, sum: (f64, f64)| -> Result<()> {
+        // A period pair always has its amount immediately after its count.
+        let mut pending_amount = None;
+        let mut missing_amount = false;
+        let finish = |row, work: &str, q: &str, a: &str, sum: (f64, f64), missing_amount: bool| -> Result<()> {
             if row == 0 || blank(work) || (blank(q) && blank(a)) {
                 return Ok(());
             }
@@ -1364,7 +1367,7 @@ impl Stage<'_> {
             if expected.0.is_none()
                 || expected.1.is_none()
                 || (sum.0 - expected.0.unwrap()).abs() > 0.001
-                || (sum.1 - expected.1.unwrap()).abs() > 0.03
+                || (!missing_amount && (sum.1 - expected.1.unwrap()).abs() > 0.03)
             {
                 let org = cfg
                     .organizations
@@ -1385,7 +1388,7 @@ impl Stage<'_> {
                     Some(cell(totals.q, row)),
                     Some(cell(totals.a, row)),
                     expected,
-                    (Some(sum.0), Some(sum.1)),
+                    (Some(sum.0), (!missing_amount).then_some(sum.1)),
                     true,
                 )?;
             }
@@ -1395,15 +1398,20 @@ impl Stage<'_> {
             check_cancel(cancel)?;
             let n: u32 = r.get(0)?;
             if row != n {
-                finish(row, &work, &q, &a, sum)?;
+                finish(row, &work, &q, &a, sum, missing_amount || pending_amount.is_some())?;
                 work.clear();
                 q.clear();
                 a.clear();
                 sum = (0., 0.);
+                pending_amount = None;
+                missing_amount = false;
                 row = n;
             }
             let col: u32 = r.get(1)?;
             let value: String = r.get::<_, Option<String>>(2)?.unwrap_or_default();
+            if let Some(expected_col) = pending_amount.take() {
+                missing_amount |= col != expected_col || blank(&value);
+            }
             if col == info.work {
                 work = value;
             } else if col == totals.q {
@@ -1411,12 +1419,15 @@ impl Stage<'_> {
             } else if col == totals.a {
                 a = value;
             } else if day_cols[col as usize] == 1 {
-                sum.0 += number(Some(&value)).unwrap_or(0.);
+                if let Some(count) = number(Some(&value)) {
+                    sum.0 += count;
+                    pending_amount = Some(col + 1);
+                }
             } else if day_cols[col as usize] == 2 {
                 sum.1 += number(Some(&value)).unwrap_or(0.);
             }
         }
-        finish(row, &work, &q, &a, sum)
+        finish(row, &work, &q, &a, sum, missing_amount || pending_amount.is_some())
     }
     pub fn report_provenance(&self, id: &str) -> Result<Option<ReportProvenance>> {
         self.conversion_ready()?;

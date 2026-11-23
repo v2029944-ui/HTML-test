@@ -370,7 +370,7 @@ impl<'a> Stage<'a> {
                 })
                 || info.start > info.end
                 || !info.count.is_finite()
-                || !info.amount.is_finite()
+                || info.amount.is_some_and(|amount| !amount.is_finite())
             {
                 return Err(fail("invalid converted report metadata"));
             }
@@ -484,7 +484,7 @@ impl<'a> Stage<'a> {
                     for (offset, row) in page.iter().enumerate() {
                         if row.row_index != c + offset as u64 + 1
                             || !row.count.is_finite()
-                            || !row.amount.is_finite()
+                            || row.amount.is_some_and(|amount| !amount.is_finite())
                         {
                             return Err(fail("invalid converted row"));
                         }
@@ -926,7 +926,7 @@ fn validate_provenance_and_zero(
     if info.row_count != 0 {
         return Ok(false);
     }
-    if !p.explicit_zero || info.count != 0.0 || info.amount != 0.0 {
+    if !p.explicit_zero || info.count != 0.0 || info.amount != Some(0.0) {
         return Err(fail("empty report lacks explicit zero proof"));
     }
     let proof:bool=stage.db.query_row("SELECT EXISTS(SELECT 1 FROM converted_totals WHERE report_id=?1 AND kind='org') AND NOT EXISTS(SELECT 1 FROM converted_totals WHERE report_id=?1 AND (count IS NULL OR amount IS NULL OR count<>0 OR amount<>0 OR kind NOT IN ('org','all'))) AND (SELECT COUNT(*) FROM converted_organizations WHERE report_id=?1) BETWEEN 1 AND 4 AND NOT EXISTS(SELECT 1 FROM converted_organizations o WHERE o.report_id=?1 AND NOT EXISTS(SELECT 1 FROM converted_totals t WHERE t.report_id=?1 AND t.kind='org' AND t.organization=o.organization)) AND NOT EXISTS(SELECT 1 FROM converted_totals t WHERE t.report_id=?1 AND t.kind='org' AND NOT EXISTS(SELECT 1 FROM converted_organizations o WHERE o.report_id=?1 AND o.organization=t.organization)) AND NOT EXISTS(SELECT 1 FROM converted_organizations WHERE report_id=?1 AND (count<>0 OR amount<>0 OR count IS NULL OR amount IS NULL)) AND NOT EXISTS(SELECT 1 FROM converted_rows WHERE report_id=?1)",[&info.id],|r|r.get(0))?;

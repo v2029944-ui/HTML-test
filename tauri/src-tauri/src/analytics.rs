@@ -260,7 +260,7 @@ pub struct ChangeValue {
     pub current_start: String,
     pub status: String,
     pub count: ChangeMeasure,
-    pub amount: ChangeMeasure,
+    pub amount: Option<ChangeMeasure>,
     pub average: AverageChange,
 }
 impl ChangeValue {
@@ -275,7 +275,7 @@ impl ChangeValue {
 #[derive(Debug, Serialize)]
 pub struct ChangesSummary {
     pub count: ChangeMeasure,
-    pub amount: ChangeMeasure,
+    pub amount: Option<ChangeMeasure>,
     pub average: AverageChange,
     pub rows: i64,
     pub new: i64,
@@ -329,14 +329,16 @@ fn finite(n: f64) -> Result<f64, String> {
         Err("Analysis numeric overflow".into())
     }
 }
-fn totals(count: f64, amount: f64, complete: bool) -> Result<AnalysisTotals, String> {
+// Report coverage and monetary completeness are independent. An absent work in
+// a covered report is zero, while a present row can have an unknown amount.
+fn totals(count: f64, amount: Option<f64>, complete: bool) -> Result<AnalysisTotals, String> {
     finite(count)?;
-    finite(amount)?;
+    amount.map(finite).transpose()?;
     Ok(AnalysisTotals {
         count: complete.then_some(count),
-        amount: complete.then_some(amount),
+        amount: if complete { amount } else { None },
         average: if complete && count > 0. {
-            Some(finite(amount / count)?)
+            amount.map(|amount| finite(amount / count)).transpose()?
         } else {
             None
         },
@@ -407,6 +409,7 @@ enum Scalar {
     Bool(bool),
     #[default]
     Other,
+    Null,
     Composite,
 }
 impl<'de> Deserialize<'de> for Scalar {
@@ -436,7 +439,7 @@ impl<'de> Deserialize<'de> for Scalar {
                 Ok(Scalar::Bool(b))
             }
             fn visit_unit<E: serde::de::Error>(self) -> Result<Scalar, E> {
-                Ok(Scalar::Other)
+                Ok(Scalar::Null)
             }
             fn visit_seq<A: SeqAccess<'de>>(self, mut a: A) -> Result<Scalar, A::Error> {
                 while a.next_element::<IgnoredAny>()?.is_some() {}
@@ -480,7 +483,7 @@ struct ParsedRow {
     org: Option<String>,
     work: Option<String>,
     count: Option<f64>,
-    amount: Option<f64>,
+    amount: Option<Option<f64>>,
 }
 impl<'de> Deserialize<'de> for ParsedRow {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
@@ -507,7 +510,7 @@ impl<'de> Deserialize<'de> for ParsedRow {
                             0 => r.org = v.text(),
                             1 => r.work = v.text(),
                             2 => r.count = v.number(),
-                            _ => r.amount = v.number(),
+                            _ => r.amount = match v { Scalar::Null => Some(None), _ => v.number().map(Some) },
                         }
                     } else {
                         a.next_value::<IgnoredAny>()?;
@@ -561,7 +564,7 @@ impl<'de> DeserializeSeed<'de> for Rows<'_> {
                     .map_err(A::Error::custom)?;
                 while let Some(r) = a.next_element::<ParsedRow>()? {
                     match (r.work, r.count, r.amount) {
-                        (Some(w), Some(c), Some(m)) if c.is_finite() && m.is_finite() => {
+                        (Some(w), Some(c), Some(m)) if c.is_finite() && m.is_none_or(f64::is_finite) => {
                             if let Some(o) = r.org {
                                 bounded(&w)
                                     .and_then(|_| bounded(&o))
@@ -1243,8 +1246,8 @@ fn fill_range(c: &Connection, s: &AnalysisScope, q: &RangeQuery, slot: i64) -> R
     }
     drop(insert);
     c.execute("INSERT INTO temp.an_missing SELECT ?1,f.item,p.start FROM analysis_filter_items f CROSS JOIN temp.an_periods p LEFT JOIN temp.an_valid v ON v.org=f.item AND v.start=p.start WHERE f.id=?2 AND p.slot=?1 AND v.report_id IS NULL",params![slot,s.organizations]).map_err(err)?;
-    c.execute("INSERT INTO temp.an_values SELECT ?1,v.org,COALESCE(g.key,'work:'||x.work),COALESCE(g.name,x.work),CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,SUM(x.count),SUM(x.amount),MAX(x.count<>0 OR x.amount<>0) FROM temp.an_valid v JOIN temp.an_periods p ON p.slot=?1 AND p.start=v.start JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work WHERE (?2 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?2 AND f.item=COALESCE(g.name,x.work))) GROUP BY v.org,COALESCE(g.key,'work:'||x.work)",params![slot,s.names]).map_err(err)?;
-    c.execute("INSERT INTO temp.an_combined SELECT slot,key,name,kind,SUM(count),SUM(amount),MAX(active) FROM temp.an_values WHERE slot=?1 GROUP BY key",[slot]).map_err(err)?;
+    c.execute("INSERT INTO temp.an_values SELECT ?1,v.org,COALESCE(g.key,'work:'||x.work),COALESCE(g.name,x.work),CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,SUM(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) FROM temp.an_valid v JOIN temp.an_periods p ON p.slot=?1 AND p.start=v.start JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work WHERE (?2 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?2 AND f.item=COALESCE(g.name,x.work))) GROUP BY v.org,COALESCE(g.key,'work:'||x.work)",params![slot,s.names]).map_err(err)?;
+    c.execute("INSERT INTO temp.an_combined SELECT slot,key,name,kind,SUM(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,MAX(active) FROM temp.an_values WHERE slot=?1 GROUP BY key",[slot]).map_err(err)?;
     validate_numbers(c, "SELECT count,amount FROM temp.an_combined")?;
     validate_numbers(c, "SELECT count,amount FROM temp.an_values")?;
     validate_numbers(
@@ -1261,13 +1264,8 @@ fn validate_numbers(c: &Connection, sql: &str) -> Result<(), String> {
     let mut stmt = c.prepare(sql).map_err(err)?;
     let mut rows = stmt.query([]).map_err(err)?;
     while let Some(r) = rows.next().map_err(err)? {
-        for column in 0..2 {
-            finite(
-                r.get::<_, Option<f64>>(column)
-                    .map_err(err)?
-                    .ok_or("Analysis numeric overflow")?,
-            )?;
-        }
+        finite(r.get(0).map_err(err)?)?;
+        r.get::<_, Option<f64>>(1).map_err(err)?.map(finite).transpose()?;
     }
     Ok(())
 }
@@ -1299,7 +1297,7 @@ fn range_summary(c: &Connection, s: &AnalysisScope, slot: i64) -> Result<RangeSu
             |r| r.get(0),
         )
         .map_err(err)?;
-    let (values,count,amount):(i64,f64,f64)=c.query_row("SELECT COUNT(*),COALESCE(SUM(count),0),COALESCE(SUM(amount),0) FROM temp.an_combined WHERE slot=?1",[slot],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
+    let (values,count,amount):(i64,f64,Option<f64>)=c.query_row("SELECT COUNT(*),COALESCE(SUM(count),0),CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END FROM temp.an_combined WHERE slot=?1",[slot],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
     let complete = periods > 0 && organizations > 0 && missing == 0;
     let available_reports: i64 = c.query_row(
         "SELECT COUNT(*) FROM temp.an_valid v
@@ -1413,7 +1411,7 @@ const TIMELINE_BUCKET_TOTALS: &str = r#"
                 FROM temp.an_missing WHERE slot=1 GROUP BY label
             ), values_by_bucket AS (
                 SELECT CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count, SUM(x.amount) AS amount, MAX(x.count<>0 OR x.amount<>0) AS active
+                       SUM(x.count) AS count, CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN analysis_filter_items f ON f.id=?2 AND f.item=v.org
@@ -1425,7 +1423,7 @@ const TIMELINE_BUCKET_TOTALS: &str = r#"
                 GROUP BY label
             )
             SELECT b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(v.count,0),COALESCE(v.amount,0), COALESCE(v.active,0), b.first_start, b.last_start
+                   COALESCE(v.count,0),CASE WHEN v.count IS NULL THEN 0 ELSE v.amount END, COALESCE(v.active,0), b.first_start, b.last_start
             FROM buckets b
             LEFT JOIN missing m ON m.label=b.label
             LEFT JOIN values_by_bucket v ON v.label=b.label
@@ -1534,7 +1532,7 @@ impl Storage {
             ), values_by_bucket AS (
                 SELECT v.org,
                        CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count,SUM(x.amount) AS amount, MAX(x.count<>0 OR x.amount<>0) AS active
+                       SUM(x.count) AS count,CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN selected s ON s.org=v.org
@@ -1546,7 +1544,7 @@ impl Storage {
                 GROUP BY v.org,label
             )
             SELECT s.org,b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(v.count,0),COALESCE(v.amount,0), COALESCE(v.active,0), b.first_start, b.last_start
+                   COALESCE(v.count,0),CASE WHEN v.count IS NULL THEN 0 ELSE v.amount END, COALESCE(v.active,0), b.first_start, b.last_start
             FROM selected s CROSS JOIN buckets b
             LEFT JOIN missing m ON m.org=s.org AND m.label=b.label
             LEFT JOIN values_by_bucket v ON v.org=s.org AND v.label=b.label
@@ -1649,7 +1647,7 @@ impl Storage {
             ), sums AS (
                 SELECT {bucket_valid} AS label,
                        COALESCE(SUM(x.count),0) AS total_count,
-                       COALESCE(SUM(x.amount),0) AS total_amount
+                       CASE WHEN COUNT(x.row_index)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(x.row_index) THEN SUM(x.amount) END AS total_amount
                 FROM temp.an_valid v
                 JOIN temp.an_periods p ON p.slot=1 AND p.start=v.start
                 LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
@@ -1660,7 +1658,7 @@ impl Storage {
                 GROUP BY label
             )
             SELECT b.label,b.days,COALESCE(m.absent,0),COALESCE(o.reports,0),
-                   COALESCE(t.total_count,0),COALESCE(t.total_amount,0)
+                   COALESCE(t.total_count,0),CASE WHEN t.label IS NULL THEN 0 ELSE t.total_amount END
             FROM buckets b
             LEFT JOIN missing m ON m.label=b.label
             LEFT JOIN observed o ON o.label=b.label
@@ -1675,7 +1673,7 @@ impl Storage {
             if points.len()>page_size {return Err("Daily rollup result exceeds page limit".into());}
             let missing:i64=row.get(2).map_err(err)?;
             let available_reports:i64=row.get(3).map_err(err)?;
-            let amount:f64=row.get(5).map_err(err)?;
+            let amount:Option<f64>=row.get(5).map_err(err)?;
             let count:f64=row.get(4).map_err(err)?;
             points.push(DailyRollupPoint {
                 start:row.get(0).map_err(err)?,
@@ -1758,7 +1756,7 @@ impl Storage {
                 WHERE slot=1 AND (?2 IS NULL OR org=?2) GROUP BY label
             ), aggregates AS (
                 SELECT CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count,SUM(x.amount) AS amount, MAX(x.count<>0 OR x.amount<>0) AS active
+                       SUM(x.count) AS count,CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
@@ -1768,7 +1766,7 @@ impl Storage {
                 GROUP BY label
             )
             SELECT b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(a.count,0),COALESCE(a.amount,0), COALESCE(a.active,0), b.first_start, b.last_start
+                   COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END, COALESCE(a.active,0), b.first_start, b.last_start
             FROM buckets b
             LEFT JOIN missing m ON m.label=b.label
             LEFT JOIN aggregates a ON a.label=b.label
@@ -1839,6 +1837,7 @@ impl Storage {
         let sql = format!(
             "SELECT key,name,kind,count,amount,active FROM {table}
              WHERE slot=1 AND {division} AND (?1 IN ('all','selectable') OR kind=?1) {names_filter}
+               AND (?2='count' OR amount IS NOT NULL)
              ORDER BY ABS(CASE WHEN ?2='count' THEN count ELSE amount END) DESC, key ASC LIMIT 12"
         );
         let mut stmt = tx.prepare(&sql).map_err(err)?;
@@ -1932,7 +1931,7 @@ impl Storage {
         let tx = c.transaction().map_err(err)?;
         workspace(&tx, expected, s)?;
         fill_range(&tx, s, q, 1)?;
-        let mut stmt=tx.prepare("SELECT f.item,(SELECT COUNT(*) FROM temp.an_missing m WHERE slot=1 AND m.org=f.item),COALESCE(SUM(v.count),0),COALESCE(SUM(v.amount),0) FROM analysis_filter_items f LEFT JOIN temp.an_values v ON v.slot=1 AND v.org=f.item WHERE f.id=?1 AND (?2 IS NULL OR f.item>?2) GROUP BY f.item ORDER BY f.item LIMIT ?3").map_err(err)?;
+        let mut stmt=tx.prepare("SELECT f.item,(SELECT COUNT(*) FROM temp.an_missing m WHERE slot=1 AND m.org=f.item),COALESCE(SUM(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END FROM analysis_filter_items f LEFT JOIN temp.an_values v ON v.slot=1 AND v.org=f.item WHERE f.id=?1 AND (?2 IS NULL OR f.item>?2) GROUP BY f.item ORDER BY f.item LIMIT ?3").map_err(err)?;
         let mut rows = stmt
             .query(params![s.organizations, after, n])
             .map_err(err)?;
@@ -2051,12 +2050,12 @@ fn average_change(b: Option<f64>, a: Option<f64>, threshold: f64) -> Result<Aver
         })
     }
 }
-fn status(bc: f64, ba: f64, cc: f64, ca: f64) -> String {
-    let b = bc != 0. || ba != 0.;
-    let c = cc != 0. || ca != 0.;
-    if !b && c {
+fn status(bc: f64, ba: Option<f64>, cc: f64, ca: Option<f64>) -> String {
+    let b = bc != 0. || ba.is_some_and(|n| n != 0.);
+    let c = cc != 0. || ca.is_some_and(|n| n != 0.);
+    if bc == 0. && ba == Some(0.) && c {
         "new"
-    } else if b && !c {
+    } else if b && cc == 0. && ca == Some(0.) {
         "gone"
     } else {
         "existing"
@@ -2093,11 +2092,11 @@ fn fill_changes(c: &Connection, s: &AnalysisScope, q: &ChangeQuery) -> Result<()
         }
     }
     c.execute("INSERT INTO temp.an_pairs SELECT p.start,p.base,f.item,b.report_id,v.report_id,COALESCE(b.warned,0) OR COALESCE(v.warned,0) FROM temp.an_currents p CROSS JOIN analysis_filter_items f LEFT JOIN temp.an_valid b ON b.org=f.item AND b.start=p.base LEFT JOIN temp.an_valid v ON v.org=f.item AND v.start=p.start WHERE f.id=?1",[&s.organizations]).map_err(err)?;
-    c.execute("INSERT INTO temp.an_period_values SELECT v.start,v.org,COALESCE(g.key,'work:'||x.work),COALESCE(g.name,x.work),CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,SUM(x.count),SUM(x.amount) FROM temp.an_valid v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work WHERE EXISTS(SELECT 1 FROM temp.an_pairs p WHERE p.org=v.org AND p.base_id IS NOT NULL AND p.current_id IS NOT NULL AND (p.base=v.start OR p.start=v.start)) AND (?1 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=COALESCE(g.name,x.work))) GROUP BY v.start,v.org,COALESCE(g.key,'work:'||x.work)",[&s.names]).map_err(err)?;
+    c.execute("INSERT INTO temp.an_period_values SELECT v.start,v.org,COALESCE(g.key,'work:'||x.work),COALESCE(g.name,x.work),CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,SUM(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END FROM temp.an_valid v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work WHERE EXISTS(SELECT 1 FROM temp.an_pairs p WHERE p.org=v.org AND p.base_id IS NOT NULL AND p.current_id IS NOT NULL AND (p.base=v.start OR p.start=v.start)) AND (?1 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=COALESCE(g.name,x.work))) GROUP BY v.start,v.org,COALESCE(g.key,'work:'||x.work)",[&s.names]).map_err(err)?;
     finish_changes(c)
 }
 fn finish_changes(c: &Connection) -> Result<(), String> {
-    c.execute_batch("INSERT INTO temp.an_changes SELECT p.start,p.base,p.org,k.key,COALESCE(b.name,a.name),COALESCE(b.kind,a.kind),COALESCE(b.count,0),COALESCE(b.amount,0),COALESCE(a.count,0),COALESCE(a.amount,0) FROM temp.an_pairs p JOIN (SELECT p.start,p.org,v.key FROM temp.an_pairs p JOIN temp.an_period_values v ON v.org=p.org AND (v.start=p.base OR v.start=p.start) WHERE p.base_id IS NOT NULL AND p.current_id IS NOT NULL GROUP BY p.start,p.org,v.key) k ON k.start=p.start AND k.org=p.org LEFT JOIN temp.an_period_values b ON b.start=p.base AND b.org=p.org AND b.key=k.key LEFT JOIN temp.an_period_values a ON a.start=p.start AND a.org=p.org AND a.key=k.key;").map_err(err)?;
+    c.execute_batch("INSERT INTO temp.an_changes SELECT p.start,p.base,p.org,k.key,COALESCE(b.name,a.name),COALESCE(b.kind,a.kind),COALESCE(b.count,0),CASE WHEN b.key IS NULL THEN 0 ELSE b.amount END,COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END FROM temp.an_pairs p JOIN (SELECT p.start,p.org,v.key FROM temp.an_pairs p JOIN temp.an_period_values v ON v.org=p.org AND (v.start=p.base OR v.start=p.start) WHERE p.base_id IS NOT NULL AND p.current_id IS NOT NULL GROUP BY p.start,p.org,v.key) k ON k.start=p.start AND k.org=p.org LEFT JOIN temp.an_period_values b ON b.start=p.base AND b.org=p.org AND b.key=k.key LEFT JOIN temp.an_period_values a ON a.start=p.start AND a.org=p.org AND a.key=k.key;").map_err(err)?;
     validate_numbers(c, "SELECT count,amount FROM temp.an_period_values")?;
     validate_numbers(
         c,
@@ -2111,9 +2110,9 @@ fn finish_changes(c: &Connection) -> Result<(), String> {
 }
 fn change_value(r: &rusqlite::Row<'_>, q: &ChangeQuery) -> Result<ChangeValue, String> {
     let bc: f64 = r.get(6).map_err(err)?;
-    let ba: f64 = r.get(7).map_err(err)?;
+    let ba: Option<f64> = r.get(7).map_err(err)?;
     let cc: f64 = r.get(8).map_err(err)?;
-    let ca: f64 = r.get(9).map_err(err)?;
+    let ca: Option<f64> = r.get(9).map_err(err)?;
     let b = totals(bc, ba, true)?;
     let a = totals(cc, ca, true)?;
     Ok(ChangeValue {
@@ -2125,7 +2124,7 @@ fn change_value(r: &rusqlite::Row<'_>, q: &ChangeQuery) -> Result<ChangeValue, S
         kind: r.get(5).map_err(err)?,
         status: status(bc, ba, cc, ca),
         count: measure(bc, cc, q.min_count, q.percent)?,
-        amount: measure(ba, ca, q.min_amount, q.percent)?,
+        amount: ba.zip(ca).map(|(b,a)| measure(b,a,q.min_amount,q.percent)).transpose()?,
         average: average_change(b.average, a.average, q.percent)?,
     })
 }
@@ -2178,10 +2177,10 @@ impl Storage {
 }
 fn changes_summary(tx: &Connection, q: &ChangeQuery) -> Result<ChangesSummary, String> {
     let (rows,new,gone):(i64,i64,i64)=tx.query_row("SELECT COUNT(*),COALESCE(SUM((bc=0 AND ba=0) AND (cc<>0 OR ca<>0)),0),COALESCE(SUM((bc<>0 OR ba<>0) AND (cc=0 AND ca=0)),0) FROM temp.an_changes",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
-    let (bc,ba,cc,ca):(f64,f64,f64,f64)=tx.query_row("SELECT COALESCE(SUM(bc),0),COALESCE(SUM(ba),0),COALESCE(SUM(cc),0),COALESCE(SUM(ca),0) FROM temp.an_changes",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(err)?;
+    let (bc,ba,cc,ca):(f64,Option<f64>,f64,Option<f64>)=tx.query_row("SELECT COALESCE(SUM(bc),0),CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(ba)=COUNT(*) THEN SUM(ba) END,COALESCE(SUM(cc),0),CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(ca)=COUNT(*) THEN SUM(ca) END FROM temp.an_changes",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(err)?;
     let bt = totals(bc, ba, true)?;
     let at = totals(cc, ca, true)?;
-    Ok(ChangesSummary{count:measure(bc,cc,q.min_count,q.percent)?,amount:measure(ba,ca,q.min_amount,q.percent)?,average:average_change(bt.average,at.average,q.percent)?,rows,new,gone,existing:rows-new-gone,missing_pairs:count_sql(tx,"SELECT COUNT(*) FROM temp.an_pairs WHERE base_id IS NULL OR current_id IS NULL")?,import_warning_pairs:count_sql(tx,"SELECT COUNT(*) FROM temp.an_pairs WHERE base_id IS NOT NULL AND current_id IS NOT NULL AND warned<>0")?,invalid_reports:count_sql(tx,"SELECT COUNT(*) FROM temp.an_issues WHERE kind='invalid'")?,duplicate_issues:count_sql(tx,"SELECT COUNT(*) FROM temp.an_issues WHERE kind='duplicate'")?,overlap_issues:count_sql(tx,"SELECT COUNT(*) FROM temp.an_issues WHERE kind='overlap'")?})
+    Ok(ChangesSummary{count:measure(bc,cc,q.min_count,q.percent)?,amount:ba.zip(ca).map(|(b,a)|measure(b,a,q.min_amount,q.percent)).transpose()?,average:average_change(bt.average,at.average,q.percent)?,rows,new,gone,existing:rows-new-gone,missing_pairs:count_sql(tx,"SELECT COUNT(*) FROM temp.an_pairs WHERE base_id IS NULL OR current_id IS NULL")?,import_warning_pairs:count_sql(tx,"SELECT COUNT(*) FROM temp.an_pairs WHERE base_id IS NOT NULL AND current_id IS NOT NULL AND warned<>0")?,invalid_reports:count_sql(tx,"SELECT COUNT(*) FROM temp.an_issues WHERE kind='invalid'")?,duplicate_issues:count_sql(tx,"SELECT COUNT(*) FROM temp.an_issues WHERE kind='duplicate'")?,overlap_issues:count_sql(tx,"SELECT COUNT(*) FROM temp.an_issues WHERE kind='overlap'")?})
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComparisonQuery {
@@ -2242,7 +2241,7 @@ fn comparison(
     } else {
         "AND ?1 IS NULL"
     };
-    c.execute(&format!("INSERT INTO temp.an_comparison WITH b AS (SELECT * FROM {table} WHERE slot=1 {predicate}),a AS (SELECT * FROM {table} WHERE slot=2 {predicate}),keys AS (SELECT key FROM b UNION SELECT key FROM a) SELECT keys.key,COALESCE(b.name,a.name),COALESCE(b.kind,a.kind),COALESCE(b.count,0),COALESCE(b.amount,0),COALESCE(a.count,0),COALESCE(a.amount,0) FROM keys LEFT JOIN b USING(key) LEFT JOIN a USING(key)"),[org]).map_err(err)?;
+    c.execute(&format!("INSERT INTO temp.an_comparison WITH b AS (SELECT * FROM {table} WHERE slot=1 {predicate}),a AS (SELECT * FROM {table} WHERE slot=2 {predicate}),keys AS (SELECT key FROM b UNION SELECT key FROM a) SELECT keys.key,COALESCE(b.name,a.name),COALESCE(b.kind,a.kind),COALESCE(b.count,0),CASE WHEN b.key IS NULL THEN 0 ELSE b.amount END,COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END FROM keys LEFT JOIN b USING(key) LEFT JOIN a USING(key)"),[org]).map_err(err)?;
     c.execute("INSERT INTO temp.an_comparison SELECT 'absent:'||f.item,f.item,'work',0,0,0,0 FROM analysis_filter_items f WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM temp.an_comparison a WHERE a.name=f.item)",[&s.names]).map_err(err)?;
     Ok((complete(c, 1, org)?, complete(c, 2, org)?))
 }
@@ -2253,9 +2252,9 @@ fn comparison_value(
     a: bool,
 ) -> Result<ComparisonValue, String> {
     let bc: f64 = r.get(3).map_err(err)?;
-    let ba: f64 = r.get(4).map_err(err)?;
+    let ba: Option<f64> = r.get(4).map_err(err)?;
     let cc: f64 = r.get(5).map_err(err)?;
-    let ca: f64 = r.get(6).map_err(err)?;
+    let ca: Option<f64> = r.get(6).map_err(err)?;
     let bt = totals(bc, ba, b)?;
     let at = totals(cc, ca, a)?;
     Ok(ComparisonValue {
@@ -2273,7 +2272,7 @@ fn comparison_value(
             None
         },
         amount: if b && a {
-            Some(measure(ba, ca, q.min_amount, q.percent)?)
+            ba.zip(ca).map(|(b,a)| measure(b,a,q.min_amount,q.percent)).transpose()?
         } else {
             None
         },
@@ -2357,8 +2356,8 @@ impl Storage {
             let available_before = complete(&tx,1,Some(&org))?;
             let available_after = complete(&tx,2,Some(&org))?;
             let get_totals = |slot:i64,ok:bool| -> Result<AnalysisTotals,String> {
-                let (c,a):(f64,f64) = tx.query_row(
-                    "SELECT COALESCE(SUM(count),0),COALESCE(SUM(amount),0)
+                let (c,a):(f64,Option<f64>) = tx.query_row(
+                    "SELECT COALESCE(SUM(count),0),CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END
                      FROM temp.an_values WHERE slot=?1 AND org=?2",
                     params![slot,&org],
                     |r| Ok((r.get(0)?,r.get(1)?)),
@@ -2384,6 +2383,7 @@ impl Storage {
         if before_complete && after_complete {
             for metric in ["amount","count"] {
                 let sql = "SELECT key,name,kind,bc,ba,cc,ca FROM temp.an_comparison
+                    WHERE ?1='count' OR (ba IS NOT NULL AND ca IS NOT NULL)
                     ORDER BY ABS(CASE WHEN ?1='amount' THEN ca-ba ELSE cc-bc END) DESC,
                              key ASC LIMIT 12";
                 let mut ranking = tx.prepare(sql).map_err(err)?;
@@ -2573,8 +2573,8 @@ fn change_csv(w: &mut impl Write, v: &ChangeValue, metrics: &[&str]) -> Result<(
     for &metric in metrics {
         let values = match metric {
             "count" | "amount" => {
-                let m = if metric == "count" { &v.count } else { &v.amount };
-                [Some(m.base), Some(m.current), Some(m.delta), m.percent]
+                let measure = if metric == "count" { Some(&v.count) } else { v.amount.as_ref() };
+                measure.map_or([None; 4], |m| [Some(m.base), Some(m.current), Some(m.delta), m.percent])
             }
             "average" => [v.average.base, v.average.current, v.average.delta, v.average.percent],
             _ => return Err("Unknown change metric".into()),

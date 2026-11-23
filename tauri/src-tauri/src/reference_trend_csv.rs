@@ -34,7 +34,7 @@ fn organization_totals_csv(
 ) -> Result<(), String> {
     let mut stmt = tx.prepare(
         "SELECT f.item,(SELECT count(*) FROM an_missing m WHERE slot=1 AND m.org=f.item),
-         coalesce(sum(v.count),0),coalesce(sum(v.amount),0) FROM analysis_filter_items f
+         coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END FROM analysis_filter_items f
          LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item WHERE f.id=?1 GROUP BY f.item ORDER BY f.item"
     ).map_err(err)?;
     let mut rows = stmt.query([&scope.organizations]).map_err(err)?;
@@ -90,7 +90,7 @@ impl Storage {
             FROM an_missing m JOIN trend_dates d USING(start) WHERE m.slot=1 GROUP BY m.org,d.label;
             CREATE UNIQUE INDEX trend_org_missing ON trend_missing(org,label);
             CREATE TEMP TABLE trend_series(member TEXT,label TEXT,qty REAL,money REAL,PRIMARY KEY(member,label)) WITHOUT ROWID;").map_err(err)?;
-        tx.execute(&format!("INSERT INTO trend_series SELECT {member},d.label,sum(x.count),sum(x.amount)
+        tx.execute(&format!("INSERT INTO trend_series SELECT {member},d.label,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END
             FROM trend_dates d JOIN an_valid v ON v.start=d.start JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
             LEFT JOIN analysis_groups g ON g.work=x.work WHERE ?1 IS NULL OR EXISTS(
                 SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=coalesce(g.name,x.work))
@@ -136,7 +136,7 @@ impl Storage {
             else {"SELECT item,item FROM analysis_filter_items WHERE id=?1 ORDER BY ordinal"};
         let mut names=tx.prepare(members).map_err(err)?;
         let mut names=names.query([if works {scope.names.as_deref()} else {Some(scope.organizations.as_str())}]).map_err(err)?;
-        let mut points=tx.prepare(&format!("SELECT coalesce(s.qty,0.0),coalesce(s.money,0.0),
+        let mut points=tx.prepare(&format!("SELECT coalesce(s.qty,0.0),CASE WHEN s.member IS NULL THEN 0.0 ELSE s.money END,
             CASE WHEN ?3 THEN b.missing ELSE coalesce(m.missing,0) END
             FROM trend_buckets b LEFT JOIN trend_series s ON s.member=?2 AND s.label=b.label
             LEFT JOIN trend_missing m ON m.org=?2 AND m.label=b.label WHERE {visible} ORDER BY b.label")).map_err(err)?;
@@ -159,7 +159,7 @@ impl Storage {
                 let mut values=Vec::with_capacity(labels.len());
                 let mut rows=points.query(params![hide,key,works]).map_err(err)?;
                 while let Some(r)=rows.next().map_err(err)? {
-                    let count:f64=r.get(0).map_err(err)?;let amount:f64=r.get(1).map_err(err)?;
+                    let count:f64=r.get(0).map_err(err)?;let amount:Option<f64>=r.get(1).map_err(err)?;
                     let missing:i64=r.get(2).map_err(err)?;
                     values.push(totals(count,amount,missing==0)?);
                 }

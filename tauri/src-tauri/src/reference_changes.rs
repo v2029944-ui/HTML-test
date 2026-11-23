@@ -25,9 +25,9 @@ pub struct ReferenceChangesRequest {
 pub struct ReferenceChangeRow {
     pub name: String,
     pub org: String,
-    pub before: f64,
-    pub after: f64,
-    pub delta: f64,
+    pub before: Option<f64>,
+    pub after: Option<f64>,
+    pub delta: Option<f64>,
     pub percent: Option<f64>,
 }
 #[derive(Debug, Serialize)]
@@ -118,7 +118,7 @@ fn prepare_reference_values(
     c.execute_batch("CREATE TEMP TABLE ref_orgs(org TEXT PRIMARY KEY) WITHOUT ROWID;
         CREATE TEMP TABLE ref_values(slot INTEGER,org TEXT,name TEXT,count REAL,amount REAL,PRIMARY KEY(slot,org,name)) WITHOUT ROWID;").map_err(err)?;
     c.execute("INSERT INTO ref_orgs SELECT f.item FROM analysis_filter_items f WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM an_missing m WHERE m.org=f.item)",[&s.organizations]).map_err(err)?;
-    c.execute_batch("INSERT INTO ref_values SELECT p.slot,v.org,x.work,sum(x.count),sum(x.amount)
+    c.execute_batch("INSERT INTO ref_values SELECT p.slot,v.org,x.work,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END
         FROM an_valid v JOIN an_periods p ON p.start=v.start JOIN ref_orgs o ON o.org=v.org
         JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY p.slot,v.org,x.work;").map_err(err)?;
     validate_numbers(c, "SELECT count,amount FROM ref_values")
@@ -127,7 +127,7 @@ fn prepare_reference(c:&Connection,q:&ReferenceChangesRequest,s:&AnalysisScope)-
     prepare_reference_values(c,q,s)?;
     c.execute_batch("CREATE TEMP TABLE ref_changes(name TEXT,org TEXT,before REAL,after REAL,delta REAL,percent REAL,kind TEXT,PRIMARY KEY(name,org)) WITHOUT ROWID;").map_err(err)?;
     let mut statement=c.prepare("WITH keys AS (SELECT DISTINCT org,name FROM ref_values)
-        SELECT k.name,k.org,coalesce(b.count,0.0),coalesce(b.amount,0.0),coalesce(a.count,0.0),coalesce(a.amount,0.0)
+        SELECT k.name,k.org,coalesce(b.count,0.0),CASE WHEN b.name IS NULL THEN 0 ELSE b.amount END,coalesce(a.count,0.0),CASE WHEN a.name IS NULL THEN 0 ELSE a.amount END
         FROM keys k LEFT JOIN ref_values b ON b.org=k.org AND b.name=k.name AND b.slot=1
         LEFT JOIN ref_values a ON a.org=k.org AND a.name=k.name AND a.slot=2").map_err(err)?;
     let mut rows = statement.query([]).map_err(err)?;
@@ -138,22 +138,27 @@ fn prepare_reference(c:&Connection,q:&ReferenceChangesRequest,s:&AnalysisScope)-
         let name: String = row.get(0).map_err(err)?;
         let org: String = row.get(1).map_err(err)?;
         let bc: f64 = row.get(2).map_err(err)?;
-        let ba: f64 = row.get(3).map_err(err)?;
+        let ba: Option<f64> = row.get(3).map_err(err)?;
         let ac: f64 = row.get(4).map_err(err)?;
-        let aa: f64 = row.get(5).map_err(err)?;
+        let aa: Option<f64> = row.get(5).map_err(err)?;
         let (before, after, minimum) = if q.metric == "count" {
-            (bc, ac, q.min_count)
+            (Some(bc), Some(ac), q.min_count)
         } else {
             (ba, aa, q.min_amount)
         };
-        let value = measure(before, after, minimum, q.percent)?;
+        let Some((b, a)) = before.zip(after) else {
+            put.execute(params![name, org, before, after, None::<f64>, None::<f64>, ""])
+                .map_err(err)?;
+            continue;
+        };
+        let value = measure(b, a, minimum, q.percent)?;
         let kind = if value.delta == 0. {
             ""
-        } else if bc == 0. && ba == 0. && (ac != 0. || aa != 0.) {
+        } else if bc == 0. && ba == Some(0.) && (ac != 0. || aa.is_some_and(|n| n != 0.)) {
             "new"
-        } else if (bc != 0. || ba != 0.) && ac == 0. && aa == 0. {
+        } else if (bc != 0. || ba.is_some_and(|n| n != 0.)) && ac == 0. && aa == Some(0.) {
             "gone"
-        } else if before != 0. && value.significant {
+        } else if b != 0. && value.significant {
             if value.delta > 0. {
                 "up"
             } else {
@@ -232,11 +237,11 @@ fn comparison_csv_context(
         csv_record(writer,&[Text("Состав сравнения"),Text(org),Text(reason)])?;
     }
     let (bc,ba,ac,aa)=if included.is_empty(){(None,None,None,None)}else{
-        let values:(f64,f64,f64,f64)=c.query_row("SELECT
-            coalesce(sum(CASE WHEN slot=1 THEN count END),0.0),coalesce(sum(CASE WHEN slot=1 THEN amount END),0.0),
-            coalesce(sum(CASE WHEN slot=2 THEN count END),0.0),coalesce(sum(CASE WHEN slot=2 THEN amount END),0.0)
+        let values:(f64,Option<f64>,f64,Option<f64>)=c.query_row("SELECT
+            coalesce(sum(CASE WHEN slot=1 THEN count END),0.0),CASE WHEN COUNT(*) FILTER(WHERE slot=1)=0 THEN 0 WHEN COUNT(amount) FILTER(WHERE slot=1)=COUNT(*) FILTER(WHERE slot=1) THEN SUM(amount) FILTER(WHERE slot=1) END,
+            coalesce(sum(CASE WHEN slot=2 THEN count END),0.0),CASE WHEN COUNT(*) FILTER(WHERE slot=2)=0 THEN 0 WHEN COUNT(amount) FILTER(WHERE slot=2)=COUNT(*) FILTER(WHERE slot=2) THEN SUM(amount) FILTER(WHERE slot=2) END
             FROM ref_values",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).map_err(err)?;
-        (Some(finite(values.0)?),Some(finite(values.1)?),Some(finite(values.2)?),Some(finite(values.3)?))
+        (Some(finite(values.0)?),values.1.map(finite).transpose()?,Some(finite(values.2)?),values.3.map(finite).transpose()?)
     };
     csv_record(writer,&[Text("Итоги сопоставимой выборки · все работы")])?;
     csv_record(writer,&[Text("Показатель"),Text("Было"),Text("Стало"),Text("Изменение"),Text("Изменение, %")])?;
@@ -278,7 +283,7 @@ impl Storage {
             let mut conn=self.connect()?;let tx=conn.transaction().map_err(err)?;
             prepare_reference(&tx,q,scope)?;
             let counts=tx.query_row("SELECT coalesce(sum(kind='up'),0),coalesce(sum(kind='down'),0),coalesce(sum(kind='new'),0),coalesce(sum(kind='gone'),0) FROM ref_changes",[],|r|Ok(ReferenceChangeCounts {up:r.get(0)?,down:r.get(1)?,new:r.get(2)?,gone:r.get(3)?})).map_err(err)?;
-            let leader=tx.query_row("SELECT name,org,before,after,delta,percent FROM ref_changes ORDER BY abs(delta) DESC,name COLLATE classic_ru,org COLLATE classic_ru,name,org LIMIT 1",[],change_row).optional().map_err(err)?;
+            let leader=tx.query_row("SELECT name,org,before,after,delta,percent FROM ref_changes WHERE delta IS NOT NULL ORDER BY abs(delta) DESC,name COLLATE classic_ru,org COLLATE classic_ru,name,org LIMIT 1",[],change_row).optional().map_err(err)?;
             let comparable=comparable_organizations(&tx,scope)?;
             let search=unified_analytics::normalized(&q.search);
             let (total,searched,significant)=tx.query_row(
@@ -359,7 +364,7 @@ impl Storage {
                 let mut rows=stmt.query(params![q.kind,unified_analytics::normalized(&q.search)]).map_err(err)?;
                 while let Some(row)=rows.next().map_err(err)? {
                     let value=change_row(row).map_err(err)?;
-                    csv_record(writer,&[Cell::Text(&value.name),Cell::Text(&value.org),Cell::Number(Some(value.before)),Cell::Number(Some(value.after)),Cell::Number(Some(value.delta)),Cell::Number(value.percent)])?;
+                    csv_record(writer,&[Cell::Text(&value.name),Cell::Text(&value.org),Cell::Number(value.before),Cell::Number(value.after),Cell::Number(value.delta),Cell::Number(value.percent)])?;
                 }
                 Ok(())
             })
@@ -387,18 +392,18 @@ impl Storage {
                 csv_record(writer,&[Cell::Text("Наблюдаемые итоги анализируемого интервала"),Cell::Text("Все выбранные подразделения; частичные данные не являются итогами сопоставимой выборки.")])?;
                 csv_record(writer,&[Cell::Text("Подразделение"),Cell::Text("Сумма"),Cell::Text("Количество / объём"),Cell::Text("Доля суммы, %"),Cell::Text("Сумма / количество (объём)"),Cell::Text("Состояние")])?;
                 let mut statement=tx.prepare("WITH observed AS (
-                    SELECT v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,coalesce(sum(x.amount),0.0) amount
+                    SELECT v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,CASE WHEN COUNT(x.row_index)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(x.row_index) THEN SUM(x.amount) END amount
                     FROM an_valid v JOIN an_periods p ON p.slot=2 AND p.start=v.start
                     LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY v.org)
                     SELECT f.item,coalesce(o.reports,0),o.count,o.amount,
                     NOT EXISTS(SELECT 1 FROM an_missing m WHERE m.slot=2 AND m.org=f.item),
-                    (SELECT sum(amount) FROM observed)
+                    (SELECT CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END FROM observed)
                     FROM analysis_filter_items f LEFT JOIN observed o ON o.org=f.item WHERE f.id=?1
                     ORDER BY (o.amount IS NULL),o.amount DESC,f.item COLLATE classic_ru,f.item").map_err(err)?;
                 let mut rows=statement.query([&scope.organizations]).map_err(err)?;
                 while let Some(row)=rows.next().map_err(err)? {
                     let org:String=row.get(0).map_err(err)?;let available:i64=row.get(1).map_err(err)?;
-                    let (count,amount)=if available>0 {(Some(finite(row.get(2).map_err(err)?)?),Some(finite(row.get(3).map_err(err)?)?))} else {(None,None)};
+                    let (count,amount)=if available>0 {(Some(finite(row.get(2).map_err(err)?)?),row.get::<_,Option<f64>>(3).map_err(err)?.map(finite).transpose()?)} else {(None,None)};
                     let average=match (count,amount) {(Some(c),Some(a)) if c>0.=>Some(finite(a/c)?),_=>None};
                     let total=row.get::<_,Option<f64>>(5).map_err(err)?.map(finite).transpose()?;
                     let share=match (amount,total) {(Some(a),Some(t)) if t>0.=>Some(finite(a/t*100.)?),_=>None};

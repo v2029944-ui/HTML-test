@@ -86,7 +86,7 @@ impl Calendar {
         c.execute_batch(&format!("INSERT INTO adv_coverage SELECT label,org,max(warned) FROM adv_reports GROUP BY label,org HAVING count(*)={expected};
             CREATE TEMP TABLE adv_facts(label TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,active INTEGER,PRIMARY KEY(label,org,key)) WITHOUT ROWID;")).map_err(err)?;
         c.execute("INSERT INTO adv_facts SELECT v.label,v.org,coalesce(g.key,'work:'||x.work),coalesce(g.name,x.work),
-            CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,sum(x.count),sum(x.amount),max(x.count<>0 OR x.amount<>0)
+            CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,max(x.count<>0 OR x.amount IS NULL OR x.amount<>0)
             FROM adv_reports v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work
             WHERE (?1 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=coalesce(g.name,x.work)))
             GROUP BY v.label,v.org,coalesce(g.key,'work:'||x.work)",[&s.names]).map_err(err)?;
@@ -465,7 +465,7 @@ impl Storage {
           CREATE TEMP TABLE adv_dates(label TEXT,slot INTEGER,batch INTEGER,complete INTEGER,PRIMARY KEY(label,slot)) WITHOUT ROWID;
           CREATE TEMP TABLE adv_tail(label TEXT PRIMARY KEY,distance INTEGER) WITHOUT ROWID;
           CREATE TEMP TABLE adv_combined(key TEXT,label TEXT,count REAL,amount REAL,active INTEGER,PRIMARY KEY(key,label)) WITHOUT ROWID;
-          INSERT INTO adv_combined SELECT key,label,sum(count),sum(amount),max(active) FROM adv_facts GROUP BY key,label;
+          INSERT INTO adv_combined SELECT key,label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,max(active) FROM adv_facts GROUP BY key,label;
           CREATE TEMP TABLE adv_keys(key TEXT PRIMARY KEY,name TEXT,kind TEXT) WITHOUT ROWID;
           INSERT INTO adv_keys SELECT key,name,kind FROM adv_facts GROUP BY key;").map_err(err)?;
         tx.execute("INSERT INTO adv_complete SELECT label FROM adv_coverage GROUP BY label HAVING count(*)=(SELECT count(*) FROM analysis_filter_items WHERE id=?1)",[&s.organizations]).map_err(err)?;
@@ -516,7 +516,7 @@ impl Storage {
         )?;
         if usual {
             tx.execute_batch("INSERT INTO adv_keys VALUES('','Итого по выбранным работам','total');
-                INSERT INTO adv_combined SELECT '',label,sum(count),sum(amount),max(active) FROM adv_combined GROUP BY label;").map_err(err)?;
+                INSERT INTO adv_combined SELECT '',label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,max(active) FROM adv_combined GROUP BY label;").map_err(err)?;
         } else {
             d = calendar.last;
             let mut distance = 0;
@@ -560,9 +560,9 @@ impl Storage {
             }else{legacy_keys.next()};
             let Some((key,name,kind))=next_key else {break};
             let mut row = if usual {
-                let (bc,ba,ac,aa):(f64,f64,f64,f64)=tx.query_row("SELECT
-                    coalesce(sum(count) FILTER(WHERE slot=0),0),coalesce(sum(amount) FILTER(WHERE slot=0),0),
-                    coalesce(sum(count) FILTER(WHERE slot=1),0),coalesce(sum(amount) FILTER(WHERE slot=1),0)
+                let (bc,ba,ac,aa):(f64,Option<f64>,f64,Option<f64>)=tx.query_row("SELECT
+                    coalesce(sum(count) FILTER(WHERE slot=0),0),CASE WHEN COUNT(*) FILTER(WHERE slot=0)=0 THEN 0 WHEN COUNT(amount) FILTER(WHERE slot=0)=COUNT(*) FILTER(WHERE slot=0) THEN SUM(amount) FILTER(WHERE slot=0) END,
+                    coalesce(sum(count) FILTER(WHERE slot=1),0),CASE WHEN COUNT(*) FILTER(WHERE slot=1)=0 THEN 0 WHEN COUNT(amount) FILTER(WHERE slot=1)=COUNT(*) FILTER(WHERE slot=1) THEN SUM(amount) FILTER(WHERE slot=1) END
                     FROM adv_combined JOIN adv_dates USING(label) WHERE key=?1 AND complete",[&key],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(err)?;
                 let base = totals(bc, ba, previous > 0)?;
                 let now = totals(ac, aa, used == i64::from(count))?;
@@ -704,20 +704,29 @@ impl Storage {
         // generic comparison screen. Structure/contributions use observed keys.
         tx.execute_batch("DELETE FROM an_comparison WHERE key LIKE 'absent:%'")
             .map_err(err)?;
-        let (bt, at): (f64, f64) = tx
+        let (bt, at): (Option<f64>, Option<f64>) = tx
             .query_row(
-                &format!("SELECT coalesce(sum({b}),0),coalesce(sum({a}),0) FROM an_comparison"),
+                &format!("SELECT CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT({b})=COUNT(*) THEN SUM({b}) END,CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT({a})=COUNT(*) THEN SUM({a}) END FROM an_comparison"),
                 [],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .map_err(err)?;
-        finite(bt)?;
+        let Some(at) = at else {
+            result["currentComplete"] = json!(false);
+            return Ok(result);
+        };
+        let base_complete = base_complete && bt.is_some();
+        result["baseComplete"] = json!(base_complete);
+        if mode == "contributions" && !base_complete {
+            return Ok(result);
+        }
+        let bt = bt.map(finite).transpose()?;
         finite(at)?;
         let mut rows = Vec::new();
         if mode == "structure" {
             let (bv,av):(bool,bool)=tx.query_row(&format!("SELECT NOT EXISTS(SELECT 1 FROM an_comparison WHERE {b}<0),NOT EXISTS(SELECT 1 FROM an_comparison WHERE {a}<0)"),[],|r|Ok((r.get(0)?,r.get(1)?))).map_err(err)?;
             let valid = av && at > 0.;
-            let base_valid = bv && bt > 0. && base_complete;
+            let base_valid = bv && bt.is_some_and(|n| n > 0.) && base_complete;
             let locale: icu_provider::DataLocale = "ru".parse().map_err(err)?;
             let collator =
                 icu_collator::Collator::try_new(&locale, Default::default()).map_err(err)?;
@@ -739,19 +748,19 @@ impl Storage {
             .map_err(err)?;
             let mut stmt=tx.prepare(&format!("WITH ranked AS (SELECT key,name,kind,{b} base,{a} current,row_number() OVER(ORDER BY abs({a}) DESC,name COLLATE classic_ru,encounter) n FROM an_comparison JOIN adv_encounter USING(key))
                 SELECT key,name,kind,base,current,n,0 FROM ranked WHERE n<={structure_limit} UNION ALL
-                SELECT NULL,'Остальные услуги ('||count(*)||')',NULL,sum(base),sum(current),{others},1 FROM ranked WHERE n>{structure_limit} HAVING count(*)>0 ORDER BY 6",others=structure_limit+1)).map_err(err)?;
+                SELECT NULL,'Остальные услуги ('||count(*)||')',NULL,CASE WHEN COUNT(base)=COUNT(*) THEN SUM(base) END,sum(current),{others},1 FROM ranked WHERE n>{structure_limit} HAVING count(*)>0 ORDER BY 6",others=structure_limit+1)).map_err(err)?;
             let mut data = stmt.query([]).map_err(err)?;
             let mut cumulative = 0.;
             while let Some(r) = data.next().map_err(err)? {
                 let key: Option<String> = r.get(0).map_err(err)?;
                 let name: String = r.get(1).map_err(err)?;
                 let kind: Option<String> = r.get(2).map_err(err)?;
-                let base: f64 = r.get(3).map_err(err)?;
+                let base: Option<f64> = r.get(3).map_err(err)?;
                 let current: f64 = r.get(4).map_err(err)?;
                 cumulative = finite(cumulative + current)?;
                 let share = percent_of(current, at, valid)?;
-                let base_share = percent_of(base, bt, base_valid)?;
-                let mut row = json!({"key":key,"name":name,"base":base_complete.then_some(base),"current":current,"share":share,"baseShare":base_share,"cumulative":percent_of(cumulative,at,valid)?,"shareChange":share.zip(base_share).map(|(a,b)|a-b)});
+                let base_share = base.zip(bt).map(|(base,bt)| percent_of(base,bt,base_valid)).transpose()?.flatten();
+                let mut row = json!({"key":key,"name":name,"base":base.filter(|_|base_complete),"current":current,"share":share,"baseShare":base_share,"cumulative":percent_of(cumulative,at,valid)?,"shareChange":share.zip(base_share).map(|(a,b)|a-b)});
                 if kind.is_some() {
                     row["kind"] = json!(kind);
                 } else {
@@ -772,6 +781,7 @@ impl Storage {
                 &format!("SELECT count(*) FROM an_comparison WHERE {a}<>{b}")
             )?);
             let offset=match page_index {Some(index)=>crate::storage::direct_page_offset(index,50,result["total_rows"].as_i64().ok_or("Invalid contribution count")?)?,None=>0};
+            let bt = bt.ok_or("Missing baseline total")?;
             let delta = finite(at - bt)?;
             let sum: f64 = tx
                 .query_row(

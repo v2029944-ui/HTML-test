@@ -489,7 +489,7 @@ fn ordered_organization_totals(
 ) -> Result<Vec<OrganizationSummary>, String> {
     let mut stmt = tx.prepare(
         "SELECT f.item,(SELECT count(*) FROM an_missing m WHERE m.slot=1 AND m.org=f.item),
-                coalesce(sum(v.count),0),coalesce(sum(v.amount),0)
+                coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END
          FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item
          WHERE f.id=?1 GROUP BY f.ordinal,f.item ORDER BY f.ordinal"
     ).map_err(err)?;
@@ -529,7 +529,7 @@ fn visit_all_organization_works(
     ).map_err(err)?;
     let mut names = names.query(params![limit, offset]).map_err(err)?;
     let mut amounts = tx.prepare(
-        "SELECT coalesce(v.count,0),coalesce(v.amount,0)
+        "SELECT coalesce(v.count,0),CASE WHEN v.key IS NULL THEN 0 ELSE v.amount END
          FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.key=?2
          WHERE f.id=?1 ORDER BY f.ordinal"
     ).map_err(err)?;
@@ -638,7 +638,7 @@ fn write_organizations(
         [],
     )
     .map_err(err)?;
-    let mut amounts=tx.prepare("SELECT f.ordinal,coalesce(sum(v.count),0),coalesce(sum(v.amount),0) FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.name=?2 WHERE f.id=?1 GROUP BY f.ordinal ORDER BY f.ordinal").map_err(err)?;
+    let mut amounts=tx.prepare("SELECT f.ordinal,coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.name=?2 WHERE f.id=?1 GROUP BY f.ordinal ORDER BY f.ordinal").map_err(err)?;
     while let Some(row) = names.next().map_err(err)? {
         let name: String = row.get(0).map_err(err)?;
         let mut cells = Vec::with_capacity(orgs.len());

@@ -62,10 +62,12 @@ function notice(root,s,comparable,summary){
  const current=summary?.after,baseline=summary?.before;
  const n=$(root+' .quality-notice');if(!n)return;const span=n.querySelector('span');const excluded=s.organizations.filter(org=>!comparable.includes(org));
  const warnings=historicalQuality(current);
+ const missingAmount=[current,baseline].some(period=>period?.available_reports>0&&period?.available_total?.amount==null);
+ const amountNotice=missingAmount?' В некоторых строках сумма не указана. Количество учтено.':'';
  const gap=current?.missing===1&&baseline?.missing===0?current.single_missing:baseline?.missing===1&&current?.missing===0?baseline.single_missing:null;
  const detail=excluded.length===1&&gap?.org===excluded[0]&&date(gap.start)!=='—'?' · '+date(gap.start)+': нет пригодного отчёта':'';
- n.hidden=!excluded.length&&current?.complete===true&&!warnings;
- span.textContent=(current?.available_reports===0?'Нет пригодных данных за анализируемый интервал. ':current?.complete===false?'Итоги частичные. ':'')+'Сравнение по '+comparable.length+' из '+s.organizations.length+' подразделений.'+(excluded.length?' Исключены из сравнения: '+excluded.join(', ')+detail+'.':'')+(warnings?' '+warnings:'')+' Пропуски не считаются нулём. Наличие отчётов не подтверждает полноту источника.';
+ n.hidden=!excluded.length&&current?.complete===true&&!warnings&&!missingAmount;
+ span.textContent=(current?.available_reports===0?'Нет пригодных данных за анализируемый интервал. ':current?.complete===false?'Итоги частичные. ':'')+'Сравнение по '+comparable.length+' из '+s.organizations.length+' подразделений.'+(excluded.length?' Исключены из сравнения: '+excluded.join(', ')+detail+'.':'')+(warnings?' '+warnings:'')+amountNotice+' Пропуски не считаются нулём. Наличие отчётов не подтверждает полноту источника.';
 }
 function appendTableRow(body,values){
  const tr=el('tr');
@@ -80,7 +82,7 @@ async function refreshSummary(s,ticket){
   const [result,organizations]=await window.analysisSummary.read(api,s);
   if(!current())return;
   if(!result?.summary?.after||!Array.isArray(result.divisions)||!Array.isArray(organizations))throw Error('Некорректный результат SQL-сводки.');
-  const comparable=result.divisions.filter(r=>s.organizations.includes(r.organization)&&Number.isFinite(r.before?.amount)&&Number.isFinite(r.before?.count)&&Number.isFinite(r.after?.amount)&&Number.isFinite(r.after?.count)).map(r=>r.organization);
+  const comparable=result.divisions.filter(r=>s.organizations.includes(r.organization)&&Number.isFinite(r.before?.count)&&Number.isFinite(r.after?.count)).map(r=>r.organization);
   let comparison=result;
   if(comparable.length&&comparable.length<s.organizations.length)comparison=await api.nativeAnalysisCompare(s.revision,s.type,s.baseFrom,s.baseTo,s.from,s.to,comparable);
   if(!current())return;
@@ -169,7 +171,7 @@ async function loadChanges(s,captured,current,focusAnchor){
  }}
 
 }
-function openSample(anchor){const data=summaryData,s=scope;if(!data||data.scope!==s)return;const root=resultDialog('Состав сравнения',anchor);document.getElementById('sheet')?.addEventListener('close',()=>{if(scope===s&&anchor?.isConnected)anchor.focus({preventScroll:true});},{once:true});root.append(el('p','Сравнение по '+data.comparable.length+' из '+s.organizations.length+' подразделений. В обоих интервалах используется один и тот же состав.'),el('p','База: '+baseRange(s)+' · Анализ: '+visibleRange(s)));const list=el('ul');for(const org of s.organizations){const d=data.result.divisions.find(row=>row.organization===org),before=Number.isFinite(d?.before?.count)&&Number.isFinite(d?.before?.amount),after=Number.isFinite(d?.after?.count)&&Number.isFinite(d?.after?.amount);list.append(el('li',org+': '+(before&&after?'включено':!before&&!after?'нет пригодных отчётов за оба интервала':!before?'неполный базовый интервал':'неполный анализируемый интервал')));}root.append(list);
+function openSample(anchor){const data=summaryData,s=scope;if(!data||data.scope!==s)return;const root=resultDialog('Состав сравнения',anchor);document.getElementById('sheet')?.addEventListener('close',()=>{if(scope===s&&anchor?.isConnected)anchor.focus({preventScroll:true});},{once:true});root.append(el('p','Сравнение по '+data.comparable.length+' из '+s.organizations.length+' подразделений. В обоих интервалах используется один и тот же состав.'),el('p','База: '+baseRange(s)+' · Анализ: '+visibleRange(s)));const list=el('ul');for(const org of s.organizations){const d=data.result.divisions.find(row=>row.organization===org),before=Number.isFinite(d?.before?.count),after=Number.isFinite(d?.after?.count);list.append(el('li',org+': '+(before&&after?'включено':!before&&!after?'нет пригодных отчётов за оба интервала':!before?'неполный базовый интервал':'неполный анализируемый интервал')));}root.append(list);
  const totals=data.comparison?.summary;
  if(data.comparable.length&&totals){
   const table=el('table');table.className='sample-values';table.setAttribute('aria-label','Показатели сопоставимых подразделений');
@@ -211,7 +213,7 @@ function printContext(root,s,comparable,comparison,overview){
  const excluded=s.organizations.filter(org=>!comparable.includes(org));
  if(excluded.length){
   root.append(el('p','Исключены из сравнения: '+excluded.join(', ')+'.'));
-  for(const org of excluded){const row=overview?.divisions?.find(value=>value.organization===org),before=Number.isFinite(row?.before?.amount)&&Number.isFinite(row?.before?.count),after=Number.isFinite(row?.after?.amount)&&Number.isFinite(row?.after?.count);root.append(el('p',org+': '+(row?!before&&!after?'неполные базовый и анализируемый интервалы':!before?'неполный базовый интервал':'неполный анализируемый интервал':'нет пригодных отчётов за весь базовый или анализируемый интервал')+'.'));}
+  for(const org of excluded){const row=overview?.divisions?.find(value=>value.organization===org),before=Number.isFinite(row?.before?.count),after=Number.isFinite(row?.after?.count);root.append(el('p',org+': '+(row?!before&&!after?'неполные базовый и анализируемый интервалы':!before?'неполный базовый интервал':'неполный анализируемый интервал':'нет пригодных отчётов за весь базовый или анализируемый интервал')+'.'));}
  }
  for(const [label,period]of [['База',overview?.summary?.before],['Анализ',overview?.summary?.after]]){
   if(period)root.append(el('p',label+': пропусков отчётов — '+(Number.isSafeInteger(period.missing)?period.missing:'—')+'.'));

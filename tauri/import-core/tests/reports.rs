@@ -207,7 +207,7 @@ fn legacy_reports_keep_all_rows_and_complete_totals_beyond_page_one() {
     assert_eq!(reports[0].start, "2026-11-09");
     assert_eq!(reports[0].end, "2026-11-15");
     assert_eq!(reports[0].count, 3.0);
-    assert_eq!(reports[0].amount, 12.3);
+    assert_eq!(reports[0].amount, Some(12.3));
     let p = stage.report_rows(&reports[0].id, 0, 1).unwrap();
     assert_eq!(p.len(), 1);
     assert_eq!(p[0].work, "Альфа");
@@ -217,6 +217,37 @@ fn legacy_reports_keep_all_rows_and_complete_totals_beyond_page_one() {
         "Бета"
     );
 }
+#[test]
+fn blank_amount_retains_numeric_quantity_and_distinguishes_explicit_zero() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("data.xlsx");
+    fixture_rows(&source, &[
+        vec!["Работа", "Количество", "Сумма"],
+        vec!["СМУ16", "10", "20"],
+        vec!["Без суммы", "7", ""],
+        vec!["Нулевая сумма", "1", "0"],
+        vec!["Полная строка", "2", "20"],
+        vec!["Некорректная сумма", "3", "ошибка"],
+    ]);
+    let area = StageArea::open(temp.path().join("stage")).unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut stage = area.ingest(&source, Limits::default(), &cancel, |_| {}).unwrap();
+    let summary = stage.convert_legacy(&options("day", "2026-11-13"), &cancel, |_| {}).unwrap();
+    assert_eq!(summary.rows, 3);
+    let reports = stage.report_page(0, 1).unwrap();
+    assert_eq!(reports[0].count, 10.0);
+    let id = &reports[0].id;
+    let rows = stage.report_rows(id, 0, 10).unwrap();
+    let rows = serde_json::to_value(rows).unwrap();
+    assert_eq!(rows[0]["count"], 7.0);
+    assert!(rows[0]["amount"].is_null());
+    assert_eq!(rows[1]["amount"], 0.0);
+    let issues = stage.report_issues(id, 0, 10).unwrap();
+    let missing = issues.iter().find(|i| i.source_row == Some(3)).unwrap();
+    assert_eq!(missing.amount_cell.as_deref(), Some("C3"));
+    assert_ne!(missing.skipped, Some(true));
+}
+
 #[test]
 fn invalid_values_keep_source_coordinates_and_do_not_invent_zero() {
     let temp = tempfile::tempdir().unwrap();
@@ -380,7 +411,7 @@ fn total_labels_use_ecmascript_whitespace() {
         let report = stage.report_page(0, 1).unwrap().remove(0);
         assert_eq!(report.row_count, expected_rows, "separator {separator:?}");
         assert_eq!(report.count, expected_count);
-        assert_eq!(report.amount, expected_count);
+        assert_eq!(report.amount, Some(expected_count));
         assert_eq!(report.has_mismatch, separator == "\u{0085}");
     }
 }
@@ -407,7 +438,7 @@ fn large_finite_rounded_totals_keep_matching_controls() {
         .unwrap();
     let report = stage.report_page(0, 1).unwrap().remove(0);
     assert_eq!(report.count, 4503599627.370497);
-    assert_eq!(report.amount, 45035996273704.97);
+    assert_eq!(report.amount, Some(45035996273704.97));
     assert!(!report.has_mismatch);
     assert!(stage.report_issues(&report.id, 0, 100).unwrap().is_empty());
 }
@@ -560,9 +591,9 @@ fn control_apis_expose_mapping_exact_cells_and_first_seen_organizations() {
     let orgs = stage.report_organizations(&report.id).unwrap();
     assert_eq!(orgs.len(), 2);
     assert_eq!(orgs[0].organization, "ТРАК");
-    assert_eq!((orgs[0].count, orgs[0].amount), (0.0, 0.0));
+    assert_eq!((orgs[0].count, orgs[0].amount), (0.0, Some(0.0)));
     assert_eq!(orgs[1].organization, "СМУ16");
-    assert_eq!((orgs[1].count, orgs[1].amount), (1.0, 2.0));
+    assert_eq!((orgs[1].count, orgs[1].amount), (1.0, Some(2.0)));
     assert!(stage.report_totals(&report.id, 0, 0).is_err());
     assert!(stage.report_totals(&report.id, 0, 101).is_err());
 }
@@ -619,7 +650,7 @@ fn omitted_detail_tag_does_not_mark_invalid_controls_or_included_unnamed_rows() 
     let area=StageArea::open(temp.path().join("stage")).unwrap();let cancel=AtomicBool::new(false);
     let mut stage=area.ingest(&source,Limits::default(),&cancel,|_|{}).unwrap();
     stage.convert_legacy(&options("day","2020-03-01"),&cancel,|_|{}).unwrap();
-    let report=stage.report_page(0,1).unwrap().remove(0);assert_eq!(report.row_count,2);assert_eq!(report.count,3.);assert_eq!(report.amount,8.);
+    let report=stage.report_page(0,1).unwrap().remove(0);assert_eq!(report.row_count,2);assert_eq!(report.count,3.);assert_eq!(report.amount,Some(8.));
     let notes=stage.report_issues(&report.id,0,50).unwrap();
     let find=|row|serde_json::to_value(notes.iter().find(|n|n.source_row==Some(row)).unwrap()).unwrap();
     assert_eq!(find(4)["skipped"],true);
@@ -683,7 +714,7 @@ fn only_verified_header_dates_create_a_manual_quality_notice() {
         let summary = stage.convert_legacy(&options(kind, start), &cancel, |_| {}).unwrap();
         assert_eq!(summary.issues, if expected_address.is_some() {1} else {0}, "{label} {adjacent}");
         let report = stage.report_page(0, 1).unwrap().remove(0);
-        assert_eq!(report.amount, 125.);
+        assert_eq!(report.amount, Some(125.));
         if let Some(address) = expected_address {
             let issue = stage.report_issues(&report.id, 0, 1).unwrap().remove(0);
             assert_eq!(issue.work_cell.as_deref(), Some(address));
@@ -709,7 +740,7 @@ fn reordered_manual_columns_keep_the_period_date_evidence() {
     let summary = stage.convert_legacy(&cfg, &cancel, |_| {}).unwrap();
     assert_eq!(summary.issues, 1);
     let report = stage.report_page(0, 1).unwrap().remove(0);
-    assert_eq!((report.count, report.amount), (1., 125.));
+    assert_eq!((report.count, report.amount), (1., Some(125.)));
     let issue = stage.report_issues(&report.id, 0, 1).unwrap().remove(0);
     assert_eq!(issue.work_cell.as_deref(), Some("B1"));
 }
@@ -736,7 +767,7 @@ fn interleaved_manual_columns_only_accept_the_first_blocks_own_label_and_date() 
     let summary = stage.convert_legacy(&cfg, &cancel, |_| {}).unwrap();
     assert_eq!(summary.issues, 1);
     let reports = stage.report_page(0, 2).unwrap();
-    assert_eq!((reports[0].amount, reports[1].amount), (125., 60.));
+    assert_eq!((reports[0].amount, reports[1].amount), (Some(125.), Some(60.)));
     let issue = stage.report_issues(&reports[0].id, 0, 1).unwrap().remove(0);
     assert_eq!(issue.work_cell.as_deref(), Some("F1"));
 }
@@ -756,7 +787,7 @@ fn repeated_department_controls_are_checked_per_section() {
         let mut stage = area.ingest(&file, Limits::default(), &cancel, |_| {}).unwrap();
         let s = stage.convert_legacy(&options("day", "2024-02-29"), &cancel, |_| {}).unwrap();
         let orgs = stage.report_organizations("legacy-1").unwrap();
-        assert_eq!((orgs.len(), orgs[0].count, orgs[0].amount), (1, 3., 30.));
+        assert_eq!((orgs.len(), orgs[0].count, orgs[0].amount), (1, 3., Some(30.)));
         assert_eq!(s.issues, if valid { 0 } else { 1 });
         if !valid {
             let issue = stage.report_issues("legacy-1", 0, 1).unwrap().remove(0);

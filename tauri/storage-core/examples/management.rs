@@ -76,7 +76,7 @@ fn main() {
     let report = store
         .management_report_summary(receipt.revision, &ManagementReportFilter::default())
         .unwrap();
-    assert_eq!((report.reports, report.rows, report.amount), (1, 1, 30.));
+    assert_eq!((report.reports, report.rows, report.amount), (1, 1, Some(30.)));
     let c = rusqlite::Connection::open(root.join("reports.sqlite3")).unwrap();
     let (kind, bytes): (String, i64) = c
         .query_row(

@@ -70,6 +70,28 @@ fn rows() -> Vec<Vec<&'static str>> {
 }
 const MERGES:&str="<mergeCells><mergeCell ref=\"A1:A2\"/><mergeCell ref=\"B1:C1\"/><mergeCell ref=\"D1:E1\"/><mergeCell ref=\"F1:G1\"/></mergeCells>";
 #[test]
+fn daily_pairs_keep_count_when_amount_is_blank() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("blank.xlsx");
+    let mut data = rows();
+    data[3][2] = "";
+    book(&file, &data, MERGES, "xl/worksheets/sheet1.xml");
+
+    let area = StageArea::open(root.path().join("stage")).unwrap();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut stage = area.ingest(&file, Limits::default(), &cancel, |_| {}).unwrap();
+    let result = stage.convert_wide(&WideOptions::default(), cancel, |_| {}).unwrap();
+    assert_eq!((result.reports, result.rows), (2, 2));
+    let reports = stage.report_page(0, 2).unwrap();
+    assert_eq!((reports[0].count, reports[0].amount), (1.0, None));
+    assert!(!reports[0].has_mismatch);
+    let row = stage.report_rows(&reports[0].id, 0, 1).unwrap().remove(0);
+    assert_eq!((row.count, row.amount), (1.0, None));
+    assert_eq!((reports[1].count, reports[1].amount), (2.0, Some(20.0)));
+    assert!(stage.source_issues("Data", 0, 100).unwrap().is_empty());
+}
+
+#[test]
 fn detects_converts_merges_and_nonstandard_relationship_target() {
     let t = tempfile::tempdir().unwrap();
     let p = t.path().join("w.xlsx");
@@ -660,7 +682,7 @@ fn each_column_pair_is_one_week_or_month_in_manual_and_folder_import() {
                 assert_eq!((report.kind.as_str(), report.start.as_str(), report.end.as_str()), (kind, starts[i], ends[i]));
                 let row = stage.report_rows(&report.id, 0, 10).unwrap().remove(0);
                 assert_eq!(row.work, "Work");
-                assert_eq!((row.count, row.amount), [(1.0, 10.0), (2.0, 20.0)][i]);
+                assert_eq!((row.count, row.amount), [(1.0, Some(10.0)), (2.0, Some(20.0))][i]);
                 assert_eq!(row.count_cell, ["B4", "D4"][i]);
             }
             let prepared = stage.prepare_with_mode(mode, &cancel, |_| {}).unwrap();
@@ -805,7 +827,7 @@ fn month_totals_remain_controls_and_blank_pairs_are_not_zeroes() {
     assert_eq!(converted.reports, 1);
     let report = stage.report_page(0, 10).unwrap().remove(0);
     assert_eq!((report.start.as_str(), report.end.as_str()), ("2024-02-01", "2024-02-29"));
-    assert_eq!((report.count, report.amount), (0.0, 0.0));
+    assert_eq!((report.count, report.amount), (0.0, Some(0.0)));
     let issues = stage.source_issues("Data", 0, 100).unwrap();
     assert!(issues.iter().any(|i| i.kind == "missing-period" && i.date.as_deref() == Some("2024-03-01")));
     assert!(issues.iter().any(|i| i.kind == "mismatch" && i.count_cell.as_deref() == Some("F4")));

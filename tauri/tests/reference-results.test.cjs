@@ -44,6 +44,19 @@ test('summary presents observed partial totals separately from the comparable sa
  assert.deepEqual(cells.map(row=>row.children.map(c=>c.textContent)),[['Сумма','100,00','100,00'],['Количество / объём','10,000','10,000']]);
  incomplete.missing=2;await f.window.referenceResults.refresh(f.scope);assert.doesNotMatch(f.s1.querySelector('.quality-notice').textContent,/02\.01\.2024/);
 });
+test('summary keeps quantities and reports unavailable amounts in complete periods',async()=>{
+ const f=fixture();
+ const total={count:17,amount:null,average:null};
+ const current={...f.full,total,available_total:total};
+ f.api.nativeAnalysisCompare=async()=>({summary:{before:f.full,after:current,count:{delta:7,percent:70}},divisions:[{organization:'A',before:f.total,after:total}],top_amount:[],top_count:[]});
+ f.api.nativeAnalysisOrganizations=async()=>[{org:'A',complete:true,missing:0,total}];
+ f.window.referenceResults.init();
+ await f.window.referenceResults.refresh({...f.scope,metric:'count'});
+ assert.deepEqual(f.s1.querySelectorAll('.metric-value').map(n=>n.textContent),['—','17,000','—']);
+ assert.match(f.s1.querySelector('.quality-notice').textContent,/сумма не указана.*Количество учтено/);
+ await f.s1.querySelector('.metric-sample').click();
+ assert.match(f.document.querySelector('#sheet').textContent,/A: включено/);
+});
 test('null refresh rejects stale summary and changes replies',async()=>{
  const delayed=deferred(),f=fixture({nativeAnalysisCompare:()=>delayed.promise});assert.ok(f.window.referenceResults);f.window.referenceResults.init();const pending=f.window.referenceResults.refresh(f.scope);await f.window.referenceResults.refresh(null);delayed.resolve({summary:{before:f.full,after:f.full},divisions:[],top_amount:[],top_count:[]});await pending;assert.doesNotMatch(f.s1.querySelector('.metric-value').textContent,/100/);
 });

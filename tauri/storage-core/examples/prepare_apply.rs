@@ -83,13 +83,14 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let total = storage.aggregate(receipt.revision, &ReadFilter::default())?;
     assert_eq!(total.rows as u64, report.rows);
     assert_eq!(total.count, report.rows as f64);
-    assert_eq!(total.amount, report.rows as f64 * 2.0);
+    let amount = total.amount.expect("Fixture has complete amounts");
+    assert_eq!(amount, report.rows as f64 * 2.0);
     assert_eq!(
         storage
             .row_page(receipt.revision, &ReadFilter::default(), None, 1)?
             .len(),
         1
     );
-    println!("apply_ms={elapsed} lock_before_commit_ms={lock_before_commit} total_rows={} total_amount={} {}",total.rows,total.amount,memory());
+    println!("apply_ms={elapsed} lock_before_commit_ms={lock_before_commit} total_rows={} total_amount={} {}",total.rows,amount,memory());
     Ok(())
 }

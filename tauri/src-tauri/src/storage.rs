@@ -302,7 +302,7 @@ fn validate_data(data: &Value) -> Result<(), String> {
             if !row.get("work").is_some_and(Value::is_string)
                 || !row.get("organization").is_some_and(Value::is_string)
                 || !row.get("count").is_some_and(Value::is_number)
-                || !row.get("amount").is_some_and(Value::is_number)
+                || !row.get("amount").is_some_and(|v| v.is_number() || v.is_null())
             {
                 return Err("В отчёте некорректная строка количества или суммы.".into());
             }
@@ -316,7 +316,7 @@ fn validate_data(data: &Value) -> Result<(), String> {
 
 // Increment when persisted schema definitions change. Connection-local settings
 // belong outside initialization: ready WAL readers must never acquire a writer.
-const STORAGE_SCHEMA_VERSION: i64 = 1;
+const STORAGE_SCHEMA_VERSION: i64 = 2;
 fn new_connection(path: &Path) -> Result<Connection, String> {
     let mut conn = Connection::open(path).map_err(err)?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(err)?;
@@ -344,6 +344,10 @@ fn new_connection(path: &Path) -> Result<Connection, String> {
            period_start TEXT NOT NULL, period_end TEXT NOT NULL,
            source_name TEXT, json TEXT NOT NULL);
          CREATE TABLE IF NOT EXISTS kv (name TEXT PRIMARY KEY, json TEXT NOT NULL);").map_err(err)?;
+        if version == 1 {
+            read_model::allow_missing_amount(&tx)?;
+            management::allow_missing_amount(&tx)?;
+        }
         read_model::initialize(&tx)?;
         metric_reports::initialize(&tx)?;
         analytics::initialize(&tx)?;
@@ -1205,7 +1209,7 @@ mod tests {
         let store = Storage::new(tmp.path().to_path_buf()).unwrap();
         store.save(example()).unwrap();
         let mut invalid = example();
-        invalid["reports"][0]["rows"][0]["amount"] = Value::Null;
+        invalid["reports"][0]["rows"][0]["amount"] = json!("invalid");
         assert!(store.save(invalid).is_err());
         assert_eq!(store.load().unwrap()["reports"][0]["rows"][0]["amount"],250);
     }
