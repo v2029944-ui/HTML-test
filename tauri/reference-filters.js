@@ -86,7 +86,7 @@ function chooseDate(target,anchor){
  const opened=snapshot,openedKind=kind,openedSource=source,weekly=source==='imported'&&kind==='week';
  const weeksForDay=weekly?C.savedWeeksForDay(UI.api,opened.revision,()=>snapshot===opened&&source===openedSource&&kind===openedKind):undefined;
  const current=target==='base'?baseRange()[0]:target==='baseEnd'?baseRange()[1]:target==='end'?to:from;
- C.open({anchor,title:target==='base'?'Начало базового периода':target==='baseEnd'?'Конец базового периода':mode==='single'?'Период':target==='start'?'Начало диапазона':'Конец диапазона',unit:kind,initial:current,spanFor:(target==='base'||target==='baseEnd')&&weekly?(v,k)=>C.period(v,k,C.dateOf(current).getUTCDay()):filterPeriod,weeksForDay,apply(value,unit,weekStart){
+ C.open({anchor,title:target==='base'?'Начало базового периода':target==='baseEnd'?'Конец базового периода':mode==='single'?'Период':target==='start'?'Начало диапазона':'Конец диапазона',unit:kind,initial:current,spanFor:(target==='base'||target==='baseEnd')&&weekly?(v,k)=>C.period(v,k,C.dateOf(baseRange()[0]).getUTCDay()):filterPeriod,weeksForDay,apply(value,unit,weekStart){
   if(snapshot!==opened||kind!==openedKind||source!==openedSource||boundsPending||boundsFailed){UI.notice('Периоды изменились. Откройте календарь повторно.',true);return;}
   if(weekly){
    if(target==='base'){rule='custom';custom=weekStart||C.period(value,'week',C.dateOf(current).getUTCDay())[0];customEnd=null;publish();return;}
