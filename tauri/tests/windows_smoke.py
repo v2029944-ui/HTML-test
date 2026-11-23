@@ -894,9 +894,11 @@ def check_filtered_zero_chart(page, temporary, output):
                     for item in geometry['overflow']:
                         if item['query'] in ('.chart-view-controls','.chart-mode-line','.chart-mode-controls','.chart-legend'):
                             assert item['scroll']<=item['width']+2,(width,size,theme,item)
-            # Screenshots make regressions in narrow controls and legends reviewable.
+            # Capture the entire visible chart panel, including legend and plot,
+            # not just the control strip. The screenshots are attached to CI.
             page.evaluate("() => { document.documentElement.dataset.theme='light'; document.documentElement.dataset.uiSize='standard'; }")
-            page.locator('#chartPanel .chart-mode-line').screenshot(path=str(output/f'windows-chart-single-controls-{width}.png'))
+            if width in (390,720,1440):
+                page.locator('#chartPanel').screenshot(path=str(output/f'windows-chart-single-{width}.png'))
     finally:
         page.set_viewport_size(viewport)
         page.evaluate('''previous => {
