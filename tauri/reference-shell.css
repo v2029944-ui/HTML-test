@@ -496,8 +496,8 @@
 @media (min-width:701px) {
   @supports (grid-template-rows:subgrid) {
     .report-filter .report-dates {row-gap:5px}
-    .report-filter .report-date-card {display:grid;grid-row:span 3;grid-template-rows:subgrid;row-gap:5px}
-    .report-filter .single-date .report-date-card {grid-row:span 2}
+    .report-filter .report-date-card {display:grid;grid-row:span 4;grid-template-rows:subgrid;row-gap:5px}
+    .report-filter .single-date .report-date-card {grid-row:span 3}
   }
 }
 @media (max-width:700px) {
