@@ -573,7 +573,17 @@ fn with_folder_prepared<T>(
     // quantity. Never guess that the next day's count is an amount, even if a
     // saved rule selects the old "legacy" structure.
     for (name, component) in &book {
-        if stage.worksheet_layout(component).map_err(|e| e.to_string())? == Some("count-only") {
+        // Ignore unrelated worksheets explicitly excluded by a saved rule.
+        // A mixed workbook may legitimately contain both financial and
+        // count-only sheets; only the selected sheets constrain this import.
+        let requested = if let Some(sheets) = rule.sheets.as_ref().filter(|s| !s.is_empty()) {
+            sheets.contains(name)
+        } else if !rule.sheet.is_empty() {
+            rule.sheet == *name || rule.sheet == *component
+        } else {
+            true
+        };
+        if requested && stage.worksheet_layout(component).map_err(|e| e.to_string())? == Some("count-only") {
             return Err(format!("Лист «{name}»: обнаружены даты и столбцы только «Количество», без «Суммы». Такой источник нельзя сохранить как финансовый отчёт. Ничего не импортировано."));
         }
     }
