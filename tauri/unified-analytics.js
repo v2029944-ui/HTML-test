@@ -217,7 +217,7 @@ async function calculate(shared=null){
 }
 function descriptors(points,granularity,s){return window.analysisSummary.timelinePeriods(points,granularity,s,O.periodEnd);}
 const allPeriodsHidden='Фильтр скрыл все подтверждённые нулевые периоды в этой выборке. Снимите фильтр нулевых периодов, чтобы увидеть их.';
-function confirmedZero(point){return point&&point.missing===0&&point.has_activity!==true&&point.total?.count===0&&point.total?.amount===0;}
+function confirmedZero(point){return point&&point.missing===0&&point.total?.count===0&&point.total?.amount===0;}
 function chartInterval(s){const to=s.source==='daily'?s.to:O.periodEnd(s.to,s.displayType);return O.displayDay(s.from)+(to===s.from?'':' — '+O.displayDay(to));}
 function plotSection(root,metric,title=titles[metric]){const section=UI.el('section',null,'metric-chart'),plot=UI.el('div',null,'metric-plot');section.append(UI.el('h3',title),plot);root.append(section);return plot;}
 function chartExport(scope,isCurrent,table,metrics){
@@ -259,6 +259,7 @@ async function renderCharts(index=seriesIndex,paging=false){
   if(series.some(item=>item.granularity!==totals.granularity||item.points.length!==totals.points.length||item.points.some((p,i)=>p.start!==totals.points[i].start)))throw Error('Несовпадающие границы SQL-серий. Повторите расчёт.');
   const keep=totals.points.map((p,i)=>!$('hideEmptyPeriods').checked||!confirmedZero(p)||series.some(item=>!confirmedZero(item.points[i]))),points=totals.points.filter((p,i)=>keep[i]),periods=descriptors(points,totals.granularity,s);
   const hiddenPeriods=descriptors(totals.points.filter((_,i)=>!keep[i]),totals.granularity,s);
+  window.referenceDetail?.setChartPeriodCount?.(points.length);
   const data=points.map((p,i)=>{if(p.missing!==0)return null;const index=totals.points.indexOf(p);return new Map(rows.map((row,j)=>[row.key,series[j].points[index].missing===0?series[j].points[index].total:{count:null,amount:null,average:null}]));});
   const root=state.chart==='table'?$('dataTable'):$('chartsContainer');
   for(const id of chartResults)clear(id,'',$(id)!==root);
@@ -286,6 +287,7 @@ async function departmentCharts(base,isCurrent){
  for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id);
  const rawSeries=trends.series||[],first=rawSeries[0]?.points||[],keep=first.map((p,i)=>!$('hideEmptyPeriods').checked||!rawSeries.every(series=>confirmedZero(series.points[i]))),points=first.filter((p,i)=>keep[i]),periods=descriptors(points,trends.granularity,s);
  const hiddenPeriods=descriptors(first.filter((_,i)=>!keep[i]),trends.granularity,s);
+ window.referenceDetail?.setChartPeriodCount?.(points.length);
  const data=first.map((p,i)=>new Map(rawSeries.map(series=>[series.organization,series.points[i]?.missing===0?series.points[i].total:{count:null,amount:null,average:null}]))).filter((p,i)=>keep[i]);
  function pointNotice(i,shown=s.organizations){
   const index=first.indexOf(points[i]);
