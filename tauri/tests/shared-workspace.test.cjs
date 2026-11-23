@@ -153,6 +153,20 @@ test('reviewed personal reports migrate only selected new rows and preserve conf
  assert.match(f.node('personalTransferResult').textContent,/резервная копия/i);
  assert.equal(f.refreshes.length,1,'shared SQL views refreshed after confirmed publication');
 });
+test('confirmed transfer stays successful if refreshing the shared dashboard fails',async()=>{
+ const f=fixture(team);
+ await f.window.sharedWorkspace.init();
+ await f.click('personalTransferPreview');
+ await f.click('personalTransferSelectAll');
+ f.scenario.accept=true;
+ f.window.unifiedUI.refreshWorkspace=async()=>{throw Error('Сбой обновления интерфейса');};
+ await f.click('personalTransferApply');
+ assert.deepEqual(Array.from(f.scenario.transferApplied.selectedIds),['local-new']);
+ assert.match(f.node('personalTransferResult').textContent,/Перенесено отчётов: 1/);
+ assert.match(f.node('personalTransferResult').textContent,/Не удалось обновить экран/);
+ assert.doesNotMatch(f.node('personalTransferResult').textContent,/Не повторяйте перенос/);
+ assert.equal(f.calls.filter(c=>c.name==='shared_workspace_transfer_apply').length,1);
+});
 test('transfer is unavailable in personal mode or while network publication is pending',async()=>{
  for(const mode of [personal,{...team,pending:true,available:false}]){
   const f=fixture(mode);
