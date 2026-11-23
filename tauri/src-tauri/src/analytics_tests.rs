@@ -874,6 +874,52 @@ fn sql_timeline_preserves_missing_and_zero_amounts_without_loading_history() {
 
 
 #[test]
+fn daily_trend_and_csv_leave_an_invalid_day_empty_between_valid_days() {
+    use super::analytics::{TrendCsvOptions, TrendMetric, TrendTable};
+
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let row = |count: f64| json!({"organization":"A","work":"Work","count":count,"amount":count*10.0});
+    let report = |id: &str, kind: &str, from: &str, to: &str, rows: Value| {
+        json!({"id":id,"type":kind,"start":from,"end":to,"organizations":["A"],"rows":rows})
+    };
+    let data = json!({
+        "reports":[
+            report("observed","day","2024-01-01","2024-01-01",json!([row(2.5)])),
+            report("invalid","day","2024-01-02","2024-01-03",json!([row(99.)])),
+            report("zero","day","2024-01-03","2024-01-03",json!([row(0.)])),
+            report("next","day","2024-01-04","2024-01-04",json!([row(3.)])),
+            report("weekly","week","2024-01-01","2024-01-07",json!([row(100.)])),
+            report("monthly","month","2024-01-01","2024-01-31",json!([row(200.)]))
+        ],
+        "settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}
+    });
+    let revision = prepare(&store, &data);
+    let selected = scope(&store, revision, "day", &["A"], Some(&["Work"]));
+    let dates = query("2024-01-01", "2024-01-04");
+    let points = store.analysis_timeline_grouped(revision, &selected, &dates, Some("day"))
+        .unwrap().points;
+    let counts: Vec<_> = points.iter().map(|p| (p.missing, p.total.count)).collect();
+    assert_eq!(counts, [(0, Some(2.5)), (1, None), (0, Some(0.)), (0, Some(3.))]);
+
+    let summary = store.analysis_range_summary(revision, &selected, &dates).unwrap();
+    assert!(!summary.complete);
+    assert_eq!(summary.invalid_reports, 1);
+    assert_eq!(summary.total.count, None);
+    assert_eq!(summary.available_total.count, Some(5.5));
+    let quality = store.quality_matrix_page(revision, "day", &dates.from, &dates.to, &["A".into()]).unwrap();
+    assert_eq!(quality.rows[0].cells[1].invalid_reports, 1);
+    assert!(quality.rows[0].cells[2].numeric_zero);
+
+    let dest = dir.path().join("days.csv");
+    let options = TrendCsvOptions { table: TrendTable::Works, metrics: vec![TrendMetric::Count], hide_empty: false };
+    store.reference_trend_csv(revision, &selected, &dates, Some("day"), &options, &dest).unwrap();
+    let csv = fs::read_to_string(dest).unwrap();
+    assert!(csv.lines().any(|line|line == r#""Work";"2,5";"";"0";"3""#), "{csv}");
+    assert_eq!(store.revision().unwrap(), revision);
+}
+
+#[test]
 fn sql_ranking_is_sorted_bounded_and_complete() {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();
