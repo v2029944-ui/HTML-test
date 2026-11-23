@@ -293,3 +293,31 @@ test('a blank sensitivity threshold keeps the dialog open and explicit zero rema
  slider.value='30';quantity.value='5';amount.value='0';await apply.click();
  assert.equal(sheet.open,false);assert.equal(requests.at(-1).minAmount,0);
 });
+
+test('missing baseline explains an unavailable comparison while preserving an observed zero',async()=>{
+ const f=fixture();
+ const zero={count:0,amount:0,average:null};
+ const observed={...f.full,total:zero,available_total:zero};
+ const unavailable={...f.full,complete:false,missing:1,total:{count:null,amount:null,average:null},available_reports:0,available_total:{count:null,amount:null,average:null}};
+ f.api.nativeAnalysisCompare=async()=>({summary:{before:unavailable,after:observed},divisions:[{organization:'A',before:unavailable.total,after:zero}],top_amount:[],top_count:[]});
+ f.api.nativeAnalysisOrganizations=async()=>[{org:'A',complete:true,missing:0,total:zero}];
+ f.api.referenceChanges=async()=>({rows:[],total:0,searched:0,significant:0,counts:{up:0,down:0,new:0,gone:0},leader:null,comparable:[]});
+ f.window.referenceResults.init();
+ await f.window.referenceResults.refresh(f.scope);
+ await f.window.referenceResults.setScreen('s2');
+ assert.equal(f.s1.querySelector('.metric-value').textContent,'0,00');
+ for(const screen of [f.s1,f.s2]){
+  const notice=screen.querySelector('.quality-notice').textContent;
+  assert.match(notice,/За базовый интервал нет пригодных данных/);
+  assert.doesNotMatch(notice,/Сравнение по 0 из/);
+ }
+ await f.s1.querySelector('.metric-sample').click();
+ const sample=f.document.getElementById('sheet');
+ assert.match(sample.textContent,/За базовый интервал нет пригодных данных/);
+ await sample.close();
+ let printed;
+ f.window.print=()=>{printed=f.document.getElementById('referencePrintDocument').textContent;};
+ const print=f.s2.querySelectorAll('button').find(button=>button.textContent==='Печать / PDF');
+ await print.click();
+ assert.match(printed,/За базовый интервал нет пригодных данных/);
+});

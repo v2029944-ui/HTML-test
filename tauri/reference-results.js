@@ -46,7 +46,7 @@ function summaryCards(values,comparison,comparable,totalOrganizations){
    delta.append(el('span',change.label+percentText,change.direction));
   }
   else delta.append(el('span',comparison?'Сравнение недоступно':'Загрузка…','mut'));
-  if(comparison&&totalOrganizations>0)delta.append(button('по '+comparable+' из '+totalOrganizations,e=>openSample(e.target),'metric-sample sample-link'));
+  if(comparison&&totalOrganizations>0)delta.append(button(comparable?'по '+comparable+' из '+totalOrganizations:'Почему недоступно?',e=>openSample(e.target),'metric-sample sample-link'));
  }
 }
 function historicalQuality(period){
@@ -58,6 +58,14 @@ function historicalQuality(period){
  if(period.overlap_issues>0)parts.push('признаков пересечения в выбранных подразделениях — '+period.overlap_issues);
  return parts.length?'За всю историю отчётов этого типа: '+parts.join(', ')+'.':'';
 }
+function comparisonStatus(comparable,total,summary){
+ if(comparable)return 'Сравнение по '+comparable+' из '+total+' подразделений.';
+ const noBaseline=summary?.before?.available_reports===0,noCurrent=summary?.after?.available_reports===0;
+ if(noBaseline&&noCurrent)return 'За оба интервала нет пригодных данных.';
+ if(noBaseline)return 'За базовый интервал нет пригодных данных.';
+ if(noCurrent)return 'За анализируемый интервал нет пригодных данных.';
+ return 'Ни у одного выбранного подразделения нет пригодных отчётов за весь базовый и анализируемый интервалы.';
+}
 function notice(root,s,comparable,summary){
  const current=summary?.after,baseline=summary?.before;
  const n=$(root+' .quality-notice');if(!n)return;const span=n.querySelector('span');const excluded=s.organizations.filter(org=>!comparable.includes(org));
@@ -67,7 +75,7 @@ function notice(root,s,comparable,summary){
  const gap=current?.missing===1&&baseline?.missing===0?current.single_missing:baseline?.missing===1&&current?.missing===0?baseline.single_missing:null;
  const detail=excluded.length===1&&gap?.org===excluded[0]&&date(gap.start)!=='—'?' · '+date(gap.start)+': нет пригодного отчёта':'';
  n.hidden=!excluded.length&&current?.complete===true&&!warnings&&!missingAmount;
- span.textContent=(current?.available_reports===0?'Нет пригодных данных за анализируемый интервал. ':current?.complete===false?'Итоги частичные. ':'')+'Сравнение по '+comparable.length+' из '+s.organizations.length+' подразделений.'+(excluded.length?' Исключены из сравнения: '+excluded.join(', ')+detail+'.':'')+(warnings?' '+warnings:'')+amountNotice+' Пропуски не считаются нулём. Наличие отчётов не подтверждает полноту источника.';
+ span.textContent=(current?.available_reports>0&&current?.complete===false?'Итоги частичные. ':'')+comparisonStatus(comparable.length,s.organizations.length,summary)+(excluded.length?' Исключены из сравнения: '+excluded.join(', ')+detail+'.':'')+(warnings?' '+warnings:'')+amountNotice+' Пропуски не считаются нулём. Наличие отчётов не подтверждает полноту источника.';
 }
 function appendTableRow(body,values){
  const tr=el('tr');
@@ -171,7 +179,7 @@ async function loadChanges(s,captured,current,focusAnchor){
  }}
 
 }
-function openSample(anchor){const data=summaryData,s=scope;if(!data||data.scope!==s)return;const root=resultDialog('Состав сравнения',anchor);document.getElementById('sheet')?.addEventListener('close',()=>{if(scope===s&&anchor?.isConnected)anchor.focus({preventScroll:true});},{once:true});root.append(el('p','Сравнение по '+data.comparable.length+' из '+s.organizations.length+' подразделений. В обоих интервалах используется один и тот же состав.'),el('p','База: '+baseRange(s)+' · Анализ: '+visibleRange(s)));const list=el('ul');for(const org of s.organizations){const d=data.result.divisions.find(row=>row.organization===org),before=Number.isFinite(d?.before?.count),after=Number.isFinite(d?.after?.count);list.append(el('li',org+': '+(before&&after?'включено':!before&&!after?'нет пригодных отчётов за оба интервала':!before?'неполный базовый интервал':'неполный анализируемый интервал')));}root.append(list);
+function openSample(anchor){const data=summaryData,s=scope;if(!data||data.scope!==s)return;const root=resultDialog('Состав сравнения',anchor);document.getElementById('sheet')?.addEventListener('close',()=>{if(scope===s&&anchor?.isConnected)anchor.focus({preventScroll:true});},{once:true});root.append(el('p',comparisonStatus(data.comparable.length,s.organizations.length,data.result.summary)+(data.comparable.length?' В обоих интервалах используется один и тот же состав.':'')),el('p','База: '+baseRange(s)+' · Анализ: '+visibleRange(s)));const list=el('ul');for(const org of s.organizations){const d=data.result.divisions.find(row=>row.organization===org),before=Number.isFinite(d?.before?.count),after=Number.isFinite(d?.after?.count);list.append(el('li',org+': '+(before&&after?'включено':!before&&!after?'нет пригодных отчётов за оба интервала':!before?'неполный базовый интервал':'неполный анализируемый интервал')));}root.append(list);
  const totals=data.comparison?.summary;
  if(data.comparable.length&&totals){
   const table=el('table');table.className='sample-values';table.setAttribute('aria-label','Показатели сопоставимых подразделений');
@@ -210,6 +218,7 @@ function changeLabels(s){
 function printTable(root,headers,rows,cls){const table=el('table',null,cls);writeTable(table,headers,rows);root.append(table);}
 function printContext(root,s,comparable,comparison,overview){
  root.append(el('p','Анализируемый период: '+visibleRange(s)),el('p','Базовый период: '+baseRange(s)),el('p','Область работ: Все работы'),el('p','Выбраны подразделения: '+s.organizations.join(', ')),el('p','Сопоставимые подразделения: '+comparable.length+' из '+s.organizations.length+(comparable.length?' · '+comparable.join(', '):'')));
+ if(!comparable.length)root.append(el('p',comparisonStatus(0,s.organizations.length,overview?.summary)));
  const excluded=s.organizations.filter(org=>!comparable.includes(org));
  if(excluded.length){
   root.append(el('p','Исключены из сравнения: '+excluded.join(', ')+'.'));
