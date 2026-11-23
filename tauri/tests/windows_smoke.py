@@ -294,6 +294,22 @@ def wait_for_app_state(page, expression, description, timeout_ms=30_000):
 def navigate(page, section):
     """Open a desktop section by the same visible buttons as the installed user."""
     key = 'overviewPanel' if section == 'dashboard' else section
+    # The detailed toolbar no longer duplicates Summary and Adjacent History.
+    # Keep the legacy summary SQL route available for deeper regression checks
+    # while entering the preserved history through its real visible button.
+    if key == 'overviewPanel':
+        page.locator('#sharedHeader .main-nav button').first.click()
+        page.evaluate("""() => window.referenceDesktop.openPanel(
+            'overviewPanel', document.getElementById('refAnalytics'))""")
+        expect(page.locator('#refNative')).to_have_attribute('data-panel','overviewPanel')
+        expect(page.locator('#overviewPanel')).to_be_visible()
+        return
+    if key == 'changes':
+        page.locator('#sharedHeader .main-nav button').nth(1).click()
+        page.locator('#referenceAdjacentHistory').click()
+        expect(page.locator('#refNative')).to_have_attribute('data-panel','changes')
+        expect(page.locator('#changes')).to_be_visible()
+        return
     tab = page.locator(f'.tool-tabs [data-section="{key}"]')
     if not tab.is_visible():
         if key in ('upload', 'groups', 'databases', 'storage'):
