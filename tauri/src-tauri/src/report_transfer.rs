@@ -92,6 +92,30 @@ fn validate_report_organizations(json: &Value, allowed: &HashSet<String>) -> Res
     Ok(())
 }
 
+
+/// Compare verified report identity and content without machine-local file paths.
+/// This distinguishes an already transferred source anchor from a conflicting ID.
+fn same_report(source: &rusqlite::Connection, target: &rusqlite::Connection, id: &str) -> Result<bool, String> {
+    fn read(conn: &rusqlite::Connection, id: &str) -> Result<Option<(String,String,String,Value)>,String> {
+        let row: Option<(String,String,String,Vec<u8>)> = conn.query_row(
+            "SELECT report_type,period_start,period_end,CAST(json AS BLOB) FROM reports WHERE id=?1",
+            [id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))
+        ).optional().map_err(err)?;
+        row.map(|(kind,start,end,raw)| {
+            let mut json: Value = serde_json::from_slice(&raw).map_err(err)?;
+            if let Some(object) = json.as_object_mut() {
+                object.remove("desktopFolder");
+                object.remove("desktopSource");
+            }
+            Ok((kind,start,end,json))
+        }).transpose()
+    }
+    match (read(source,id)?, read(target,id)?) {
+        (Some(a),Some(b)) => Ok(a==b),
+        _ => Ok(false)
+    }
+}
+
 impl Storage {
     /// Page through the personal reports with destination conflict markers.
     /// No private Excel path or report body is sent to the webview.
@@ -137,7 +161,7 @@ impl Storage {
         for row in iter {
             let mut row = row.map_err(err)?;
             row.status = if overlap(&dest,&row.id,&row.report_type,&row.start,&row.end)? {
-                "conflict"
+                if same_report(&source,&dest,&row.id)? { "duplicate" } else { "conflict" }
             } else {
                 // Check indexed rows without sending sensitive JSON to the UI.
                 // Unindexed legacy reports are validated again during apply.
@@ -254,8 +278,12 @@ impl Storage {
             ).map_err(err)?;
             let anchors = links.query_map([id], |r| r.get::<_,String>(0)).map_err(err)?;
             for anchor in anchors {
-                if !ids.contains(anchor.map_err(err)?.as_str()) {
-                    return Err("Связанные диагностические отчёты должны переноситься вместе. Выберите также исходный отчёт и повторите.".into());
+                let anchor = anchor.map_err(err)?;
+                // Large daily/quarterly books may contain far more than 25
+                // linked reports. The anchor can be moved in an earlier verified
+                // batch and reused only if the source report content matches it.
+                if !ids.contains(anchor.as_str()) && !same_report(&source,&dest,&anchor)? {
+                    return Err("Сначала перенесите исходный диагностический отчёт или выберите его вместе с зависимыми записями.".into());
                 }
             }
             batch.push(Candidate { id:id.clone(), kind, start, end, source_name, json });
