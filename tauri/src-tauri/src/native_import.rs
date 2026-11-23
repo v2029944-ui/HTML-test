@@ -566,6 +566,14 @@ fn with_folder_prepared<T>(
         .map_err(|e|e.to_string())?;
     let mut wide_options=rule.native_wide_options(organizations.clone())?;
     let book=stage.sheet_names().map_err(|e|e.to_string())?;
+    // The standard publication schema requires both monetary amount and
+    // quantity. Never guess that the next day's count is an amount, even if a
+    // saved rule selects the old "legacy" structure.
+    for (name, component) in &book {
+        if stage.worksheet_layout(component).map_err(|e| e.to_string())? == Some("count-only") {
+            return Err(format!("Лист «{name}»: обнаружены даты и столбцы только «Количество», без «Суммы». Такой источник нельзя сохранить как финансовый отчёт. Ничего не импортировано."));
+        }
+    }
     let wide = if rule.format.as_deref() == Some("auto") {
         if stage.classic_daily_workbook(&book, &organizations, cancel).map_err(|e| e.to_string())? {
             wide_options.kind = "day".into();
