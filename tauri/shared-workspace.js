@@ -213,7 +213,8 @@
       text.textContent=[entry.reportType,entry.start===entry.end?entry.start:entry.start+' — '+entry.end,
         entry.sourceName||'Импортированный отчёт',
         entry.status==='conflict'?'Конфликт идентификатора или периода — перенос недоступен':
-        entry.status==='organization_conflict'?'Подразделение отсутствует в общей базе — перенос недоступен':'Можно перенести'].join(' · ');
+        entry.status==='organization_conflict'?'Подразделение отсутствует в общей базе — перенос недоступен':
+        entry.status==='duplicate'?'Уже есть в общей базе — перенос не требуется':'Можно перенести'].join(' · ');
       label.title=entry.id;
       label.append(cb,text);
       list.append(label);
