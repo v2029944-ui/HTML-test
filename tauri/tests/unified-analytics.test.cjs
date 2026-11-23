@@ -368,6 +368,47 @@ test('the reference weekly chart requests daily observations without changing th
  assert.equal(f.calls.filter(c=>c.key==='nativeAnalysisTimeline').length,before);
 });
 
+test('a daily month keeps observed days and gaps identical in charts and tables',async()=>{
+ const points=Array.from({length:31},(_,i)=>({
+  start:'2024-01-'+String(i+1).padStart(2,'0'),periods:1,missing:i===14?1:0,
+  total:i===14?{count:null,amount:null,average:null}:i===15?{count:0,amount:0,average:null}:{count:2,amount:20,average:10}
+ }));
+ const timeline=async()=>({granularity:'day',points});
+ const f=fixture({nativeAnalysisTimeline:timeline,nativeWorkTimeline:timeline});
+ f.UI.request=s=>({revision:s.revision,source:s.source,displayType:s.displayType,
+  organizations:[...s.organizations],selectedNames:[...s.selectedNames],query:{from:s.from,to:s.to}});
+ await f.bootstrap();
+ f.window.referenceDetail={active:'chartPanel'};
+ f.nodes.get('advancedAnalytics').open=true;
+ await f.window.unifiedAnalytics.applyReferenceScope({
+  revision:1,displayType:'month',source:'daily',type:'day',overviewMode:'single',
+  from:'2024-01-01',to:'2024-01-31',baseFrom:'2023-12-01',baseTo:'2023-12-31',
+  organizations:['A'],metric:'count',allNames:false,nameRows:[{key:'work:W',name:'W',kind:'work'}]
+ });
+ const request=f.calls.filter(call=>call.key==='nativeAnalysisTimeline').at(-1);
+ assert.deepEqual(request.args.slice(1,4),['day','2024-01-01','2024-01-31']);
+ assert.equal(request.args[6],'day');
+ for(const style of ['line','bar']){
+  f.buttons.find(button=>button.dataset.chart===style).dispatch('click');
+  await settle();
+  const [periods,,,,options]=f.draws.at(-1);
+  assert.equal(options.chart,style);
+  assert.equal(periods.length,31);
+  assert.equal(options.data[13].get('work:W').count,2);
+  assert.equal(options.data[14],null);
+  assert.match(options.pointNotice(14),/пропусков 1/);
+  assert.equal(options.data[15].get('work:W').count,0);
+  assert.equal(options.data[16].get('work:W').count,2);
+ }
+ f.buttons.find(button=>button.dataset.chart==='table').dispatch('click');
+ await settle();
+ const table=f.tables.findLast(t=>t.root==='dataTable'&&t.metric==='count');
+ for(const row of table.options.csvRows){
+  assert.deepEqual(Array.from(row.slice(14,18)),[2,null,0,2]);
+ }
+ assert.deepEqual(Array.from(table.rows[1].slice(14,18)),['2','—','0','2']);
+});
+
 test('reference trend CSV retains selected names when a confirmed zero with activity is hidden',async()=>{
  const saved=[],points=[{start:'2024-01-01',periods:1,missing:0,has_activity:true,total:{count:0,amount:0,average:null}}];
  const f=fixture({
