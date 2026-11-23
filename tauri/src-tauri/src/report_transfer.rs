@@ -36,6 +36,8 @@ pub struct TransferPreview {
     pub page_size: usize,
     pub rows: Vec<TransferRow>,
     pub has_next: bool,
+    pub initializes_organizations: bool,
+    pub organization_warning: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -64,6 +66,32 @@ struct Candidate {
     json: Value,
 }
 
+fn organization_settings(conn: &rusqlite::Connection) -> Result<(Vec<String>, bool), String> {
+    let stored: Option<String> = conn.query_row(
+        "SELECT CAST(json AS TEXT) FROM kv WHERE name='settings'", [], |r| r.get(0)
+    ).optional().map_err(err)?;
+    let settings: Value = match &stored {
+        Some(s) => serde_json::from_str(s).map_err(err)?,
+        None => super::default_settings(),
+    };
+    let list = settings["orgNames"].as_array().ok_or("У базы отсутствует список подразделений.")?;
+    if list.len() != 4 || list.iter().any(|v| !v.is_string()) {
+        return Err("Ожидаются четыре названия подразделений.".into());
+    }
+    Ok((list.iter().map(|v| v.as_str().unwrap().to_owned()).collect(), stored.is_some()))
+}
+
+fn validate_report_organizations(json: &Value, allowed: &HashSet<String>) -> Result<(), String> {
+    let rows = json["rows"].as_array().ok_or("Отчёт не содержит массив работ.")?;
+    for row in rows {
+        let org = row["organization"].as_str().ok_or("У работы не задано подразделение.")?;
+        if !allowed.contains(org) {
+            return Err(format!("Подразделение «{org}» отсутствует в настройках выбранной базы. Исправьте названия до переноса."));
+        }
+    }
+    Ok(())
+}
+
 impl Storage {
     /// Page through the personal reports with destination conflict markers.
     /// No private Excel path or report body is sent to the webview.
@@ -80,6 +108,19 @@ impl Storage {
         let dest = self.connect()?;
         let source_revision = read_model::revision(&source)?;
         let target_revision = read_model::revision(&dest)?;
+        let (source_orgs, _) = organization_settings(&source)?;
+        let (target_orgs, target_settings_exist) = organization_settings(&dest)?;
+        let target_empty: bool = dest.query_row(
+            "SELECT NOT EXISTS(SELECT 1 FROM reports)", [], |r| r.get(0)
+        ).map_err(err)?;
+        // The initial blank team can inherit the personal organization labels,
+        // but existing team settings/reports must not be overwritten.
+        let initializes_organizations = target_empty && !target_settings_exist;
+        let allowed: HashSet<String> = if initializes_organizations {
+            source_orgs.iter().cloned().collect()
+        } else {
+            target_orgs.iter().cloned().collect()
+        };
         let total_reports: i64 = source.query_row("SELECT COUNT(*) FROM reports", [], |r| r.get(0)).map_err(err)?;
         let mut stmt = source.prepare(
             "SELECT r.id,r.report_type,r.period_start,r.period_end,r.source_name,i.row_count
@@ -95,13 +136,34 @@ impl Storage {
         let mut rows = Vec::new();
         for row in iter {
             let mut row = row.map_err(err)?;
-            row.status = if overlap(&dest,&row.id,&row.report_type,&row.start,&row.end)? { "conflict" } else { "ready" }.into();
+            row.status = if overlap(&dest,&row.id,&row.report_type,&row.start,&row.end)? {
+                "conflict"
+            } else {
+                // Check indexed rows without sending sensitive JSON to the UI.
+                // Unindexed legacy reports are validated again during apply.
+                let mut stmt = source.prepare(
+                    "SELECT DISTINCT organization FROM report_rows WHERE report_id=?1"
+                ).map_err(err)?;
+                let mut orgs = stmt.query([&row.id]).map_err(err)?;
+                let mut compatible = true;
+                while let Some(org) = orgs.next().map_err(err)? {
+                    let label: String = org.get(0).map_err(err)?;
+                    if !allowed.contains(&label) { compatible = false; break; }
+                }
+                if compatible { "ready" } else { "organization_conflict" }
+            }.into();
             rows.push(row);
         }
         Ok(TransferPreview {
             source_revision, target_revision, total_reports,
             page_index: page, page_size: TRANSFER_PAGE,
             has_next: offset + (rows.len() as i64) < total_reports, rows,
+            initializes_organizations,
+            organization_warning: if initializes_organizations {
+                Some("Новая пустая общая база получит названия четырёх подразделений личной базы; группы и остальные настройки не копируются.".into())
+            } else if source_orgs != target_orgs {
+                Some("Названия подразделений двух баз различаются. Отчёты с неизвестными для общей базы подразделениями нельзя перенести.".into())
+            } else { None },
         })
     }
 
@@ -126,6 +188,18 @@ impl Storage {
         let dest = self.connect()?;
         read_model::check_revision(&source, source_revision)?;
         read_model::check_revision(&dest, target_revision)?;
+        let (source_orgs, _) = organization_settings(&source)?;
+        let (target_orgs, target_settings_exist) = organization_settings(&dest)?;
+        let target_empty: bool = dest.query_row(
+            "SELECT NOT EXISTS(SELECT 1 FROM reports)", [], |r| r.get(0)
+        ).map_err(err)?;
+        let seed_organizations = target_empty && !target_settings_exist;
+        let source_allowed: HashSet<String> = source_orgs.iter().cloned().collect();
+        let target_allowed: HashSet<String> = if seed_organizations {
+            source_allowed.clone()
+        } else {
+            target_orgs.into_iter().collect()
+        };
 
         // Validate all selected records before taking the target backup or writing.
         let mut batch = Vec::with_capacity(selected_ids.len());
@@ -153,6 +227,8 @@ impl Storage {
             {
                 return Err(format!("Некорректная структура отчёта {id}."));
             }
+            validate_report_organizations(&json, &source_allowed)?;
+            validate_report_organizations(&json, &target_allowed)?;
             // Never publish an origin machine's local Excel folder grant.
             if let Some(object) = json.as_object_mut() {
                 object.remove("desktopFolder");
@@ -198,6 +274,17 @@ impl Storage {
         let tx = dest.transaction_with_behavior(TransactionBehavior::Immediate).map_err(err)?;
         read_model::check_revision(&tx,target_revision)?;
         read_model::check_revision(&source,source_revision)?;
+        if seed_organizations {
+            // No team settings or reports exist: carry only the organization names
+            // necessary to make the imported report rows visible. Other settings stay private.
+            let names = serde_json::json!({
+                "orgNames": source_orgs, "groups": [], "catalog": []
+            });
+            tx.execute(
+                "INSERT INTO kv(name,json) VALUES('settings',?1)",
+                [serde_json::to_string(&names).map_err(err)?]
+            ).map_err(err)?;
+        }
         // Recheck every conflict BEFORE inserting any selected report. Multiple
         // source reports from the SAME period are allowed in one verified batch.
         for item in &batch {
