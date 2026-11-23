@@ -165,12 +165,12 @@ impl Storage {
                 (!name.is_empty() && !name.contains(':')).then_some(name)
             });
             if let Some(object) = json.as_object_mut() {
-                if let Some(Value::String(value)) = object.get_mut("desktopSource") {
-                    if let Some(clean) = source_name.as_ref() {
+                if let Some(clean) = source_name.as_ref() {
+                    if let Some(Value::String(value)) = object.get_mut("desktopSource") {
                         *value = clean.clone();
-                    } else {
-                        object.remove("desktopSource");
                     }
+                } else {
+                    object.remove("desktopSource");
                 }
             }
             let mut links = source.prepare(
