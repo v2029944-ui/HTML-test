@@ -132,6 +132,7 @@ pub struct TimelinePoint {
 pub struct TimelineSummary {
     pub granularity: String,
     pub points: Vec<TimelinePoint>,
+    pub zero_buckets_with_nonzero_works: Vec<String>,
 }
 #[derive(Debug, Serialize)]
 pub struct WorkTrendSummary {
@@ -1430,6 +1431,51 @@ const TIMELINE_BUCKET_TOTALS: &str = r#"
             ORDER BY b.label
         "#;
 
+// A nonzero work on another page keeps the period visible even when the
+// selected works offset one another in the overall total.
+fn zero_buckets_with_nonzero_works(
+    conn: &Connection,
+    mode: i64,
+    scope: &AnalysisScope,
+    points: &[TimelinePoint],
+) -> Result<Vec<String>, String> {
+    let candidates: Vec<_> = points.iter()
+        .filter(|point| {
+            point.missing == 0 && point.has_activity
+                && point.total.count == Some(0.) && point.total.amount == Some(0.)
+        })
+        .map(|point| point.start.as_str())
+        .collect();
+    if candidates.is_empty() {
+        return Ok(Vec::new());
+    }
+    conn.execute_batch("CREATE TEMP TABLE trend_zero_buckets(label TEXT PRIMARY KEY) WITHOUT ROWID;").map_err(err)?;
+    let mut insert = conn.prepare("INSERT INTO trend_zero_buckets VALUES(?1)").map_err(err)?;
+    for label in candidates {
+        insert.execute([label]).map_err(err)?;
+    }
+    let mut stmt = conn.prepare(
+        "WITH dates AS (
+            SELECT start, CASE ?1 WHEN 1 THEN substr(start,1,7)
+                WHEN 2 THEN date(start,'-'||((CAST(strftime('%w',start) AS INTEGER)+6)%7)||' days')
+                WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label
+            FROM an_periods WHERE slot=1
+         ), nonzero AS (
+            SELECT d.label FROM dates d JOIN trend_zero_buckets z USING(label)
+            JOIN an_valid v ON v.start=d.start
+            JOIN analysis_filter_items f ON f.id=?2 AND f.item=v.org
+            JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
+            LEFT JOIN analysis_groups g ON g.work=x.work
+            WHERE ?3 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items n
+                WHERE n.id=?3 AND n.item=COALESCE(g.name,x.work))
+            GROUP BY d.label,COALESCE(g.key,'work:'||x.work)
+            HAVING SUM(x.count)<>0 OR SUM(x.amount)<>0
+         ) SELECT DISTINCT label FROM nonzero ORDER BY label"
+    ).map_err(err)?;
+    let rows = stmt.query_map(params![mode, &scope.organizations, &scope.names], |row| row.get(0)).map_err(err)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(err)
+}
+
 impl Storage {
     /// Bounded data for the graphical timeline, with missing periods as nulls.
     /// Up to 120 source periods remain individual; longer selections are
@@ -1476,9 +1522,11 @@ impl Storage {
                 total: totals(row.get(3).map_err(err)?, row.get(4).map_err(err)?, missing == 0)?,
             });
         }
+        let zero_buckets_with_nonzero_works = zero_buckets_with_nonzero_works(&tx, mode, s, &points)?;
         Ok(TimelineSummary {
             granularity: granularity.into(),
             points,
+            zero_buckets_with_nonzero_works,
         })
     }
     /// Up to eight individually verified organization series, up to 124 points
