@@ -311,6 +311,10 @@ def navigate(page, section):
         expect(page.locator('#changes')).to_be_visible()
         return
     tab = page.locator(f'.tool-tabs [data-section="{key}"]')
+    if not tab.is_visible() and page.locator('#toolsPage').is_visible() and page.locator('#toolsPage .tool-tabs').is_hidden():
+        # Old internal comparison/summary routes hide the five-tab strip.
+        # Close that route before reopening the genuine navigation bar.
+        page.locator('#backBtn').click()
     if not tab.is_visible():
         if key in ('upload', 'groups', 'databases', 'storage'):
             page.locator('#refImport' if key == 'upload' else '#refSettings').click()
