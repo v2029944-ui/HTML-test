@@ -1,6 +1,6 @@
 //! One checked-out data workspace per desktop process. Network files are transport only.
 use super::shared_folder::{self, Checkout, Publication};
-use super::{err, Config, Storage};
+use super::{err, Config, Storage, TransferPreview, TransferReceipt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -528,6 +528,43 @@ impl Runtime {
         }
         Ok(value)
     }
+    /// Preview existing local reports against the currently connected team.
+    pub fn preview_personal_transfer(
+        &self, workspace_token: Option<&str>, page: usize,
+    ) -> Result<TransferPreview, String> {
+        let personal_root = {
+            let state = self.state.lock().map_err(err)?;
+            if state.selection.folder.is_none() {
+                return Err("Подключите общую базу для переноса личных отчётов.".into());
+            }
+            state.personal.root.clone()
+        };
+        self.execute(workspace_token, Access::Read, move |shared| {
+            let personal = Storage::new(personal_root)?;
+            shared.personal_transfer_preview(&personal, page)
+        })
+    }
+
+    pub fn apply_personal_transfer(
+        &self, workspace_token: Option<&str>,
+        source_revision: i64, target_revision: i64, selected_ids: Vec<String>,
+    ) -> Result<TransferReceipt, String> {
+        let personal_root = {
+            let state = self.state.lock().map_err(err)?;
+            if state.selection.folder.is_none() {
+                return Err("Перенос доступен только при подключённой общей базе.".into());
+            }
+            state.personal.root.clone()
+        };
+        let backup_dir = self.root.join("transfer-backups");
+        self.execute(workspace_token, Access::Write, move |shared| {
+            let personal = Storage::new(personal_root)?;
+            shared.import_selected_personal_reports(
+                &personal,source_revision,target_revision,&selected_ids,&backup_dir
+            )
+        })
+    }
+
     pub fn close_window(&self, owner: &str) {
         // Cancellation is independent of the data lock: an import may hold that
         // lock while waiting for SQLite or parsing a large workbook.
