@@ -437,7 +437,8 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         panel('chartPanel')
         sections = [('Состав работ', 'structurePanel'), ('Сравнение', 'comparison'),
                     ('Отклонения', 'usualPanel'), ('Частота', 'regularityPanel'),
-                    ('Итоги и рейтинги', 'overviewPanel'), ('Соседние периоды', 'changes'), ('Динамика', 'chartPanel')]
+                    ('Динамика', 'chartPanel')]
+        assert page.locator('#toolsPage .tool-tabs button').count() == 5
         for title, target in sections:
             check_position = switch_in_place(page.locator('#toolsPage .tool-tabs').get_by_role('button', name=title, exact=True),
                                              keyboard=target == 'comparison')
@@ -486,9 +487,18 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                 expect(chart.locator('[data-chart="table"]')).to_have_attribute('aria-pressed', 'true')
                 expect(orientation).to_have_count(0)
                 assert abs(mode_row.bounding_box()['height'] - bar_height) <= 1
-                chart.locator('[data-reference-line]').click()
-                expect(chart.locator('[data-reference-line]')).to_have_attribute('aria-pressed', 'true')
-                expect(orientation).to_have_count(0)
+                line = chart.locator('[data-reference-line]')
+                if line.is_visible() and line.is_enabled():
+                    line.click()
+                    expect(line).to_have_attribute('aria-pressed', 'true')
+                    expect(orientation).to_have_count(0)
+                else:
+                    # One selected period cannot show a time-series line.
+                    expect(line).to_be_hidden()
+                    expect(line).to_be_disabled()
+                    chart.locator('[data-chart="bar"]').click()
+                    expect(chart.locator('[data-chart="bar"]')).to_have_attribute('aria-pressed', 'true')
+                    expect(orientation).to_be_visible()
                 assert abs(mode_row.bounding_box()['height'] - bar_height) <= 1
             if target == 'usualPanel' and has_reports:
                 work = page.locator('#usualResults .service-link').first
@@ -523,7 +533,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                     if has_reports:
                         saved_size = page.evaluate('({width:innerWidth,height:innerHeight})')
                         try:
-                            for width in (720, 1028):
+                            for width in (320, 390, 720, 1028):
                                 page.set_viewport_size({'width': width, 'height': 749})
                                 check_shell_layout(page, chart=True)
                                 record(f'08-chart-controls-{width}', page.locator('#chartPanel .chart-view-controls'))
@@ -534,7 +544,12 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                         original_layout = layout.input_value()
                         chart = page.locator('#chartPanel')
                         layout.select_option('combined')
-                        for mode, direction in [('line', None), ('bar', 'vertical'), ('bar', 'horizontal')]:
+                        modes = [('bar', 'vertical'), ('bar', 'horizontal')]
+                        if chart.locator('[data-reference-line]').is_visible():
+                            modes.insert(0, ('line', None))
+                        else:
+                            expect(chart.locator('[data-reference-line]')).to_be_disabled()
+                        for mode, direction in modes:
                             chart.locator('[data-reference-line]' if mode == 'line' else '[data-chart="bar"]').click()
                             if direction:
                                 page.locator('#chartOrientation').select_option(direction)
@@ -564,7 +579,10 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                                 assert results['scroll'] <= 1 and results['legendScroll'] <= 1, results
                             inventory.append({'step': step + '-geometry', **results})
                         page.locator('#chartOrientation').select_option('vertical')
-                        chart.locator('[data-reference-line]').click()
+                        if chart.locator('[data-reference-line]').is_visible():
+                            chart.locator('[data-reference-line]').click()
+                        else:
+                            chart.locator('[data-chart="bar"]').click()
                         layout.select_option(original_layout)
                     record('08-department-totals', page.locator('#toolsPage'))
                 table_help('#chartOrgTotals .metric-table', '08-department-totals-table-help')
@@ -614,14 +632,15 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         focused(settings)
 
         if has_reports:
-            page.locator('#sharedHeader .main-nav button').first.click()
-            analytics = page.locator('#refAnalytics')
-            analytics.click()
-            page.locator('.tool-tabs [data-section="overviewPanel"]').click()
-            panel('overviewPanel')
-            record('09-rankings', page.locator('#overviewPanel'))
-            page.locator('.tool-tabs [data-section="changes"]').click()
-            expect(page.locator('#changes')).to_be_visible()
+            # No duplicate summary in the detail tabs. Adjacent-period history
+            # is available directly from the primary Changes screen.
+            page.locator('#sharedHeader .main-nav button').nth(1).click()
+            expect(page.locator('#s2')).to_be_visible()
+            history_button=page.locator('#referenceAdjacentHistory')
+            expect(history_button).to_be_visible()
+            history_button.click()
+            panel('changes')
+            expect(page.locator('#toolsPage .tool-tabs')).to_be_hidden()
             latest = page.evaluate('''() => window.desktopAPI.unifiedPeriodOptions(
               window.unifiedUI.revision, 'day', null, null, 1)''')['max']
             assert latest, 'The real daily import must provide a latest report date'
@@ -639,7 +658,9 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
             expect(work).to_be_visible(timeout=TIMEOUT)
             history_close(work, 'changeDetails', 'changeDetailContent', 'closeChangeDetails', '09-native-change-history')
             panel('changes')
-            close_panel(analytics)
+            record('09-adjacent-history', page.locator('#changes'))
+            close_panel(history_button)
+            page.locator('#sharedHeader .main-nav button').first.click()
         settings.click()
         panel('storage')
         settings.click()
@@ -659,6 +680,20 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
             types.get_by_role('button', name=name, exact=True).click()
             calendar(page.locator('#reportShell [data-date="start"]'), '11-shared-' + mode + '-' + name, mode)
         calendar(page.locator('#reportShell .filter-base-edit'), '12-baseline', 'years')
+        base_start=page.locator('#reportShell [data-base-start]')
+        base_end=page.locator('#reportShell [data-base-end]')
+        expect(base_start).to_be_visible()
+        expect(base_end).to_be_visible()
+        expect(base_start).to_have_attribute('aria-haspopup','dialog')
+        expect(base_end).to_have_attribute('aria-haspopup','dialog')
+        calendar(base_start, '12-baseline-start', 'years')
+        calendar(base_end, '12-baseline-end', 'years')
+        quick_prev=page.locator('#reportShell [data-baseline-quick="prev"]')
+        quick_year=page.locator('#reportShell [data-baseline-quick="year"]')
+        quick_year.click()
+        expect(quick_year).to_have_attribute('aria-pressed','true')
+        quick_prev.click()
+        expect(quick_prev).to_have_attribute('aria-pressed','true')
         baseline = page.locator('#sum-base')
         baseline_before = baseline.input_value()
         baseline.select_option('custom')

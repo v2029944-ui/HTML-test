@@ -337,12 +337,17 @@ async function departmentComparison(task,index){
    perName.push(...batch);
   }
  }
- const trends=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(0,8),null,s.source==='daily'?s.displayType:null,s.selectedNames);
- if(!task.valid())return;
- for(let offset=8;offset<s.organizations.length;offset+=8){
-  const page=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(offset,offset+8),null,s.source==='daily'?s.displayType:null,s.selectedNames);
+ // Render the optional overlapping trend only after its disclosure is opened.
+ const showDynamics=$('comparisonDynamics').open;
+ let trends=null;
+ if(showDynamics){
+  trends=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(0,8),null,s.source==='daily'?s.displayType:null,s.selectedNames);
   if(!task.valid())return;
-  trends.series.push(...page.series);
+  for(let offset=8;offset<s.organizations.length;offset+=8){
+   const page=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(offset,offset+8),null,s.source==='daily'?s.displayType:null,s.selectedNames);
+   if(!task.valid())return;
+   trends.series.push(...page.series);
+  }
  }
  reset();
  if(reference){sampleNote($('comparisonCoverage'),sample,true);$('comparisonBaseOrg').replaceChildren(...included.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));$('comparisonBaseOrg').value=baseOrg;}
@@ -359,15 +364,17 @@ async function departmentComparison(task,index){
   UI.drawChart([{type:s.displayType,start:s.from,end:visibleEnd(s)}],new Set(s.organizations),metric,plot,{chart:'bar',seriesType:'organizations',categories:s.organizations,data:[new Map(organizations.map(o=>[o.org,o.total]))]});
  }
  if(workPage){task.s.index=index;addBoundedPager($('comparisonTable'),task.s,perName,i=>comparison(i,true),workPage.total_rows);}
- const first=trends.series?.[0]?.points||[],periods=window.analysisSummary.timelinePeriods(first,trends.granularity,s,periodEnd);
- const data=first.map((p,i)=>new Map(trends.series.map(series=>[series.organization,series.points[i]?.missing===0?series.points[i].total:{count:null,amount:null,average:null}])));
- for(const metric of chosen){const plot=UI.el('div',null,'metric-plot');$('comparisonDynamicsPlots').append(UI.el('h3',titles[metric]+' · '+caption(range)),plot);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'bar',orientation:orientation(),seriesType:'organizations',categories:s.organizations,data});}
+ if(showDynamics&&trends&&$('comparisonDynamics').open){
+  const first=trends.series?.[0]?.points||[],periods=window.analysisSummary.timelinePeriods(first,trends.granularity,s,periodEnd);
+  const data=first.map((p,i)=>new Map(trends.series.map(series=>[series.organization,series.points[i]?.missing===0?series.points[i].total:{count:null,amount:null,average:null}])));
+  for(const metric of chosen){const plot=UI.el('div',null,'metric-plot');$('comparisonDynamicsPlots').append(UI.el('h3',titles[metric]+' · '+caption(range)),plot);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'bar',orientation:orientation(),seriesType:'organizations',categories:s.organizations,data});}
+ }
 }
 async function contributions(index=0,paging=false){
  const input=slot('comparison').captured;
  if(!scope||!input||value('comparisonMode')!=='periods')return;
  const task=loading('contribution',contributionFields,paging);
- try{const {before,after,sample}=input,s=scopeFor(after,{selectedNames:[],allNames:true}),chosen=metrics().filter(m=>m!=='average');
+ try{const {before,after,sample}=input,s=scopeFor(after),chosen=metrics().filter(m=>m!=='average');
   if(sample){
    if(!sample.included.length){clear('contributionCheck','Нет сопоставимых подразделений.');clear('contributionResults');return;}
    s.organizations=sample.included;
@@ -375,6 +382,7 @@ async function contributions(index=0,paging=false){
   if(index===0)task.s.metricTotals={};const metricTotals=task.s.metricTotals||{};
   const result=await Promise.all(chosen.map(metric=>index>0&&Number.isSafeInteger(metricTotals[metric])&&index*50>=metricTotals[metric]?null:api.nativeCompositionPageAtPage(compositionRequest(s,{percent:0,min_count:0,min_amount:0}),{from:before.from,to:before.to},'contributions',metric,index)));
   if(!task.valid())return;clear('contributionResults','',false);clear('contributionCheck','',false);
+  $('contributionCheck').append(UI.el('p',s.allNames?'Область расчёта: все работы.':'Область расчёта: отмеченные работы и группы.','muted small'));
   result.forEach((page,i)=>{const metric=chosen[i];if(!page)return;metricTotals[metric]=page.total_rows;if(!page.baseComplete||!page.currentComplete){$('contributionCheck').append(UI.el('p','Нет полного набора отчётов для обоих интервалов. Вклад не рассчитывается.','warn small'));return;}
    const check=page.check;$('contributionCheck').append(UI.el('p',titles[metric]+': сумма вкладов '+fmt(check.sum,metric)+'; общее изменение '+fmt(check.delta,metric)+' — '+(check.reconciled?'совпадает':'расхождение '+fmt(check.residual,metric)),check.reconciled?'positive small':'negative small'));
    const rows=page.rows.map(row=>[itemButton(row,{...s,from:before.from<after.from?before.from:after.from,to:before.to>after.to?before.to:after.to}),fmt(row.base,metric),fmt(row.current,metric),delta(row.delta,metric),percent(row.percent),percent(row.contribution)]);
@@ -446,19 +454,16 @@ async function patterns(mode,index=0,paging=false){
  const name=mode==='usual'?'usual':'regularity',task=loading(name,[name+'Results',name+'Coverage'],paging);
  try{if(!scope||!selected())throw Error('Отметьте услуги или группы в списке работ.');const normal=referencePanel(mode==='usual'?'usualPanel':'regularityPanel'),range=mode==='usual'&&!normal?fieldsRange('usualPeriod'):scope,s=scopeFor(range),windowSize=Number(value(mode==='usual'?'usualWindow':'regularityGap'));
   const opts={search:mode==='usual'?'':value('regularitySearch'),status:mode==='usual'?'all':value('regularityStatus')};
-  let sample=null;
+  // SQL already excludes incomplete calendar buckets. Keep organizations
+  // with some complete periods; do not discard an entire series for one gap.
+  const sample=null;
   if(normal){
-   const baseline={from:scope.baseFrom,to:scope.baseTo};
-   const ranges=mode==='regularity'?[baseline,range]:[range];
-   sample=await sampleFor(s,ranges);if(!task.valid())return;
-   if(!sample.included.length){clear(name+'Results','Нет сопоставимых подразделений.');clear(name+'Coverage');sampleNote($(name+'Coverage'),sample);pager(name,{total_rows:0},0);return;}
-   s.organizations=sample.included;
-   if(s.source==='daily')s.displayType='day';
-   if(mode==='regularity')opts.baseline=baseline;else opts.range_window=true;
+   if(mode==='regularity')opts.baseline={from:scope.baseFrom,to:scope.baseTo};
+   else opts.range_window=true;
   }
   const req=request(s,{method:'range',percent:mode==='usual'?number('usualPercent'):0,min_count:0,min_amount:0});
   const page=await api.unifiedPatternPageAtPage(req,mode,windowSize,opts,index);if(!task.valid())return;clear(name+'Results','',false);clear(name+'Coverage','',false);sampleNote($(name+'Coverage'),sample);
-  $(name+'Coverage').append(UI.el('p','Полных периодов: '+page.used+' из '+page.expected+'. В предыдущем диапазоне: '+page.previous_used+'.'+(page.current_complete?'':' Анализируемый диапазон неполон.'),'muted small'));
+  $(name+'Coverage').append(UI.el('p',mode==='usual'?'Полных исторических окон: '+page.used+' из '+page.expected+'. '+(page.current_complete?'Анализируемый интервал полный.':'Анализируемый интервал неполон.'):'Полных периодов анализа: '+page.used+' из '+page.expected+'. В базовом интервале: '+page.previous_used+'.'+(page.current_complete?'':' Анализируемый интервал неполон.'),'muted small'));
   const root=$(name+'Results');if(!page.rows.length)root.append(UI.el('p','Нет услуг по выбранным фильтрам.','muted small'));
   if(mode==='usual')for(const metric of usualMetrics){const rows=page.rows.map(row=>{const m=row[metric];return [row.key?itemButton(row,{...s,from:page.baseline_from,to:s.to}):row.name,fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent),UI.el('span',usualLabels[m.status]||m.status,m.status==='high'?'numeric-rise':m.status==='low'?'numeric-fall':'')];});UI.table(root,metric,'Среднее: '+sampleCaption(page.baseline_from,page.baseline_to,s.displayType)+'. Анализ: '+sampleCaption(page.current_from,page.current_to,s.displayType),['Услуга / группа','Среднее раньше','Сейчас','Отклонение','Отклонение, %','Оценка'],rows,{
    headerHelp:[
@@ -567,6 +572,7 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
  const dateIds=['changesFrom','changesTo','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','structureBase','structureCurrent','usualPeriod'];for(const id of dateIds){for(const event of ['input','change'])$(id)?.addEventListener(event,()=>{$(id).dataset.unifiedTouched='true';updatePeriodOverrides();});}
  for(const id of ['periodComparisonScope','comparisonScope'])$(id)?.addEventListener('change',()=>{$(id).dataset.unifiedTouched='true';updatePeriodOverrides();});
  $('comparisonMode').addEventListener('change',updatePeriodOverrides);
+ $('comparisonDynamics').addEventListener('toggle',()=>{if($('comparisonDynamics').open&&value('comparisonMode')==='organizations'&&scope)void comparison();});
  for(const name of Object.keys(localPeriods))$(name+'PeriodReset')?.addEventListener('click',()=>resetLocalPeriod(name));
  $('changesType')?.addEventListener('change',updatePeriodOverrides);
  $('changesMethod')?.addEventListener('change',updatePeriodOverrides);

@@ -95,6 +95,18 @@ function buildUnified(source){
  shiftPeriod=(type,start,steps)=>type==='year'?String(Number(start.slice(0,4))+steps).padStart(4,'0')+'-01-01':original.shiftPeriod(type,start,steps);
 })();
 `;
+ // A single observation cannot form a line. Keep grouped department metrics in bars.
+ const multiSingle="const scales=departmentScaleMax(series),bar=state.chart==='bar',horizontal=bar&&options.orientation==='horizontal';";
+ if(!script.includes(multiSingle))throw Error('Original department chart mode changed');
+ script=script.replace(multiSingle,"const scales=departmentScaleMax(series),bar=state.chart==='bar'||periods.length===1,horizontal=bar&&options.orientation==='horizontal';");
+ // Distinct metric patterns remain legible at the compact 80% interface scale.
+ const patternOld="const id='metric-pattern-'+(++metricPatternId),defs=svgEl('defs'),pattern=svgEl('pattern',{id,width:6,height:6,patternUnits:'userSpaceOnUse'});";
+ const bgOld="pattern.append(svgEl('rect',{width:6,height:6,fill:'var(--surface)'}));";
+ const marksOld="pattern.append(metric==='count'?svgEl('path',{d:'M-1 1L1 -1M0 6L6 0M5 7L7 5',stroke:color,'stroke-width':2}):svgEl('circle',{cx:3,cy:3,r:1.8,fill:color}));";
+ for(const fragment of [patternOld,bgOld,marksOld])if(!script.includes(fragment))throw Error('Original metric pattern changed');
+ script=script.replace(patternOld,"const id='metric-pattern-'+(++metricPatternId),defs=svgEl('defs'),pattern=svgEl('pattern',{id,width:8,height:8,patternUnits:'userSpaceOnUse'});");
+ script=script.replace(bgOld,"pattern.append(svgEl('rect',{width:8,height:8,fill:'var(--surface)'}));");
+ script=script.replace(marksOld,"pattern.append(metric==='count'?svgEl('path',{d:'M-2 2L2 -2M0 8L8 0M6 10L10 6',stroke:color,'stroke-width':2.4}):svgEl('circle',{cx:4,cy:4,r:2.2,fill:color}));");
  // Never allow a paged UI to reach an old whole-database writer by accident.
  script+='\nmain=wire=loadData=saveSettings=storeReports=storeAllData=saveImport=saveGroup=moveWork=saveOrganizations=importGroupFile=importBackupFile=()=>{throw Error("Полная загрузка истории и старые обработчики отключены.");};\n';
  script+='notice=(message,error)=>window.showDesktopNotice(message,error);\n';
@@ -154,7 +166,21 @@ function buildUnified(source){
  html=html.replace(/<div class="section-filter-row" hidden style="display:none"><label>Тип источника<select id="calendarType">[\s\S]*?<\/div>/,'');
  // Issue67: hide only confirmed zero periods, keep missing periods and natural vertical layout.
  if(!html.includes("<div class=\"segmented chart-mode-controls\"><button data-chart=\"line\" class=\"active\" title=\"Показывать изменение значений по периодам линиями\">Линейный график</button><button data-chart=\"bar\" title=\"Сравнивать значения столбцами\">Столбцы</button><button data-chart=\"table\" title=\"Показывать точные значения по периодам\">Таблица значений</button></div>"))throw Error('Canonical chart modes changed');
- html=html.replace("<div class=\"segmented chart-mode-controls\"><button data-chart=\"line\" class=\"active\" title=\"Показывать изменение значений по периодам линиями\">Линейный график</button><button data-chart=\"bar\" title=\"Сравнивать значения столбцами\">Столбцы</button><button data-chart=\"table\" title=\"Показывать точные значения по периодам\">Таблица значений</button></div>",'<label class="checkline"><input id="hideEmptyPeriods" type="checkbox"> Скрывать подтверждённые нулевые периоды</label>'+"<div class=\"chart-mode-line\"><div class=\"segmented chart-mode-controls\"><button type=\"button\" data-chart=\"bar\" class=\"active\" title=\"Сравнить значения по периодам\">Диаграмма</button><button type=\"button\" data-chart=\"table\" title=\"Показать точные значения\">Таблица значений</button></div><label>Расположение столбцов<select id=\"chartOrientation\"><option value=\"vertical\">Вертикально</option><option value=\"horizontal\">Горизонтально</option></select></label></div>");
+ html=html.replace("<div class=\"segmented chart-mode-controls\"><button data-chart=\"line\" class=\"active\" title=\"Показывать изменение значений по периодам линиями\">Линейный график</button><button data-chart=\"bar\" title=\"Сравнивать значения столбцами\">Столбцы</button><button data-chart=\"table\" title=\"Показывать точные значения по периодам\">Таблица значений</button></div>",'<label class="checkline"><input id="hideEmptyPeriods" type="checkbox"> Скрывать периоды с нулевыми количеством и суммой</label>'+"<div class=\"chart-mode-line\"><div class=\"segmented chart-mode-controls\"><button type=\"button\" data-chart=\"bar\" class=\"active\" title=\"Сравнить значения по периодам\">Диаграмма</button><button type=\"button\" data-chart=\"table\" title=\"Показать точные значения\">Таблица значений</button></div><label>Расположение столбцов<select id=\"chartOrientation\"><option value=\"vertical\">Вертикально</option><option value=\"horizontal\">Горизонтально</option></select></label></div>");
+
+ // Chart layout select options must fit 320-390 px without clipping.
+ // Long-form scale explanations remain in the chart guide and captions.
+ const longBreakdown='<option value="organizations">Подразделения по показателям</option>';
+ const longAll='<option value="all">Все выполненные работы</option>';
+ const longScope='<option value="selected">Только отмеченные работы и группы</option>';
+ const longSeparate='<option value="separate">Отдельно — исходные значения</option>';
+ const longTogether='<option value="combined">Вместе — % от максимума каждого показателя</option>';
+ if(!html.includes(longBreakdown)||!html.includes(longAll)||!html.includes(longScope)||!html.includes(longSeparate)||!html.includes(longTogether))throw Error('Chart layout options changed');
+ html=html.replace(longBreakdown,'<option value="organizations">Подразделения</option>')
+   .replace(longAll,'<option value="all">Все работы</option>')
+   .replace(longScope,'<option value="selected">Отмеченные</option>')
+   .replace(longSeparate,'<option value="separate">Отдельно (значения)</option>')
+   .replace(longTogether,'<option value="combined">Вместе (% макс.)</option>');
 
  // Keep the original SQLite chart and composition renderers, but give them one
  // visible presentation switch. Relocate markup, not the report calculations.

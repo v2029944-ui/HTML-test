@@ -9,6 +9,9 @@
     upload: 'Отчёты', groups: 'Группы работ', databases: 'Базы данных', storage: 'Настройки'
   };
   const management = ['upload', 'groups', 'databases', 'storage'];
+  // Keep the legacy route keys for transitions, but do not duplicate the
+  // main summary and adjacent-history tools among the five detail tabs.
+  const analyticsTabs = ['chartPanel','structurePanel','comparison','usualPanel','regularityPanel'];
   let active = 's1', panel = '', panelOpener = null, dialogOpener = null;
   let panelChange = 0;
   let returnPanel = null;
@@ -78,7 +81,7 @@
     tools.hidden = false;
     byId('refNative').dataset.panel = key;
     const manage = management.includes(key);
-    const allowed = Object.keys(sections).filter(item => management.includes(item) === manage);
+    const allowed = manage ? management : analyticsTabs;
     if (nav.firstElementChild?.dataset.section !== allowed[0]) {
       nav.replaceChildren(...allowed.map(item => {
         const tab = button(sections[item], () => openPanel(item));
@@ -87,12 +90,13 @@
       }));
     }
     for (const tab of nav.children) tab.setAttribute('aria-pressed', String(tab.dataset.section === key));
-    byId('toolsTitle').textContent = manage ? 'Управление' : 'Подробная аналитика';
+    nav.hidden = key === 'changes' || key === 'overviewPanel';
+    byId('toolsTitle').textContent = manage ? 'Управление' : key === 'changes' ? 'История соседних периодов' : key === 'overviewPanel' ? 'Сводка' : 'Подробная аналитика';
     window.unifiedUI.activate(manage || key === 'changes' ? key : 'dashboard');
     window.referenceDetail.show(key);
     if (!manage) window.referenceFilters.syncDetails();
     disclosures();
-    const focus = opener ? byId('toolsTitle') : nav.querySelector('[aria-pressed=true]');
+    const focus = opener ? byId('toolsTitle') : (nav.querySelector('[aria-pressed=true]') || byId('toolsTitle'));
     focus.focus({preventScroll:true});
     if (opener) {
       // Collapsing filters changes the sticky offset in ResizeObserver. Scroll
@@ -144,6 +148,7 @@
       tab.addEventListener('click', () => navigate(i ? 's2' : 's1')));
     byId('refImport').addEventListener('click', event => openPanel('upload', event.currentTarget));
     byId('refSettings').addEventListener('click', event => panel === 'storage' ? closePanel() : openPanel('storage', event.currentTarget));
+    byId('referenceAdjacentHistory')?.addEventListener('click', event => openPanel('changes', event.currentTarget));
     byId('refAnalytics').addEventListener('click', event =>
       panel && !management.includes(panel) ? closePanel() : openPanel('chartPanel', event.currentTarget));
     byId('backBtn').addEventListener('click', () => closePanel());

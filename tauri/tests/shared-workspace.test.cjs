@@ -8,10 +8,12 @@ const team={...personal,mode:'shared',folder:'fixture/team',generation:0,workspa
 function fixture(initial=personal) {
   const calls=[],refreshes=[],nodes=new Map(),handlers=new Map(),timers=new Map(),timerIds={value:0};
   function node(id){
-    if(!nodes.has(id))nodes.set(id,{addEventListener:(event,fn)=>handlers.set(id+'-'+event,fn),dataset:{},textContent:'',hidden:false,disabled:false});
+    if(!nodes.has(id))nodes.set(id,{addEventListener:(event,fn)=>handlers.set(id+'-'+event,fn),dataset:{},textContent:'',hidden:false,disabled:false,children:[],
+      replaceChildren(...children){this.children=children;},append(...children){this.children.push(...children);}});
     return nodes.get(id);
   }
-  const scenario={selected:null,server:initial,accept:false,chooseCalls:[],stops:0,revocations:0,syncError:null,read:null};
+  const scenario={selected:null,server:initial,accept:false,chooseCalls:[],stops:0,revocations:0,syncError:null,read:null,
+    transferPreview:null,transferApplied:null};
   const window={__TAURI__:{core:{invoke:async(name,args)=>{
     calls.push({name,args});
     if(name==='shared_workspace_status')return scenario.server;
@@ -23,13 +25,31 @@ function fixture(initial=personal) {
       assert.equal(args.workspaceToken,scenario.server.workspace_token);
       return scenario.server={...team,generation:3,workspace_token:'team-3'};
     }
+    if(name==='shared_workspace_transfer_preview'){
+      assert.equal(args.workspaceToken,scenario.server.workspace_token);
+      return scenario.transferPreview||{sourceRevision:7,targetRevision:3,totalReports:2,pageIndex:args.page,pageSize:25,hasNext:false,rows:[
+        {id:'local-new',reportType:'day',start:'2024-02-28',end:'2024-02-28',status:'ready',sourceName:'import.xlsx'},
+        {id:'local-conflict',reportType:'day',start:'2024-02-29',end:'2024-02-29',status:'conflict',sourceName:'previous.xlsx'}
+      ]};
+    }
+    if(name==='shared_workspace_transfer_apply'){
+      assert.equal(args.workspaceToken,scenario.server.workspace_token);
+      scenario.transferApplied=args;
+      scenario.server={...scenario.server,generation:1};
+      return {imported:args.selectedIds.length,revision:4,backupPath:'C:/local/transfer-backups/snapshot.sqlite3'};
+    }
     if(name==='native_read_revision')return scenario.read||7;
     throw Error('Unexpected IPC '+name);
   }},dialog:{open:async options=>{scenario.chooseCalls.push(options);return scenario.selected;}}},
     confirm:async()=>scenario.accept,unifiedUI:{snapshot:{revision:7},refreshWorkspace:async()=>refreshes.push(window.sharedWorkspace.state)},
     addEventListener:(name,fn)=>handlers.set(name,fn),
     nativeFolderAutoImport:{stopForWorkspaceChange:async()=>{scenario.stops++;},forgetWorkspaceSession:()=>{scenario.revocations++;}}};
-  const context={window,document:{getElementById:node},setTimeout:fn=>{const id=++timerIds.value;timers.set(id,fn);return id;},
+  const context={window,document:{getElementById:node,createElement:tag=>({
+      tagName:tag.toUpperCase(),children:[],listeners:{},dataset:{},
+      addEventListener(name,fn){this.listeners[name]=fn;},
+      append(...children){this.children.push(...children);},
+      replaceChildren(...children){this.children=children;},
+    })},setTimeout:fn=>{const id=++timerIds.value;timers.set(id,fn);return id;},
     clearTimeout:id=>timers.delete(id)};
   vm.runInNewContext(script('shared-workspace'),context);vm.runInNewContext(script('bridge'),context);
   const click=id=>handlers.get(id+'-click')();
@@ -109,4 +129,36 @@ test('switching back confirms, never moves reports and never crosses pending pub
   const offline=fixture({...team,available:false});await offline.window.sharedWorkspace.init();
   offline.scenario.accept=true;await offline.click('sharedWorkspaceDisconnect');
   assert.equal(offline.scenario.stops,0);assert.equal(offline.refreshes.at(-1).mode,'personal');
+});
+
+test('reviewed personal reports migrate only selected new rows and preserve conflict entries',async()=>{
+ const f=fixture(team);
+ await f.window.sharedWorkspace.init();
+ assert.equal(f.node('personalTransferPanel').hidden,false);
+ await f.click('personalTransferPreview');
+ assert.equal(f.node('personalTransferList').children.length,2);
+ assert.match(f.node('personalTransferSummary').textContent,/новых на этой странице: 1/);
+ assert.equal(f.node('personalTransferApply').disabled,true);
+ await f.click('personalTransferSelectAll');
+ assert.equal(f.node('personalTransferApply').disabled,false);
+ await f.click('personalTransferApply');
+ assert.equal(f.scenario.transferApplied,null,'confirmation is necessary');
+ f.scenario.accept=true;
+ await f.click('personalTransferApply');
+ assert.deepEqual(Array.from(f.scenario.transferApplied.selectedIds),['local-new']);
+ assert.equal(f.scenario.transferApplied.sourceRevision,7);
+ assert.equal(f.scenario.transferApplied.targetRevision,3);
+ assert.match(f.node('personalTransferResult').textContent,/Перенесено отчётов: 1/);
+ assert.match(f.node('personalTransferResult').textContent,/резервная копия/i);
+ assert.equal(f.refreshes.length,1,'shared SQL views refreshed after confirmed publication');
+});
+test('transfer is unavailable in personal mode or while network publication is pending',async()=>{
+ for(const mode of [personal,{...team,pending:true,available:false}]){
+  const f=fixture(mode);
+  await f.window.sharedWorkspace.init();
+  assert.equal(f.node('personalTransferPreview').disabled,true);
+  await f.click('personalTransferPreview');
+  assert.equal(f.calls.filter(x=>x.name==='shared_workspace_transfer_preview').length,0);
+  assert.equal(f.node('personalTransferPanel').hidden,mode.mode==='personal');
+ }
 });

@@ -421,3 +421,154 @@ fn ungranted_folder_and_missing_workspace_token_never_run_data_commands() {
     assert!(!ran);
     assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 0);
 }
+
+#[test]
+fn personal_reports_transfer_only_after_review_and_leave_source_unchanged() {
+    let (_root, runtime) = runtime_fixture();
+    let private = runtime.status().unwrap();
+    runtime.execute(Some(&private.workspace_token), Access::Write, |store| {
+        store.save(json!({"reports":[
+            {"id":"local-day-1","type":"day","start":"2024-02-28","end":"2024-02-28",
+             "desktopFolder":"C:\\personal\\excel","rows":[{"organization":"A","work":"Форсунка","count":2,"amount":300}]},
+            {"id":"local-day-2","type":"day","start":"2024-02-29","end":"2024-02-29","rows":[]}
+        ],"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}}))
+    }).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let shared = connect(&runtime, folder.path());
+    let preview = runtime.preview_personal_transfer(Some(&shared.workspace_token),0).unwrap();
+    assert_eq!(preview.total_reports,2);
+    assert_eq!(preview.rows.len(),2);
+    assert!(preview.rows.iter().all(|r|r.status=="ready"));
+    let receipt = runtime.apply_personal_transfer(
+        Some(&shared.workspace_token),
+        preview.source_revision,preview.target_revision,
+        vec!["local-day-1".into(),"local-day-2".into()],
+    ).unwrap();
+    assert_eq!(receipt.imported,2);
+    assert!(std::path::Path::new(&receipt.backup_path).exists());
+    assert_eq!(runtime.status().unwrap().generation,Some(1));
+    let team_data = read(&runtime,&shared.workspace_token);
+    assert_eq!(team_data["reports"].as_array().unwrap().len(),2);
+    assert!(team_data["reports"][0].get("desktopFolder").is_none());
+    let post = runtime.preview_personal_transfer(Some(&shared.workspace_token),0).unwrap();
+    assert!(post.rows.iter().all(|r|r.status=="conflict"));
+    assert!(runtime.apply_personal_transfer(
+        Some(&shared.workspace_token),post.source_revision,post.target_revision,
+        vec!["local-day-1".into()]
+    ).is_err());
+    assert_eq!(runtime.status().unwrap().generation,Some(1));
+    let private = runtime.disconnect(Some(&shared.workspace_token)).unwrap();
+    let originals=read(&runtime,&private.workspace_token);
+    assert_eq!(originals["reports"].as_array().unwrap().len(),2);
+    assert!(originals["reports"][0].get("desktopFolder").is_some());
+}
+#[test]
+fn personal_transfer_rejects_conflicts_and_stale_reviews_without_writing() {
+    let (_root,runtime)=runtime_fixture();
+    let private=runtime.status().unwrap();
+    runtime.execute(Some(&private.workspace_token),Access::Write,|s|s.save(data("personal"))).unwrap();
+    let folder=tempfile::tempdir().unwrap();
+    let team=connect(&runtime,folder.path());
+    let preview=runtime.preview_personal_transfer(Some(&team.workspace_token),0).unwrap();
+    let selected=vec!["personal".to_string()];
+    assert!(runtime.apply_personal_transfer(
+        Some(&private.workspace_token),preview.source_revision,preview.target_revision,selected.clone()
+    ).is_err(),"stale personal mode token must not authorize transfer");
+    runtime.execute(Some(&team.workspace_token),Access::Write,|s|s.save(data("shared"))).unwrap();
+    assert!(runtime.apply_personal_transfer(
+        Some(&team.workspace_token),preview.source_revision,preview.target_revision,selected.clone()
+    ).is_err(),"stale destination revision must not publish");
+    let conflict=runtime.preview_personal_transfer(Some(&team.workspace_token),0).unwrap();
+    assert_eq!(conflict.rows[0].status,"conflict");
+    assert!(runtime.apply_personal_transfer(
+        Some(&team.workspace_token),conflict.source_revision,conflict.target_revision,selected
+    ).is_err(),"cross-id overlapping date must not silently replace");
+    assert_eq!(runtime.status().unwrap().generation,Some(1));
+    assert_eq!(read(&runtime,&team.workspace_token)["reports"][0]["id"],"shared");
+}
+#[test]
+fn personal_transfer_publishes_to_a_second_client_without_reimporting_excel() {
+    let (_root,first)=runtime_fixture();
+    let (_root2,second)=runtime_fixture();
+    let private=first.status().unwrap();
+    first.execute(Some(&private.workspace_token),Access::Write,|s|s.save(data("from-excel"))).unwrap();
+    let folder=tempfile::tempdir().unwrap();
+    let team=connect(&first,folder.path());
+    let stale=connect(&second,folder.path());
+    let preview=first.preview_personal_transfer(Some(&team.workspace_token),0).unwrap();
+    first.apply_personal_transfer(Some(&team.workspace_token),
+        preview.source_revision,preview.target_revision,vec!["from-excel".into()]).unwrap();
+    assert!(second.execute(Some(&stale.workspace_token),Access::Read,|s|s.load()).is_err());
+    let fresh=second.sync().unwrap();
+    assert_eq!(read(&second,&fresh.workspace_token)["reports"][0]["id"],"from-excel");
+}
+
+#[test]
+fn personal_transfer_keeps_linked_wide_records_together_and_rebuilds_rows() {
+    let (_root,runtime)=runtime_fixture();
+    let initial=runtime.status().unwrap();
+    runtime.execute(Some(&initial.workspace_token),Access::Write,|s|s.save(json!({
+        "reports":[
+            {"id":"wide-parent","type":"day","start":"2024-03-01","end":"2024-03-01","rows":[
+                {"organization":"A","work":"Ремонт форсунок","count":2.5,"amount":300.75}
+            ]},
+            {"id":"wide-child","type":"day","start":"2024-03-01","end":"2024-03-01","rows":[
+                {"organization":"B","work":"Ремонт ТНВД","count":3,"amount":390}
+            ]}
+        ],"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}
+    }))).unwrap();
+    {
+        let state=runtime.state.lock().unwrap();
+        state.personal.connect().unwrap().execute(
+            "INSERT INTO report_source_diagnostic_links(report_id,anchor_id) VALUES('wide-child','wide-parent')",[]
+        ).unwrap();
+    }
+    let folder=tempfile::tempdir().unwrap();
+    let shared=connect(&runtime,folder.path());
+    let preview=runtime.preview_personal_transfer(Some(&shared.workspace_token),0).unwrap();
+    assert_eq!(preview.rows.len(),2);
+    assert!(runtime.apply_personal_transfer(
+        Some(&shared.workspace_token),preview.source_revision,preview.target_revision,
+        vec!["wide-child".into()]
+    ).unwrap_err().contains("Связанные диагностические"));
+    assert_eq!(runtime.status().unwrap().generation,Some(0));
+    runtime.apply_personal_transfer(
+        Some(&shared.workspace_token),preview.source_revision,preview.target_revision,
+        vec!["wide-child".into(),"wide-parent".into()]
+    ).unwrap();
+    let state=runtime.state.lock().unwrap();
+    let conn=state.checkout.as_ref().unwrap().storage.connect().unwrap();
+    let n:i64=conn.query_row("SELECT COUNT(*) FROM report_rows WHERE report_id IN ('wide-child','wide-parent')",[],|r|r.get(0)).unwrap();
+    assert_eq!(n,2);
+    let links:i64=conn.query_row("SELECT COUNT(*) FROM report_source_diagnostic_links WHERE report_id='wide-child' AND anchor_id='wide-parent'",[],|r|r.get(0)).unwrap();
+    assert_eq!(links,1);
+}
+
+#[test]
+fn personal_transfer_does_not_block_different_report_types_with_overlapping_dates() {
+    let (_root, runtime) = runtime_fixture();
+    let personal = runtime.status().unwrap();
+    runtime.execute(Some(&personal.workspace_token), Access::Write, |store| {
+        store.save(data("individual-day"))
+    }).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let shared = connect(&runtime, folder.path());
+    runtime.execute(Some(&shared.workspace_token), Access::Write, |store| {
+        store.save(json!({"reports":[{
+            "id":"existing-week","type":"week","start":"2024-02-26",
+            "end":"2024-03-03","rows":[]
+        }],"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}}))
+    }).unwrap();
+    let page = runtime.preview_personal_transfer(Some(&shared.workspace_token), 0).unwrap();
+    assert_eq!(page.rows.len(), 1);
+    assert_eq!(page.rows[0].status, "ready");
+    runtime.apply_personal_transfer(
+        Some(&shared.workspace_token), page.source_revision, page.target_revision,
+        vec!["individual-day".into()],
+    ).unwrap();
+    let ids = read(&runtime, &shared.workspace_token)["reports"].as_array()
+        .unwrap().iter().map(|r|r["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(&"existing-week".to_string()));
+    assert!(ids.contains(&"individual-day".to_string()));
+}
