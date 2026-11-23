@@ -247,12 +247,18 @@ const contributionFields=['contributionResults','contributionCheck'];
 async function comparison(index=0,paging=false){
  if(window.referenceDetail?.active&&!referencePanel('comparison'))return;
  comparisonLayout();if(!scope)return;
+ const mode=value('comparisonMode'),state=slot('comparison');
+ if(state.renderedMode!==mode){
+  // Results for a different comparison type no longer match the active controls.
+  state.renderedMode=mode;state.renderedRevision=null;
+  slot('contribution').renderedRevision=null;
+ }
  const task=loading('comparison',['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis'],paging);$('analyticsDetails').hidden=true;
  const contributionTask=loading('contribution',contributionFields);
  window.sqlRowScroll?.reset($('contributionResults'));
  let contributionInput=null;
  try{if(!selected())throw Error('Отметьте работы или группы для сравнения.');
-  if(value('comparisonMode')==='organizations'){await departmentComparison(task,index);return;}
+  if(mode==='organizations'){await departmentComparison(task,index);return;}
   const {before,after}=comparisonRanges(),s=scopeFor(after);
   const sample=referencePanel('comparison')?await sampleFor(s,[before,after]):null;
   if(!task.valid())return;

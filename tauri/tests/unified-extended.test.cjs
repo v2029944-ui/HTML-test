@@ -600,3 +600,27 @@ test('department comparison fetches its duplicate historical charts only when ex
  details.open=true;details.dispatch('toggle');await settle();
  assert.equal(trendReads,1);
 });
+
+test('switching comparison type clears the previous results before SQL completes',async()=>{
+ const pending=deferred();
+ const total={count:2,amount:20,average:10};
+ const f=fixture({
+  nativeAnalysisOrganizations:async()=>[{org:'A',complete:true,total}],
+  nativeAnalysisCompare:()=>pending.promise,
+  unifiedComparisonWindow:async()=>({rows:[],total_rows:0})
+ });
+ f.publish();
+ const mode=f.nodes.get('comparisonMode'),table=f.nodes.get('comparisonTable'),charts=f.nodes.get('comparisonCharts');
+ mode.value='organizations';mode.dispatch('change');await settle();
+ assert.match(table.textContent,/20/);
+ assert.ok(charts.children.length);
+ mode.value='periods';mode.dispatch('change');await settle();
+ assert.equal(table.textContent,'Загрузка…');
+ assert.equal(charts.textContent,'Загрузка…');
+ assert.equal(table.attributes['aria-busy'],'true');
+ const full={complete:true,periods:1,missing:0,total,available_reports:1,available_total:total};
+ pending.resolve({summary:{before:full,after:full}});
+ await settle();
+ assert.equal(table.attributes['aria-busy'],'false');
+ assert.match(table.textContent,/20/);
+});
