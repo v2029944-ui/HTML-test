@@ -291,3 +291,20 @@ test('baseline manual end supports leap February while keeping a single month in
   assert.equal(controls.scope.baseFrom,'2024-01-01');
   assert.equal(controls.scope.baseTo,'2024-02-29');
 });
+
+test('editing imported weekly baseline end keeps the actual report weekday', async () => {
+  const {controls,panel,source,open,one,draft}=await fixture();
+  panel.querySelectorAll('[data-filter=mode] button')[0].onclick();
+  await source('imported');
+  open().apply('2026-11-07','week','2026-11-04');
+  one('[data-base-start]').onclick();
+  draft().apply('2026-11-07','week','2026-11-04');
+  one('[data-base-end]').onclick();
+  const end=draft();
+  assert.equal(end.spanFor('2026-11-18','week')[0],'2026-11-18');
+  end.apply('2026-11-18','week','2026-11-18');
+  assert.equal(controls.scope.baseFrom,'2026-11-04');
+  assert.equal(controls.scope.displayBaseTo,'2026-11-24');
+  end.apply('2026-11-16','week','2026-11-16');
+  assert.equal(controls.scope.displayBaseTo,'2026-11-24','a different weekday must not corrupt the baseline');
+});
