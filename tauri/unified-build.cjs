@@ -170,13 +170,15 @@ function buildUnified(source){
 
  // Chart layout select options must fit 320-390 px without clipping.
  // Long-form scale explanations remain in the chart guide and captions.
+ const longBreakdown='<option value="organizations">Подразделения по показателям</option>';
  const longScope='<option value="selected">Только отмеченные работы и группы</option>';
  const longSeparate='<option value="separate">Отдельно — исходные значения</option>';
  const longTogether='<option value="combined">Вместе — % от максимума каждого показателя</option>';
- if(!html.includes(longScope)||!html.includes(longSeparate)||!html.includes(longTogether))throw Error('Chart layout options changed');
- html=html.replace(longScope,'<option value="selected">Отмеченные работы / группы</option>')
-   .replace(longSeparate,'<option value="separate">Отдельно — исходные числа</option>')
-   .replace(longTogether,'<option value="combined">Вместе — % от максимума</option>');
+ if(!html.includes(longBreakdown)||!html.includes(longScope)||!html.includes(longSeparate)||!html.includes(longTogether))throw Error('Chart layout options changed');
+ html=html.replace(longBreakdown,'<option value="organizations">Подразделения</option>')
+   .replace(longScope,'<option value="selected">Отмеченные</option>')
+   .replace(longSeparate,'<option value="separate">Отдельно (значения)</option>')
+   .replace(longTogether,'<option value="combined">Вместе (% макс.)</option>');
 
  // Keep the original SQLite chart and composition renderers, but give them one
  // visible presentation switch. Relocate markup, not the report calculations.
