@@ -204,7 +204,7 @@ function buildUnified(source){
  html=html.replace('</head>','<meta name="analiz-unified-sql" content="true"><link rel="stylesheet" href="tauri-app-status.css"><link rel="stylesheet" href="tauri-unified.css"><link rel="stylesheet" href="tauri-sql-row-scroll.css"><script src="tauri-shared-workspace.js"></script><script src="tauri-bridge.js"></script></head>');
  const filterSetting='<label><span id="filterPlacementLabel">Расположение фильтра</span><select id="appearanceFilterPlacement" aria-labelledby="filterPlacementLabel" aria-describedby="filterPlacementHint">'+
   '<option value="top">Сверху</option><option value="side">Слева</option></select>'+
-  '<small class="muted" id="filterPlacementHint">В узком окне фильтр располагается сверху.</small></label>';
+  '<small class="muted" id="filterPlacementHint">Если слева не хватает места, фильтр располагается сверху.</small></label>';
  const designLabel='<label>Дизайн<select id="appearanceDesign">';
  if(!html.includes(designLabel))throw Error('Missing desktop appearance settings');
  html=html.replace(designLabel,filterSetting+designLabel);

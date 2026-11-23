@@ -108,7 +108,7 @@ def check_filter_placement(page, record):
         if not settings_already_open:
             page.locator('#refSettings').click()
         expect(settings).to_be_visible()
-        placement.select_option('side')
+        page.set_viewport_size({'width':2600,'height':650})
         scope = page.evaluate('JSON.stringify(window.referenceFilters.scope)')
         reset = fold.locator('.filter-reset')
         for scale in ('80','90','standard','large','xlarge'):
@@ -118,9 +118,21 @@ def check_filter_placement(page, record):
             size.select_option(scale)
             expect(size).to_be_focused()
             expect(page.locator('#refRoot')).to_have_attribute('data-ui-size',scale)
-            expect(sidebar).to_have_css('--filter-at-side','1')
             page.evaluate("scrollTo({top:0,behavior:'instant'})")
+            report = page.locator('#s1 main')
+            header = page.locator('#sharedHeader')
+            brand = header.locator('.brand')
+            placement.select_option('top')
             page.evaluate(settle)
+            original = [element.bounding_box() for element in (report, header, brand)]
+            placement.select_option('side')
+            expect(sidebar).to_have_css('--filter-at-side','1')
+            page.evaluate(settle)
+            for element, before in zip((report, header, brand), original):
+                after = element.bounding_box()
+                assert abs(after['x'] - before['x']) <= 2 and abs(after['width'] - before['width']) <= 2, (
+                    scale, before, after
+                )
             origin = sidebar.bounding_box()['y']
             # Measure against the real scroll position; a short document cannot
             # scroll past its available content even when a larger Y is requested.
@@ -128,8 +140,8 @@ def check_filter_placement(page, record):
             page.evaluate(settle)
             scrolled_y = page.evaluate('scrollY')
             expected_top = max(0, origin - scrolled_y)
-            sidebar_box = sidebar.bounding_box()
-            report_box = page.locator('#s1').bounding_box()
+            sidebar_box = fold.bounding_box()
+            report_box = page.locator('#s1 .title-row').bounding_box()
             assert abs(sidebar_box['y']-expected_top) <= 2, (scale,origin,scrolled_y,expected_top,sidebar_box)
             assert sidebar_box['x'] + sidebar_box['width'] <= report_box['x'] + 2, (scale,sidebar_box,report_box)
             assert scrolled_y > origin + 2, ('Settings should scroll past the header', scale,origin,scrolled_y)
@@ -152,6 +164,17 @@ def check_filter_placement(page, record):
             )
             assert abs(page.evaluate('scrollY')-scrolled_y) <= 2, (scale,scrolled_y,page.evaluate('scrollY'))
             assert page.evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1')
+        # At the same window width, increasing the interface scale can use
+        # up the free left margin. The saved preference still applies again
+        # when there is room.
+        page.set_viewport_size({'width':2048,'height':650})
+        size.select_option('standard')
+        expect(sidebar).to_have_css('--filter-at-side','1')
+        size.select_option('xlarge')
+        page.evaluate(settle)
+        assert not page.evaluate('window.referenceFilters.atSide()')
+        size.select_option('standard')
+        expect(sidebar).to_have_css('--filter-at-side','1')
         page.set_viewport_size({'width':720,'height':650})
         page.evaluate(settle)
         assert not page.evaluate('window.referenceFilters.atSide()')
