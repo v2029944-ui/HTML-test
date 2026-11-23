@@ -27,6 +27,8 @@ async function fixture(storage = new Map(), width = 1440) {
     if (!lists.has(selector)) lists.set(selector, Array.from({length:n}, element));
     return lists.get(selector);
   };
+  one('#sharedHeader').querySelector = () => ({getBoundingClientRect: () => ({left:Math.max(32,(width-1480)/2+32)})});
+  one('#refRoot').getBoundingClientRect = () => ({left:0});
   const document = {createElement: element, getElementById: id => id === 'refNative' ? null : one('#'+id)};
   const calls = [], seen = [];
   const weeks = ['2026-11-04','2026-11-06','2026-11-16'];
@@ -57,7 +59,10 @@ async function fixture(storage = new Map(), width = 1440) {
     }
   }};
   window.localStorage={getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)};
-  const getComputedStyle=()=>({getPropertyValue:()=>width>=1280 && one('#refRoot').dataset.filterPlacement==='side'?'1':''});
+  const getComputedStyle=()=>({getPropertyValue:key=>({
+    '--filter-sidebar-width':'272px','--filter-sidebar-gap':'12px',
+    '--filter-at-side':one('#refRoot').dataset.filterSidebar?'1':''
+  })[key]||''});
   const observer=class {observe(){}};
   const ctx={window,document,getComputedStyle,matchMedia:()=>({matches:width<=680}),ResizeObserver:observer,IntersectionObserver:observer};
   const run = name => vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../'+name+'.js'),'utf8'),ctx);
@@ -242,7 +247,7 @@ test('reflecting works already applied in overview preserves its local metric ch
 
 test('filter placement stays on this device and falls back to the top in a narrow window', async () => {
   const storage=new Map();
-  const wide=await fixture(storage);
+  const wide=await fixture(storage,2048);
   const picker=wide.one('#appearanceFilterPlacement');
   assert.equal(picker.value,'top');
   const before=wide.controls.scope;
@@ -250,8 +255,8 @@ test('filter placement stays on this device and falls back to the top in a narro
   picker.onchange();
   assert.equal(wide.controls.scope,before);
   assert.equal(wide.controls.atSide(),true);
-  assert.equal((await fixture(storage)).controls.atSide(),true);
-  const narrow=await fixture(storage,720);
+  assert.equal((await fixture(storage,2048)).controls.atSide(),true);
+  const narrow=await fixture(storage,1440);
   assert.equal(narrow.one('#appearanceFilterPlacement').value,'side');
   assert.equal(narrow.controls.atSide(),false);
 });

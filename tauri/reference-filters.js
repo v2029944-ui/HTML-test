@@ -381,6 +381,7 @@ function closeFilters(){
 }
 function initPlacement(){
  const root=document.getElementById('refRoot'),fold=one('.filter-fold'),summary=one('.filter-fold > summary');
+ const header=document.getElementById('sharedHeader'),brand=header.querySelector('.brand');
  const placement=document.getElementById('appearanceFilterPlacement');
  const layoutKey='analiz.desktop.filterPlacement';
  function fitSidebar(){
@@ -393,12 +394,23 @@ function initPlacement(){
   panel.removeAttribute('data-floating');
   panel.style.removeProperty('--filter-slot');
  }
+ function syncSidebar(){
+  const style=getComputedStyle(panel),zoom=panel.currentCSSZoom||Number(style.zoom)||1;
+  const width=parseFloat(style.getPropertyValue('--filter-sidebar-width'));
+  const gap=parseFloat(style.getPropertyValue('--filter-sidebar-gap'));
+  const available=brand.getBoundingClientRect().left-root.getBoundingClientRect().left;
+  const fits=root.dataset.filterPlacement==='side'&&available>=(width+2*gap)*zoom;
+  if(fits===Boolean(root.dataset.filterSidebar))return;
+  if(fits)root.dataset.filterSidebar='true';else delete root.dataset.filterSidebar;
+  releaseSpace();
+  if(fits)fold.open=true;
+ }
  function display(value){
   const layout=value==='side'?'side':'top';
   placement.value=layout;
   root.dataset.filterPlacement=layout;
   releaseSpace();
-  if(atSide())fold.open=true;
+  syncSidebar();
  }
  let initial='top';
  try{initial=window.localStorage.getItem(layoutKey);}catch{/* Storage may be unavailable. */}
@@ -429,9 +441,9 @@ function initPlacement(){
  }
  window.addEventListener('scroll',updatePinnedState,{passive:true});
  const headerObserver=new IntersectionObserver(([entry])=>{if(entry.isIntersecting)releaseSpace();});
- headerObserver.observe(document.getElementById('sharedHeader'));
+ headerObserver.observe(header);
  const sizeObserver=new ResizeObserver(()=>{
-  if(atSide() && panel.hasAttribute('data-floating'))releaseSpace();
+  syncSidebar();
   // viewport units and DOMRect use window coordinates; panel height is in its own CSS pixels.
   panel.style.setProperty('--filter-zoom',panel.currentCSSZoom || Number(getComputedStyle(panel).zoom) || 1);
   const summaryHeight=Math.ceil(summary.getBoundingClientRect().height)+'px';
@@ -440,7 +452,7 @@ function initPlacement(){
   root.style.setProperty('--sticky-filter-height',atSide()?'0px':summaryHeight);
   updatePinnedState();
  });
- sizeObserver.observe(summary);sizeObserver.observe(panel);sizeObserver.observe(root);
+ sizeObserver.observe(summary);sizeObserver.observe(panel);sizeObserver.observe(root);sizeObserver.observe(header);
 }
 function init(){
  if(initialized)return;
