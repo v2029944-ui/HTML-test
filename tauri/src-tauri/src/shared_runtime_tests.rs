@@ -534,7 +534,7 @@ fn personal_transfer_keeps_linked_wide_records_together_and_rebuilds_rows() {
     assert!(runtime.apply_personal_transfer(
         Some(&shared.workspace_token),preview.source_revision,preview.target_revision,
         vec!["wide-child".into()]
-    ).unwrap_err().contains("Связанные диагностические"));
+    ).unwrap_err().contains("исходный диагностический отчёт"));
     assert_eq!(runtime.status().unwrap().generation,Some(0));
     runtime.apply_personal_transfer(
         Some(&shared.workspace_token),preview.source_revision,preview.target_revision,
