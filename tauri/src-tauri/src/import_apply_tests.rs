@@ -95,7 +95,7 @@ pub(super) fn original(storage: &Storage) -> Value {
     data
 }
 #[test]
-fn blank_amount_survives_transaction_backup_and_reindex() {
+fn confirmed_reimport_recovers_pre_fix_count_without_inventing_an_amount() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("blank.xlsx");
     let mut zip = ZipWriter::new(fs::File::create(&source).unwrap());
@@ -109,20 +109,61 @@ fn blank_amount_survives_transaction_backup_and_reindex() {
     let area = StageArea::open(root.path().join("stage")).unwrap();
     let input = prepared(&area, &source, "day", "2026-11-01");
     let store = Storage::new(root.path().join("live")).unwrap();
-    store.load().unwrap();
+    let mut previous = original(&store);
+    previous["reports"].as_array_mut().unwrap().push(json!({
+        "id": "before-fix", "type": "day", "start": "2026-11-01", "end": "2026-11-01",
+        "desktopSource": "blank.xlsx", "hasMismatch": true,
+        "rows": [{"organization": "СМУ16", "work": "Нулевая сумма", "count": 2.0, "amount": 0.0}],
+        "issues": [{"type": "invalid", "reason": "Пропущена строка: нет количества или суммы",
+            "row": 3, "amount_cell": "C3", "count_cell": null, "skipped": true}]
+    }));
+    store.save(previous.clone()).unwrap();
+    let filter = ReadFilter {
+        start: Some("2026-11-01".into()),
+        end: Some("2026-11-01".into()),
+        ..Default::default()
+    };
+    let revision = store.revision().unwrap();
+    store.index_report("before-fix", revision).unwrap();
+    let before = store.aggregate(revision, &filter).unwrap();
+    assert_eq!((before.rows, before.count, before.amount), (1, 2.0, Some(0.0)));
     let preview = store.preview_import(&input).unwrap();
-    let confirmation = ImportConfirmation { accept_quality: true, ..Default::default() };
-    let receipt = store.apply_import(&input, &preview, confirmation, &ImportJob::new(), |_| {}).unwrap();
-    assert_eq!(receipt.rows, 2);
+    assert_eq!(
+        (preview.counts().new_reports, preview.counts().replacements),
+        (0, 1)
+    );
+    let refusal = store.apply_import(
+        &input,
+        &preview,
+        ImportConfirmation { accept_quality: true, ..Default::default() },
+        &ImportJob::new(),
+        |_| {},
+    ).unwrap_err();
+    assert_eq!(refusal, "Exact-period replacement needs explicit confirmation.");
+    assert_eq!(store.revision().unwrap(), revision);
+    let old_backup = root.path().join("before-reimport.sqlite3");
+    assert_eq!(store.backup_sqlite_verified(&old_backup).unwrap(), revision);
+    assert_eq!(store.load().unwrap(), previous);
+    let confirmation = ImportConfirmation {
+        replace_exact: true,
+        accept_quality: true,
+        ..Default::default()
+    };
+    let receipt = store
+        .apply_import(&input, &preview, confirmation, &ImportJob::new(), |_| {})
+        .unwrap();
+    assert_eq!((receipt.rows, receipt.replaced), (2, 1));
     let data = store.load().unwrap();
-    let report = &data["reports"][0];
+    assert_eq!(data["reports"].as_array().unwrap().len(), 2);
+    assert_eq!(data["reports"][0], previous["reports"][0]);
+    let report = &data["reports"][1];
     let id = report["id"].as_str().unwrap();
     assert_eq!(report["rows"][0]["count"], 7.0);
     assert!(report["rows"][0]["amount"].is_null());
     assert_eq!(report["rows"][1]["amount"], 0.0);
 
     let verify = |store: &Storage, revision| {
-        let sum = store.aggregate(revision, &ReadFilter::default()).unwrap();
+        let sum = store.aggregate(revision, &filter).unwrap();
         assert_eq!((sum.rows, sum.count, sum.amount, sum.weighted_average), (2, 9.0, None, None));
     };
     verify(&store, receipt.revision);
@@ -133,10 +174,20 @@ fn blank_amount_survives_transaction_backup_and_reindex() {
     store.backup_sqlite(&copy).unwrap();
     let db = Connection::open(copy).unwrap();
     let amounts: (Option<f64>, Option<f64>) = db.query_row(
-        "SELECT MIN(amount), MAX(CASE WHEN count=7 THEN amount END) FROM report_rows",
-        [], |row| Ok((row.get(0)?, row.get(1)?)),
+        "SELECT MIN(amount), MAX(CASE WHEN count=7 THEN amount END) FROM report_rows WHERE report_id=?1",
+        [id], |row| Ok((row.get(0)?, row.get(1)?)),
     ).unwrap();
     assert_eq!(amounts, (Some(0.0), None));
+    let old = Connection::open_with_flags(old_backup, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .unwrap();
+    let integrity: String = old.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap();
+    assert_eq!(integrity, "ok");
+    let original_count: f64 = old.query_row(
+        "SELECT SUM(count) FROM report_rows WHERE report_id='before-fix'",
+        [],
+        |row| row.get(0),
+    ).unwrap();
+    assert_eq!(original_count, 2.0);
 }
 
 #[test]
