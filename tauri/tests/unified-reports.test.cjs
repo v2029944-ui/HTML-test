@@ -57,6 +57,12 @@ test('wide import selects multiple named sheets and keeps legacy component ident
  assert.equal(ui.nodes.sheetSelect.children[1].value,'xl/custom/sheet2.xml');
  ui.nodes.importFormat.value='daily-wide';await ui.nodes.importFormat.fire('change');
  for(const i of [0,1]){ui.nodes['unifiedWideSheet'+i].checked=true;await ui.nodes['unifiedWideSheet'+i].fire('change');}
+ const summary=ui.nodes.unifiedWideSheets;
+ assert.equal(summary.tag,'textarea');
+ assert.equal(summary.className,'wide-sheet-summary');
+ assert.equal(summary.readOnly,true);
+ assert.equal(summary.hidden,false);
+ assert.equal(summary.value,'Первый квартал; Второй; квартал');
  await ui.nodes.inspectFile.click();
  assert.deepEqual(Array.from(previews[0].sheets),['Первый квартал','Второй; квартал']);
  assert.equal(ui.nodes.saveImport.disabled,false);
