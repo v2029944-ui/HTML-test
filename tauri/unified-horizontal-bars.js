@@ -19,20 +19,25 @@ function chartPager(plot,key,options){
  plot.append(host);
  window.sqlRowScroll.attach(host,{...options,footer:host,controlsOnly:true});
 }
+function chartPlot(root,svg,className='chart-plot-scroll'){
+ const wrap=document.createElement('div');
+ wrap.className=className;
+ wrap.tabIndex=0;
+ wrap.setAttribute('role','region');
+ wrap.setAttribute('aria-label','Область графика');
+ wrap.append(svg);root.append(wrap);
+}
 function horizontalBars(periods,shown,data,metric,root,options,color,redraw,seriesNumbers){
  if(!periods.length||!shown.length)return;
  const pageSize=12,pageCount=Math.ceil(periods.length/pageSize);
  const page=Math.max(0,Math.min(pageCount-1,Number.isSafeInteger(options.periodPage)?options.periodPage:0));
  const start=page*pageSize,visible=periods.slice(start,start+pageSize);
  const presentation=window.unifiedOriginal;
- if(pageCount>1){
-  chartPager(root,'chart-periods',{index:page,size:pageSize,count:visible.length,total:periods.length,
-   axis:'x',label:'Периоды горизонтальной диаграммы',go:index=>{options.periodPage=index;redraw();}});
- }
  const values=data.flatMap(point=>point?shown.map(name=>point.get(name)?.[metric]).filter(Number.isFinite):[]);
  const scale=presentation.chartNiceScale(values),{min,max}=scale;
- const left=160,right=30,top=36,bottom=38,width=Math.max(740,root.clientWidth||740);
- const plotWidth=width-left-right,groupHeight=shown.length*19+35,height=top+visible.length*groupHeight+bottom;
+ const left=160,right=30,top=54,bottom=57,width=Math.max(740,root.clientWidth||740);
+ const rowHeight=28.5,plotWidth=width-left-right,groupHeight=shown.length*rowHeight+52.5;
+ const height=top+visible.length*groupHeight+bottom;
  const px=v=>left+(v-min)/(max-min)*plotWidth;
  const svg=make('svg',{viewBox:'0 0 '+width+' '+height,role:'img','aria-label':'Горизонтальные столбцы по отчётным периодам'});
  svg.style.minWidth=width+'px';
@@ -56,7 +61,7 @@ function horizontalBars(periods,shown,data,metric,root,options,color,redraw,seri
    return;
   }
   shown.forEach((name,j)=>{
-   const item=point.get(name),v=item?.[metric],ybar=y+21+j*19;
+   const item=point.get(name),v=item?.[metric],ybar=y+21+j*rowHeight;
    const reason=metric==='average'?presentation.averageQuantityReason(item?.count):'';
    if(Number.isFinite(v)||reason)hasCompleteValue=true;
    if(!Number.isFinite(v)){
@@ -73,7 +78,11 @@ function horizontalBars(periods,shown,data,metric,root,options,color,redraw,seri
    mark.dataset.chartTooltip=accessible;mark.setAttribute('aria-describedby','chartTooltip');mark.setAttribute('aria-label',accessible);mark.append(make('title',{},accessible));svg.append(mark);
   });
  });
- const wrap=document.createElement('div');wrap.className='horizontal-bar-scroll';wrap.append(svg);root.append(wrap);
+ chartPlot(root,svg,'horizontal-bar-scroll');
+ if(pageCount>1){
+  chartPager(root,'chart-periods',{index:page,size:pageSize,count:visible.length,total:periods.length,
+   axis:'x',label:'Периоды горизонтальной диаграммы',go:index=>{options.periodPage=index;redraw();}});
+ }
  const legend=document.createElement('div');legend.className='chart-legend';
  for(const name of shown){
   const label=options.label?options.label(name):name,item=document.createElement('span');
@@ -84,6 +93,7 @@ function horizontalBars(periods,shown,data,metric,root,options,color,redraw,seri
  if(!hasCompleteValue){const message=document.createElement('p');message.className='muted small';message.textContent='Нет полных данных за показанные периоды. Пропуски не заменены нулями.';root.append(message);}
 }
 window.unifiedChartPager=chartPager;
+window.unifiedChartPlot=chartPlot;
 window.unifiedHorizontalBars=horizontalBars;
 if(typeof module==='object'&&module?.exports)module.exports={horizontalBars};
 })();

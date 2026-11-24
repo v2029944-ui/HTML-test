@@ -36,9 +36,14 @@ function buildUnified(source){
  // Use the actual desktop plot width in SVG coordinates. Scaling a fixed
  // 760px viewBox up to a wide window also magnifies its height and labels.
  const plotGeometry=[
-  ['height=phone?310:350','height=phone?250:280'],
+  ['height=phone?310:350','height=phone?375:420'],
   ['Math.max(760,periods.length*Math.max(110,bar?shown.length*18:110))','Math.max(root.clientWidth||0,left+right+periods.length*Math.max(90,bar?shown.length*18:0))'],
-  ['+bottom:phone?325:370','+bottom:phone?260:300'],
+  ['+bottom:phone?325:370','+bottom:phone?390:450'],
+  ['top=27,bottom=horizontal?20:80','top=horizontal?40.5:27,bottom=horizontal?30:80'],
+  ['const rowHeight=series.length*18+22;', 'const rowHeight=series.length*27+33;'],
+  ['top+shown.length*(series.length*18+22)+bottom', 'top+shown.length*(series.length*27+33)+bottom'],
+  ['top+i*rowHeight+index*18+3', 'top+i*rowHeight+index*27+3'],
+  ['top+i*rowHeight+index*18+14', 'top+i*rowHeight+index*27+14'],
   ['Math.max(800,periods.length*Math.max(116,bar?series.length*19:116))','Math.max(root.clientWidth||0,left+right+periods.length*Math.max(90,bar?series.length*19:0))']
  ];
  for(const [original,replacement] of plotGeometry){
@@ -60,13 +65,19 @@ function buildUnified(source){
       periodNotices.push(description);
       `+script.slice(noteEnd);
  script=script.replace('  const missingRanges=[];','  const missingRanges=[],periodNotices=[];')
-  .replace(appendChart,appendChart+`
+  .replace(appendChart,`  svg.append(...numberMarks);window.unifiedChartPlot(root,svg);
   if(periodNotices.length){
     const details=elem('details',null,'chart-period-notices'),list=elem('ul');
     details.append(elem('summary','! Замечания по периодам ('+periodNotices.length+')'),list);
     for(const description of periodNotices)list.append(elem('li',description));
     root.append(details);
   }`);
+ const departmentPlot='  svg.append(...numbers);root.append(svg);';
+ if(!script.includes(departmentPlot))throw Error('Original department chart plot changed');
+ script=script.replace(departmentPlot,`  svg.append(...numbers);
+  window.unifiedChartPlot(root,svg);
+  const periodPager=root.querySelector('[data-sql-scroll-host="chart-periods"]');
+  if(periodPager)root.append(periodPager);`);
  const seriesStart=script.indexOf('  if(pages>1){',script.indexOf('function drawChart('));
  const seriesEnd=script.indexOf('  const seriesColor=',seriesStart);
  if(seriesStart<0||seriesEnd<0||!script.slice(seriesStart,seriesEnd).includes('Видимые серии графика'))throw Error('Original chart series control changed');

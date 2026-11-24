@@ -155,7 +155,7 @@ function init(){
    }catch(error){UI.notice?.('Не удалось удалить отчёт: '+String(error.message||error),true);}finally{deleting=false;action.disabled=false;}
   });actions.append(action);}
 
-  if(r.shared_source_artifact)card.append(el('p','Сохранены общие замечания исходного файла; ссылка на отчёт хранения показана в таблице качества.','muted small'));
+  if(r.shared_source_artifact)card.append(el('p','В контроле качества доступны общие замечания по исходному файлу.','muted small'));
   return card;
  }
  async function loadReports(index=reportIndex){
@@ -308,14 +308,26 @@ function init(){
   skipped:'Проверьте название работы и ближайший заголовок подразделения в этом наборе столбцов.',
   mismatch:'Сравните контрольные количество и сумму с детализацией подразделения или всего набора. Проверьте также строки над контрольным итогом.',
   missing:'Проверьте, существует ли отчёт за этот период и подразделение. Если он есть, загрузите его.',
+  'missing-day':'Проверьте заголовок дня и его столбцы на исходном листе Excel.',
+  'missing-period':'Проверьте заголовок периода и его столбцы на исходном листе Excel.',
   duplicate:'Сверьте даты отчётов и проверьте данные перед подтверждением замены.',
   overlap:'Сверьте даты пересекающихся отчётов и повторите импорт с правильными датами.'
  };
+ const qualityReasonLabels={
+  invalid_rows:'Некорректная структура строк отчёта.',
+  invalid_bounds:'Некорректные границы отчётного периода.',
+  'Daily columns are blank; no zero report invented':'Столбцы дня пусты. Отчёт за этот день отсутствует.',
+  'Day is absent from source header':'Дата отсутствует в заголовках исходного листа Excel.',
+  'Daily values do not match source-period controls':'Значения по дням не совпадают с контрольными итогами Excel.'
+ };
  function qualityReason(issue,address){
-  const reason=el('div',issue.reason),advice=el('details',undefined,'quality-advice');
+  const reason=el('div',Object.hasOwn(qualityReasonLabels,issue.reason)?qualityReasonLabels[issue.reason]:issue.reason),advice=el('details',undefined,'quality-advice');
   if(issue.expected&&issue.actual)reason.append(el('small','Количество: факт '+UI.fmt(issue.actual.count,'count')+' / итог Excel '+UI.fmt(issue.expected.count,'count')+' · Сумма: факт '+UI.fmt(issue.actual.amount,'amount')+' / итог Excel '+UI.fmt(issue.expected.amount,'amount')));
   if(Array.isArray(issue.raw))reason.append(el('small','Значения при чтении: '+issue.raw.map(v=>v??'[нет значения]').join(' | ')));
   advice.append(el('summary','Как проверить и исправить'),el('p',repairHints[issue.kind]||'Проверьте исходный лист Excel и предупреждения импорта. После исправления повторно проверьте файл.'));
+  if(issue.kind==='invalid'&&issue.reason==='Пропущена строка: нет количества или суммы'&&issue.amount_cell&&!issue.count_cell){
+   advice.append(el('p','Если количество заполнено, а ячейка суммы пуста, повторно проверьте исходный Excel и подтвердите замену сохранённых отчётов. После замены количество будет учтено, а сумма останется неизвестной.'));
+  }
   if(address){
    const copy=button('Скопировать адрес ячейки',async()=>{
     try{await navigator.clipboard.writeText(address);copy.textContent='Адрес скопирован';}
@@ -324,6 +336,17 @@ function init(){
   }
   reason.append(advice);return reason;
  }
+ function qualitySource(issue){
+  const file=[issue.source_name,issue.sheet].filter(Boolean).join(' · ');
+  const source=el('div',file||(issue.kind==='missing'?'Отчёт отсутствует':'Источник не указан'));
+  if(issue.diagnostic_scope==='source')source.append(el('small','Замечание по всему файлу','muted'));
+  return source;
+ }
+ function qualityType(kind){
+  if(kind==='missing-day')return 'Пропущен день в Excel';
+  if(kind==='missing-period')return 'Пропущен период в Excel';
+  return Object.hasOwn(types,kind)?types[kind]:'Другое замечание';
+ }
  function renderQualityIssues(issues){
   const date=value=>value?.replace(/^(\d{4})-(\d{2})-(\d{2})$/,'$3.$2.$1');
   page($('qualityTable'),'Проблемы отчётов',['Период','Подразделение','Проблема','Источник','Строка Excel','Ячейка Excel','Причина'],issues.map(i=>{
@@ -331,7 +354,7 @@ function init(){
    const sheet=!i.sheet?'':/^[A-Za-zА-Яа-яЁё0-9_]+$/.test(i.sheet)?i.sheet:"'"+i.sheet.replace(/'/g,"''")+"'";
    const address=cells.map(c=>sheet?sheet+'!'+c:c).join(', ');
    const period=i.date?date(i.date):i.period_start===i.period_end?date(i.period_start):[date(i.period_start),date(i.period_end)].filter(Boolean).join(' — ');
-   return [period||'Даты не сохранены',i.organization||'Не указано / общий итог',types[i.kind]||i.kind,[i.source_name,i.sheet,i.source_anchor?'Отчёт хранения: '+i.source_anchor:null].filter(Boolean).join(' · ')||'Отчёт отсутствует',i.source_row||i.row,address||'—',qualityReason(i,address)];
+   return [period||'Даты не сохранены',i.organization||'Не указано / общий итог',qualityType(i.kind),qualitySource(i),i.source_row||i.row,address||'—',qualityReason(i,address)];
   }),[null,null,null,null,'Номер строки исходного листа, если он сохранён при проверке или импорте.',
    'Адреса ячеек на исходном листе, если они сохранены. При расхождении итогов указаны контрольные ячейки. Причина расхождения может находиться в строках детализации.',null]);
  }
@@ -356,7 +379,7 @@ function init(){
    if(!current())return;
    if(!Array.isArray(result.issues)||result.issues.length>LIMIT)throw Error('Некорректная страница качества');
    if(result.issues.length)renderQualityIssues(result.issues);
-   const categories=Object.entries(result.counts).map(([key,n])=>(types[key]||(key==='other'?'Другие замечания':key))+': '+n).join(' · ');
+   const categories=Object.entries(result.counts).map(([key,n])=>(Object.hasOwn(types,key)?types[key]:'Другие замечания')+': '+n).join(' · ');
    const found=(pending?'Предпросмотр · ':'')+(result.total?'Найдено: '+result.total:'Замечаний по выбранным условиям нет');
    status('qualitySummary',[found,categories,'Отсутствие замечаний само по себе не подтверждает полноту'].filter(Boolean).join('. ')+'.');
    if(result.total){
@@ -733,7 +756,7 @@ function init(){
   source.append(hint,filePicker);
   if(folder)source.append(folder);
   showSource(false);
-  const book=el('p',undefined,'upload-selected-book');book.id='uploadSelectedBook';book.hidden=true;parameters.append(book);
+  const book=el('p',undefined,'upload-selected-book');book.id='uploadSelectedBook';book.hidden=true;source.append(book);
   const inspect=$('inspectFile'),save=$('saveImport'),actions=inspect.parentElement;
   parameters.append(fileGrid,$('importDateEvidence'),$('dailyWideOptions'),$('ordinaryImportHint'),$('importAdvanced'),inspect,importStatus);
   result.append($('importPreview'),$('replaceExisting').parentElement,acknowledgements,save);

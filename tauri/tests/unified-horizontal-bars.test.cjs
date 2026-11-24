@@ -37,6 +37,11 @@ test('horizontal chart paginates long periods and keeps the renderer bounded',()
  draw();
  assert.equal(all(root).filter(node=>node.tagName==='RECT').length,24);
  const host=all(root).find(n=>n.dataset.sqlScrollHost==='chart-periods');
+ const plot=root.children.find(node=>node.className==='horizontal-bar-scroll');
+ const legend=root.children.find(node=>node.className==='chart-legend');
+ assert.equal(plot.children[0].attributes.viewBox,'0 0 800 1425');
+ assert.ok(root.children.indexOf(plot)<root.children.indexOf(host),'the period slider follows the plot');
+ assert.ok(root.children.indexOf(host)<root.children.indexOf(legend),'the legend follows the period slider');
  assert.equal(host.scrollWindow.total,periods.length);
  assert.equal(host.scrollWindow.size,12);
  host.scrollWindow.go(1);

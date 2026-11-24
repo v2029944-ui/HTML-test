@@ -18,6 +18,9 @@
 #refNative .chart-period-notices {margin-block:5px 10px;color:var(--warning)}
 #refNative .chart-period-notices summary {cursor:pointer}
 #refNative .chart-period-notices ul {margin-block:6px;padding-inline-start:22px;color:var(--text)}
+#refNative .metric-plot {overflow:visible}
+#refNative .chart-plot-scroll {max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+#refNative #qualityTable td:nth-child(4) small {display:block}
 #refNative[data-panel] .view.active {display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
 #refNative[data-panel] .view.active > .panel {margin:0}
 #refNative[data-panel] :is(button,select,input,label,summary) {overflow-wrap:anywhere}

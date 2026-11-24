@@ -32,6 +32,13 @@ def check_control_layout(page):
       }
       const parameterGrid = document.querySelector('#uploadParameterCard > .import-grid');
       if (visible(parameterGrid)) {
+        const source = document.querySelector('#uploadEntryCard');
+        const parameters = parameterGrid.parentElement;
+        const sourceButton = source.querySelector('#uploadSourceFile');
+        const periodType = parameterGrid.querySelector('#importType');
+        if (visible(sourceButton) && visible(periodType) && close(rect(source).top,rect(parameters).top) &&
+            (!close(rect(sourceButton).top,rect(periodType).top) || !close(rect(sourceButton).bottom,rect(periodType).bottom)))
+          errors.push(['Источник Excel', 'source buttons and first report field start at different heights']);
         const rowFields = [];
         for (const group of parameterGrid.children) {
           const field = [...group.querySelectorAll('select,.ref-calendar-field')].find(visible);
@@ -137,6 +144,15 @@ def check_control_layout(page):
           if (visible(next) && close(rect(next.parentElement).top, rect(metric.parentElement).top) &&
               (!close(rect(metric).top,rect(next).top) || !close(rect(metric).bottom,rect(next).bottom)))
             errors.push(['Показатель', 'misaligned with adjacent filter']);
+        }
+        if (innerWidth >= 1050 && !document.querySelector('#refRoot').dataset.filterSidebar) {
+          const filterFields = [...document.querySelectorAll('#reportShell :is(.filter-periods,.filter-options) > .lbl > :is(select,button)')].filter(visible);
+          if (!filterFields.every(field => close(rect(field).top,rect(metric).top) &&
+              close(rect(field).bottom,rect(metric).bottom)))
+            errors.push(['Периоды и фильтры', 'period, source, baseline and options are not aligned']);
+          const source = document.querySelector('#referenceSource'), baseline = document.querySelector('#sum-base');
+          if (rect(source).left >= rect(baseline).left)
+            errors.push(['Источник', 'source should precede the comparison baseline']);
         }
       }
       const orientation = document.querySelector('#chartOrientation');

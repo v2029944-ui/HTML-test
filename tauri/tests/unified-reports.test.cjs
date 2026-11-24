@@ -140,6 +140,41 @@ test('quality filters and offset go to native global query, old responses clear 
  const calls=[];const ui=mount({unifiedQualityPage:async(...args)=>{calls.push(args);return {issues:[],next_offset:50,total:80,counts:{missing:80}};}});await ui.refresh();ui.nodes.qualitySearch.value='needle';await ui.nodes.qualitySearch.fire('input');await flush();assert.equal(calls.at(-1)[1].search,'needle');await ui.nodes.qualityTable.scrollWindow.go(1);await flush();assert.equal(calls.at(-1)[2],50);assert.match(ui.nodes.qualitySummary.textContent,/80/);
 });
 
+test('quality shows the workbook and sheet, with Russian labels for stored diagnostic codes',async()=>{
+ const ui=mount({unifiedQualityPage:async()=>({total:7,next_offset:null,counts:{invalid:2,mismatch:1,other:4},issues:[
+  {kind:'invalid',reason:'invalid_rows',source_name:'Проверка.xlsx',sheet:'Q1',source_anchor:'native-opaque-id',diagnostic_scope:'source'},
+  {kind:'invalid',reason:'invalid_bounds',source_name:'Другой.xlsx'},
+  {kind:'custom-diagnostic',reason:'Проверьте формулу Excel',source_name:'Другой.xlsx'},
+  {kind:'missing-day',reason:'Day is absent from source header',source_name:'Другой.xlsx'},
+  {kind:'missing-day',reason:'Daily columns are blank; no zero report invented',source_name:'Другой.xlsx'},
+  {kind:'missing-period',reason:'В столбцах периода нет значений',source_name:'Другой.xlsx'},
+  {kind:'mismatch',reason:'Daily values do not match source-period controls',source_name:'Другой.xlsx'},
+ ]})});
+ await ui.window.unifiedReports.openView('quality');
+ const result=text(ui.nodes.qualityTable);
+ assert.match(result,/Проверка\.xlsx · Q1/);
+ assert.match(result,/Замечание по всему файлу/);
+ assert.match(result,/Некорректная структура строк отчёта/);
+ assert.match(result,/Некорректные границы отчётного периода/);
+ assert.match(result,/Другое замечание/);
+ assert.match(result,/Проверьте формулу Excel/);
+ assert.match(result,/Пропущен день в Excel/);
+ assert.match(result,/Пропущен период в Excel/);
+ assert.match(result,/Дата отсутствует в заголовках исходного листа Excel/);
+ assert.match(result,/Столбцы дня пусты/);
+ assert.match(result,/Значения по дням не совпадают с контрольными итогами Excel/);
+ assert.doesNotMatch(result,/native-opaque-id|invalid_rows|invalid_bounds|custom-diagnostic|missing-day|Daily |Day is absent/);
+});
+
+test('quality explains how to recover quantities omitted by previous Excel imports',async()=>{
+ const legacy={kind:'invalid',reason:'Пропущена строка: нет количества или суммы',sheet:'Q1',amount_cell:'C7'};
+ const ui=mount({unifiedQualityPage:async()=>({total:2,next_offset:null,counts:{invalid:2},issues:[legacy,{...legacy,count_cell:'B7'}]})});
+ await ui.window.unifiedReports.openView('quality');
+ const reasons=ui.nodes.qualityTable.querySelectorAll('*').filter(el=>el.className==='quality-advice');
+ assert.match(text(reasons[0]),/подтвердите замену сохранённых отчётов/);
+ assert.doesNotMatch(text(reasons[1]),/подтвердите замену сохранённых отчётов/);
+});
+
 test('snapshot invalidation accepts null and clears stale reports and quality',async()=>{const ui=mount();await ui.refresh();assert.equal(ui.nodes.reportCalendar.children.length,12);ui.snapshot(null);assert.equal(ui.nodes.reportCalendar.children.length,0);assert.equal(ui.nodes.reports.children.length,0);assert.equal(ui.nodes.qualityTable.children.length,0);assert.equal(ui.nodes.saveImport.disabled,true);});
 
 test('changing XLSX A to B clears dates year and manual mappings before B review',async()=>{

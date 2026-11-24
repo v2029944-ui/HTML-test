@@ -397,10 +397,14 @@ function initPlacement(){
  }
  function syncSidebar(){
   const style=getComputedStyle(panel),zoom=panel.currentCSSZoom||Number(style.zoom)||1;
-  const width=parseFloat(style.getPropertyValue('--filter-sidebar-width'));
+  const maxWidth=parseFloat(style.getPropertyValue('--filter-sidebar-max-width'));
+  const minWidth=parseFloat(style.getPropertyValue('--filter-sidebar-min-width'));
   const gap=parseFloat(style.getPropertyValue('--filter-sidebar-gap'));
   const available=brand.getBoundingClientRect().left-root.getBoundingClientRect().left;
-  const fits=root.dataset.filterPlacement==='side'&&available>=(width+2*gap)*zoom;
+  const width=Math.min(maxWidth,Math.floor(available/zoom-2*gap));
+  const fits=root.dataset.filterPlacement==='side'&&width>=minWidth;
+  if(fits)panel.style.setProperty('--filter-sidebar-width',width+'px');
+  else panel.style.removeProperty('--filter-sidebar-width');
   if(fits===Boolean(root.dataset.filterSidebar))return;
   if(fits)root.dataset.filterSidebar='true';else delete root.dataset.filterSidebar;
   releaseSpace();
@@ -460,8 +464,8 @@ function init(){
  initialized=true;dates(today());
  const sourceLabel=make('label','Источник');sourceLabel.className='lbl';const input=make('select');input.id='referenceSource';input.className='sel';
  for(const [value,text] of [['daily','Дневные отчёты'],['imported','Отчёты выбранного типа']]){const option=make('option',text);option.value=value;input.append(option);}
- sourceLabel.append(input);one('.filter-periods').append(sourceLabel);input.onchange=sourceChanged;
  const compare=one('[data-compare]');compare.replaceChildren();
+ sourceLabel.append(input);compare.parentElement.before(sourceLabel);input.onchange=sourceChanged;
  for(const [value,text] of baselines){const option=make('option',text);option.value=value;compare.append(option);}
  compare.onchange=()=>{if(compare.value==='custom'){compare.value=rule;chooseDate('base',compare);}else{rule=compare.value;customEnd=null;publish();}};
  for(const button of many('[data-baseline-quick]'))button.onclick=()=>{if(!allowRule(button.dataset.baselineQuick))return;rule=button.dataset.baselineQuick;customEnd=null;publish();};

@@ -20,6 +20,7 @@ async function fixture(storage = new Map(), width = 1440) {
     return elements.get(selector);
   }
   const panel = one('#reportShell');
+  one('[data-compare]').parentElement={before:label=>one('.filter-periods').append(label)};
   panel.querySelector = selector => selector === '#referenceSource' ? one('.filter-periods').options[0].options[0] : one(selector);
   panel.querySelectorAll = selector => {
     const n = {'[data-date]':2, '[data-shift]':2}[selector] || 0;
@@ -59,7 +60,7 @@ async function fixture(storage = new Map(), width = 1440) {
   }};
   window.localStorage={getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)};
   const getComputedStyle=()=>({getPropertyValue:key=>({
-    '--filter-sidebar-width':'272px','--filter-sidebar-gap':'12px',
+    '--filter-sidebar-min-width':'208px','--filter-sidebar-max-width':'272px','--filter-sidebar-gap':'12px',
     '--filter-at-side':one('#refRoot').dataset.filterSidebar?'1':''
   })[key]||''});
   const observer=class {observe(){}};

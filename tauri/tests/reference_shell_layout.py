@@ -167,7 +167,7 @@ def check_filter_placement(page, record):
         # At the same window width, increasing the interface scale can use
         # up the free left margin. The saved preference still applies again
         # when there is room.
-        page.set_viewport_size({'width':2048,'height':650})
+        page.set_viewport_size({'width':1920,'height':650})
         size.select_option('standard')
         expect(sidebar).to_have_css('--filter-at-side','1')
         size.select_option('xlarge')
