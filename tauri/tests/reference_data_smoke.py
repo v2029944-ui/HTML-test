@@ -202,10 +202,10 @@ def _check_detail_table_csv_parity(page, scratch, scope, evidence):
         tab('comparison')
         page.locator('#refComparisonModes [data-value="organizations"]').click()
         choose_metrics('comparisonMetrics')
-        base_org = orgs[0]
-        page.locator('#comparisonBaseOrg').select_option(base_org)
         for metric, expected in zip(metrics, [5, .5, 10]):
             data = ui_row('#comparisonTable', metrics[metric], 'Альфа')
+            base_org = page.locator('#comparisonBaseOrg').input_value()
+            assert base_org in orgs, base_org
             rows = csv_rows(f'comparison-parity-{metric}', {'section': 'organizations',
                             'metric': metric, 'baseOrg': base_org})
             exported = next(row for row in rows if row[0] == 'Альфа')
