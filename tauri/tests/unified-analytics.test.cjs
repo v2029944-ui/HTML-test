@@ -56,10 +56,22 @@ test('dashboard uses bounded aggregates, publishes exact selected names, and pri
  f.nodes.get('clearAll').dispatch('click');assert.equal(f.published.at(-1).allNames,false);assert.equal(f.published.at(-1).selectedNames.length,0);
  f.nodes.get('selectAll').dispatch('click');assert.equal(f.published.at(-1).allNames,true);assert.equal(f.published.at(-1).selectedNames.length,0);await settle();
 });
-test('confirmed zero filtering keeps missing points and does not change overview totals',async()=>{
- const points=[{start:'2024-01-01',periods:1,missing:1,total:{count:null,amount:null,average:null}},{start:'2024-01-02',periods:1,missing:0,has_activity:true,total:{count:0,amount:0,average:null}}];
- const f=fixture({nativeAnalysisTimeline:async()=>({granularity:'period',points}),nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points})});await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();assert.equal(f.draws.at(-1)[4].data[0],null);assert.equal(f.draws.at(-1)[4].data[1].get('work:W').count,0);
- const overview=f.nodes.get('overviewKpis').textContent;f.nodes.get('hideEmptyPeriods').checked=true;f.nodes.get('hideEmptyPeriods').dispatch('change');await settle();assert.equal(f.draws.at(-1)[0].length,1);assert.equal(f.draws.at(-1)[4].data[0],null);assert.equal(f.nodes.get('overviewKpis').textContent,overview);
+test('trend filtering hides absent and confirmed zero buckets and preserves incomplete or invalid reports',async()=>{
+ const unknown={count:null,amount:null,average:null};
+ const points=[
+  {start:'2024-01-01',periods:1,missing:1,total:unknown},
+  {start:'2024-01-02',periods:1,missing:0,has_activity:true,total:{count:0,amount:0,average:null}},
+  {start:'2024-01-03',periods:1,missing:1,total:unknown},
+  {start:'2024-01-04',periods:2,missing:1,total:unknown},
+ ];
+ const f=fixture({nativeAnalysisTimeline:async()=>({granularity:'period',points,buckets_with_reports:points.slice(1).map(p=>p.start)}),
+  nativeWorkTimeline:async()=>({key:'work:W',name:'W',kind:'work',granularity:'period',points})});
+ await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ assert.equal(f.draws.at(-1)[4].data[0],null);assert.equal(f.draws.at(-1)[4].data[1].get('work:W').count,0);
+ const overview=f.nodes.get('overviewKpis').textContent;
+ f.nodes.get('hideEmptyPeriods').checked=true;f.nodes.get('hideEmptyPeriods').dispatch('change');await settle();
+ assert.deepEqual(Array.from(f.draws.at(-1)[0],p=>p.start),['2024-01-03','2024-01-04']);
+ assert.ok(f.draws.at(-1)[4].data.every(p=>p===null));assert.equal(f.nodes.get('overviewKpis').textContent,overview);
  assert.deepEqual(Array.from(f.draws.at(-1)[4].hiddenPeriods,p=>p.start),['2024-01-02']);
 });
 test('a complete zero stays hidden even if a source reports activity, while non-zero amount stays visible',async()=>{
@@ -322,17 +334,25 @@ test('department charts and CSV retain organizations after the first eight serie
  const organizations=Array.from({length:10},(_,i)=>'Org '+i),queries=[];
  const f=fixture({
   nativeOrganizationTrends:async(_rev,_kind,_from,_to,orgs)=>{
-   queries.push(Array.from(orgs));return {granularity:'period',series:orgs.slice(0,8).map(organization=>({organization,points:[{start:'2024-01-02',missing:0,total:{count:2.5,amount:-10.75,average:-4.3}}]}))};
+   queries.push(Array.from(orgs));
+   const present='2024-01-01',absent='2024-01-02',unknown={count:null,amount:null,average:null};
+   return {granularity:'period',buckets_with_reports:orgs.includes('Org 9')?[present]:[],
+    series:orgs.map(organization=>({organization,points:[
+     organization==='Org 9'?{start:present,missing:0,total:{count:2.5,amount:-10.75,average:-4.3}}:{start:present,missing:1,total:unknown},
+     {start:absent,missing:1,total:unknown}
+    ]}))};
   },
   nativeAnalysisOrganizations:async()=>organizations.map(org=>({org,complete:true,total:{count:2.5,amount:-10.75,average:-4.3}}))
  });
  f.UI.snapshot.org_names=organizations;f.UI.state.selectedOrganizations=new Set(organizations);f.UI.state.chartMetrics=new Set(['amount']);
  await f.bootstrap();f.nodes.get('chartBreakdown').value='organizations';
+ f.nodes.get('hideEmptyPeriods').checked=true;
  f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
+ assert.deepEqual(Array.from(f.draws.at(-1)[0],p=>p.start),['2024-01-01']);
  assert.equal(f.draws.at(-1)[4].data[0].get('Org 9')?.amount,-10.75);
  f.buttons.find(button=>button.dataset.chart==='table').dispatch('click');await settle();
  const table=f.tables.findLast(t=>t.root==='dataTable');
- assert.equal(table.options.csvRows.length,10);assert.equal(table.options.csvRows[9][2],-10.75);
+ assert.equal(table.options.csvRows.length,10);assert.deepEqual(Array.from(table.options.csvRows[9]),['Org 9','Сумма',-10.75]);
  assert.ok(queries.every(orgs=>orgs.length<=8));
 });
 test('horizontal combined department charts use the same scale as vertical bars while separate charts show original units',async()=>{

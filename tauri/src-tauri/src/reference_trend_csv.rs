@@ -23,7 +23,7 @@ pub struct TrendCsvOptions {
     pub table: TrendTable,
     pub metrics: Vec<TrendMetric>,
     pub hide_empty: bool,
-    /// Use the displayed chart's aggregate-zero rule for the date axis.
+    /// Use the displayed chart's rules for zero and absent periods on the date axis.
     #[serde(default)]
     pub match_chart: bool,
 }
@@ -112,10 +112,13 @@ impl Storage {
         }
         let hide = options.hide_empty;
         let visible = if hide && options.match_chart {
+            fill_timeline_report_buckets(&tx, mode, scope)?;
             tx.execute_batch("CREATE INDEX trend_series_by_label ON trend_series(label);").map_err(err)?;
             let nonzero_total = if works { "b.qty<>0 OR b.money IS NOT 0 OR " } else { "" };
-            format!("(?1=0 OR b.missing<>0 OR {nonzero_total} EXISTS(
-                SELECT 1 FROM trend_series s WHERE s.label=b.label AND (s.qty<>0 OR s.money IS NOT 0)))")
+            format!("(?1=0 OR CASE WHEN b.missing<>0 THEN EXISTS(
+                SELECT 1 FROM temp.timeline_report_buckets r WHERE r.label=b.label)
+            ELSE {nonzero_total} EXISTS(
+                SELECT 1 FROM trend_series s WHERE s.label=b.label AND (s.qty<>0 OR s.money IS NOT 0)) END)")
         } else {
             // Standalone exports preserve activity even when its totals cancel.
             "(?1=0 OR b.active<>0 OR b.missing<>0)".into()
@@ -221,9 +224,66 @@ mod tests {
         };
         store.reference_trend_csv(rev,&scope,&range,Some("day"),&options,&csv).unwrap();
         let content = fs::read_to_string(&csv).unwrap();
-        assert!(content.starts_with("\u{feff}\"Работа / группа\";\"2024-01-01\";\"2024-01-03\"\r\n"));
-        assert!(content.lines().any(|line|line == r#""Negative";"-1";"""#));
-        assert!(content.lines().any(|line|line == r#""Positive";"1";"""#));
+        assert!(content.starts_with("\u{feff}\"Работа / группа\";\"2024-01-01\"\r\n"));
+        assert!(content.lines().any(|line|line == r#""Negative";"-1""#));
+        assert!(content.lines().any(|line|line == r#""Positive";"1""#));
+    }
+
+    #[test]
+    fn chart_axis_keeps_incomplete_or_rejected_reports_and_hides_only_absent_or_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Storage::new(dir.path().join("data")).unwrap();
+        let report = |id: &str, day: &str, orgs: &[&str], qty, amount| json!({
+            "id": id, "type": "day", "start": day, "end": day, "organizations": orgs,
+            "rows": [{"organization": orgs[0], "work": "W", "count": qty, "amount": amount}]
+        });
+        store.save(json!({"reports": [
+            report("normal", "2024-01-01", &["A", "B"], 2, json!(20)),
+            report("outside", "2024-01-02", &["C"], 7, json!(30)),
+            report("partial", "2024-01-03", &["A"], 3, json!(40)),
+            report("duplicate1", "2024-01-05", &["A"], 4, json!(41)),
+            report("duplicate2", "2024-01-05", &["A"], 5, json!(42)),
+            report("zero", "2024-01-06", &["A", "B"], 0, json!(0)),
+            report("unknown-amount", "2024-01-07", &["A", "B"], 0, Value::Null),
+            {"id":"week", "type":"week", "start":"2024-01-02", "end":"2024-01-08", "organizations":["A","B"], "rows":[]}
+        ], "settings": {"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}})).unwrap();
+        // A legacy writer can store an invalid report without a trusted organization index.
+        let mut invalid = report("invalid", "2024-01-04", &["B"], 2, json!(20));
+        invalid["rows"][0]["count"] = json!("bad");
+        store.connect().unwrap().execute("INSERT INTO reports(id,report_type,period_start,period_end,json)
+            VALUES('invalid','day','2024-01-04','2024-01-04',?1)", [invalid.to_string()]).unwrap();
+        let rev = store.revision().unwrap();
+        for id in ["normal", "outside", "partial", "invalid", "duplicate1", "duplicate2", "zero", "unknown-amount"] {
+            store.analysis_index_report(id, rev).unwrap();
+        }
+        store.analysis_index_settings(rev).unwrap();
+        let orgs = store.analysis_filter_create(rev,"organizations").unwrap();
+        store.analysis_filter_append(rev, &orgs, &["A".into(),"B".into()]).unwrap();
+        store.analysis_filter_seal(rev, &orgs).unwrap();
+        let scope = AnalysisScope {report_type:"day".into(), organizations:orgs, names:None};
+        let range = RangeQuery {from:"2024-01-01".into(), to:"2024-01-07".into()};
+        let timeline = store.analysis_timeline_grouped(rev, &scope, &range, Some("day")).unwrap();
+        let departments = store.analysis_organization_trends_grouped(rev, &scope, &range, Some("day")).unwrap();
+        let reported = ["2024-01-01", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-06", "2024-01-07"];
+        assert_eq!(timeline.buckets_with_reports, reported);
+        assert_eq!(departments.buckets_with_reports, reported);
+        assert_eq!((timeline.points[1].missing,timeline.points[3].missing,timeline.points[4].missing),(2,2,2));
+        assert_eq!(timeline.points[5].total.amount, Some(0.));
+        assert_eq!(timeline.points[6].total.amount, None);
+        for (table, file) in [(TrendTable::Works, "works.csv"), (TrendTable::Organizations, "orgs.csv")] {
+            let csv = dir.path().join(file);
+            let options = TrendCsvOptions {table, metrics:vec![TrendMetric::Amount], hide_empty:true, match_chart:true};
+            store.reference_trend_csv(rev, &scope, &range, Some("day"), &options, &csv).unwrap();
+            let csv = fs::read_to_string(csv).unwrap();
+            let header = csv.lines().next().unwrap();
+            assert!(header.ends_with(";\"2024-01-01\";\"2024-01-03\";\"2024-01-04\";\"2024-01-05\";\"2024-01-07\""), "{header}");
+            if table == TrendTable::Works {
+                assert!(csv.lines().any(|line| line == r#""W";"20";"";"";"";"""#));
+            } else {
+                assert!(csv.lines().any(|line| line == r#""A";"Сумма";"20";"40";"";"";"""#));
+            }
+        }
+        assert_eq!(store.revision().unwrap(), rev);
     }
 
     #[test]
