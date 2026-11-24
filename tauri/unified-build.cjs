@@ -27,6 +27,9 @@ function buildUnified(source){
  const rankingRows='const defaultHideZeroRankingRows=false;';
  if(!script.includes(rankingRows))throw Error('Original ranking filter marker changed');
  script=script.replace(rankingRows,'const defaultHideZeroRankingRows=true;');
+ const rankingHint="+'). Для динамики выберите несколько периодов.'";
+ if(!script.includes(rankingHint))throw Error('Original ranking hint changed');
+ script=script.replace(rankingHint,"+').'+(options.rankingHint===false?'':' Для динамики выберите несколько периодов.')");
  const chartValues="return value===null?[]:[value||0];";
  if(!script.includes(chartValues))throw Error('Original chart value marker changed');
  script=script.replace(chartValues,"return Number.isFinite(value)?[value]:[];");
@@ -123,6 +126,17 @@ function buildUnified(source){
  script+='notice=(message,error)=>window.showDesktopNotice(message,error);\n';
  script+='window.unifiedOriginal=Object.freeze({state,$,el:elem,notice,fmt:formatMetric,fmtNumber,averageQuantityReason,chartNiceScale,chartTickLabel,drawChart,drawDepartments:drawDepartmentMultiChart,makeTable,tableCsvButton,initTheme,initChartTooltip,redrawCharts,renderMultiFilter,periodEnd,shiftPeriod,displayDay,displayPeriod,metricTitle,departmentChartTitle,chartRenders});\n';
  let html=source.replace(/<script>[\s\S]*?<\/script>/g,'');
+ const comparisonPlots=/<div id="comparisonTable"><\/div><div id="comparisonCharts"><\/div>\s*<details id="comparisonDynamics"[^>]*>[\s\S]*?<\/details>/;
+ if(!comparisonPlots.test(html))throw Error('Original comparison charts changed');
+ html=html.replace(comparisonPlots,`
+        <section id="comparisonDynamics" class="extended-section" aria-labelledby="comparisonDynamicsHeading" hidden>
+          <h3 id="comparisonDynamicsHeading">Линейный график по периодам</h3>
+          <p class="muted small">У каждого подразделения своя линия. Пропуски разрывают линию.</p>
+          <div id="comparisonDynamicsPlots"></div>
+        </section>
+        <div id="comparisonCharts" role="region" aria-label="График итогов по подразделениям"></div>
+        <div id="comparisonTable"></div>`);
+
  // Extend the shared preference only in the installed application.
  const compactSizes=['80','90'];
  script+=`\nUI_SIZES.unshift(...${JSON.stringify(compactSizes)});\n`;

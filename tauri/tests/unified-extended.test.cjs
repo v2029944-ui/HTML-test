@@ -230,14 +230,13 @@ test('department comparison dynamics include selected organizations beyond eight
  const f=fixture({
   nativeAnalysisOrganizations:async()=>organizations.map(org=>({org,complete:true,missing:0,total:{count:2.5,amount:-10.75,average:-4.3}})),
   nativeOrganizationTrends:async(_rev,_kind,_from,_to,orgs)=>{
-   queries.push(Array.from(orgs));return {granularity:'period',series:orgs.slice(0,8).map(organization=>({organization,points:[{start:'2024-01-02',missing:0,total:{count:2.5,amount:-10.75,average:-4.3}}]}))};
+   queries.push(Array.from(orgs));return {granularity:'period',series:orgs.map(organization=>({organization,points:['2024-01-01','2024-01-02'].map(start=>({start,missing:0,total:{count:2.5,amount:-10.75,average:-4.3}}))}))};
   }
  });
  f.UI.drawChart=(...args)=>plots.push(args);f.UI.snapshot.org_names=organizations;
- f.nodes.get('comparisonDynamics').open=true;
- f.publish({organizations});f.nodes.get('comparisonMode').value='organizations';f.nodes.get('comparisonBaseOrg').value='Org 0';
+ f.publish({organizations,overviewMode:'range'});f.nodes.get('comparisonMode').value='organizations';f.nodes.get('comparisonBaseOrg').value='Org 0';
  f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');await settle();
- const chart=plots.filter(args=>args[4].orientation).at(-1);
+ const chart=plots.find(args=>args[4].chart==='line');
  assert.equal(chart[4].data[0].get('Org 9')?.amount,-10.75);
  assert.deepEqual(queries,[organizations.slice(0,8),organizations.slice(8)]);
 });
@@ -582,7 +581,7 @@ test('contribution detail respects the selected work scope used by its parent co
  assert.match(f.nodes.get('contributionCheck').textContent,/все работы/);
 });
 
-test('department comparison fetches its duplicate historical charts only when expanded',async()=>{
+test('department comparison loads a line chart automatically only for a range',async()=>{
  let trendReads=0;
  const values=[{org:'A',complete:true,missing:0,total:{count:5,amount:10,average:2}}];
  const f=fixture({
@@ -597,9 +596,13 @@ test('department comparison fetches its duplicate historical charts only when ex
  f.nodes.get('comparisonMode').value='organizations';f.nodes.get('comparisonBaseOrg').value='A';
  await f.window.unifiedExtended.openComparison();await settle();
  assert.equal(trendReads,0);
- const details=f.nodes.get('comparisonDynamics');
- details.open=true;details.dispatch('toggle');await settle();
+ const chart=f.nodes.get('comparisonDynamics');
+ assert.equal(chart.hidden,true);
+ f.publish({overviewMode:'range'});
+ await f.window.unifiedExtended.openComparison();
  assert.equal(trendReads,1);
+ assert.equal(chart.hidden,false);
+ assert.match(f.nodes.get('comparisonDynamicsPlots').textContent,/один период/);
 });
 
 test('switching comparison type clears the previous results before SQL completes',async()=>{
@@ -640,4 +643,47 @@ test('comparison displays both partial intervals without calculating deltas from
  const table=f.tables.find(t=>t.root==='comparisonTable'&&t.metric==='amount');
  assert.ok(table);assert.deepEqual(Array.from(table.options.csvRows[1]),['W',20,30,null,null]);
  assert.match(f.nodes.get('comparisonCoverage').textContent,/неполн/i);
+});
+
+test('department comparison graphs one selected metric, preserving zero and missing values',async()=>{
+ const plots=[],requests=[];
+ const empty={count:null,amount:null,average:null};
+ const point=(start,amount)=>({start,missing:Number(amount===null),total:{count:amount,amount,average:null}});
+ const trends=[
+  {organization:'A',points:[point('2024-01',0),point('2024-02',9)]},
+  {organization:'B',points:[point('2024-01',null),point('2024-02',3)]}
+ ];
+ const f=fixture({
+  nativeAnalysisOrganizations:async()=>[
+   {org:'A',total:{amount:0},complete:true,missing:0},
+   {org:'B',total:empty,available_total:{amount:3},complete:false,missing:1}
+  ],
+  nativeOrganizationTrends:async(...args)=>{requests.push(args);return {granularity:'month',series:trends};}
+ });
+ f.UI.drawChart=(...args)=>plots.push(args);
+ f.UI.state.selectedMetrics=new Set(['amount']);
+ f.window.referenceDetail={active:'comparison'};
+ f.publish({organizations:['A','B','C'],overviewMode:'range',displayType:'month',to:'2024-02-29'});
+ f.nodes.get('comparisonMode').value='organizations';
+ await f.window.unifiedExtended.openComparison();
+ const [totals,trend]=plots;
+ assert.deepEqual(Array.from(requests[0].slice(2,4)),['2024-01-01','2024-02-29']);
+ assert.deepEqual(Array.from(requests[0][4]),['A','B','C']);
+ assert.equal(requests[0][6],'month');
+ assert.deepEqual(Array.from(requests[0][7]),['Work']);
+ assert.equal(totals[2],'amount');
+ assert.equal(totals[4].hideZeroRankingRows,false);
+ assert.equal(totals[4].data[0].get('A').amount,0);
+ assert.equal(totals[4].data[0].get('B').amount,3);
+ assert.equal(totals[4].data[0].get('C').amount,null);
+ assert.equal(trend[2],'amount');
+ assert.equal(trend[4].chart,'line');
+ assert.deepEqual(Array.from(trend[0],period=>period.end),['2024-01-31','2024-02-29']);
+ assert.deepEqual(Array.from(trend[4].categories),['A','B','C']);
+ assert.equal(trend[4].data[0].get('A').amount,0);
+ assert.equal(trend[4].data[0].get('B').amount,null);
+ assert.equal(trend[4].data[0].get('C').amount,null);
+ assert.equal(trend[4].data[1].get('B').amount,3);
+ assert.match(trend[4].pointNotice(0,['A','B','C']),/B, C/);
+ assert.equal(trend[4].pointNotice(0,['A']),'');
 });
