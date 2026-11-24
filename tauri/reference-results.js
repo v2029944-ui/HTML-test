@@ -2,7 +2,7 @@
 (function(){
 'use strict';
 const api=window.desktopAPI,$=selector=>document.querySelector(selector),all=selector=>[...document.querySelectorAll(selector)];
-const titles=window.analysisSummary.titles,categories={up:'Рост',down:'Снижение',new:'Новые работы',gone:'Без выполнений'};
+const {titles,observed,incomplete}=window.analysisSummary,categories={up:'Рост',down:'Снижение',new:'Новые работы',gone:'Без выполнений'};
 let initialized=false,scope=null,screen='s1',generation=0,changesTicket=0,modalTicket=0,searchTimer=null,summaryData=null,changeData=null,changeRequest=null;
 let modalHeading=null,shownSummaryRevision=null,shownChangesRevision=null,scopeBlocked=false;
 let kind='significant',page=0,percent=30,minCount=5,minAmount=1000;
@@ -70,12 +70,12 @@ function notice(root,s,comparable,summary){
  const current=summary?.after,baseline=summary?.before;
  const n=$(root+' .quality-notice');if(!n)return;const span=n.querySelector('span');const excluded=s.organizations.filter(org=>!comparable.includes(org));
  const warnings=historicalQuality(current);
- const missingAmount=[current,baseline].some(period=>period?.available_reports>0&&period?.available_total?.amount==null);
- const amountNotice=missingAmount?' В некоторых строках сумма не указана. Количество учтено.':'';
+ const missingAmount=[current,baseline].some(period=>period?.available_reports>0&&(period.amount_missing_rows===true || (period.amount_missing_rows==null&&period?.available_total?.amount==null)));
+ const amountNotice=missingAmount?' В некоторых строках сумма не указана. Количество учтено, показана сумма заполненных ячеек.':'';
  const gap=current?.missing===1&&baseline?.missing===0?current.single_missing:baseline?.missing===1&&current?.missing===0?baseline.single_missing:null;
  const detail=excluded.length===1&&gap?.org===excluded[0]&&date(gap.start)!=='—'?' · '+date(gap.start)+': нет пригодного отчёта':'';
  n.hidden=!excluded.length&&current?.complete===true&&!warnings&&!missingAmount;
- span.textContent=(current?.available_reports>0&&current?.complete===false?'Итоги частичные. ':'')+comparisonStatus(comparable.length,s.organizations.length,summary)+(excluded.length?' Исключены из сравнения: '+excluded.join(', ')+detail+'.':'')+(warnings?' '+warnings:'')+amountNotice+' Пропуски не считаются нулём. Наличие отчётов не подтверждает полноту источника.';
+ span.textContent=(current?.available_reports>0&&current?.complete===false?'Итоги частичные. ':'')+comparisonStatus(comparable.length,s.organizations.length,summary)+(excluded.length?' Исключены из сравнения: '+excluded.join(', ')+detail+'. Доступные значения показаны.':'')+(warnings?' '+warnings:'')+amountNotice+' Пропуски не считаются нулём. Наличие отчётов не подтверждает полноту источника.';
 }
 function appendTableRow(body,values){
  const tr=el('tr');
@@ -96,15 +96,15 @@ async function refreshSummary(s,ticket){
   if(!current())return;
   const rows=[];
   for(let offset=0;offset<organizations.length;offset+=4){const part=await Promise.all(organizations.slice(offset,offset+4).map(async org=>{
-   if(org.complete)return {...org,observed:org.total};const partial=await api.nativeAnalysisRange(s.revision,s.type,s.from,s.to,[org.org]);return {...org,observed:partial.available_reports>0?partial.available_total:null};
+   if(org.available_total||org.complete)return {...org,observed:observed(org)};const partial=await api.nativeAnalysisRange(s.revision,s.type,s.from,s.to,[org.org]);return {...org,observed:partial.available_reports>0?partial.available_total:null};
   }));if(!current())return;rows.push(...part);}
   rows.sort((a,b)=>{const av=a.observed?.amount,bv=b.observed?.amount;if(Number.isFinite(av)!==Number.isFinite(bv))return Number.isFinite(av)?-1:1;return (Number.isFinite(av)&&av!==bv?bv-av:0)||a.org.localeCompare(b.org,'ru');});
-  const after=result.summary.after,observed=after.complete?after.total:after.available_reports>0?after.available_total:null;
-  captions(s,['#s1']);shownSummaryRevision=s.revision;summaryData={scope:s,result,comparison:comparable.length?comparison:null,organizations:rows,observed,comparable};$('#s1 .data-card button').disabled=false;
-  summaryCards(observed,comparable.length?comparison:{summary:{}},comparable.length,s.organizations.length);notice('#s1',s,comparable,result.summary);if(screen==='s2'&&changeData)notice('#s2',s,changeData.comparable,result.summary);summaryLeaders(comparable.length?comparison:null,s.metric);
-  const totalAmount=observed?.amount;
+  const after=result.summary.after,available=observed(after);
+  captions(s,['#s1']);shownSummaryRevision=s.revision;summaryData={scope:s,result,comparison:comparable.length?comparison:null,organizations:rows,observed:available,comparable};$('#s1 .data-card button').disabled=false;
+  summaryCards(available,comparable.length?comparison:{summary:{}},comparable.length,s.organizations.length);notice('#s1',s,comparable,result.summary);if(screen==='s2'&&changeData)notice('#s2',s,changeData.comparable,result.summary);summaryLeaders(comparable.length?comparison:null,s.metric);
+  const totalAmount=after.amount_missing_rows?null:available?.amount;
   writeTable($('#s1 table'),['Подразделение',titles.amount,titles.count,'Доля суммы'],rows.map(org=>{
-   const label=el('span',org.org+(org.complete?'':' (частичные данные)'));if(!comparable.includes(org.org)){const warning=button('',e=>openSample(e.target.closest?e.target.closest('button'):e.target),'org-warning');warning.setAttribute('aria-label',org.org+' · неполные отчёты. Показать состав сравнения');warning.title='Недостаточно пригодных отчётов за базовый или анализируемый интервал';const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('width','17');icon.setAttribute('height','17');icon.setAttribute('fill','none');icon.setAttribute('stroke-width','1.7');icon.setAttribute('aria-hidden','true');const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d','M12 3 2 21h20L12 3zM12 10v5M12 18v.5');icon.append(path);warning.append(icon);label.append(warning);}const value=org.observed;
+   const label=el('span',org.org+(incomplete(org)?' (частичные данные)':''));if(!comparable.includes(org.org)){const warning=button('',e=>openSample(e.target.closest?e.target.closest('button'):e.target),'org-warning');warning.setAttribute('aria-label',org.org+' · неполные отчёты. Показать состав сравнения');warning.title='Недостаточно пригодных отчётов за базовый или анализируемый интервал';const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('width','17');icon.setAttribute('height','17');icon.setAttribute('fill','none');icon.setAttribute('stroke-width','1.7');icon.setAttribute('aria-hidden','true');const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d','M12 3 2 21h20L12 3zM12 10v5M12 18v.5');icon.append(path);warning.append(icon);label.append(warning);}const value=org.observed;
    const share=Number.isFinite(value?.amount)&&Number.isFinite(totalAmount)&&totalAmount>0?100*value.amount/totalAmount:null,shareCell=el('span',Number.isFinite(share)?new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1,minimumFractionDigits:1}).format(share)+'%':'—');if(Number.isFinite(share)&&share>=0){const bar=el('div',null,'bar'),fill=el('i');fill.style.width=Math.min(100,share)+'%';bar.append(fill);shareCell.append(bar);}return [label,fmt(value?.amount,'amount'),fmt(value?.count,'count'),shareCell];
   }));
  }catch(error){if(current()){captions(s,['#s1']);shownSummaryRevision=null;summaryData=null;writeTable($('#s1 table'),['Подразделение',titles.amount,titles.count,'Доля суммы'],[]);summaryLeaders(null,s.metric);summaryCards(null,{summary:{}},0,0);$('#s1 .quality-notice').hidden=false;$('#s1 .quality-notice span').textContent='Не удалось рассчитать сводку: '+textError(error);}}
@@ -162,12 +162,12 @@ async function loadChanges(s,captured,current,focusAnchor){
   const result=await api.referenceChanges(captured);if(!current())return;
   if(!Array.isArray(result?.rows)||result.rows.length>12||!Number.isSafeInteger(result.total)||result.total<0||!Number.isSafeInteger(result.searched)||!Number.isSafeInteger(result.significant)||result.significant<0||result.searched<result.significant||result.searched<result.total||!Array.isArray(result.comparable)||!Object.keys(categories).every(key=>Number.isSafeInteger(result.counts?.[key])&&result.counts[key]>=0))throw Error('Некорректная страница SQL-изменений.');
   captions(s,['#s2']);shownChangesRevision=s.revision;changeData=result;changeRequest=captured;renderCounts(result.counts);renderChangeLeader(result.leader,s.metric);notice('#s2',s,result.comparable,summaryData?.result.summary);
-  const excluded=s.organizations.filter(x=>!result.comparable.includes(x)),chip=$('#s2 .excluded-orgs');if(chip){chip.hidden=!excluded.length;chip.textContent='без '+excluded.join(', ');}
+  const excluded=s.organizations.filter(x=>!result.comparable.includes(x)),chip=$('#s2 .excluded-orgs');if(chip){chip.hidden=!excluded.length;chip.textContent='Без расчёта изменений: '+excluded.join(', ');}
   changeLabels(s);
   const changes=result.rows.map(row=>displayedChange(row.delta,s.metric));
   const rows=result.rows.map((row,i)=>[row.name,row.org,fmt(row.before,s.metric),fmt(row.after,s.metric),changes[i].value,pct(row.percent)]);writeTable($('#s2 .changes-table'),['Работа','Подразделение','Было','Стало','Изменение','Изменение, %'],rows);for(const [i,tr]of all('#s2 .changes-table tbody tr').entries()){const row=result.rows[i],direction=changes[i].direction;tr.children[4].className='num '+direction;tr.children[5].className='num '+direction;const mobile=el('td',null,'mobile-position'),heading=el('div',null,'position-heading'),metric=el('div',null,'position-metric');mobile.setAttribute('colspan','6');heading.append(el('strong',row.name),el('span',row.org));metric.append(el('span',titles[s.metric]),el('strong',changes[i].value+' · '+pct(row.percent),direction),el('span','Было '+fmt(row.before,s.metric)+' → стало '+fmt(row.after,s.metric),'position-history'));mobile.append(heading,metric);tr.append(mobile);}
   const empty=$('#s2 .table-empty');empty.hidden=Boolean(rows.length);empty.replaceChildren();if(!rows.length){const filtered=captured.search||!['significant','all'].includes(kind);empty.append(el('strong',!result.comparable.length?'Нет сопоставимых позиций':filtered?'Совпадений нет':kind==='significant'?'Значимых изменений нет':'Нет выполненных работ'),el('p',!result.comparable.length?'Проверьте отчёты за оба периода и выбранные подразделения. Пропуски не считаются нулём.':'Измените запрос, категорию или чувствительность.'));if(filtered)empty.append(button('Сбросить поиск и категорию',()=>{$('#s2 input[placeholder]').value='';kind='significant';page=0;return refreshChanges();}));}
-  const note=$('#s2 .match-note');note.hidden=false;note.replaceChildren(el('span',kind==='all'?'Все позиции · '+result.searched:kind==='significant'?'Значимые позиции · '+result.significant:'Фильтр · '+categories[kind]));if(kind!=='significant')note.append(button('Только значимые',()=>{kind='significant';page=0;return refreshChanges();}));if(kind!=='all'&&result.searched>result.significant)note.append(button('Показать все '+result.searched,()=>{kind='all';page=0;return refreshChanges();}));
+  const note=$('#s2 .match-note');note.hidden=false;note.replaceChildren(el('span',kind==='all'?'Все позиции · '+result.searched:kind==='significant'?(result.partial_fallback&&result.total?'Доступные значения · '+result.total+' · Изменение недоступно':'Значимые позиции · '+result.significant):'Фильтр · '+categories[kind]));if(kind!=='significant')note.append(button('Только значимые',()=>{kind='significant';page=0;return refreshChanges();}));if(kind!=='all'&&result.searched>result.significant)note.append(button('Показать все '+result.searched,()=>{kind='all';page=0;return refreshChanges();}));
   pageControls(result.total,captured,result.rows.length);$('#s2 [data-export-changes]').disabled=result.total===0;
  }catch(error){if(current()){captions(s,['#s2']);clearChanges(s,'Не удалось рассчитать изменения: '+textError(error));}}
  finally{if(current()){
@@ -247,14 +247,15 @@ async function printScreen(event){
   if(tab==='s1'){
    root.append(el('h1','Сводка выполненных работ'));printContext(root,s,data.comparable,data.comparison?.summary,data.result);
    root.append(el('h2','Наблюдаемые итоги за анализируемый период'),el('p','Все выбранные подразделения; при пропусках итог частичный и отличается от сопоставимой выборки.'));
-   const observed=data.result.summary.after,totals=observed.complete?observed.total:observed.available_total;
-   printTable(root,['Показатель','Наблюдаемое значение'],['amount','count','average'].map(metric=>[titles[metric],fmt(observed.available_reports===0?null:totals?.[metric],metric)]),'print-observed');
+   const after=data.result.summary.after,totals=observed(after);
+   printTable(root,['Показатель','Наблюдаемое значение'],['amount','count','average'].map(metric=>[titles[metric],fmt(after.available_reports===0?null:totals?.[metric],metric)]),'print-observed');
    printTable(root,['Подразделение',titles.amount,titles.count,'Доля суммы'],all('#s1 table tbody tr').map(row=>[...row.children].map(cell=>cell.textContent)),'print-organizations');
   }else{
    root.append(el('h1',changeTitle(captured.kind)),el('p','Показатель: '+titles[captured.metric]));
    const comparable=data.comparable;let overview=summaryData?.scope===s?summaryData.result:null;if(!overview){overview=await api.nativeAnalysisCompare(s.revision,s.type,s.baseFrom,s.baseTo,s.from,s.to,s.organizations);if(!current())return;}let comparison=summaryData?.scope===s&&JSON.stringify(summaryData.comparable)===JSON.stringify(comparable)?summaryData.comparison?.summary:null;
    if(comparable.length&&!comparison){comparison=(await api.nativeAnalysisCompare(s.revision,s.type,s.baseFrom,s.baseTo,s.from,s.to,comparable)).summary;if(!current())return;}
    printContext(root,s,comparable,comparison,overview);
+   if(data.partial_fallback&&data.total)root.append(el('p','Показаны доступные значения. Изменения для неполных данных не рассчитываются.'));
    root.append(el('p','Фильтр: '+changeTitle(captured.kind)+(captured.search?' · Поиск: '+captured.search:'')+' · Сортировка: '+({delta:'по величине изменения',percent:'по изменению, %',name:'по названию'}[captured.sort]||captured.sort)),el('p','Порог: '+captured.percent+'% · Количество / объём: '+captured.minCount+' · Сумма: '+captured.minAmount));
    const totalLine=el('p'),table=el('table',null,'print-changes');
    let rowCount=0;

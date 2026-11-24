@@ -695,9 +695,12 @@ impl Storage {
         let mut conn = self.connect()?;
         let tx = conn.transaction().map_err(err)?;
         workspace(&tx, revision, s)?;
-        let (base_complete, current_complete) = comparison(&tx, s, &q, None)?;
+        let (base_complete, mut current_complete) = comparison(&tx, s, &q, None)?;
         let mut result = json!({"baseComplete":base_complete,"currentComplete":current_complete,"total_rows":0,"rows":[],"next":null});
-        if !current_complete || (mode == "contributions" && !base_complete) {
+        if mode == "contributions" && !(current_complete && base_complete) {
+            return Ok(result);
+        }
+        if mode == "structure" && !observed_reports(&tx,2,None)? {
             return Ok(result);
         }
         // Explicitly selected names absent in both ranges are added by the
@@ -711,10 +714,18 @@ impl Storage {
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .map_err(err)?;
-        let Some(at) = at else {
-            result["currentComplete"] = json!(false);
-            return Ok(result);
-        };
+        current_complete &= at.is_some();
+        result["currentComplete"] = json!(current_complete);
+        // The structure can list observed values even where the full
+        // denominator is unknown. Such rows never receive shares.
+        let a = if mode == "structure" && metric == "amount" { "coalesce(ca,a_known)" } else { a };
+        let current_total = if mode == "structure" && at.is_none() {
+            range_summary(&tx,s,2)?.available_total.amount
+        } else { at };
+        let Some(at) = current_total else { return Ok(result); };
+        if mode == "structure" {
+            result["currentAvailable"] = json!(true);
+        }
         let base_complete = base_complete && bt.is_some();
         result["baseComplete"] = json!(base_complete);
         if mode == "contributions" && !base_complete {
@@ -725,7 +736,7 @@ impl Storage {
         let mut rows = Vec::new();
         if mode == "structure" {
             let (bv,av):(bool,bool)=tx.query_row(&format!("SELECT NOT EXISTS(SELECT 1 FROM an_comparison WHERE {b}<0),NOT EXISTS(SELECT 1 FROM an_comparison WHERE {a}<0)"),[],|r|Ok((r.get(0)?,r.get(1)?))).map_err(err)?;
-            let valid = av && at > 0.;
+            let valid = current_complete && av && at > 0.;
             let base_valid = bv && bt.is_some_and(|n| n > 0.) && base_complete;
             let locale: icu_provider::DataLocale = "ru".parse().map_err(err)?;
             let collator =
@@ -756,9 +767,9 @@ impl Storage {
                 let name: String = r.get(1).map_err(err)?;
                 let kind: Option<String> = r.get(2).map_err(err)?;
                 let base: Option<f64> = r.get(3).map_err(err)?;
-                let current: f64 = r.get(4).map_err(err)?;
-                cumulative = finite(cumulative + current)?;
-                let share = percent_of(current, at, valid)?;
+                let current: Option<f64> = r.get(4).map_err(err)?;
+                if let Some(value) = current { cumulative = finite(cumulative + value)?; }
+                let share = current.map(|value| percent_of(value,at,valid)).transpose()?.flatten();
                 let base_share = base.zip(bt).map(|(base,bt)| percent_of(base,bt,base_valid)).transpose()?.flatten();
                 let mut row = json!({"key":key,"name":name,"base":base.filter(|_|base_complete),"current":current,"share":share,"baseShare":base_share,"cumulative":percent_of(cumulative,at,valid)?,"shareChange":share.zip(base_share).map(|(a,b)|a-b)});
                 if kind.is_some() {

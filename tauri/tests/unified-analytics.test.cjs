@@ -152,7 +152,7 @@ test('incomplete coverage remains visible and opens a missing-org/day matrix',as
  assert.ok(details);details.open=true;details.dispatch('toggle');await settle();
  assert.match(details.textContent,/Подразделение/);assert.match(details.textContent,/02\.01\.2024/);
  assert.match(details.textContent,/Нет/);assert.match(f.nodes.get('overviewAlerts').textContent,/Проверить данные/);
- assert.match(f.nodes.get('overviewKpis').textContent,/—/);
+ assert.match(f.nodes.get('overviewKpis').textContent,/20Частичное значение/);
  f.nodes.get('printSummary').dispatch('click');assert.match(f.nodes.get('printReport').textContent,/Частичный итог/);
 });
 test('pending and empty sources immediately publish a null scope',async()=>{
@@ -703,4 +703,22 @@ test('overview keeps its extra metrics across a new interval until the shared me
  assert.deepEqual([...f.UI.state.selectedMetrics],['amount','count']);
  await f.window.unifiedAnalytics.applyReferenceScope({...scope,metric:'count'});
  assert.deepEqual([...f.UI.state.selectedMetrics],['count']);
+});
+
+test('plots and tabulates available work amounts while leaving absent dates blank',async()=>{
+ const unknown={count:null,amount:null,average:null};
+ const points=[
+  {start:'2024-01-01',periods:1,missing:0,total:{count:5,amount:null,average:null},available_total:{count:5,amount:20,average:null}},
+  {start:'2024-01-02',periods:1,missing:1,total:unknown,available_total:{count:4,amount:30,average:7.5}},
+  {start:'2024-01-03',periods:1,missing:2,total:unknown,available_total:unknown}
+ ];
+ const result={granularity:'period',points,buckets_with_reports:points.slice(0,2).map(p=>p.start)};
+ const f=fixture({nativeAnalysisTimeline:async()=>result,nativeWorkTimeline:async()=>result});
+ await f.bootstrap();f.nodes.get('advancedAnalytics').open=true;f.nodes.get('advancedAnalytics').dispatch('toggle');
+ f.buttons.find(b=>b.dataset.chart==='line').dispatch('click');await settle();
+ const opts=f.draws.findLast(d=>d[2]==='amount')[4];
+ assert.deepEqual(Array.from(opts.data,point=>point?.get('work:W').amount??null),[20,30,null]);
+ assert.match(f.nodes.get('chartHelp').textContent,/частичн/i);
+ f.buttons.find(b=>b.dataset.chart==='table').dispatch('click');await settle();
+ assert.deepEqual(Array.from(f.tables.findLast(t=>t.root==='dataTable'&&t.metric==='amount').options.csvRows[1]),['W',20,30,null]);
 });

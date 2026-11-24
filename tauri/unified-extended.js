@@ -2,7 +2,7 @@
 (function(){
 'use strict';
 const UI=window.unifiedUI,$=UI.$,api=UI.api;
-const titles=window.analysisSummary.titles;
+const {titles,observed,incomplete}=window.analysisSummary;
 const usualLabels={normal:'Обычный уровень',high:'Необычно выше',low:'Необычно ниже',insufficient:'Недостаточно данных'};
 const regularLabels={frequent:'Часто',rare:'Редко',rarer:'Заметно реже',disappeared:'Перестала встречаться',new:'Впервые в загруженной истории',dormant:'Долго без выполнений',occasional:'Встречается',absent:'Нет выполнений',uncertain:'Есть пропуски',unknown:'Нет сопоставимых отчётов'};
 const channels=new Map();
@@ -97,8 +97,8 @@ function entryLabel(entry,name=entry.name){return name+(entry.kind==='group'?' (
 function itemButton(entry,s,organization=null,target='analytics',label=entryLabel(entry,workLabel(entry.name))){const button=UI.el('button',label,'service-link text-button');button.type='button';button.dataset.historyEntry=JSON.stringify([entry.key,organization,s.from,s.to]);button.addEventListener('click',()=>history({...entry,name:label},s,organization,target,button));return button;}
 function plotTimeline(result,entry,s,root,chosenMetrics,seriesType){
  const points=result.points||[],periods=window.analysisSummary.timelinePeriods(points,result.granularity,s,periodEnd);
- const data=points.map(p=>p.missing===0?new Map([[entry.key,p.total]]):null);
- for(const metric of chosenMetrics){const section=UI.el('section',null,'metric-chart'),plot=UI.el('div',null,'metric-plot');section.append(UI.el('h3',titles[metric]),plot);root.append(section);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'bar',orientation:orientation(),categories:[entry.key],data,label:()=>entry.name,seriesType});}
+ const data=points.map(p=>Number.isFinite(observed(p)?.count)?new Map([[entry.key,observed(p)]]):null);
+ for(const metric of chosenMetrics){const section=UI.el('section',null,'metric-chart'),plot=UI.el('div',null,'metric-plot');section.append(UI.el('h3',titles[metric]),plot);root.append(section);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'bar',orientation:orientation(),categories:[entry.key],data,label:()=>entry.name,seriesType,pointNotice:i=>incomplete(points[i])?'Неполные данные':''});}
 }
 const historyTriggers=new Map();
 function historyLinks(host,entry){return host?[...host.querySelectorAll('[data-history-entry]')].filter(button=>button.dataset.historyEntry===entry):[];}
@@ -215,11 +215,13 @@ async function sampleFor(s,ranges){
  const included=s.organizations.filter(org=>complete.every(list=>list.has(org)));
  return {included,excluded:s.organizations.filter(org=>!included.includes(org)),pages};
 }
-function sampleNote(root,sample,apply=false){
+function sampleNote(root,sample,apply=false,showPartial=false){
  if(!sample?.excluded.length)return;
  const banner=UI.el('div',null,'comparison-warning'),total=sample.included.length+sample.excluded.length;
  banner.append(UI.el('strong',sample.included.length?'Сопоставимые подразделения: '+sample.included.length+' из '+total:'Нет сопоставимых подразделений'),
-  UI.el('p','Исключены из расчёта: '+sample.excluded.join(', ')+'.'));
+  UI.el('p',showPartial?
+   'Неполные интервалы: '+sample.excluded.join(', ')+'. Показаны доступные значения. Разница и проценты требуют сопоставимых данных.':
+   'Исключены из расчёта: '+sample.excluded.join(', ')+'.'));
  const reasons=UI.el('details');reasons.append(UI.el('summary','Причины по подразделениям'));
  sample.pages.forEach((rows,index)=>{for(const org of sample.excluded){
   const row=rows.find(item=>item.org===org);
@@ -262,54 +264,54 @@ async function comparison(index=0,paging=false){
   const {before,after}=comparisonRanges(),s=scopeFor(after);
   const sample=referencePanel('comparison')?await sampleFor(s,[before,after]):null;
   if(!task.valid())return;
-  if(sample?.included.length)s.organizations=sample.included;
   const req=request(s,{percent:0,min_count:0,min_amount:0});
   const [dashboard,windowPage]=await Promise.all([api.nativeAnalysisCompare(s.revision,s.type,before.from,before.to,after.from,after.to,s.organizations,null,s.selectedNames),api.unifiedComparisonWindow(req,{from:before.from,to:before.to},null,index,50)]);
   if(!task.valid())return;for(const id of ['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis'])clear(id,'',false);
-  const page=windowPage.rows,summary=dashboard.summary;sampleNote($('comparisonCoverage'),sample,true);
+  const page=windowPage.rows,summary=dashboard.summary;sampleNote($('comparisonCoverage'),sample,true,true);
   $('comparisonHelp').textContent=workScopeText(s)+' Второй интервал сравнивается с первым по отмеченным работам. Прочерк — неполные данные; при нулевой базе процент не рассчитывается.';
   for(const [label,total] of [['Первый интервал',summary.before],['Второй интервал',summary.after]])$('comparisonCoverage').append(UI.el('p',label+': '+(total.complete?'Полные данные':'Неполные данные')+' · периодов '+total.periods+', пропусков: '+total.missing+' (подразделение × период)',total.complete?'muted small':'warn small'));
   const beforeComplete=summary.before.complete,afterComplete=summary.after.complete;
+  const beforeValues=observed(summary.before),afterValues=observed(summary.after);
+  const beforeObserved=beforeComplete||Number.isFinite(beforeValues?.count),afterObserved=afterComplete||Number.isFinite(afterValues?.count);
   if(!beforeComplete||!afterComplete){
-   $('comparisonCoverage').append(UI.el('p',
-    'Сравнение недоступно: '+(!beforeComplete&&!afterComplete?'не хватает отчётов базового и анализируемого периодов':!beforeComplete?'не хватает отчётов базового периода':'не хватает отчётов анализируемого периода')+
-    (!beforeComplete&&!afterComplete?'. Значения недоступны; пропуск не означает ноль.':'. Показаны только доступные показатели; прочерк не означает ноль.'),'warn small'));
+   $('comparisonCoverage').append(UI.el('p','Неполные данные '+(!beforeComplete&&!afterComplete?'базового и анализируемого периодов':!beforeComplete?'базового периода':'анализируемого периода')+
+    '. Показаны доступные показатели; пропуск не означает ноль.','warn small'));
+  }
+  if([summary.before,summary.after].some(period=>period.amount_missing_rows||
+     (period.complete&&Number.isFinite(observed(period)?.count)&&period.total.amount==null))){
+   $('comparisonCoverage').append(UI.el('p','В некоторых строках сумма не указана. Показана сумма заполненных ячеек.','warn small'));
   }
   contributionInput={before,after,sample};
-  if(!beforeComplete&&!afterComplete){
+  if(!beforeObserved&&!afterObserved){
    clear('comparisonTable','Нет доступных значений для сравнения: оба интервала неполны. Проверьте наличие отчётов или выберите другие периоды. Пропуск не означает ноль.');
    return;
   }
+  const onlyOne=beforeObserved!==afterObserved;
   for(const metric of metrics()){
-   const valueNow=summary.after.total[metric],valueBefore=summary.before.total[metric],card=UI.el('div',null,'kpi');
-   card.append(UI.el('span',titles[metric]+' · анализируемый период'),UI.el('strong',fmt(valueNow,metric)),
-    UI.el('small',beforeComplete&&afterComplete?difference(valueNow,valueBefore,metric).join(' · '):'Неполные данные'));
+   const now=afterValues?.[metric],old=beforeValues?.[metric],card=UI.el('div',null,'kpi');
+   const totalDiff=rawDifference(summary.after.total[metric],summary.before.total[metric]);
+   card.append(UI.el('span',titles[metric]+' · анализируемый период'),UI.el('strong',fmt(now,metric)),
+    UI.el('small',totalDiff[0]===null?'Сравнение недоступно':difference(now,old,metric).join(' · ')));
    $('kpis').append(card);
-   if(!beforeComplete||!afterComplete){
-    const showAfter=afterComplete,label=showAfter?'Значение сейчас':'Значение раньше',availableRange=showAfter?after:before;
-    const historyScope={...s,from:availableRange.from,to:availableRange.to};
-    const total=showAfter?valueNow:valueBefore;
-    const knownValue=entry=>entry.available?.[metric]??(entry[metric]||{})[showAfter?'current':'base'];
-    const visible=page.filter(entry=>Number.isFinite(knownValue(entry)));
-    if(!Number.isFinite(total)&&!visible.length)continue;
-    const raw=[['Итого по выбранным работам',total]],rows=[['Итого по выбранным работам',fmt(total,metric)]];
-    for(const entry of visible){const value=knownValue(entry);
-     rows.push([itemButton(entry,historyScope),fmt(value,metric)]);raw.push([entryLabel(entry),value]);}
-    UI.table($('comparisonTable'),metric,caption(availableRange),
-     ['Работа / группа',label],rows,{csvRows:raw,csvContext:fullExport(task,req,'comparison',metric,{before:{from:before.from,to:before.to}})});
-    continue;
+   const availableRange=afterObserved?after:before;
+   const combinedRange={...s,from:before.from<after.from?before.from:after.from,to:before.to>after.to?before.to:after.to};
+   const headers=onlyOne?['Работа / группа',afterObserved?'Значение сейчас':'Значение раньше']:
+    ['Работа / группа','Значение раньше','Значение сейчас','Разница','Изменение, %'];
+   const raw=[],rows=[];
+   function append(label,rawLabel,b,a,d,p){
+    if(!Number.isFinite(b)&&!Number.isFinite(a))return;
+    raw.push(onlyOne?[rawLabel,afterObserved?a:b]:[rawLabel,b,a,d,p]);
+    rows.push(onlyOne?[label,fmt(afterObserved?a:b,metric)]:[label,fmt(b,metric),fmt(a,metric),delta(d,metric),percent(p)]);
    }
-   const raw=[['Итого по выбранным работам',valueBefore,valueNow,...rawDifference(valueNow,valueBefore)]];
-   const rows=[['Итого по выбранным работам',fmt(valueBefore,metric),fmt(valueNow,metric),...difference(valueNow,valueBefore,metric)]];
+   append('Итого по выбранным работам','Итого по выбранным работам',old,now,...totalDiff);
    for(const entry of page){
-    const m=entry[metric]||{};
-    if(!Number.isFinite(m.base)&&!Number.isFinite(m.current))continue;
-    rows.push([itemButton(entry,{...s,from:before.from<after.from?before.from:after.from,to:before.to>after.to?before.to:after.to}),
-     fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent)]);
-    raw.push([entryLabel(entry),m.base,m.current,m.delta,m.percent]);
+    const measure=entry[metric]||{};
+    const b=entry.observed_before?.[metric]??measure.base??(beforeComplete&&!afterComplete?entry.available?.[metric]:null);
+    const a=entry.observed_after?.[metric]??measure.current??(afterComplete&&!beforeComplete?entry.available?.[metric]:null);
+    append(itemButton(entry,onlyOne?{...s,...availableRange}:combinedRange),entryLabel(entry),b,a,measure.delta??null,measure.percent??null);
    }
-   UI.table($('comparisonTable'),metric,caption(before)+' / '+caption(after),
-    ['Работа / группа','Значение раньше','Значение сейчас','Разница','Изменение, %'],rows,{csvRows:raw,csvContext:fullExport(task,req,'comparison',metric,{before:{from:before.from,to:before.to}})});
+   if(rows.length)UI.table($('comparisonTable'),metric,onlyOne?caption(availableRange):caption(before)+' / '+caption(after),
+    headers,rows,{csvRows:raw,csvContext:fullExport(task,req,'comparison',metric,{before:{from:before.from,to:before.to}})});
   }
   task.s.index=index;addBoundedPager($('comparisonTable'),task.s,page,i=>comparison(i,true),windowPage.total_rows);
  }catch(error){contributionInput=null;task.error(error);contributionTask.error(error);}
@@ -325,12 +327,11 @@ async function departmentComparison(task,index){
  const range=referencePanel('comparison')?scope:value('comparisonScope')==='range'?fieldsRange('comparisonRangeStart','comparisonRangeEnd'):fieldsRange('comparisonPeriod'),s=scopeFor(range),chosen=[...comparisonMetrics];let baseOrg=value('comparisonBaseOrg');
  const organizations=await api.nativeAnalysisOrganizations(s.revision,s.type,s.from,s.to,s.organizations,null,s.selectedNames);
  if(!task.valid())return;
- const reference=referencePanel('comparison'),included=reference?s.organizations.filter(org=>organizations.some(row=>row.org===org&&row.complete)):s.organizations;
+ const reference=referencePanel('comparison'),included=s.organizations.filter(org=>organizations.some(row=>row.org===org&&row.complete));
  const sample={included,excluded:s.organizations.filter(org=>!included.includes(org)),pages:[organizations]};
  const reset=()=>{for(const id of ['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis'])clear(id,'',false);};
  if(reference){
-  if(!included.length){reset();sampleNote($('comparisonCoverage'),sample,true);clear('comparisonTable','Нет подразделений с полным набором отчётов.');return;}
-  s.organizations=included;baseOrg=included.includes(baseOrg)?baseOrg:included[0];
+  baseOrg=s.organizations.includes(baseOrg)?baseOrg:s.organizations[0];
  }
  const workPage=s.allNames===true?await api.unifiedOrganizationWorkWindow(request(s),index,50):null;
  if(!task.valid())return;
@@ -356,23 +357,28 @@ async function departmentComparison(task,index){
   }
  }
  reset();
- if(reference){sampleNote($('comparisonCoverage'),sample,true);$('comparisonBaseOrg').replaceChildren(...included.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));$('comparisonBaseOrg').value=baseOrg;}
+ if(reference){sampleNote($('comparisonCoverage'),sample,true,true);$('comparisonBaseOrg').replaceChildren(...s.organizations.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));$('comparisonBaseOrg').value=baseOrg;}
  $('comparisonHelp').textContent='Общий интервал для подразделений. Разница относительно '+baseOrg+'. При нулевой базе процент не рассчитывается.';
- for(const org of organizations)$('comparisonCoverage').append(UI.el('p',org.org+': '+(org.complete?'Полные данные':'Неполные данные')+' · пропусков '+org.missing,org.complete?'muted small':'warn small'));
+ for(const org of organizations)$('comparisonCoverage').append(UI.el('p',org.org+': '+(incomplete(org)?'Неполные данные':'Полные данные')+' · пропусков '+org.missing+(org.complete&&incomplete(org)?' · есть строки без суммы':''),incomplete(org)?'warn small':'muted small'));
  for(const metric of chosen){const raw=[],rows=[];
-  const make=(label,values)=>[label,...s.organizations.flatMap(org=>{const n=values.find(o=>o.org===org)?.total?.[metric];return org===baseOrg?[fmt(n,metric)]:[fmt(n,metric),...difference(n,values.find(o=>o.org===baseOrg)?.total?.[metric],metric)];})];
-  const makeRaw=(label,values)=>{const base=values.find(o=>o.org===baseOrg)?.total?.[metric];return [label,...s.organizations.flatMap(org=>{const n=values.find(o=>o.org===org)?.total?.[metric]??null;return org===baseOrg?[n]:[n,...rawDifference(n,base)];})];};
+  const cells=(org,values)=>{
+   const row=values.find(o=>o.org===org),base=values.find(o=>o.org===baseOrg);
+   const n=observed(row)?.[metric]??null;
+   return org===baseOrg?[n]:[n,...rawDifference(row?.total?.[metric],base?.total?.[metric])];
+  };
+  const make=(label,values)=>[label,...s.organizations.flatMap(org=>cells(org,values).map((n,i)=>i===0?fmt(n,metric):i===1?delta(n,metric):percent(n)))];
+  const makeRaw=(label,values)=>[label,...s.organizations.flatMap(org=>cells(org,values))];
   rows.push(make('Итого по выбранным работам',organizations));raw.push(makeRaw('Итого по выбранным работам',organizations));
   for(const item of perName){const button=workPage?itemButton(item.entry,s,null,'analytics',item.entry.name):itemButton(item.entry,s);
    rows.push(make(button,item.rows));raw.push(makeRaw(workPage?item.entry.name:entryLabel(item.entry),item.rows));}
   UI.table($('comparisonTable'),metric,caption(range),['Работа / группа',...s.organizations.flatMap(org=>org===baseOrg?[org]:[org,org+' · разница',org+' · %'])],rows,{csvRows:raw,csvContext:fullExport(task,request(s),'organizations',metric,{baseOrg})});
   const plot=UI.el('div',null,'metric-plot');$('comparisonCharts').append(UI.el('h3',titles[metric]+' · '+caption(range)),plot);
-  UI.drawChart([{type:s.displayType,start:s.from,end:visibleEnd(s)}],new Set(s.organizations),metric,plot,{chart:'bar',seriesType:'organizations',categories:s.organizations,data:[new Map(organizations.map(o=>[o.org,o.total]))]});
+  UI.drawChart([{type:s.displayType,start:s.from,end:visibleEnd(s)}],new Set(s.organizations),metric,plot,{chart:'bar',seriesType:'organizations',categories:s.organizations,data:[new Map(organizations.map(o=>[o.org,observed(o)]))]});
  }
  if(workPage){task.s.index=index;addBoundedPager($('comparisonTable'),task.s,perName,i=>comparison(i,true),workPage.total_rows);}
  if(showDynamics&&trends&&$('comparisonDynamics').open){
   const first=trends.series?.[0]?.points||[],periods=window.analysisSummary.timelinePeriods(first,trends.granularity,s,periodEnd);
-  const data=first.map((p,i)=>new Map(trends.series.map(series=>[series.organization,series.points[i]?.missing===0?series.points[i].total:{count:null,amount:null,average:null}])));
+  const data=first.map((p,i)=>new Map(trends.series.map(series=>[series.organization,observed(series.points[i])])));
   for(const metric of chosen){const plot=UI.el('div',null,'metric-plot');$('comparisonDynamicsPlots').append(UI.el('h3',titles[metric]+' · '+caption(range)),plot);UI.drawChart(periods,new Set(s.organizations),metric,plot,{chart:'bar',orientation:orientation(),seriesType:'organizations',categories:s.organizations,data});}
  }
 }
@@ -414,16 +420,13 @@ async function structure(){
   const before=shared?.before.from?shared.before:fieldsRange('structureBase');
   const after=shared?shared.after:fieldsRange('structureCurrent');
   const metric=value('structureMetric'),s=scopeFor(after,value('structureScope')==='all'?{selectedNames:[],allNames:true}:{});
-  const sample=useShared?await sampleFor(s,[before,after]):null;
-  if(!task.valid())return;
-  if(sample){
-   if(!sample.included.length){clear('structureResults');sampleNote($('structureResults'),sample);return;}
-   s.organizations=sample.included;
-  }
   const page=await api.nativeCompositionPage(compositionRequest(s,{percent:0,min_count:0,min_amount:0}),{from:before.from,to:before.to},'structure',metric,null,Number(value('structureLimit')));
-  if(!task.valid())return;clear('structureResults');const root=$('structureResults');sampleNote(root,sample);
-  if(!page.currentComplete){clear('structureResults','Нет полного отчёта анализируемого периода. Доли не рассчитываются.');return;}
-  root.append(UI.el('p','Итог: '+fmt(page.total,metric),'small'));if(!page.sharesValid)root.append(UI.el('p','Есть отрицательные значения или неположительный итог: доли не рассчитываются.','warn small'));if(!page.baseComplete)root.append(UI.el('p','Базовый период неполон: изменение долей недоступно.','warn small'));
+  if(!task.valid())return;clear('structureResults');const root=$('structureResults');
+  if(!page.currentComplete&&!page.currentAvailable){clear('structureResults','Нет доступных значений за анализируемый период.');return;}
+  root.append(UI.el('p',(page.currentComplete?'Итог: ':'Частичный итог: ')+fmt(page.total,metric),'small'));
+  if(!page.currentComplete)root.append(UI.el('p','Неполные отчёты или суммы. Показаны доступные значения; доли не рассчитываются.','warn small'));
+  else if(!page.sharesValid)root.append(UI.el('p','Есть отрицательные значения или неположительный итог: доли не рассчитываются.','warn small'));
+  if(!page.baseComplete)root.append(UI.el('p','Базовый период неполон: изменение долей недоступно.','warn small'));
   const visible=page.rows.filter(row=>Number.isFinite(row.current)&&row.current!==0);
   const selectedLimit=Number(value('structureLimit'));
   if(visible.length<selectedLimit)root.append(UI.el('p','Показано '+visible.length+' из '+selectedLimit+': у остальных нет ненулевых значений за этот период.','muted small'));

@@ -959,6 +959,57 @@ def check_filtered_zero_chart(page, temporary, output):
     expect(line).to_have_attribute('aria-pressed', 'true')
 
 
+def check_partial_amount_charts(page, temporary, output):
+    snapshot=api(page,'nativeSettingsBootstrap')
+    first,second,*_=snapshot['org_names']
+    for day,first_amount,second_amount in [(1,20,30),(2,40,50)]:
+        source=temporary/f'partial-amount-{day}.xlsx'
+        source.write_bytes(quality_evidence_xlsx([
+            ['Работа','Количество','Сумма'],
+            [first,5,first_amount],['Сумма известна',2,first_amount],['Пустая сумма',3,None],
+            [second,4,second_amount],['Сумма известна',4,second_amount],
+        ]))
+        options={'sheet':'xl/worksheets/sheet1.xml','kind':'day','start':f'2018-01-0{day}',
+                 'organizations':snapshot['org_names']}
+        preview=api(page,'nativeLegacyImportPreview',str(source),options)
+        assert preview['reportCount']==1 and preview['rowCount']==3,preview
+        result=api(page,'nativeLegacyImportApply',str(source),options,preview['reviewToken'],
+                   {'replaceExact':False,'acceptCrossType':False,'acceptQuality':True})
+        assert result['reports']==1 and result['rows']==3,result
+    page.evaluate('window.unifiedUI.refresh()')
+    open_daily_overview(page,'2018-01-01')
+    filters=page.locator('#reportShell .filter-fold')
+    if not filters.evaluate('node => node.open'):
+        filters.locator(':scope > summary').click()
+    select_filter_period(filters,'День','range')
+    choose_calendar_date(page,filters.locator('[data-date="start"]'),'2018-01-01')
+    choose_calendar_date(page,filters.locator('[data-date="end"]'),'2018-01-03')
+    filters.locator('[data-measure]').select_option('amount')
+    navigate(page,'chartPanel')
+    page.locator('#chartBreakdown').select_option('organizations')
+    layout=page.locator('#chartSeriesLayout')
+    if layout.is_visible():
+        layout.select_option('separate')
+    page.locator('#hideEmptyPeriods').uncheck()
+    line=page.locator('#chartPanel [data-reference-line]')
+    if line.get_attribute('aria-pressed')!='true':
+        line.click()
+    chart=page.locator('#chartsContainer')
+    expect(chart.locator('svg polyline.chart-series').first).to_be_visible()
+    fmt=lambda n:page.evaluate('n=>window.unifiedUI.fmt(n,"amount")',n)
+    for name,amount in [(first,20),(second,30)]:
+        expect(chart.locator(f'svg circle[data-chart-tooltip*="{name}"][data-chart-tooltip*="01.01.2018: {fmt(amount)}"]').first).to_be_visible()
+    expect(chart.locator('svg circle[data-chart-tooltip*="03.01.2018"]')).to_have_count(0)
+    expect(page.locator('#chartHelp')).to_contain_text('Частичные значения')
+    chart.screenshot(path=str(output/'windows-sql-partial-amount-chart.png'))
+    page.locator('#chartPanel [data-chart="table"]').click()
+    rows=page.locator('#dataTable table tbody tr')
+    for name,amount in [(first,20),(second,30)]:
+        row=rows.filter(has_text=name).filter(has_text='Сумма').first
+        expect(row).to_contain_text(fmt(amount))
+        expect(row).to_contain_text('—')
+
+
 def check_omitted_detail_evidence(page, temporary, output):
     source=temporary/'omitted-detail.xlsx';original=omitted_detail_xlsx();source.write_bytes(original)
     snapshot=api(page,'nativeSettingsBootstrap');before=snapshot['reports']
@@ -1204,14 +1255,13 @@ def check_extended(page):
     expect(reset).to_be_hidden()
     expect(editor).to_be_focused()
     expect(page.locator('#comparison .detail-date-scope')).to_contain_text('01.11.2023')
-    # Both missing intervals show a reason, with no meaningless pager/CSV.
+    # The partial December data remains visible against a missing November baseline.
     common_period(page,'Месяц','2023-12-01',base='prevMonth')
     wait_for_text(page,'#comparisonCoverage','базового и анализируемого периодов',90_000)
-    expect(page.locator('#comparisonTable')).to_contain_text('Нет доступных значений для сравнения')
-    expect(page.locator('#comparisonTable table')).to_have_count(0)
-    expect(page.locator('#comparisonTable .change-pagination')).to_have_count(0)
-    expect(page.locator('#comparisonTable button')).to_have_count(0)
-    page.locator('#comparison').screenshot(path=str(ROOT/'tauri/test-artifacts/windows-sql-empty-comparison.png'))
+    expect(page.locator('#comparisonTable table').first).to_be_visible()
+    expect(page.locator('#comparisonTable table').first).to_contain_text('Значение сейчас')
+    expect(page.locator('#comparisonTable table').first).not_to_contain_text('Изменение, %')
+    page.locator('#comparison').screenshot(path=str(ROOT/'tauri/test-artifacts/windows-sql-partial-comparison.png'))
     common_period(page,'Месяц','2024-02-01',base='prevMonth')
     wait_for_app_state(page,'window.unifiedUI.scope?.baseFrom==="2024-01-01"','January shared baseline')
     wait_for_text(page,'#comparisonCoverage','Первый интервал: Полные данные',90_000)
@@ -1849,6 +1899,8 @@ def run():
                 report['checks'].append('Saved source evidence distinguishes zero provenance, source-day gaps, unknown organization and acknowledgment without changing source XLSX or read-only revision')
                 check_filtered_zero_chart(page,tmp,output)
                 report['checks'].append('Imported 10, 0, 20 into SQLite and verified hidden zero in the installed chart and table')
+                check_partial_amount_charts(page,tmp,output)
+                report['checks'].append('Partial Excel amounts appear in installed department lines and tables; a missing day has no plotted value')
                 check_omitted_detail_evidence(page,tmp,output)
                 report['checks'].append('Native omitted-detail tags distinguish invalid data, unknown organizations, invalid controls and included unnamed rows; persisted totals remain 3 and 8 with explicit acknowledgment')
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
