@@ -1419,7 +1419,7 @@ def check_delete_without_backup(page, temporary, confirmations):
     assert [row['start'] for row in wide]==['2019-01-04','2019-01-02','2019-01-01'],wide
     anchor=wide[-1]['id']
     assert_rejected(lambda:api(page,'nativeDeleteReport',snapshot['revision'],anchor),
-                    'A deletion removed the shared diagnostic anchor','общие замечания Excel')
+                    'A deletion removed the shared diagnostic anchor','общие замечания excel')
     deleted=api(page,'nativeDeleteReport',snapshot['revision'],wide[0]['id'])
     assert deleted['deleted']==1 and wide_file.read_bytes()==original_wide
     days=api(page,'unifiedCalendar',deleted['revision'],2019)['days']
