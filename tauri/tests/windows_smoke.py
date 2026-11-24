@@ -837,8 +837,10 @@ def check_filtered_zero_chart(page, temporary, output):
     options={'year':2019,'sheets':[],'mappings':{},'organizations':snapshot['org_names']}
     preview=api(page,'nativeWideImportPreview',str(source),options)
     assert preview['reportCount']==3 and preview['conflicts']['new_reports']==3,preview
+    # A date skipped by the Excel header is kept as a source-quality notice.
+    assert preview['quality']['relevant_source_issues']==1,preview
     saved=api(page,'nativeWideImportApply',str(source),options,preview['reviewToken'],
-              {'replaceExact':False,'acceptCrossType':False,'acceptQuality':False})
+              {'replaceExact':False,'acceptCrossType':False,'acceptQuality':True})
     assert saved['reports']==3,saved
     page.evaluate('window.unifiedUI.refresh()')
     open_daily_overview(page,'2019-01-01')
