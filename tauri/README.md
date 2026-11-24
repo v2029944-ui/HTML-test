@@ -2,11 +2,11 @@
 
 Основная платформа — Windows x64, Tauri 2 и системный WebView2. Личные данные хранятся в SQLite в папке «Документы/Анализ работ». При подключении к общей папке компьютеры обмениваются проверенными снимками отчётов. Корневой [`index.html`](../index.html) используется при подготовке интерфейса Tauri.
 
-## Выпуск 1.12.3 для Windows x64
+## Выпуск 1.12.4 для Windows x64
 
-[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.3/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.3/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.12.3](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.12.3)
+[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.4/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.4/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.12.4](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.12.4)
 
-Перед обновлением сохраните резервную копию SQLite в настройках установленной версии. Если у сотрудников общая база, обновите приложение на каждом компьютере. Обновление до 1.12.3 доступно через «Настройки → Проверить обновления». [План разработки и оставшиеся задачи](https://github.com/v2029944-ui/HTML-test/issues/79).
+Перед обновлением сохраните резервную копию SQLite в настройках установленной версии. Если у сотрудников общая база, обновите приложение на каждом компьютере. Обновление до 1.12.4 доступно через «Настройки → Проверить обновления». [План разработки и оставшиеся задачи](https://github.com/v2029944-ui/HTML-test/issues/79).
 
 ## Общая база сотрудников
 
@@ -60,6 +60,6 @@ npm --prefix tauri run build:windows
 - Workflow [`Tauri signed Windows release`](../.github/workflows/tauri-signed-release.yml) сначала проверяет ключи без публикации; новый релиз требует отдельного ручного `workflow_dispatch`, новой версии, заметок и успешного Windows CI точного SHA. [Инструкция](../docs/SIGNED_UPDATES.md).
 - Используйте отдельный уникальный тег для каждого выпуска. [Порядок выпуска](../docs/RELEASE_POLICY.md).
 
-## Проверка версии 1.12.3
+## Проверка версии 1.12.4
 
-[Windows CI на коммите выпуска](https://github.com/v2029944-ui/HTML-test/actions/runs/45364076585) и [подписанный релизный workflow](https://github.com/v2029944-ui/HTML-test/actions/runs/45372794808) проверили установленное приложение с WebView2, импорт синтетического Excel, SQLite и обмен через Windows SMB. Рабочие книги и сетевой сервер пользователей требуют отдельной приёмки. [Открытые задачи](https://github.com/v2029944-ui/HTML-test/issues/79) · [Все выпуски](https://github.com/v2029944-ui/HTML-test/releases).
+[Windows CI на коммите выпуска](https://github.com/v2029944-ui/HTML-test/actions/runs/45440247958) и [подписанный релизный workflow](https://github.com/v2029944-ui/HTML-test/actions/runs/45447233826) проверили установленное приложение с WebView2, импорт синтетического Excel, SQLite и обмен через Windows SMB. Рабочие книги и сетевой сервер пользователей требуют отдельной приёмки. [Открытые задачи](https://github.com/v2029944-ui/HTML-test/issues/79) · [Все выпуски](https://github.com/v2029944-ui/HTML-test/releases).

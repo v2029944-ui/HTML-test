@@ -1,10 +1,10 @@
 # Анализ работ — Tauri для Windows
 
-## Выпуск 1.12.3 для Windows x64
+## Выпуск 1.12.4 для Windows x64
 
-[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.3/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.3/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.12.3](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.12.3)
+[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.4/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.4/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.12.4](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.12.4)
 
-Обновление до 1.12.3 доступно через «Настройки → Проверить обновления». [План разработки и оставшиеся задачи](https://github.com/v2029944-ui/HTML-test/issues/79).
+Обновление до 1.12.4 доступно через «Настройки → Проверить обновления». [План разработки и оставшиеся задачи](https://github.com/v2029944-ui/HTML-test/issues/79).
 
 В «Настройки → Оформление» доступны пять масштабов интерфейса (80%, 90%, 100%, около 115% и около 130%). В широком окне фильтр можно закрепить слева в свободном поле рядом с отчётом. При переключении вкладок подробной аналитики, разделов отчётов и года в календаре сохраняется положение страницы. [Подключение сотрудников](tauri/README.md#общая-база-сотрудников)
 
@@ -59,7 +59,7 @@ python -m unittest discover -s tests -v
 cargo test --manifest-path tauri/src-tauri/Cargo.toml
 ```
 
-Подписанная 1.12.3 проверена на синтетических книгах и изолированных базах. Проверки включали Windows/WebView2, импорт Excel, SQLite и обмен двух установленных клиентов через SMB. [Windows CI](https://github.com/v2029944-ui/HTML-test/actions/runs/45364076585) · [Подписанная сборка](https://github.com/v2029944-ui/HTML-test/actions/runs/45372794808).
+Подписанная 1.12.4 проверена на синтетических книгах и изолированных базах. Проверки включали Windows/WebView2, импорт Excel, SQLite и обмен двух установленных клиентов через SMB. [Windows CI](https://github.com/v2029944-ui/HTML-test/actions/runs/45440247958) · [Подписанная сборка](https://github.com/v2029944-ui/HTML-test/actions/runs/45447233826).
 
 Корневой [index.html](index.html) используется при подготовке интерфейса Tauri. Поддержка автономного запуска в браузере завершена.
 
