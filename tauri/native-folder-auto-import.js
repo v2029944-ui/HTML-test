@@ -6,7 +6,9 @@ const control=$('sourceAutoImport');
 const status=text=>{$('sourceAutoStatus').textContent=text;};
 const batchSize=25;
 let session=null,latest=null,fingerprint=null,running=null,transition=Promise.resolve(),toggleVersion=0;
+let activeFolder=null,lastImport=null,workspaceVersion=0;
 const handled=new Map();
+const notifyStatus=()=>window.dispatchEvent?.(new Event('native-folder-import-status'));
 const zero=x=>Number.isSafeInteger(x)&&x===0;
 function safe(review){
  const c=review?.conflicts,q=review?.quality;
@@ -16,7 +18,13 @@ function safe(review){
   ['issues','invalid','skipped','mismatches','other_notices','mismatch_reports','source_issues','relevant_source_issues','deferred_source_issues'].every(k=>zero(q?.[k]));
 }
 function remember(snapshot){
- if(!snapshot?.folder||!Array.isArray(snapshot.files)||!Number.isSafeInteger(snapshot.revision)){
+ const valid=snapshot&&(snapshot.folder===null||typeof snapshot.folder==='string')&&
+  Array.isArray(snapshot.files)&&Number.isSafeInteger(snapshot.revision);
+ if(valid&&snapshot.folder!==activeFolder){
+  activeFolder=snapshot.folder;
+  lastImport=null;
+ }
+ if(!valid||!snapshot.folder){
   latest=null;fingerprint=null;return;
  }
  const key=JSON.stringify([snapshot.folder,snapshot.files,snapshot.rules]);
@@ -34,11 +42,16 @@ function remember(snapshot){
 function fileKey(file,rule){
  return JSON.stringify([file.nativeSignature,rule,file.nativeTooLarge??file.tooLarge]);
 }
+function fileStatus(folder,file,rule){
+ const result=handled.get(file.name);
+ if(!folder||folder!==activeFolder||result?.key!==fileKey(file,rule))return null;
+ return result.manual?'manual':'imported';
+}
 async function drain(){
  let imported=0,refreshFailed=false;
  try{
   while(session&&latest){
-   const current=latest, lease=session;
+   const current=latest, lease=session, workspace=workspaceVersion;
    let revision=current.revision;
    for(let offset=0;offset<current.files.length;offset+=batchSize){
     if(session!==lease||latest!==current)break;
@@ -59,6 +72,8 @@ async function drain(){
         imported+=receipt.reports;
         revision=receipt.revision;
         manual=false;
+        if(workspace===workspaceVersion&&current.folder===activeFolder&&receipt.reports>0)
+         lastImport=Date.now();
        }
       }catch(error){
        if(session!==lease||latest!==current)break;
@@ -68,11 +83,12 @@ async function drain(){
        }
       }
      }
-     if(latest?.folder===current.folder)handled.set(file.name,{key,manual});
+     if(workspace===workspaceVersion&&latest?.folder===current.folder)handled.set(file.name,{key,manual});
     }
     if(offset+batchSize<current.files.length&&session===lease&&latest===current)
      await new Promise(resolve=>setTimeout(resolve,0));
    }
+   if(workspace!==workspaceVersion)continue;
    if(latest===current){
     latest={...current,revision};
     break;
@@ -94,6 +110,7 @@ async function drain(){
   }else if(refreshFailed){
    status('Автоматический импорт выключен. Нажмите «Обновить данные», чтобы увидеть сохранённые отчёты.');
   }
+  notifyStatus();
  }
 }
 function pump(){
@@ -159,18 +176,26 @@ control.addEventListener('change',async()=>{
 });
 window.addEventListener?.('pagehide',()=>{if(control.checked||session)void stop().catch(()=>{});},{once:true});
 async function stopForWorkspaceChange(){
- if(!control.checked&&!session)return;
- control.checked=false;
- await stop();
- if(running)await running;
- latest=null;fingerprint=null;handled.clear();
- status('Автоматический импорт выключен.');
+ const optedIn=control.checked||session!==null;
+ if(optedIn){
+  control.checked=false;
+  await stop();
+  if(running)await running;
+  status('Автоматический импорт выключен.');
+ }
+ clearWorkspaceStatus();
+}
+function clearWorkspaceStatus(){
+ workspaceVersion++;
+ latest=null;fingerprint=null;activeFolder=null;lastImport=null;handled.clear();
+ notifyStatus();
 }
 function forgetWorkspaceSession(){
  const optedIn=control.checked||session!==null;
  ++toggleVersion;control.checked=false;session=null;
- latest=null;fingerprint=null;handled.clear();
+ clearWorkspaceStatus();
  if(optedIn)status('Общая база обновилась. Автоматический импорт выключен.');
 }
-window.nativeFolderAutoImport=Object.freeze({updateSnapshot,stopForWorkspaceChange,forgetWorkspaceSession,isEnabled:()=>session!==null});
+window.nativeFolderAutoImport=Object.freeze({updateSnapshot,stopForWorkspaceChange,forgetWorkspaceSession,fileStatus,
+ lastSuccessfulImport:folder=>folder&&folder===activeFolder?lastImport:null,isEnabled:()=>session!==null});
 })();

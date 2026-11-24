@@ -6,6 +6,7 @@ if(!api?.list||!api?.chooseFolder)return;
 const $=id=>document.getElementById(id);
 const choose=$('sourceFolderChoose'),refresh=$('sourceFolderRefresh');
 const location=$('sourceFolderLocation'),status=$('sourceFolderStatus');
+const lastSync=$('sourceFolderLastSync');
 const rows=$('sourceFolderRows'),count=$('sourceFolderCount');
 const fields={
   file:$('sourceRuleFile'),format:$('sourceRuleFormat'),type:$('sourceRuleType'),
@@ -16,6 +17,7 @@ if(!choose||!refresh||!location||!status||!rows||!count||
    Object.values(fields).some(item=>!item))return;
 const maxVisible=100;
 let pageIndex=0,listedFiles=[],listedRules={},pagerView=null;
+const visibleStatusCells=new Map();
 const pager=document.createElement('div');pager.id='sourceFolderPager';rows.parentElement?.after(pager);
 const autoEnabled=()=>window.nativeFolderAutoImport?.isEnabled()===true;
 const ruleEffect=()=>autoEnabled()
@@ -119,8 +121,27 @@ function displayFolder(path){
   if(rest.startsWith('UNC\\'))return '\\\\'+rest.slice(4);
   return /^[a-z]:/i.test(rest)?rest:path;
 }
+function describeFile(file){
+ if(file.nativeTooLarge??file.tooLarge)return 'Превышен предел нативного импорта (100 МиБ)';
+ if(!file.nativeSignature)return 'Файл недоступен для проверки';
+ if(!Object.hasOwn(listedRules,file.name))return 'Правило не задано';
+ const result=window.nativeFolderAutoImport?.fileStatus?.(folder,file,listedRules[file.name]);
+ if(result==='imported')return 'Отчёты добавлены автоимпортом';
+ if(result==='manual')return 'Требует ручной проверки';
+ return 'Есть правило';
+}
+function refreshImportStatus(){
+ for(const [file,cell] of visibleStatusCells)cell.textContent=describeFile(file);
+ if(!lastSync)return;
+ const timestamp=window.nativeFolderAutoImport?.lastSuccessfulImport?.(folder);
+ lastSync.hidden=!folder;
+ lastSync.textContent=Number.isFinite(timestamp)
+   ?'Последний успешный автоимпорт из папки: '+new Date(timestamp).toLocaleString('ru-RU')
+   :'Успешного автоимпорта из папки в этом сеансе ещё не было.';
+}
 function renderFiles(){
  rows.replaceChildren();count.textContent='Найдено XLSX: '+listedFiles.length;
+ visibleStatusCells.clear();
 
     for(const file of listedFiles.slice(pageIndex*maxVisible,(pageIndex+1)*maxVisible)){
       if(!file||typeof file.name!=='string'||!Number.isFinite(file.size)||
@@ -128,10 +149,11 @@ function renderFiles(){
         throw Error('Некорректные метаданные XLSX.');
       const hasRule=Object.prototype.hasOwnProperty.call(listedRules,file.name);
       const tr=make('tr');
+      const fileStatus=make('td');visibleStatusCells.set(file,fileStatus);
       tr.append(
         make('td',file.name),
         make('td',Math.ceil(file.size/1024)+' КБ'),
-        make('td',(file.nativeTooLarge??file.tooLarge)?'Превышен предел нативного импорта (100 МиБ)':hasRule?'Есть правило':'Правило не задано')
+        fileStatus
       );
       const action=make('td'),button=make('button','Настроить правило'),inspect=make('button','Открыть для проверки');
       inspect.type='button';inspect.className=button.className='button secondary';action.className='source-file-actions';inspect.disabled=(file.nativeTooLarge??file.tooLarge)||!file.nativeSignature;inspect.setAttribute('aria-label','Открыть для проверки '+file.name);inspect.addEventListener('click',()=>{if(busy||changing)return;const path=folder.replace(/[\\/]$/,'')+(folder.includes('\\')?'\\':'/')+file.name;void window.unifiedReports?.openSource(path);});
@@ -146,6 +168,7 @@ function renderFiles(){
    pagerView={folder,index:pageIndex,total:listedFiles.length};
    window.sqlRowScroll.attach(rows,{index:pageIndex,size:maxVisible,count:rows.children.length,total:listedFiles.length,controlsOnly:true,footer:pager,label:'Страницы файлов Excel',go:index=>{if(busy||changing)return false;pageIndex=index;renderFiles();}});
  }
+ refreshImportStatus();
  lock();
 }
 async function load(){
@@ -241,6 +264,7 @@ choose.addEventListener('click',async()=>{
   }
 });
 refresh.addEventListener('click',()=>{void load();});
+window.addEventListener?.('native-folder-import-status',refreshImportStatus);
 if(typeof api.onFilesChanged==='function'){
   const stop=api.onFilesChanged(()=>{
     if(!closed){report('Состав папки изменился. Проверьте файлы перед импортом.');void load();}
