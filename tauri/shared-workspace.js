@@ -64,6 +64,11 @@
     node('sharedWorkspaceRetry').disabled = busy;
     node('sharedWorkspaceDiscard').hidden = !state?.pending;
     node('sharedWorkspaceDiscard').disabled = busy;
+    const reset = node('sharedWorkspaceReset');
+    if (reset) {
+      reset.hidden = !shared || state.pending;
+      reset.disabled = busy || Boolean(window.tauriOperations?.updating || window.tauriOperations?.saves);
+    }
     renderTransfer();
   }
 
@@ -154,6 +159,36 @@
       await apply(result, true);
     } catch (failure) { error = statusMessage(failure); }
     finally { busy = false; render(error); schedule(); }
+  }
+
+  async function resetShared() {
+    if (busy || state?.mode !== 'shared' || state.pending || window.tauriOperations?.updating || window.tauriOperations?.saves) return;
+    const token = state.workspace_token;
+    busy = true;
+    render();
+    let error = '', receipt = null;
+    try {
+      const preview = await raw('shared_workspace_reset_preview', {workspaceToken: token});
+      if (preview.folder !== state.folder || !Number.isSafeInteger(preview.confirmedGeneration) ||
+          !Number.isSafeInteger(preview.foundGeneration) ||
+          (preview.foundGeneration !== 0 && preview.foundGeneration !== preview.confirmedGeneration)) {
+        throw Error('Не удалось подтвердить состояние общей папки.');
+      }
+      const missing = preview.foundGeneration !== preview.confirmedGeneration;
+      const consequence = missing
+        ? '\nСнимки отсутствуют: последнее подтверждённое поколение ' + preview.confirmedGeneration + '. Продолжайте только после намеренного удаления. Чтобы вернуть отчёты, сначала восстановите исходные снимки и повторите подключение.'
+        : '\nПрежние снимки останутся в папке для восстановления.';
+      if (!await window.confirm('Создать пустую общую базу в папке:\n' + preview.folder +
+          '\nПосле синхронизации коллеги увидят пустые отчёты и настройки по умолчанию. Личные базы и файлы Excel сохранятся.' + consequence)) return;
+      if (token !== state.workspace_token || state.pending || window.tauriOperations?.updating || window.tauriOperations?.saves) return;
+      if (state.available) await window.nativeFolderAutoImport?.stopForWorkspaceChange();
+      else window.nativeFolderAutoImport?.forgetWorkspaceSession();
+      receipt = await raw('shared_workspace_reset_apply', {workspaceToken: token, preview});
+      await apply(receipt, true);
+    } catch (failure) {
+      error = receipt ? 'Общая база сброшена. Не удалось обновить экран: ' + statusMessage(failure) : statusMessage(failure);
+      if (!receipt) try { await apply(await raw('shared_workspace_status')); } catch { /* Keep the original failure visible. */ }
+    } finally { busy = false; render(error); schedule(); }
   }
 
   function transferMessage(message) {
@@ -307,6 +342,7 @@
     node('sharedWorkspaceDisconnect').addEventListener('click', disconnect);
     node('sharedWorkspaceConnect').addEventListener('click', connect);
     node('sharedWorkspaceDiscard').addEventListener('click', discard);
+    node('sharedWorkspaceReset')?.addEventListener('click', resetShared);
     node('sharedWorkspaceRetry').addEventListener('click', () => check(true));
     node('personalTransferPreview')?.addEventListener('click',()=>previewTransfer(0,true));
     for(const id of transferFilterIds)node(id)?.addEventListener('change',()=>{

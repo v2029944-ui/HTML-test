@@ -13,7 +13,7 @@ function fixture(initial=personal) {
     return nodes.get(id);
   }
   const scenario={selected:null,server:initial,accept:false,chooseCalls:[],stops:0,revocations:0,syncError:null,read:null,
-    transferPreview:null,transferApplied:null};
+    transferPreview:null,transferApplied:null,confirmation:null};
   const window={__TAURI__:{core:{invoke:async(name,args)=>{
     calls.push({name,args});
     if(name==='shared_workspace_status')return scenario.server;
@@ -24,6 +24,14 @@ function fixture(initial=personal) {
     if(name==='shared_workspace_discard_pending'){
       assert.equal(args.workspaceToken,scenario.server.workspace_token);
       return scenario.server={...team,generation:3,workspace_token:'team-3'};
+    }
+    if(name==='shared_workspace_reset_preview'){
+      assert.equal(args.workspaceToken,scenario.server.workspace_token);
+      return {folder:scenario.server.folder,confirmedGeneration:3,foundGeneration:0};
+    }
+    if(name==='shared_workspace_reset_apply'){
+      assert.equal(args.workspaceToken,scenario.server.workspace_token);
+      return scenario.server={...team,generation:4,workspace_token:'reset-4'};
     }
     if(name==='shared_workspace_transfer_preview'){
       assert.equal(args.workspaceToken,scenario.server.workspace_token);
@@ -42,7 +50,7 @@ function fixture(initial=personal) {
     if(name==='native_read_revision')return scenario.read||7;
     throw Error('Unexpected IPC '+name);
   }},dialog:{open:async options=>{scenario.chooseCalls.push(options);return scenario.selected;}}},
-    confirm:async()=>scenario.accept,unifiedUI:{snapshot:{revision:7},refreshWorkspace:async()=>refreshes.push(window.sharedWorkspace.state)},
+    confirm:async message=>{scenario.confirmation=message;return scenario.accept;},unifiedUI:{snapshot:{revision:7},refreshWorkspace:async()=>refreshes.push(window.sharedWorkspace.state)},
     addEventListener:(name,fn)=>handlers.set(name,fn),
     nativeFolderAutoImport:{stopForWorkspaceChange:async()=>{scenario.stops++;},forgetWorkspaceSession:()=>{scenario.revocations++;}}};
   const context={window,document:{getElementById:node,createElement:tag=>({
@@ -105,6 +113,25 @@ test('pending publication blocks edits and requires positive confirmation to dis
   f.scenario.accept=true;await f.click('sharedWorkspaceDiscard');
   assert.equal(f.calls.at(-1).name,'shared_workspace_discard_pending');assert.equal(f.node('sharedWorkspaceDiscard').hidden,true);
   assert.equal(f.refreshes.length,1);assert.equal(f.window.sharedWorkspace.state.workspace_token,'team-3');
+});
+
+test('reset confirms the exact share and missing generation without touching personal mode or pending writes',async()=>{
+  const f=fixture({...team,generation:3,available:false});await f.window.sharedWorkspace.init();
+  assert.equal(f.node('sharedWorkspaceReset').hidden,false);
+  await f.click('sharedWorkspaceReset');
+  assert.match(f.scenario.confirmation,/fixture\/team/);
+  assert.match(f.scenario.confirmation,/поколение 3/);
+  assert.equal(f.calls.filter(c=>c.name==='shared_workspace_reset_apply').length,0);
+  assert.equal(f.scenario.revocations,0);
+  f.scenario.accept=true;await f.click('sharedWorkspaceReset');
+  assert.equal(f.calls.filter(c=>c.name==='shared_workspace_reset_apply').length,1);
+  assert.equal(f.refreshes[0].generation,4);
+  for(const mode of [personal,{...team,available:false,pending:true}]){
+    const blocked=fixture(mode);await blocked.window.sharedWorkspace.init();
+    assert.equal(blocked.node('sharedWorkspaceReset').hidden,true);
+    await blocked.click('sharedWorkspaceReset');
+    assert.equal(blocked.calls.length,1);
+  }
 });
 
 test('a registered offline share can be replaced on the first selection without invoking its old lease',async()=>{

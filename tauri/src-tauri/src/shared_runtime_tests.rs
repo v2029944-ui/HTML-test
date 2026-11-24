@@ -89,6 +89,135 @@ fn other_client_publication_invalidates_selection_and_sync_pulls_latest() {
 }
 
 #[test]
+fn explicit_reset_preserves_prior_snapshots_and_the_other_clients_personal_data() {
+    let (_a, writer) = runtime_fixture();
+    let (reader_root, reader) = runtime_fixture();
+    let folder = tempfile::tempdir().unwrap();
+    let personal = reader.status().unwrap();
+    reader.execute(Some(&personal.workspace_token), Access::Write, |store| store.save(data("personal"))).unwrap();
+    let team = connect(&writer, folder.path());
+    writer.execute(Some(&team.workspace_token), Access::Write, |store| store.save(data("team"))).unwrap();
+    let peer = connect(&reader, folder.path());
+    let retained = folder.path().join("analiz-generation-00000000000000000001.snapshot");
+    let bytes = fs::read(&retained).unwrap();
+    let preview = writer.preview_reset(&team.workspace_token).unwrap();
+    assert_eq!((preview.confirmed_generation, preview.found_generation), (1, 1));
+    let mut wrong = preview.clone();
+    wrong.folder.push_str("/wrong");
+    assert!(writer.reset_shared(&team.workspace_token, &wrong).is_err());
+    assert_eq!(reader.sync().unwrap().workspace_token, peer.workspace_token);
+    let empty = writer.reset_shared(&team.workspace_token, &preview).unwrap();
+    assert_eq!(empty.generation, Some(2));
+    assert_ne!(team.workspace_token, empty.workspace_token);
+    assert_eq!(fs::read(retained).unwrap(), bytes);
+    assert_eq!(read(&writer, &empty.workspace_token)["reports"], json!([]));
+    drop(reader);
+    let reader = Runtime::new(reader_root.path().to_owned()).unwrap();
+    let connected = reader.sync().unwrap();
+    assert_eq!(connected.generation, Some(2));
+    assert_eq!(read(&reader, &connected.workspace_token)["reports"], json!([]));
+    let personal = reader.disconnect(Some(&connected.workspace_token)).unwrap();
+    assert_eq!(read(&reader, &personal.workspace_token)["reports"][0]["id"], "personal");
+}
+
+#[test]
+fn only_confirmed_reset_recovers_a_share_with_all_snapshots_missing() {
+    let (_a, writer) = runtime_fixture();
+    let (reader_root, reader) = runtime_fixture();
+    let folder = tempfile::tempdir().unwrap();
+    let team = connect(&writer, folder.path());
+    for id in ["early", "latest"] {
+        writer.execute(Some(&team.workspace_token), Access::Write, |store| store.save(data(id))).unwrap();
+    }
+    connect(&reader, folder.path());
+    let first = folder.path().join("analiz-generation-00000000000000000001.snapshot");
+    let second = folder.path().join("analiz-generation-00000000000000000002.snapshot");
+    let original = fs::read(&second).unwrap();
+    fs::remove_file(&second).unwrap();
+    let unavailable = writer.sync().unwrap();
+    assert!(!unavailable.available);
+    assert!(writer.preview_reset(&unavailable.workspace_token).is_err());
+    fs::remove_file(&first).unwrap();
+    assert_eq!(shared_folder::head(folder.path()).unwrap(), 0);
+    assert!(!reader.sync().unwrap().available);
+    let preview = writer.preview_reset(&unavailable.workspace_token).unwrap();
+    assert_eq!((preview.confirmed_generation, preview.found_generation), (2, 0));
+    assert_eq!(shared_folder::head(folder.path()).unwrap(), 0, "preview cannot publish an empty database");
+    fs::write(&second, &original).unwrap();
+    assert!(writer.reset_shared(&unavailable.workspace_token, &preview).is_err());
+    fs::remove_file(second).unwrap();
+    let empty = writer.reset_shared(&unavailable.workspace_token, &preview).unwrap();
+    assert_eq!(empty.generation, Some(3));
+    assert_eq!(read(&writer, &empty.workspace_token)["reports"], json!([]));
+    let reset = folder.path().join("analiz-generation-00000000000000000003.snapshot");
+    let proof = fs::read(&reset).unwrap();
+    let mut tampered = proof.clone();
+    *tampered.last_mut().unwrap() ^= 1;
+    fs::write(&reset, tampered).unwrap();
+    assert!(!reader.sync().unwrap().available, "the reset anchor does not make a damaged payload trusted");
+    fs::write(&reset, proof).unwrap();
+    drop(reader);
+    let reader = Runtime::new(reader_root.path().to_owned()).unwrap();
+    let connected = reader.sync().unwrap();
+    assert_eq!(connected.generation, Some(3));
+    assert_eq!(read(&reader, &connected.workspace_token)["reports"], json!([]));
+    reader.execute(Some(&connected.workspace_token), Access::Write, |store| store.save(data("new"))).unwrap();
+    assert_eq!(writer.sync().unwrap().generation, Some(4));
+}
+
+#[test]
+fn unavailable_publication_leaves_previous_generation_readable_and_reset_discardable() {
+    let (_a, writer) = runtime_fixture();
+    let (_b, reader) = runtime_fixture();
+    let folder = tempfile::tempdir().unwrap();
+    let team = connect(&writer, folder.path());
+    writer.execute(Some(&team.workspace_token), Access::Write, |store| store.save(data("team"))).unwrap();
+    let peer = connect(&reader, folder.path());
+    let lock = folder.path().join(".analiz-publication.lock");
+    fs::remove_file(&lock).unwrap();
+    fs::create_dir(&lock).unwrap();
+    let preview = writer.preview_reset(&team.workspace_token).unwrap();
+    assert!(writer.reset_shared(&team.workspace_token, &preview).is_err());
+    assert_eq!(shared_folder::head(folder.path()).unwrap(), 1);
+    assert_eq!(read(&reader, &peer.workspace_token)["reports"][0]["id"], "team");
+    let pending = writer.status().unwrap();
+    assert!(pending.pending);
+    assert!(writer.preview_reset(&pending.workspace_token).is_err());
+    let discarded = writer.discard_pending(Some(&pending.workspace_token)).unwrap();
+    assert!(discarded.available && !discarded.pending);
+    assert_eq!(read(&writer, &discarded.workspace_token)["reports"][0]["id"], "team");
+}
+
+#[test]
+fn acknowledged_reset_waiting_for_write_access_can_resume_after_restart() {
+    let (root, writer) = runtime_fixture();
+    let (_b, peer) = runtime_fixture();
+    let folder = tempfile::tempdir().unwrap();
+    let team = connect(&writer, folder.path());
+    writer.execute(Some(&team.workspace_token), Access::Write, |store| store.save(data("team"))).unwrap();
+    connect(&peer, folder.path());
+    fs::remove_file(folder.path().join("analiz-generation-00000000000000000001.snapshot")).unwrap();
+    let lock = folder.path().join(".analiz-publication.lock");
+    fs::remove_file(&lock).unwrap();
+    fs::create_dir(&lock).unwrap();
+    let unavailable = writer.sync().unwrap();
+    let preview = writer.preview_reset(&unavailable.workspace_token).unwrap();
+    assert!(writer.reset_shared(&unavailable.workspace_token, &preview).is_err());
+    assert!(writer.status().unwrap().pending);
+    assert_eq!(shared_folder::head(folder.path()).unwrap(), 0);
+    drop(writer);
+    let writer = Runtime::new(root.path().to_owned()).unwrap();
+    assert!(writer.status().unwrap().pending);
+    fs::remove_dir(lock).unwrap();
+    let synced = writer.sync().unwrap();
+    assert!(synced.available && !synced.pending);
+    assert_eq!(synced.generation, Some(2));
+    let synced = peer.sync().unwrap();
+    assert_eq!(synced.generation, Some(2));
+    assert_eq!(read(&peer, &synced.workspace_token)["reports"], json!([]));
+}
+
+#[test]
 fn shared_deletions_survive_a_second_clients_sync_and_restart() {
     use super::super::{ManagementJob, ReadFilter, UnifiedReportDeletion};
 
@@ -367,7 +496,9 @@ fn durable_pending_retries_after_restart_without_reapplying_the_mutation() {
         read(&restarted, &synced.workspace_token)["reports"][0]["id"],
         "once"
     );
-    assert_eq!(fs::read_dir(&folder).unwrap().count(), 1);
+    // The publication lock is retained; no temporary or duplicate payload remains.
+    assert_eq!(fs::read_dir(&folder).unwrap().count(), 2);
+    assert_eq!(shared_folder::head(&folder).unwrap(), 1);
 }
 
 #[test]
@@ -449,7 +580,8 @@ fn competing_publication_is_not_success_and_explicit_discard_keeps_remote_winner
         .file_name()
         .to_string_lossy()
         .starts_with("abandoned-")));
-    assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 1);
+    assert_eq!(fs::read_dir(folder.path()).unwrap().count(), 2);
+    assert_eq!(shared_folder::head(folder.path()).unwrap(), 1);
 }
 
 #[test]

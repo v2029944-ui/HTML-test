@@ -31,6 +31,13 @@ pub struct WorkspaceStatus {
     pub pending: bool,
     pub workspace_token: String,
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceResetPreview {
+    pub folder: String,
+    pub confirmed_generation: u64,
+    pub found_generation: u64,
+}
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Selection {
@@ -218,9 +225,15 @@ impl Runtime {
         let head = shared_folder::head(folder)?;
         Self::check_generation(selection, head)?;
         if selection.highest_generation > 0 {
-            let digest = shared_folder::generation_digest(folder, selection.highest_generation)?;
-            if selection.highest_digest.is_none() || selection.highest_digest != digest {
-                return Err("Подтверждённое поколение общей базы изменилось. Проверьте выбранную общую папку.".into());
+            let expected = selection.highest_digest.as_deref().ok_or("Не найдена контрольная сумма подтверждённого поколения общей базы.")?;
+            match shared_folder::generation_digest(folder, selection.highest_generation) {
+                Ok(digest) if digest.as_deref() == Some(expected) => {}
+                Ok(_) => return Err("Подтверждённое поколение общей базы изменилось. Проверьте выбранную общую папку.".into()),
+                Err(error) => {
+                    if !shared_folder::reset_follows(folder, selection.highest_generation, expected)? {
+                        return Err(error);
+                    }
+                }
             }
         }
         Ok(head)
@@ -435,6 +448,55 @@ impl Runtime {
         }
         Ok(Self::snapshot(&state))
     }
+    fn describe_reset(state: &State, expected_token: &str) -> Result<WorkspaceResetPreview, String> {
+        if state.token != expected_token {
+            return Err("Выбранная база изменилась. Повторите проверку состояния.".into());
+        }
+        if state.pending.is_some() {
+            return Err("Сначала завершите неподтверждённую публикацию общей базы.".into());
+        }
+        let folder = state.selection.folder.as_ref().ok_or("Общая папка не выбрана.")?;
+        let found = shared_folder::head(folder)?;
+        let confirmed = state.selection.highest_generation;
+        if found > confirmed {
+            return Err("Общая база обновилась. Синхронизируйте её перед сбросом.".into());
+        }
+        // An unreadable directory, partial loss, a changed digest, or a
+        // different generation are not permission to start an empty share.
+        if found != 0 || confirmed == 0 {
+            Self::check_trust(&state.selection)?;
+        } else if state.selection.highest_digest.is_none() {
+            return Err("Не удалось подтвердить исходное состояние общей базы.".into());
+        }
+        Ok(WorkspaceResetPreview {
+            folder: folder.to_string_lossy().into_owned(),
+            confirmed_generation: confirmed,
+            found_generation: found,
+        })
+    }
+    pub fn preview_reset(&self, expected_token: &str) -> Result<WorkspaceResetPreview, String> {
+        let state = self.state.lock().map_err(err)?;
+        Self::describe_reset(&state, expected_token)
+    }
+    pub fn reset_shared(&self, expected_token: &str, expected: &WorkspaceResetPreview) -> Result<WorkspaceStatus, String> {
+        let mut state = self.state.lock().map_err(err)?;
+        if Self::describe_reset(&state, expected_token)? != *expected {
+            return Err("Состояние общей папки изменилось. Повторите подтверждение сброса.".into());
+        }
+        let folder = state.selection.folder.as_ref().ok_or("Общая папка не выбрана.")?;
+        let candidate = Checkout::empty_successor(folder, &self.cache_dir(&state)?, expected.confirmed_generation,
+            state.selection.highest_digest.as_deref(), expected.found_generation != expected.confirmed_generation)?;
+        if let Some(config) = &state.selection.config {
+            candidate.storage.install_local_config(config)?;
+        }
+        state.pending = Some(Pending { candidate: Some(candidate), publication: None });
+        if let Err(error) = self.finish_pending(&mut state) {
+            Self::unavailable(&mut state, error.clone());
+            return Err(format!("Сброс не подтверждён общей папкой: {error} Проверьте состояние публикации."));
+        }
+        state.token = token();
+        Ok(Self::snapshot(&state))
+    }
     fn finish_pending(&self, state: &mut State) -> Result<(), String> {
         let directory = self.pending_dir(state)?;
         let pending = state
@@ -458,6 +520,7 @@ impl Runtime {
         }
         if let Some(mut candidate) = pending.candidate.take() {
             candidate.confirm_publication(generation, pending.publication.as_ref().unwrap())?;
+            *self.sessions.lock().map_err(err)? = Arc::clone(&candidate.storage.folder_import);
             state.checkout = Some(candidate);
         } else {
             self.pull(state)?;
