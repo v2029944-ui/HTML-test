@@ -250,7 +250,7 @@ def check_reference_data(page, output):
         expect(dialog).not_to_be_visible(timeout=TIMEOUT)
         settled('#s2')
 
-    def print_view(screen):
+    def print_view(screen, *, comparable=4, scenario='complete'):
         # Capture the dedicated print document synchronously while it exists.
         # Change-table printing prepares all filtered SQL pages asynchronously.
         title = ('Сводка выполненных работ' if screen == '#s1' else
@@ -294,13 +294,16 @@ def check_reference_data(page, output):
             assert len({tuple(row[:2]) for row in rows}) == len(rows), frame
             if screen == '#s2':
                 assert 'Строк: ' + str(total_rows) + ' ·' in frame['context'], frame
-            assert len(frame['comparison']) == 3, frame
+            assert len(frame['comparison']) == (3 if comparable else 0), frame
+            assert f'Сопоставимые подразделения: {comparable} из 4' in frame['context'], frame
             assert 'Область работ: Все работы' in frame['context'], frame
             if expected_values is not None:
                 assert [row[1] for row in frame['observed']] == expected_values, frame
             page.wait_for_function("() => !document.body.hasAttribute('data-reference-print') && !document.getElementById('referencePrintDocument')", timeout=TIMEOUT)
-            evidence['checks'].append('print-media-' + screen[1:])
-            evidence.setdefault('print', {})[screen] = frame
+            key = screen if scenario == 'complete' else screen + '-' + scenario
+            evidence['checks'].append('print-media-' + key[1:])
+            evidence.setdefault('print', {})[key] = frame
+            return frame
         finally:
             page.emulate_media(media='screen')
             page.evaluate("""() => {window.print=window.__referenceSmokePrint;
@@ -314,8 +317,11 @@ def check_reference_data(page, output):
         expect(sheet).to_contain_text('Качество отчётов')
         return sheet
 
-    def csv_export(method, path, *, empty=False):
-        _api(page, method, request(), str(path))
+    def csv_export(method, path, *, coverage='complete'):
+        has_comparison = coverage == 'complete'
+        filters = (request('significant', percent=0, minCount=0, minAmount=0)
+                   if coverage == 'partial' and method == 'referenceChangesCsv' else request())
+        _api(page, method, filters, str(path))
         raw = path.read_bytes()
         assert raw.startswith(b'\xef\xbb\xbf')
         rows = list(csv.reader(io.StringIO(raw.decode('utf-8-sig')), delimiter=';'))
@@ -325,29 +331,39 @@ def check_reference_data(page, output):
             header = next(i for i, row in enumerate(rows) if row[:2] == ['Подразделение', 'Сумма'])
             data = rows[header + 1:]
             assert len(data) == 4 and {r[0] for r in data} == set(organizations), rows
-            if empty:
+            if coverage == 'empty':
                 assert all(row[1:5] == ['', '', '', ''] and row[5] == 'нет данных' for row in data), rows
+            elif coverage == 'partial':
+                assert all([_number(value) for value in row[1:5]] == [5, .5, 25, 10]
+                           and row[5] == 'частичные данные' for row in data), rows
             else:
                 assert all(_number(row[1]) == 145 and _number(row[2]) == 14.5 for row in data), rows
                 assert all(_number(row[3]) == 25 for row in data), rows
         else:
             header = next(i for i, row in enumerate(rows) if row[:2] == ['Работа', 'Подразделение'])
             data = rows[header + 1:]
-            assert len(data) == (0 if empty else 4), rows
-            if not empty:
+            assert len(data) == (4 if has_comparison else 0), rows
+            if has_comparison:
                 assert all(row[0] == 'Альфа' and _number(row[2]) == 155 and
                            _number(row[3]) == 145 and _number(row[4]) == -10 for row in data), rows
         sample = next(row for row in rows if row and row[0] == 'Сопоставимые подразделения')
-        assert sample[1:3] == [('0' if empty else '4'), '4'], rows
-        assert sample[3] == ('' if empty else ', '.join(organizations)), rows
+        assert sample[1:3] == [('4' if has_comparison else '0'), '4'], rows
+        assert sample[3] == (', '.join(organizations) if has_comparison else ''), rows
+        if coverage == 'partial':
+            members = [row for row in rows if row and row[0] == 'Состав сравнения']
+            assert {tuple(row[1:]) for row in members} == {
+                (org, 'неполные базовый и анализируемый интервалы') for org in organizations
+            }, rows
+            totals = rows.index(['Показатель', 'Было', 'Стало', 'Изменение', 'Изменение, %'])
+            assert [row[1:] for row in rows[totals + 1:totals + 4]] == [[''] * 4] * 3, rows
         try:
-            _api(page, method, request(), str(path))
+            _api(page, method, filters, str(path))
         except PlaywrightError:
             pass
         else:
             raise AssertionError('Native CSV export overwrote an existing scratch file')
         assert path.read_bytes() == raw
-        evidence['csv'][method + ('-empty' if empty else '-data')] = rows
+        evidence['csv'][method + ('-data' if has_comparison else '-' + coverage)] = rows
 
     try:
         page.set_viewport_size({'width': 1440, 'height': 1000})
@@ -448,10 +464,31 @@ def check_reference_data(page, output):
             expect(page.locator('#s1 .quality-notice')).to_contain_text('За базовый интервал нет пригодных данных')
             assert all('частичные данные' in text for text in page.locator('#s1 table tbody tr').all_text_contents())
             record('03-partial-adjacent-year')
+
+            # Each interval contains exactly one real day and one missing day.
+            current = select_period('День', '2024-12-31', '2025-01-01', baseline='year')
+            assert (current['from'], current['to'], current['baseFrom'], current['baseTo']) == (
+                '2024-12-31', '2025-01-01', '2023-12-31', '2024-01-01'), current
+            summary(20, 2)
+            reason = 'Ни у одного выбранного подразделения нет пригодных отчётов за весь базовый и анализируемый интервалы.'
+            expect(page.locator('#s1 .quality-notice')).to_contain_text(reason)
+            frame = print_view('#s1', comparable=0, scenario='partial')
+            assert all(text in frame['context'] for text in (
+                reason, 'База: пропусков отчётов — 4', 'Анализ: пропусков отчётов — 4')), frame
+            csv_export('referenceSummaryCsv', scratch / 'partial-summary.csv', coverage='partial')
+            navigate('Анализ изменений')
+            expect(page.locator('#s2 .table-empty')).to_contain_text('Нет сопоставимых позиций')
+            expect(page.locator('#s2 .quality-notice')).to_contain_text(reason)
+            frame = print_view('#s2', comparable=0, scenario='partial')
+            assert reason in frame['context'] and frame['changes'] == [], frame
+            csv_export('referenceChangesCsv', scratch / 'partial-changes.csv', coverage='partial')
+            record('03b-both-intervals-partial', '#s2')
+
+            navigate('Сводка')
             select_period('День', '2023-12-29', '2023-12-30')
             summary(None, None, None)
-            csv_export('referenceSummaryCsv', scratch / 'empty-summary.csv', empty=True)
-            csv_export('referenceChangesCsv', scratch / 'empty-changes.csv', empty=True)
+            csv_export('referenceSummaryCsv', scratch / 'empty-summary.csv', coverage='empty')
+            csv_export('referenceChangesCsv', scratch / 'empty-changes.csv', coverage='empty')
             navigate('Анализ изменений')
             expect(page.locator('#s2 .table-empty')).to_contain_text('Нет сопоставимых позиций')
             expect(page.locator('#s2 [data-export-changes]')).to_be_disabled()
