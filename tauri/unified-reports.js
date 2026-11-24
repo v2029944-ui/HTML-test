@@ -231,12 +231,20 @@ function init(){
   skipped:'Проверьте название работы и ближайший заголовок подразделения в этом наборе столбцов.',
   mismatch:'Сравните контрольные количество и сумму с детализацией подразделения или всего набора. Проверьте также строки над контрольным итогом.',
   missing:'Проверьте, существует ли отчёт за этот период и подразделение. Если он есть, загрузите его.',
+  'missing-day':'Проверьте заголовок дня и его столбцы на исходном листе Excel.',
+  'missing-period':'Проверьте заголовок периода и его столбцы на исходном листе Excel.',
   duplicate:'Сверьте даты отчётов и проверьте данные перед подтверждением замены.',
   overlap:'Сверьте даты пересекающихся отчётов и повторите импорт с правильными датами.'
  };
+ const qualityReasonLabels={
+  invalid_rows:'Некорректная структура строк отчёта.',
+  invalid_bounds:'Некорректные границы отчётного периода.',
+  'Daily columns are blank; no zero report invented':'Столбцы дня пусты. Отчёт за этот день отсутствует.',
+  'Day is absent from source header':'Дата отсутствует в заголовках исходного листа Excel.',
+  'Daily values do not match source-period controls':'Значения по дням не совпадают с контрольными итогами Excel.'
+ };
  function qualityReason(issue,address){
-  const labels={invalid_rows:'Некорректная структура строк отчёта.',invalid_bounds:'Некорректные границы отчётного периода.'};
-  const reason=el('div',Object.hasOwn(labels,issue.reason)?labels[issue.reason]:issue.reason),advice=el('details',undefined,'quality-advice');
+  const reason=el('div',Object.hasOwn(qualityReasonLabels,issue.reason)?qualityReasonLabels[issue.reason]:issue.reason),advice=el('details',undefined,'quality-advice');
   if(issue.expected&&issue.actual)reason.append(el('small','Количество: факт '+UI.fmt(issue.actual.count,'count')+' / итог Excel '+UI.fmt(issue.expected.count,'count')+' · Сумма: факт '+UI.fmt(issue.actual.amount,'amount')+' / итог Excel '+UI.fmt(issue.expected.amount,'amount')));
   if(Array.isArray(issue.raw))reason.append(el('small','Значения при чтении: '+issue.raw.map(v=>v??'[нет значения]').join(' | ')));
   advice.append(el('summary','Как проверить и исправить'),el('p',repairHints[issue.kind]||'Проверьте исходный лист Excel и предупреждения импорта. После исправления повторно проверьте файл.'));
@@ -257,6 +265,11 @@ function init(){
   if(issue.diagnostic_scope==='source')source.append(el('small','Замечание по всему файлу','muted'));
   return source;
  }
+ function qualityType(kind){
+  if(kind==='missing-day')return 'Пропущен день в Excel';
+  if(kind==='missing-period')return 'Пропущен период в Excel';
+  return Object.hasOwn(types,kind)?types[kind]:'Другое замечание';
+ }
  function renderQualityIssues(issues){
   const date=value=>value?.replace(/^(\d{4})-(\d{2})-(\d{2})$/,'$3.$2.$1');
   page($('qualityTable'),'Проблемы отчётов',['Период','Подразделение','Проблема','Источник','Строка Excel','Ячейка Excel','Причина'],issues.map(i=>{
@@ -264,7 +277,7 @@ function init(){
    const sheet=!i.sheet?'':/^[A-Za-zА-Яа-яЁё0-9_]+$/.test(i.sheet)?i.sheet:"'"+i.sheet.replace(/'/g,"''")+"'";
    const address=cells.map(c=>sheet?sheet+'!'+c:c).join(', ');
    const period=i.date?date(i.date):i.period_start===i.period_end?date(i.period_start):[date(i.period_start),date(i.period_end)].filter(Boolean).join(' — ');
-   return [period||'Даты не сохранены',i.organization||'Не указано / общий итог',Object.hasOwn(types,i.kind)?types[i.kind]:'Другое замечание',qualitySource(i),i.source_row||i.row,address||'—',qualityReason(i,address)];
+   return [period||'Даты не сохранены',i.organization||'Не указано / общий итог',qualityType(i.kind),qualitySource(i),i.source_row||i.row,address||'—',qualityReason(i,address)];
   }),[null,null,null,null,'Номер строки исходного листа, если он сохранён при проверке или импорте.',
    'Адреса ячеек на исходном листе, если они сохранены. При расхождении итогов указаны контрольные ячейки. Причина расхождения может находиться в строках детализации.',null]);
  }

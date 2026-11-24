@@ -141,10 +141,14 @@ test('quality filters and offset go to native global query, old responses clear 
 });
 
 test('quality shows the workbook and sheet, with Russian labels for stored diagnostic codes',async()=>{
- const ui=mount({unifiedQualityPage:async()=>({total:3,next_offset:null,counts:{invalid:2,other:1},issues:[
+ const ui=mount({unifiedQualityPage:async()=>({total:7,next_offset:null,counts:{invalid:2,mismatch:1,other:4},issues:[
   {kind:'invalid',reason:'invalid_rows',source_name:'Проверка.xlsx',sheet:'Q1',source_anchor:'native-opaque-id',diagnostic_scope:'source'},
   {kind:'invalid',reason:'invalid_bounds',source_name:'Другой.xlsx'},
   {kind:'custom-diagnostic',reason:'Проверьте формулу Excel',source_name:'Другой.xlsx'},
+  {kind:'missing-day',reason:'Day is absent from source header',source_name:'Другой.xlsx'},
+  {kind:'missing-day',reason:'Daily columns are blank; no zero report invented',source_name:'Другой.xlsx'},
+  {kind:'missing-period',reason:'В столбцах периода нет значений',source_name:'Другой.xlsx'},
+  {kind:'mismatch',reason:'Daily values do not match source-period controls',source_name:'Другой.xlsx'},
  ]})});
  await ui.window.unifiedReports.openView('quality');
  const result=text(ui.nodes.qualityTable);
@@ -154,7 +158,12 @@ test('quality shows the workbook and sheet, with Russian labels for stored diagn
  assert.match(result,/Некорректные границы отчётного периода/);
  assert.match(result,/Другое замечание/);
  assert.match(result,/Проверьте формулу Excel/);
- assert.doesNotMatch(result,/native-opaque-id|invalid_rows|invalid_bounds|custom-diagnostic/);
+ assert.match(result,/Пропущен день в Excel/);
+ assert.match(result,/Пропущен период в Excel/);
+ assert.match(result,/Дата отсутствует в заголовках исходного листа Excel/);
+ assert.match(result,/Столбцы дня пусты/);
+ assert.match(result,/Значения по дням не совпадают с контрольными итогами Excel/);
+ assert.doesNotMatch(result,/native-opaque-id|invalid_rows|invalid_bounds|custom-diagnostic|missing-day|Daily |Day is absent/);
 });
 
 test('quality explains how to recover quantities omitted by previous Excel imports',async()=>{
