@@ -65,6 +65,35 @@ impl Calendar {
         })
     }
 
+    /// Keep full calendar buckets inside an exact baseline. Edge dates
+    /// outside those buckets must not contribute even when reports exist.
+    fn whole_buckets(&self, from: NaiveDate, to: NaiveDate) -> Result<Option<(NaiveDate, NaiveDate)>, String> {
+        let start = |d: NaiveDate| match self.kind.as_str() {
+            "week" => d - Duration::days(i64::from(d.weekday().num_days_from_monday())),
+            "month" => d.with_day(1).expect("Every month has a first day"),
+            "year" => d.with_ordinal(1).expect("Every year has a first day"),
+            _ => d,
+        };
+        let ends_at_boundary = match self.kind.as_str() {
+            "week" => to.weekday() == chrono::Weekday::Sun,
+            "month" => to.succ_opt().is_some_and(|d| d.day() == 1),
+            "year" => to.month() == 12 && to.day() == 31,
+            _ => true,
+        };
+        let mut first = start(from);
+        let mut last = start(to);
+        if first == last && (from != first || !ends_at_boundary) {
+            return Ok(None);
+        }
+        if from != first {
+            first = step(&self.kind, first, 1)?;
+        }
+        if !ends_at_boundary {
+            last = step(&self.kind, last, -1)?;
+        }
+        Ok((first <= last).then_some((first, last)))
+    }
+
     fn facts(
         &self,
         c: &Connection,
@@ -485,22 +514,30 @@ impl Storage {
             d = step(&calendar.kind, d, 1)?;
         }
         let sample_length = if range_window { count } else { 1 };
-        let (baseline_from, baseline_to) = if let Some(base) = options.and_then(|o| o.baseline.as_ref()) {
+        let (baseline_from, baseline_to, baseline_buckets) = if let Some(base) = options.and_then(|o| o.baseline.as_ref()) {
             let selected = ChangeQuery { from: base.from.clone(), to: base.to.clone(), ..q.clone() };
-            let baseline = Calendar::new(s, &selected, grouping)?;
-            (baseline.first, baseline.last)
+            let baseline = Calendar::new(s, &selected, None)?;
+            let bounds = (baseline.first, baseline.last);
+            let buckets = if grouping.is_some() {
+                calendar.whole_buckets(bounds.0, bounds.1)?
+            } else {
+                Some(bounds)
+            };
+            (bounds.0, bounds.1, buckets)
         } else {
             let base_count = if usual { window * sample_length } else { count };
-            (step(&calendar.kind, first, -base_count)?, step(&calendar.kind, first, -1)?)
+            let bounds = (step(&calendar.kind, first, -base_count)?, step(&calendar.kind, first, -1)?);
+            (bounds.0, bounds.1, Some(bounds))
         };
-        let mut index = 0;
-        d = baseline_from;
-        while d <= baseline_to {
-            tx.execute("INSERT INTO adv_dates VALUES(?1,0,?2,EXISTS(SELECT 1 FROM adv_complete WHERE label=?1))",
-                params![d.to_string(), index / sample_length]).map_err(err)?;
-            if d == baseline_to { break; }
-            d = step(&calendar.kind, d, 1)?;
-            index += 1;
+        if let Some((mut day, last)) = baseline_buckets {
+            let mut index = 0;
+            loop {
+                tx.execute("INSERT INTO adv_dates VALUES(?1,0,?2,EXISTS(SELECT 1 FROM adv_complete WHERE label=?1))",
+                    params![day.to_string(), index / sample_length]).map_err(err)?;
+                if day == last { break; }
+                day = step(&calendar.kind, day, 1)?;
+                index += 1;
+            }
         }
         // A missing day excludes its entire historical sample from the mean.
         // Other samples retain their original values, including observed zeros.

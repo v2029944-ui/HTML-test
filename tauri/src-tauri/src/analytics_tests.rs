@@ -118,6 +118,69 @@ fn missing_money_preserves_quantity_in_ranges_comparisons_and_exports() {
 }
 
 #[test]
+fn detail_views_distinguish_missing_amount_missing_report_and_zero_baseline() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let report = |day: &str, rows: Value| json!({
+        "id":day,"type":"day","start":day,"end":day,"organizations":["A"],"rows":rows
+    });
+    let row = |work: &str, count: i64, amount: Option<i64>| {
+        json!({"organization":"A","work":work,"count":count,"amount":amount})
+    };
+    let rev = prepare(&store, &json!({"reports":[
+        report("2024-02-27", json!([row("Alpha", 0, Some(0))])),
+        report("2024-02-28", json!([row("Alpha", 2, Some(20))])),
+        report("2024-02-29", json!([row("Alpha", 3, Some(30)), row("Beta", 1, None)]))
+    ],"settings":{"orgNames":["A","B","C","D"],"catalog":[],"groups":[]}}));
+    let all = scope(&store, rev, "day", &["A"], None);
+    let base = query("2024-02-27", "2024-02-27");
+    let options = UnifiedPatternOptions {
+        search: "".into(), status: "all".into(), range_window: true, baseline: None,
+    };
+    for (end, complete) in [("2024-02-29", true), ("2024-03-01", false)] {
+        let current = query("2024-02-29", end);
+        let changes = ChangeQuery {
+            method: "range".into(), from: current.from.clone(), to: current.to.clone(),
+            percent: 0., min_count: 0., min_amount: 0.,
+        };
+        for (metric, total) in [("count", 4.), ("amount", 30.)] {
+            let structure = store.advanced_composition(rev, &all, &changes, None, &base, "structure", metric, None).unwrap();
+            assert_eq!(structure["total"], total);
+            let alpha = &structure["rows"][0];
+            assert_eq!(alpha["name"], "Alpha");
+            if complete && metric == "count" {
+                assert_eq!(alpha["share"], 75.);
+                assert_eq!(alpha["cumulative"], 75.);
+                assert_eq!(structure["rows"][1]["cumulative"], 100.);
+            } else {
+                assert!(alpha["share"].is_null() && alpha["cumulative"].is_null());
+            }
+        }
+        let comparison = store.analysis_comparison_summary(rev, &all, &ComparisonQuery {
+            before: base.clone(), after: current, percent: 0., min_count: 0., min_amount: 0.,
+        }).unwrap();
+        assert!(comparison.amount.is_none());
+        if complete {
+            let count = comparison.count.unwrap();
+            assert_eq!((count.base, count.current, count.delta, count.percent), (0., 4., 4., None));
+        } else {
+            assert!(comparison.count.is_none());
+        }
+        let usual = store.unified_pattern_page_at_page(rev, &all, &changes, None, "usual", 4, &options, 0).unwrap();
+        let alpha = usual.rows.iter().find(|row| row["name"] == "Alpha").unwrap();
+        let beta = usual.rows.iter().find(|row| row["name"] == "Beta").unwrap();
+        assert!(beta["amount"]["delta"].is_null() && beta["amount"]["percent"].is_null());
+        if complete {
+            assert_eq!(alpha["amount"]["base"], 10.);
+            assert_eq!(alpha["amount"]["delta"], 20.);
+            assert_eq!(alpha["amount"]["percent"], 200.);
+        } else {
+            assert!(alpha["amount"]["delta"].is_null() && alpha["amount"]["percent"].is_null());
+        }
+    }
+}
+
+#[test]
 fn real_js_ranges_changes_full_pages_exports() {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();
@@ -2147,4 +2210,17 @@ fn partial_analytics_keeps_observed_amounts_and_report_gaps_separate() {
     assert_eq!(structure["rows"][0]["current"],50.);
     assert!(structure["rows"][0]["share"].is_null());
 
+    let known_day = "2024-01-01".to_owned();
+    let known = RangeQuery { from: known_day.clone(), to: known_day.clone() };
+    let exact_selection = ChangeQuery { from: known_day.clone(), to: known_day, ..selection };
+    let counts = store.advanced_composition(revision, &selected, &exact_selection, None, &known, "structure", "count", None).unwrap();
+    assert_eq!(counts["currentComplete"], true);
+    assert_eq!(counts["sharesValid"], true);
+    assert_eq!(counts["rows"][0]["share"], 100.);
+    assert_eq!(counts["rows"][0]["cumulative"], 100.);
+    let same_day = ComparisonQuery { before: known.clone(), after: known, ..q };
+    let same = serde_json::to_value(store.analysis_comparison_window(revision, &selected, &same_day, None, 0, 50).unwrap()).unwrap();
+    assert_eq!(same["rows"][0]["count"]["delta"], 0.);
+    assert_eq!(same["rows"][0]["count"]["percent"], 0.);
+    assert!(same["rows"][0]["amount"].is_null());
 }

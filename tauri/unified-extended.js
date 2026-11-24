@@ -347,7 +347,7 @@ async function departmentComparison(task,index){
  }
  reset();
  if(reference){sampleNote($('comparisonCoverage'),sample,true,true);$('comparisonBaseOrg').replaceChildren(...s.organizations.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));$('comparisonBaseOrg').value=baseOrg;}
- $('comparisonHelp').textContent='Общий интервал для подразделений. Разница относительно '+baseOrg+'. При нулевой базе процент не рассчитывается.';
+ $('comparisonHelp').textContent='Общий интервал для подразделений. Разница относительно '+baseOrg+'. При нулевой базе процент не рассчитывается. Чтобы сравнить одну работу, выберите её в фильтре «Работы» и оставьте одну отметку в «Показатели сравнения».';
  for(const org of organizations)$('comparisonCoverage').append(UI.el('p',org.org+': '+(incomplete(org)?'Неполные данные':'Полные данные')+' · пропусков '+org.missing+(org.complete&&incomplete(org)?' · есть строки без суммы':''),incomplete(org)?'warn small':'muted small'));
  const unknown={count:null,amount:null,average:null};
  const byOrganization=new Map(organizations.map(row=>[row.org,row]));
@@ -440,7 +440,7 @@ async function structure(){
   if(!task.valid())return;clear('structureResults');const root=$('structureResults');
   if(!page.currentComplete&&!page.currentAvailable){clear('structureResults','Нет доступных значений за анализируемый период.');return;}
   root.append(UI.el('p',(page.currentComplete?'Итог: ':'Частичный итог: ')+fmt(page.total,metric),'small'));
-  if(!page.currentComplete)root.append(UI.el('p','Неполные отчёты или суммы. Показаны доступные значения; доли не рассчитываются.','warn small'));
+  if(!page.currentComplete)root.append(UI.el('p','Доли и накопленная доля требуют полного итога по выбранному показателю. Показаны доступные значения. Если отсутствуют только суммы, проверьте состав по количеству.','warn small'));
   else if(!page.sharesValid)root.append(UI.el('p','Есть отрицательные значения или неположительный итог: доли не рассчитываются.','warn small'));
   if(!page.baseComplete)root.append(UI.el('p','Базовый период неполон: изменение долей недоступно.','warn small'));
   const visible=page.rows.filter(row=>Number.isFinite(row.current)&&row.current!==0);
@@ -489,6 +489,13 @@ async function patterns(mode,index=0,paging=false){
   const req=request(s,{method:'range',percent:mode==='usual'?number('usualPercent'):0,min_count:0,min_amount:0});
   const page=await api.unifiedPatternPageAtPage(req,mode,windowSize,opts,index);if(!task.valid())return;clear(name+'Results','',false);clear(name+'Coverage','',false);sampleNote($(name+'Coverage'),sample);
   $(name+'Coverage').append(UI.el('p',mode==='usual'?'Полных исторических окон: '+page.used+' из '+page.expected+'. '+(page.current_complete?'Анализируемый интервал полный.':'Анализируемый интервал неполон.'):'Полных периодов анализа: '+page.used+' из '+page.expected+'. В базовом интервале: '+page.previous_used+'.'+(page.current_complete?'':' Анализируемый интервал неполон.'),'muted small'));
+  if(mode==='usual'){
+   if(!page.current_complete)$(name+'Coverage').append(UI.el('p','Прочерк в отклонении при неполном интервале означает, что сравнить его с историей нельзя. Выберите диапазон с отчётами по всем выбранным подразделениям.','warn small'));
+   if(page.used<2)$(name+'Coverage').append(UI.el('p','Для оценки отклонения нужны минимум два полных исторических окна.','warn small'));
+   if(usualMetrics.has('amount')||usualMetrics.has('average'))$(name+'Coverage').append(UI.el('p','Пустые суммы могут сделать отклонение по сумме или средней недоступным. При нулевой базе процент недоступен.','muted small'));
+  }else if(normal){
+   $(name+'Coverage').append(UI.el('p','В частоте учитываются только целые календарные периоды внутри каждого диапазона с отчётами по всем выбранным подразделениям.','muted small'));
+  }
   const root=$(name+'Results');if(!page.rows.length)root.append(UI.el('p','Нет услуг по выбранным фильтрам.','muted small'));
   if(mode==='usual')for(const metric of usualMetrics){const rows=page.rows.map(row=>{const m=row[metric];return [row.key?itemButton(row,{...s,from:page.baseline_from,to:s.to}):row.name,fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent),UI.el('span',usualLabels[m.status]||m.status,m.status==='high'?'numeric-rise':m.status==='low'?'numeric-fall':'')];});UI.table(root,metric,'Среднее: '+sampleCaption(page.baseline_from,page.baseline_to,s.displayType)+'. Анализ: '+sampleCaption(page.current_from,page.current_to,s.displayType),['Услуга / группа','Среднее раньше','Сейчас','Отклонение','Отклонение, %','Оценка'],rows,{
    headerHelp:[
