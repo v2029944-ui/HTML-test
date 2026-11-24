@@ -479,6 +479,11 @@ def import_year(page, workbook, confirmations):
         page.locator(f'#unifiedWidePeriod{i}').select_option('q'+str(i+1))
         assert page.locator(f'#unifiedWideSheet{i}').is_checked()
     assert page.locator('#unifiedWideSheetMode').input_value()=='selected'
+    summary = page.locator('#unifiedWideSheets')
+    expect(summary).to_be_visible()
+    expect(summary).to_have_value('Q1; Q2; Q3; Q4')
+    expect(summary).to_have_attribute('readonly', '')
+    assert summary.evaluate("node => getComputedStyle(node).borderRadius === getComputedStyle(document.querySelector('#unifiedWideSheetMode')).borderRadius")
     page.locator('#inspectFile').click()
     wait_for_text(page,'#unifiedImportStatus','Проверка завершена',90_000)
     assert page.locator('#importPreview .kpi').first.locator('strong').inner_text()=='366'

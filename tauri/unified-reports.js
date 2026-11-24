@@ -493,7 +493,7 @@ function init(){
   const label=el('label','Листы для загрузки'),mode=el('select');mode.id='unifiedWideSheetMode';
   for(const [value,text] of [['auto','Все листы с единым списком'],['selected','Только отмеченные листы']]){const option=el('option',text);option.value=value;mode.append(option);}mode.value='auto';label.append(mode);root.append(label);
   mode.addEventListener('change',()=>{updateWideSheetSummary();changed();});
-  const summary=el('input');summary.id='unifiedWideSheets';summary.readOnly=true;summary.setAttribute('aria-label','Отмеченные листы');root.append(summary);
+  const summary=el('textarea',undefined,'wide-sheet-summary');summary.id='unifiedWideSheets';summary.rows=2;summary.readOnly=true;summary.setAttribute('aria-label','Отмеченные листы');root.append(summary);
   for(const [i,sheet] of found.entries()){
    const row=el('div',undefined,'daily-sheet-option'),checkLabel=el('label',undefined,'checkline'),box=el('input');box.type='checkbox';box.id='unifiedWideSheet'+i;
    checkLabel.append(box,el('span',sheet.name));row.append(checkLabel);
