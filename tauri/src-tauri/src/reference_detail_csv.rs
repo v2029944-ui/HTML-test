@@ -111,8 +111,12 @@ pub(super) fn export_patterns(
 ) -> Result<(), String> {
     export(path, |w| {
         context(w, tx, s, q, table)?;
-        period_header(w, "Базовый период", base_kind, base_from, base_to)?;
         let opts = table.options.as_ref().ok_or("Missing pattern options")?;
+        if let Some(base) = &opts.baseline {
+            period_header(w, "Базовый период", &s.report_type, &base.from, &base.to)?;
+        } else {
+            period_header(w, "Базовый период", base_kind, base_from, base_to)?;
+        }
         headers(w, &["Поиск", &opts.search])?;
         headers(w, &["Фильтр признака", &opts.status])?;
         let usual = table.section == "usual";

@@ -2147,4 +2147,17 @@ fn partial_analytics_keeps_observed_amounts_and_report_gaps_separate() {
     assert_eq!(structure["rows"][0]["current"],50.);
     assert!(structure["rows"][0]["share"].is_null());
 
+    let known_day = "2024-01-01".to_owned();
+    let known = RangeQuery { from: known_day.clone(), to: known_day.clone() };
+    let exact_selection = ChangeQuery { from: known_day.clone(), to: known_day, ..selection };
+    let counts = store.advanced_composition(revision, &selected, &exact_selection, None, &known, "structure", "count", None).unwrap();
+    assert_eq!(counts["currentComplete"], true);
+    assert_eq!(counts["sharesValid"], true);
+    assert_eq!(counts["rows"][0]["share"], 100.);
+    assert_eq!(counts["rows"][0]["cumulative"], 100.);
+    let same_day = ComparisonQuery { before: known.clone(), after: known, ..q };
+    let same = serde_json::to_value(store.analysis_comparison_window(revision, &selected, &same_day, None, 0, 50).unwrap()).unwrap();
+    assert_eq!(same["rows"][0]["count"]["delta"], 0.);
+    assert_eq!(same["rows"][0]["count"]["percent"], 0.);
+    assert!(same["rows"][0]["amount"].is_null());
 }

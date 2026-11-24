@@ -641,3 +641,37 @@ test('comparison displays both partial intervals without calculating deltas from
  assert.ok(table);assert.deepEqual(Array.from(table.options.csvRows[1]),['W',20,30,null,null]);
  assert.match(f.nodes.get('comparisonCoverage').textContent,/неполн/i);
 });
+
+test('deviations explain missing reports and insufficient historical windows',async()=>{
+ const f=fixture({unifiedPatternPageAtPage:async()=>({
+  rows:[],total_rows:0,used:1,expected:4,previous_used:1,current_complete:false,
+  baseline_from:'2023-12-24',baseline_to:'2023-12-31',current_from:'2024-01-01',current_to:'2024-01-02'
+ })});
+ f.window.referenceDetail={active:'usualPanel'};
+ f.publish({baseFrom:'2023-12-30',baseTo:'2023-12-31'});
+ f.nodes.get('usualPanel').open=true;f.nodes.get('usualPanel').dispatch('toggle');await settle();
+ const message=f.nodes.get('usualCoverage').textContent;
+ assert.match(message,/прочерк.*неполном интервале/i);
+ assert.match(message,/минимум два полных исторических окна/i);
+});
+
+test('one metric and one work can be compared across three selected departments',async()=>{
+ const calls=[],charts=[];
+ const f=fixture({nativeAnalysisOrganizations:async(...args)=>{
+  calls.push(args);
+  return ['A','B','C'].map((org,i)=>({org,complete:true,missing:0,total:{count:i+1,amount:(i+1)*10,average:10}}));
+ }});
+ f.UI.drawChart=(...args)=>charts.push(args);
+ f.window.referenceDetail={active:'comparison'};
+ f.UI.state.selectedMetrics=new Set(['count']);
+ f.publish({organizations:['A','B','C']});
+ f.nodes.get('comparisonMode').value='organizations';
+ f.nodes.get('comparisonMode').dispatch('change');await settle();
+ assert.deepEqual(Array.from(calls.at(-1)[4]),['A','B','C']);
+ assert.deepEqual(Array.from(calls.at(-1)[6]),['Work']);
+ assert.deepEqual(f.tables.map(table=>table.metric),['count']);
+ assert.deepEqual(Array.from(f.tables[0].options.csvRows[1].slice(1)),[1,2,1,100,3,2,200]);
+ assert.equal(charts.length,1);
+ assert.deepEqual(Array.from(charts[0][4].categories),['A','B','C']);
+ assert.match(f.nodes.get('comparisonHelp').textContent,/Показатели сравнения/);
+});
