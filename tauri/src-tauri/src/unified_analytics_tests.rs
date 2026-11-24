@@ -506,6 +506,50 @@ fn reference_frequency_counts_overlapping_and_future_baseline_days_separately() 
     assert_eq!(result.rows[0]["last"], "2024-01-01");
 }
 
+#[test]
+fn reference_frequency_keeps_only_whole_months_inside_exact_baseline() {
+    let (dir, store, _, mut scope) = fixture();
+    let first = date("2024-01-01").unwrap();
+    let reports: Vec<Value> = (0..91).map(|offset| {
+        let day = (first + Duration::days(offset)).to_string();
+        json!({"id":day,"type":"day","start":day,"end":day,"organizations":["A"],
+               "rows":[{"organization":"A","work":"Работа","count":1.0,"amount":null}]})
+    }).collect();
+    store.save(json!({"reports":reports,"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}})).unwrap();
+    let revision = store.revision().unwrap();
+    for offset in 0..91 {
+        store.analysis_index_report(&(first + Duration::days(offset)).to_string(), revision).unwrap();
+    }
+    store.analysis_index_settings(revision).unwrap();
+    scope.organizations = store.analysis_filter_create(revision, "organizations").unwrap();
+    store.analysis_filter_append(revision, &scope.organizations, &["A".into()]).unwrap();
+    store.analysis_filter_seal(revision, &scope.organizations).unwrap();
+    let q = ChangeQuery { from: "2024-03-01".into(), to: "2024-03-31".into(), ..query() };
+    for (from, to, expected) in [("2024-01-28", "2024-02-29", 1), ("2024-01-28", "2024-02-28", 0)] {
+        let options = UnifiedPatternOptions {
+            search: "".into(), status: "all".into(), range_window: false,
+            baseline: Some(RangeQuery { from: from.into(), to: to.into() }),
+        };
+        let result = store.unified_pattern_page_at_page(revision, &scope, &q, Some("month"), "regularity", 4, &options, 0).unwrap();
+        assert_eq!(result.used, 1);
+        assert_eq!(result.previous_used, expected);
+        assert_eq!(result.rows[0]["frequency"], 100.);
+        assert_eq!(result.rows[0]["previousHits"], expected);
+        assert_eq!(result.rows[0]["previousFrequency"].as_f64(), (expected == 1).then_some(100.));
+
+        let spec = serde_json::from_value(json!({
+            "section":"regularity","metric":"count","window":4,"options":options
+        })).unwrap();
+        let target = dir.path().join(format!("frequency-{expected}.csv"));
+        store.reference_detail_csv(revision, &scope, &q, Some("month"), &spec, &target).unwrap();
+        let csv = std::fs::read_to_string(target).unwrap();
+        assert!(csv.contains(&format!(r#""Базовый период";"{from}";"{to}""#)));
+        let values = if expected == 1 { r#""Работа";"1";"100";"1";"100";"0""# }
+            else { r#""Работа";"1";"100";"";"";"""# };
+        assert!(csv.contains(values), "{csv}");
+    }
+}
+
 #[path="reference_detail_csv_tests.rs"]
 mod reference_detail_csv_tests;
 
