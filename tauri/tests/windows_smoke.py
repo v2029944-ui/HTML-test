@@ -1469,15 +1469,15 @@ def check_delete_without_backup(page, temporary, confirmations):
     database=Path(api(page,'info')['dataFile'])
     files={p.name for p in database.parent.glob('*.sqlite3')}
     stored=backup_contents(database)
-    navigate(page,'upload')
-    page.locator('#unifiedUploadList').click()
+    navigate(page,'databases')
+    expect(page.locator('#databases #unifiedReportDatabase')).to_have_text('Личная база')
     loaded=page.locator('#uploadedReports')
     if not loaded.evaluate('node=>node.open'):
         loaded.locator(':scope > summary').click()
     card=page.locator('#reports .calendar-source').first
     expect(card.locator('strong')).to_contain_text('2030-01-06',timeout=90_000)
     confirmations.cancel_then_accept(card.get_by_role('button',name='Удалить отчёт',exact=True),
-        'Удалить отчёт 2030-01-06 — 2030-01-06?')
+        'Удалить отчёт 2030-01-06 — 2030-01-06 из личной базы?')
     wait_for_app_state(page,
         "typeof window.unifiedUI.snapshot?.reports==='number' && window.unifiedUI.snapshot.reports==="+
         str(before['reports']+5),'Confirmed single-report deletion',90_000)

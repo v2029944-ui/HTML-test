@@ -5,7 +5,7 @@ function mount(overrides={}){
  class E{
   constructor(tag='div'){this.tag=tag;this.nodeType=1;this.children=[];this.events={};this.dataset={};this.attrs={};this.value='';this.checked=false;this.disabled=false;this.isConnected=true;}
   set id(v){this._id=v;nodes[v]=this;}get id(){return this._id;}
-  append(...xs){for(const x of xs){if(x&&typeof x==='object'){x.parentElement=this;}this.children.push(x);}}
+  append(...xs){for(const x of xs){if(x&&typeof x==='object'){if(x.parentElement)x.parentElement.children=x.parentElement.children.filter(child=>child!==x);x.parentElement=this;}this.children.push(x);}}
   prepend(x){x.parentElement=this;this.children.unshift(x);}after(x){x.parentElement=this.parentElement;this.parentElement?.children.push(x);}before(x){this.after(x);}
   replaceChildren(...xs){for(const x of this.children)if(x&&typeof x==='object')x.isConnected=false;this.children=[];this.append(...xs);}
   remove(){if(this.parentElement)this.parentElement.children=this.parentElement.children.filter(x=>x!==this);this.isConnected=false;}
@@ -14,17 +14,17 @@ function mount(overrides={}){
   querySelectorAll(s){const all=this.children.flatMap(x=>x&&typeof x==='object'?[x,...x.querySelectorAll('*')]:[]);if(s==='*')return all;if(s==='button')return all.filter(x=>x.tag==='button');if(s==='input,select,textarea,button')return all.filter(x=>['input','select','textarea','button'].includes(x.tag));if(s==='[data-mapping]')return all.filter(x=>x.dataset.mapping);if(s==='input[data-ordinal]')return all.filter(x=>x.tag==='input'&&x.dataset.ordinal!==undefined);return [];}
   querySelector(s){return this.querySelectorAll('*').find(x=>s==='[data-field="'+x.dataset.field+'"]')||null;}
  }
- const ids=['reports','reportCount','upload','calendarDetails','reportCalendar','calendarRange','calendarPrev','calendarNext','qualitySource','qualityPeriod','qualityOrg','qualityType','qualityTable','qualitySummary','qualityPage','qualityPrev','qualityNext','qualityHeading','reportPeriods','uploadedReports','importAdvanced','replaceExisting','importPreview','excelFile','importFormat','importType','importWeek','importMonth','sheetSelect','dailyYear','importMappingMode','inspectFile','saveImport','dailyWideOptions','weekStartLabel','monthStartLabel','importDateCaption','importManualWrap','importColumnMappings','addImportMapping','excelFileStatus','dailySheetChoices','importPeriodDates','saveDailyFolderRule'];
+ const ids=['reports','reportCount','upload','databases','refNative','calendarDetails','reportCalendar','calendarRange','calendarPrev','calendarNext','qualitySource','qualityPeriod','qualityOrg','qualityType','qualityTable','qualitySummary','qualityPage','qualityPrev','qualityNext','qualityHeading','reportPeriods','uploadedReports','importAdvanced','replaceExisting','importPreview','excelFile','importFormat','importType','importWeek','importMonth','sheetSelect','dailyYear','importMappingMode','inspectFile','saveImport','dailyWideOptions','weekStartLabel','monthStartLabel','importDateCaption','importManualWrap','importColumnMappings','addImportMapping','excelFileStatus','dailySheetChoices','importPeriodDates','saveDailyFolderRule'];
  const root=new E();for(const id of ids){const e=new E(id.includes('File')?'input':'div');e.id=id;const p=new E();root.append(p);p.append(e);}
  const filterRoot=new E(),qualityLabel=new E();filterRoot.append(qualityLabel);qualityLabel.append(nodes.qualityType);
  Object.assign(nodes.importFormat,{value:'legacy'});nodes.importType.value='day';nodes.importWeek.value='2024-01-01';nodes.importMappingMode.value='auto';nodes.qualitySource.value='saved';for(const id of ['qualityPeriod','qualityOrg','qualityType'])nodes[id].value='all';
  const api={managementReportWindow:async()=>({rows:[],total_rows:0}),managementReportSummary:async()=>({reports:0,rows:0,amount:0,latest:'2024-01-01'}),managementReportOrgWindow:async()=>({rows:[],total_rows:0}),unifiedCalendar:async(revision,year)=>({revision,year,days:[]}),nativeDailyRollup:async()=>({points:[],next_cursor:null}),unifiedQualityPage:async()=>({issues:[],next_offset:null,total:0,counts:{}}),chooseWideXlsx:async()=>null,nativeImportFolderContext:async()=>null,nativeImportSheets:async()=>[{name:'Дни',component:'xl/worksheets/sheet1.xml'}],nativeLegacyImportSheets:async()=>['xl/worksheets/sheet1.xml'],nativeLegacyImportPreview:async()=>({reviewToken:'a'.repeat(64),reportCount:1,rowCount:2,conflicts:{},quality:{},sampleReports:[]}),nativeLegacyImportApply:async()=>({reports:1,rows:2,revision:2}),chooseSqliteBackupPath:async()=>null,...overrides};
- let snapshotHook,viewHook;const UI={api,$:id=>nodes[id],el:(tag,text,cls)=>{const e=new E(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;},tableHelp:(section,_table,headers,help)=>{section.headerHints=headers.filter((_,i)=>help[i]);},revision:1,snapshot:{org_names:['A','B','C','D']},fmt:v=>v??'—',onSnapshot:fn=>snapshotHook=fn,onView:(_,fn)=>viewHook=fn,refresh:async()=>{UI.revision++;snapshotHook(UI.snapshot);}};
+ let snapshotHook;const viewHooks=new Map();const UI={api,$:id=>nodes[id],el:(tag,text,cls)=>{const e=new E(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;},tableHelp:(section,_table,headers,help)=>{section.headerHints=headers.filter((_,i)=>help[i]);},revision:1,snapshot:{org_names:['A','B','C','D']},fmt:v=>v??'—',onSnapshot:fn=>snapshotHook=fn,onView:(name,fn)=>viewHooks.set(name,fn),refresh:async()=>{UI.revision++;snapshotHook(UI.snapshot);}};
  const window={sqlRowScroll:require('./scroll-window-fixture.cjs'),unifiedUI:UI,confirm:()=>true};const document={createElement:t=>new E(t),getElementById:id=>nodes[id],head:new E('head')};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../unified-reports.js'),'utf8'),{window,document,console});window.unifiedReports.init();return {nodes,UI,window,startFolder:async()=>{
   window.desktopAPI=api;
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-folder-status.js'),'utf8'),{window,document});
   await window.nativeFolderReady;
- },refresh:async()=>{await window.unifiedReports.openView('list');await window.unifiedReports.openView('calendar');await window.unifiedReports.openView('quality');},snapshot:(value=UI.snapshot)=>snapshotHook(value),view:()=>viewHook()};
+ },refresh:async()=>{await window.unifiedReports.openView('list');await window.unifiedReports.openView('calendar');await window.unifiedReports.openView('quality');},snapshot:(value=UI.snapshot)=>snapshotHook(value),view:(name='upload')=>{nodes.refNative.dataset.panel=name;return viewHooks.get(name)?.();}};
 }
 const text=e=>[e.textContent||'',...e.children.map(x=>typeof x==='object'?text(x):'')].join(' ');
 const flush=()=>new Promise(r=>setImmediate(r));
@@ -278,6 +278,72 @@ test('bulk report selection survives scrolling and passes only confirmed report 
   ['delete',1,{kind:'selected',ids:['0','50']},2],
  ]);
  assert.equal(ui.nodes.unifiedDeleteSelectedReports.disabled,true);
+});
+
+test('databases lists active reports and authorizes deletion only for the inspected workspace',async()=>{
+ const commands=[],row={id:'a',start:'2024-01-01',end:'2024-01-01',report_type:'day',rows:1,amount:5,warnings:0,organizations:1};
+ const ui=mount({
+  managementReportWindow:async()=>({rows:[row],total_rows:1}),
+  managementReportSummary:async()=>({reports:1,rows:1,latest:row.start}),
+  unifiedReportDeletionCount:async()=>1,
+  unifiedDeleteReports:async(...args)=>{commands.push(args);return {deleted:1};},
+  unifiedClearReports:async()=>({deleted:1})
+ });
+ ui.window.sharedWorkspace={state:{mode:'shared',workspace_token:'team-1',folder:'C:/Team',available:true,pending:false}};
+ await ui.view('databases');
+ assert.equal(ui.nodes.unifiedSavedReports.parentElement.id,'databases');
+ assert.match(text(ui.nodes.databases),/Общая база.*C:\/Team/);
+ const selected=ui.nodes.unifiedDeleteSelectedReports;
+ const select=async()=>{
+  const checkbox=ui.nodes.reports.querySelectorAll('*').find(node=>node.type==='checkbox');
+  checkbox.checked=true;await checkbox.fire('change');
+ };
+ await select();
+ ui.window.confirm=message=>{assert.match(message,/1 отчёт.*общей базы.*C:\/Team/s);return false;};
+ await selected.click();
+ assert.equal(commands.length,0);
+ const confirm=deferred();
+ ui.window.confirm=()=>confirm.promise;
+ const pending=selected.click();await flush();
+ ui.window.sharedWorkspace.state={mode:'personal',workspace_token:'local-1',available:true,pending:false};
+ ui.snapshot();confirm.resolve(true);await pending;await flush();
+ assert.equal(commands.length,0);
+ assert.match(text(ui.nodes.databases),/Личная база/);
+ assert.equal(selected.disabled,true);
+ await select();
+ ui.window.confirm=message=>{assert.match(message,/1 отчёт.*личной базы/);return true;};
+ await selected.click();
+ assert.deepEqual(JSON.parse(JSON.stringify(commands)),[[1,{kind:'selected',ids:['a']},1]]);
+ await ui.view('upload');
+ await ui.window.unifiedReports.openView('list');
+ assert.equal(ui.nodes.unifiedSavedReports.parentElement.id,'upload');
+ assert.doesNotMatch(text(ui.nodes.databases),/Личная база/);
+});
+
+test('database manager refuses unavailable shared workspace writes and preserves data on access denial',async()=>{
+ const commands=[],notices=[],row={id:'a',start:'2024-01-01',end:'2024-01-01',report_type:'day',rows:1,amount:5,warnings:0,organizations:1};
+ const ui=mount({
+  managementReportWindow:async()=>({rows:[row],total_rows:1}),
+  managementReportSummary:async()=>({reports:1,rows:1,latest:row.start}),
+  unifiedReportDeletionCount:async()=>1,
+  unifiedDeleteReports:async()=>({deleted:1}),
+  unifiedClearReports:async()=>{commands.push('clear');throw Error('Нет прав записи');}
+ });
+ ui.UI.notice=message=>notices.push(message);
+ ui.window.sharedWorkspace={state:{mode:'shared',workspace_token:'team',folder:'C:/Team',available:false,pending:false}};
+ await ui.view('databases');
+ const clear=ui.nodes.unifiedDeleteAllReports;
+ assert.equal(clear.disabled,true);
+ await clear.click();
+ assert.deepEqual(commands,[]);
+ ui.window.sharedWorkspace.state={...ui.window.sharedWorkspace.state,available:true};
+ await ui.view('databases');
+ ui.window.confirm=message=>{assert.match(message,/все 1 отчёт.*общей базы/s);return true;};
+ await clear.click();
+ assert.deepEqual(commands,['clear']);
+ assert.match(notices.at(-1),/Нет прав записи/);
+ assert.match(text(ui.nodes.reports),/2024-01-01/);
+ assert.equal(ui.UI.revision,1);
 });
 
 test('bulk deletion keeps its actions unavailable until a partially published refresh settles',async()=>{
