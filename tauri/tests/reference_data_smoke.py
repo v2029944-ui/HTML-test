@@ -131,6 +131,120 @@ def _check_trend_exports(page, scratch, scope, evidence):
     evidence['csv']['referenceTrendCsv'] = checks
 
 
+def _check_detail_table_csv_parity(page, scratch, scope, evidence):
+    """Compare rendered rows with native CSV on the same complete daily selection."""
+    assert (scope['from'], scope['to'], scope['baseFrom'], scope['baseTo']) == (
+        '2024-02-02', '2024-02-02', '2024-02-01', '2024-02-01'), scope
+    assert scope['allNames'] and len(scope['organizations']) == 4, scope
+    req = {
+        'revision': scope['revision'], 'source': 'daily', 'displayType': 'day',
+        'organizations': scope['organizations'], 'selectedNames': [],
+        'query': {'method': 'range', 'from': scope['from'], 'to': scope['to'],
+                  'percent': 30, 'min_count': 0, 'min_amount': 0},
+    }
+    baseline = {'from': scope['baseFrom'], 'to': scope['baseTo']}
+    metrics = {'amount': 'Сумма', 'count': 'Количество / объём',
+               'average': 'Сумма / количество (объём)'}
+    orgs = req['organizations']
+    observed = {}
+
+    def tab(key):
+        page.locator(f'#toolsPage .tool-tabs [data-section="{key}"]').click()
+        expect(page.locator('#refNative')).to_have_attribute('data-panel', key)
+
+    def choose_metrics(id):
+        menu = page.locator(f'#{id} details')
+        if not menu.evaluate('node => node.open'):
+            menu.locator('summary').click()
+        for metric in metrics:
+            menu.locator(f'input[value="{metric}"]').check()
+        menu.locator('summary').click()
+
+    def ui_row(root, title, label, metric=None):
+        section = page.locator(root + ' .metric-table').filter(
+            has=page.get_by_role('heading', name=title, exact=True))
+        rows = section.locator('tbody tr').filter(has=page.get_by_role('cell', name=label, exact=True))
+        if metric:
+            rows = rows.filter(has=page.get_by_role('cell', name=metric, exact=True))
+        expect(rows).to_have_count(1, timeout=TIMEOUT)
+        return rows.locator('td').all_text_contents()
+
+    def csv_rows(name, spec, trend=False):
+        path = scratch / (name + '.csv')
+        if trend:
+            _api(page, 'referenceTrendCsv', req, spec, str(path))
+        else:
+            _api(page, 'referenceDetailCsv', {'request': req, **spec}, str(path))
+        with path.open(encoding='utf-8-sig', newline='') as stream:
+            return list(csv.reader(stream, delimiter=';'))
+
+    def compare(name, rendered, exported, expected):
+        values = [_number(v) for v in rendered]
+        assert values == [_number(v) for v in exported] == expected, (name, rendered, exported, expected)
+        observed[name] = values
+
+    page.locator('#refAnalytics').click()
+    expect(page.locator('#refNative')).to_have_attribute('data-panel', 'chartPanel')
+    try:
+        page.locator('#chartBreakdown').select_option('organizations')
+        choose_metrics('chartMetrics')
+        page.locator('#hideEmptyPeriods').uncheck()
+        page.locator('#chartPanel [data-chart="table"]').click()
+        records = csv_rows('trend-parity', {'table': 'organizations', 'metrics': list(metrics),
+                                             'hideEmpty': False, 'matchChart': True}, trend=True)
+        assert records[0] == ['Подразделение', 'Показатель', '2024-02-02'], records
+        for org in orgs:
+            for metric, expected in zip(metrics.values(), [5, .5, 10]):
+                data = ui_row('#dataTable', 'Все выбранные показатели по подразделениям', org, metric)
+                exported = next(row for row in records[1:] if row[:2] == [org, metric])
+                compare(f'Динамика / {org} / {metric}', data[2:], exported[2:], [expected])
+
+        tab('comparison')
+        page.locator('#refComparisonModes [data-value="organizations"]').click()
+        choose_metrics('comparisonMetrics')
+        base_org = orgs[0]
+        page.locator('#comparisonBaseOrg').select_option(base_org)
+        for metric, expected in zip(metrics, [5, .5, 10]):
+            data = ui_row('#comparisonTable', metrics[metric], 'Альфа')
+            rows = csv_rows(f'comparison-parity-{metric}', {'section': 'organizations',
+                            'metric': metric, 'baseOrg': base_org})
+            exported = next(row for row in rows if row[0] == 'Альфа')
+            compare(f'Сравнение / {metrics[metric]}', data[1:], exported[1:],
+                    [value for org in orgs for value in ([expected] if org == base_org else [expected, 0, 0])])
+
+        tab('structurePanel')
+        expect(page.locator('#structureLimit')).to_have_value('10')
+        for metric, expected in [('amount', 20), ('count', 2)]:
+            page.locator('#structureMetric').select_option(metric)
+            data = ui_row('#structureResults', metrics[metric], 'Альфа')
+            rows = csv_rows(f'structure-parity-{metric}', {'section': 'structure',
+                            'metric': metric, 'before': baseline, 'limit': 10})
+            exported = next(row for row in rows if row[0] == 'Альфа')
+            compare(f'Состав работ / {metrics[metric]}', data[1:], exported[1:], [expected, expected, 100, 100, 100, 0])
+
+        tab('usualPanel')
+        expect(page.locator('#usualWindow')).to_have_value('4')
+        for metric, expected in zip(metrics, [20, 2, 10]):
+            data = ui_row('#usualResults', metrics[metric], 'Альфа')
+            rows = csv_rows(f'usual-parity-{metric}', {'section': 'usual', 'metric': metric,
+                            'window': 4, 'options': {'search': '', 'status': 'all', 'range_window': True}})
+            exported = next(row for row in rows if row[0] == 'Альфа')
+            compare(f'Отклонения / {metrics[metric]}', data[1:5], exported[1:5], [expected, expected, 0, 0])
+            assert data[5] == exported[5] == 'Обычный уровень', (data, exported)
+
+        tab('regularityPanel')
+        expect(page.locator('#regularityGap')).to_have_value('4')
+        data = ui_row('#regularityResults', 'Как часто выполнялись услуги', 'Альфа')
+        rows = csv_rows('regularity-parity', {'section': 'regularity', 'metric': 'count',
+                        'window': 4, 'options': {'search': '', 'status': 'all', 'baseline': baseline}})
+        exported = next(row for row in rows if row[0] == 'Альфа')
+        compare('Частота / периоды с активностью', data[1:6], exported[1:6], [1, 100, 1, 100, 0])
+        evidence['detailTableCsvParity'] = observed
+    finally:
+        page.locator('#backBtn').click()
+    expect(page.locator('#refAnalytics')).to_be_focused()
+
+
 def select_filter_period(container, unit, mode):
     units = {'День': 'day', 'Неделя': 'week', 'Месяц': 'month', 'Год': 'year'}
     container.locator('[data-period-selection]').select_option(f'{units[unit]}:{mode}')
@@ -407,6 +521,8 @@ def check_reference_data(page, output):
         expect(quality).to_be_focused()
         record('01-complete-current-and-base')
         print_view('#s1')
+        with tempfile.TemporaryDirectory(prefix='analiz-detail-parity-') as scratch:
+            _check_detail_table_csv_parity(page, Path(scratch), current, evidence)
 
         # February and January are independently complete, deliberately unequal intervals.
         current = select_period('Месяц', '2024-02-01', baseline='prevMonth')
