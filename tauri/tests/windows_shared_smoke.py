@@ -351,6 +351,39 @@ def summary(client):
     return result
 
 
+def verify_shared_to_personal_transfer(client, folder):
+    page = client.page
+    before = generations(folder)
+    page.locator('#reportTransferDirection').select_option('toPersonal')
+    page.locator('#reportTransferFrom').fill('2024-01-01')
+    page.locator('#reportTransferTo').fill('2024-01-02')
+    preview = page.locator('#personalTransferPreview')
+    preview.click()
+    expect(page.locator('#personalTransferSummary')).to_contain_text('Общая база: 2 отчётов')
+    page.locator('#personalTransferSelectAll').click()
+    apply = page.locator('#personalTransferApply')
+    prompt = 'Добавить 2 отчётов в личную базу?'
+    apply.click()
+    dialog, owner = client.confirmations.find_dialog(prompt)
+    client.confirmations.answer(dialog, owner, prompt, 1)
+    expect(page.locator('#personalTransferResult')).to_contain_text('Перенесено отчётов: 2', timeout=120_000)
+    assert generations(folder) == before
+    with closing(sqlite3.connect(client.personal_file.as_uri() + '?mode=ro', uri=True)) as personal:
+        assert personal.execute('PRAGMA integrity_check').fetchone() == ('ok',)
+        assert personal.execute('SELECT COUNT(*) FROM reports').fetchone() == (367,)
+        assert personal.execute("SELECT period_start FROM reports WHERE period_start < '2025-01-01' ORDER BY period_start").fetchall() == [
+            ('2024-01-01',), ('2024-01-02',)]
+    backups = list(client.root.rglob('personal-before-shared-transfer-*.sqlite3'))
+    assert len(backups) == 1, backups
+    with closing(sqlite3.connect(backups[0].as_uri() + '?mode=ro', uri=True)) as backup:
+        assert backup.execute('PRAGMA integrity_check').fetchone() == ('ok',)
+        assert backup.execute('SELECT COUNT(*) FROM reports').fetchone() == (365,)
+    preview.click()
+    expect(page.locator('#personalTransferSummary')).to_contain_text('новых на этой странице: 0')
+    expect(page.locator('#personalTransferSelectAll')).to_be_disabled()
+    assert page.locator('#personalTransferList').get_by_text('Уже есть в личной базе', exact=False).count() == 2
+
+
 def verify_personal_transfer(writer, reader, folder, root, previous_generation):
     workbook = root / 'synthetic-personal-year.xlsx'
     workbook.write_bytes(wide_xlsx(2025))
@@ -399,6 +432,7 @@ def verify_personal_transfer(writer, reader, folder, root, previous_generation):
     with closing(sqlite3.connect(writer.personal_file.as_uri() + '?mode=ro', uri=True)) as source:
         assert list(source.iterdump()) == personal_before
     assert file_hash(workbook) == source_hash
+    verify_shared_to_personal_transfer(writer, folder)
     return totals
 
 

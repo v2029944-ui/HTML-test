@@ -1,8 +1,8 @@
-//! Selective personal -> shared import. It never deletes either source or destination rows.
-//! The caller must publish the target through shared_runtime::Runtime::execute(Write).
+//! Selective transfer between two SQLite workspaces.
+//! Only transfers into the shared workspace use the publication pipeline.
 use super::{err, read_model, valid_date, Storage, REPORT_TYPES};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     collections::HashSet,
@@ -15,6 +15,34 @@ const TRANSFER_PAGE: usize = 25;
 const MAX_REPORT_BYTES: usize = 16 * 1024 * 1024;
 // Batch JSON is decoded and indexed in one transaction; cap cumulative input.
 const MAX_BATCH_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Clone, Copy, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum TransferDirection {
+    #[default]
+    ToShared,
+    ToPersonal,
+}
+
+impl TransferDirection {
+    fn target(self) -> &'static str {
+        match self { Self::ToShared => "общей", Self::ToPersonal => "личной" }
+    }
+
+    fn backup_prefix(self) -> &'static str {
+        match self {
+            Self::ToShared => "shared-before-personal-transfer",
+            Self::ToPersonal => "personal-before-shared-transfer",
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransferPeriod {
+    pub from: String,
+    pub to: String,
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +84,12 @@ fn overlap(conn: &rusqlite::Connection, id: &str, kind: &str, start: &str, end: 
           WHERE id=?1 OR (report_type=?2 AND period_start<=?3 AND period_end>=?4))",
         params![id, kind, end, start], |r| r.get(0),
     ).map_err(err)
+}
+
+fn clean_source_name(raw: Option<String>) -> Option<String> {
+    let raw = raw?;
+    let name = raw.rsplit(['/', '\\']).next()?.trim();
+    (!name.is_empty() && !name.contains(':')).then(|| name.to_owned())
 }
 
 #[derive(Debug)]
@@ -119,18 +153,24 @@ fn same_report(source: &rusqlite::Connection, target: &rusqlite::Connection, id:
 }
 
 impl Storage {
-    /// Page through the personal reports with destination conflict markers.
+    /// Page through reports in the source with destination conflict markers.
     /// No private Excel path or report body is sent to the webview.
-    pub fn personal_transfer_preview(
-        &self, personal: &Storage, page: usize,
+    pub fn report_transfer_preview(
+        &self, source_store: &Storage, page: usize, direction: TransferDirection, period: Option<&TransferPeriod>,
     ) -> Result<TransferPreview, String> {
-        if self.db_path() == personal.db_path() {
+        if self.db_path() == source_store.db_path() {
             return Err("Подключите общую базу перед переносом.".into());
         }
         let offset = page.checked_mul(TRANSFER_PAGE)
             .and_then(|n| i64::try_from(n).ok())
             .ok_or("Номер страницы слишком велик.")?;
-        let source = personal.connect()?;
+        let (from, to) = match period {
+            Some(p) if valid_date(&p.from) && valid_date(&p.to) && p.from <= p.to =>
+                (Some(p.from.as_str()), Some(p.to.as_str())),
+            Some(_) => return Err("Укажите корректный период переноса отчётов.".into()),
+            None => (None, None),
+        };
+        let source = source_store.connect()?;
         let dest = self.connect()?;
         let source_revision = read_model::revision(&source)?;
         let target_revision = read_model::revision(&dest)?;
@@ -147,16 +187,20 @@ impl Storage {
         } else {
             target_orgs.iter().cloned().collect()
         };
-        let total_reports: i64 = source.query_row("SELECT COUNT(*) FROM reports", [], |r| r.get(0)).map_err(err)?;
+        let total_reports: i64 = source.query_row(
+            "SELECT COUNT(*) FROM reports WHERE (?1 IS NULL OR period_start >= ?1) AND (?2 IS NULL OR period_end <= ?2)",
+            params![from,to], |r| r.get(0)
+        ).map_err(err)?;
         let mut stmt = source.prepare(
             "SELECT r.id,r.report_type,r.period_start,r.period_end,r.source_name,i.row_count
              FROM reports r LEFT JOIN report_row_index i ON i.report_id=r.id
-             ORDER BY r.period_start,r.id LIMIT ?1 OFFSET ?2"
+             WHERE (?1 IS NULL OR r.period_start >= ?1) AND (?2 IS NULL OR r.period_end <= ?2)
+             ORDER BY r.period_start,r.id LIMIT ?3 OFFSET ?4"
         ).map_err(err)?;
-        let iter = stmt.query_map(params![TRANSFER_PAGE as i64,offset], |r| {
+        let iter = stmt.query_map(params![from,to,TRANSFER_PAGE as i64,offset], |r| {
             Ok(TransferRow {
                 id: r.get(0)?, report_type: r.get(1)?, start: r.get(2)?, end: r.get(3)?,
-                source_name: r.get(4)?, row_count: r.get(5)?, status: String::new(),
+                source_name: clean_source_name(r.get(4)?), row_count: r.get(5)?, status: String::new(),
             })
         }).map_err(err)?;
         let mut rows = Vec::new();
@@ -186,9 +230,9 @@ impl Storage {
             has_next: offset + (rows.len() as i64) < total_reports, rows,
             initializes_organizations,
             organization_warning: if initializes_organizations {
-                Some("Новая пустая общая база получит названия четырёх подразделений личной базы; группы и остальные настройки не копируются.".into())
+                Some("Пустая база назначения получит названия четырёх подразделений из базы-источника.".into())
             } else if source_orgs != target_orgs {
-                Some("Названия подразделений двух баз различаются. Отчёты с неизвестными для общей базы подразделениями нельзя перенести.".into())
+                Some(format!("Названия подразделений двух баз различаются. Для переноса подразделения должны быть известны {} базе.", direction.target()))
             } else { None },
         })
     }
@@ -196,12 +240,12 @@ impl Storage {
     /// Revalidate both revisions and every selected report, then add only new reports.
     /// A verified private backup is written BEFORE the destination transaction.
     /// The old published network generation is also left intact by the caller.
-    pub fn import_selected_personal_reports(
-        &self, personal: &Storage, source_revision: i64, target_revision: i64,
-        selected_ids: &[String], backup_dir: &Path,
+    pub fn import_selected_reports(
+        &self, source_store: &Storage, source_revision: i64, target_revision: i64,
+        selected_ids: &[String], backup_dir: &Path, direction: TransferDirection,
     ) -> Result<TransferReceipt, String> {
-        if self.db_path() == personal.db_path() {
-            return Err("Личную базу нельзя переносить в саму себя.".into());
+        if self.db_path() == source_store.db_path() {
+            return Err("Базы источника и назначения должны различаться.".into());
         }
         if selected_ids.is_empty() || selected_ids.len() > TRANSFER_PAGE {
             return Err("Выберите от 1 до 25 отчётов за один перенос.".into());
@@ -210,7 +254,7 @@ impl Storage {
         if ids.len() != selected_ids.len() || selected_ids.iter().any(|id| id.is_empty() || id.len() > 65536) {
             return Err("Недопустимые или повторяющиеся идентификаторы отчётов.".into());
         }
-        let source = personal.connect()?;
+        let source = source_store.connect()?;
         let dest = self.connect()?;
         read_model::check_revision(&source, source_revision)?;
         read_model::check_revision(&dest, target_revision)?;
@@ -235,9 +279,9 @@ impl Storage {
                 "SELECT report_type,period_start,period_end,source_name,CAST(json AS BLOB) FROM reports WHERE id=?1",
                 [id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)),
             ).optional().map_err(err)?;
-            let (kind,start,end,source_name,bytes) = row.ok_or("Отчёт отсутствует в личной базе. Повторите проверку.")?;
+            let (kind,start,end,source_name,bytes) = row.ok_or("Отчёт отсутствует в исходной базе. Повторите проверку.")?;
             if !REPORT_TYPES.contains(&kind.as_str()) || !valid_date(&start) || !valid_date(&end) || start > end {
-                return Err("Некорректный тип или даты личного отчёта.".into());
+                return Err("Некорректный тип или даты исходного отчёта.".into());
             }
             if bytes.len() > MAX_REPORT_BYTES {
                 return Err(format!("Отчёт {id} слишком велик для выборочного переноса (16 МиБ)."));
@@ -247,7 +291,7 @@ impl Storage {
                 return Err("Выбранные отчёты превышают 64 МиБ. Выберите меньше отчётов и повторите перенос.".into());
             }
             if overlap(&dest,id,&kind,&start,&end)? {
-                return Err(format!("Период отчёта {id} уже представлен в общей базе. Ничего не изменено."));
+                return Err(format!("Период отчёта {id} уже представлен в {} базе. Ничего не изменено.", direction.target()));
             }
             let mut json: Value = serde_json::from_slice(&bytes).map_err(err)?;
             if json["id"].as_str() != Some(id.as_str())
@@ -267,10 +311,7 @@ impl Storage {
             // Some old personal reports used an absolute workbook path as
             // their provenance label. The network recipient only needs its
             // filename; never transfer private local folder paths.
-            let source_name = source_name.and_then(|raw| {
-                let name = raw.rsplit(['/', '\\']).next()?.trim().to_owned();
-                (!name.is_empty() && !name.contains(':')).then_some(name)
-            });
+            let source_name = clean_source_name(source_name);
             if let Some(object) = json.as_object_mut() {
                 if let Some(clean) = source_name.as_ref() {
                     if let Some(Value::String(value)) = object.get_mut("desktopSource") {
@@ -299,10 +340,10 @@ impl Storage {
         // Keep the backup on the originating computer, outside the network share.
         fs::create_dir_all(backup_dir).map_err(err)?;
         let unique = SystemTime::now().duration_since(UNIX_EPOCH).map_err(err)?.as_nanos();
-        let backup = backup_dir.join(format!("shared-before-personal-transfer-{}-{unique}.sqlite3",std::process::id()));
+        let backup = backup_dir.join(format!("{}-{}-{unique}.sqlite3",direction.backup_prefix(),std::process::id()));
         let backed_revision = self.backup_sqlite_verified(&backup)?;
         if backed_revision != target_revision {
-            return Err("Общая база изменилась во время создания резервной копии.".into());
+            return Err("База назначения изменилась во время создания резервной копии.".into());
         }
 
         let mut dest = self.connect()?;
@@ -324,7 +365,7 @@ impl Storage {
         // source reports from the SAME period are allowed in one verified batch.
         for item in &batch {
             if overlap(&tx,&item.id,&item.kind,&item.start,&item.end)? {
-                return Err("Общая база изменилась или содержит конфликт. Повторите предпросмотр.".into());
+                return Err("База назначения изменилась или содержит конфликт. Повторите предпросмотр.".into());
             }
         }
         for item in &batch {
