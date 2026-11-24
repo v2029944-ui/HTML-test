@@ -12,7 +12,14 @@ use tempfile::{NamedTempFile, TempDir};
 const PREFIX: &str = "analiz-generation-";
 const EXT: &str = ".snapshot";
 const MAGIC: &[u8; 8] = b"ANALIZ02";
+const RESET_MAGIC: &[u8; 8] = b"ANALIZR2";
 const PENDING: &str = "pending.snapshot";
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ResetAnchor {
+    generation: u64,
+    digest: [u8; 32],
+}
 
 // Columns and SQL are compiled constants. The transport has ordinary,
 // unconstrained data tables only. Indexes, triggers, views, derived caches,
@@ -120,6 +127,35 @@ fn open_regular(path: &Path) -> Result<File, String> {
     Ok(file)
 }
 
+fn lock_publication(folder: &Path) -> Result<File, String> {
+    let path = folder.join(".analiz-publication.lock");
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(0o400000 | 0o4000);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x00200000).share_mode(3);
+    }
+    let file = options.open(&path).map_err(err)?;
+    if !file.metadata().map_err(err)?.is_file() || opened_file_path(&file)? != path {
+        return Err("Расположение блокировки общей папки изменилось.".into());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if file.metadata().map_err(err)?.file_attributes() & 0x400 != 0 {
+            return Err("Ссылки в общей базе недопустимы.".into());
+        }
+    }
+    fs2::FileExt::try_lock_exclusive(&file).map_err(err)?;
+    Ok(file)
+}
+
 fn remaining(file: &mut File) -> Result<u64, String> {
     file.metadata()
         .map_err(err)?
@@ -128,9 +164,19 @@ fn remaining(file: &mut File) -> Result<u64, String> {
         .ok_or_else(|| "Размер файла общей базы изменился.".into())
 }
 
+#[cfg(test)]
 fn transfer(source: &mut File, output: &mut impl Write) -> Result<[u8; 32], String> {
+    transfer_snapshot(source, output, None)
+}
+
+fn transfer_snapshot(source: &mut File, output: &mut impl Write, reset: Option<ResetAnchor>) -> Result<[u8; 32], String> {
     let bytes = remaining(source)?;
     let mut hash = Sha256::new();
+    if let Some(anchor) = reset {
+        hash.update(RESET_MAGIC);
+        hash.update(anchor.generation.to_le_bytes());
+        hash.update(anchor.digest);
+    }
     let mut reader = source.take(bytes);
     let mut buffer = [0; 64 * 1024];
     while reader.limit() > 0 {
@@ -147,15 +193,26 @@ fn transfer(source: &mut File, output: &mut impl Write) -> Result<[u8; 32], Stri
     Ok(hash.finalize().into())
 }
 
-fn digest_header(file: &mut File) -> Result<[u8; 32], String> {
+fn snapshot_header(file: &mut File, generation: u64) -> Result<([u8; 32], Option<ResetAnchor>), String> {
     let mut magic = [0; 8];
     let mut digest = [0; 32];
     file.read_exact(&mut magic).map_err(err)?;
     file.read_exact(&mut digest).map_err(err)?;
-    if &magic != MAGIC {
+    if &magic == MAGIC {
+        return Ok((digest, None));
+    }
+    if &magic != RESET_MAGIC {
         return Err("Неизвестный или устаревший формат общей базы.".into());
     }
-    Ok(digest)
+    let mut base = [0; 8];
+    let mut prior_digest = [0; 32];
+    file.read_exact(&mut base).map_err(err)?;
+    file.read_exact(&mut prior_digest).map_err(err)?;
+    let base = u64::from_le_bytes(base);
+    if base == 0 || base.checked_add(1) != Some(generation) {
+        return Err("Некорректное поколение сброса общей базы.".into());
+    }
+    Ok((digest, Some(ResetAnchor { generation: base, digest: prior_digest })))
 }
 
 fn hex_digest(digest: [u8; 32]) -> String {
@@ -171,13 +228,33 @@ fn advertised(folder: &Path, generation: u64) -> Result<Option<[u8; 32]>, String
     if generation == 0 {
         return Ok(None);
     }
-    Ok(Some(digest_header(&mut open_regular(&path(
-        folder, generation,
-    ))?)?))
+    Ok(Some(snapshot_header(&mut open_regular(&path(folder, generation))?, generation)?.0))
 }
 
 pub fn generation_digest(folder: &Path, generation: u64) -> Result<Option<String>, String> {
     Ok(advertised(&directory(folder)?, generation)?.map(hex_digest))
+}
+
+pub fn reset_follows(folder: &Path, generation: u64, digest: &str) -> Result<bool, String> {
+    let folder = directory(folder)?;
+    match fs::symlink_metadata(path(&folder, generation)) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(_) => return Ok(false),
+        Err(error) => return Err(err(error)),
+    }
+    let next = generation.checked_add(1).ok_or("Исчерпаны номера поколений.")?;
+    let next_path = path(&folder, next);
+    match fs::symlink_metadata(&next_path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(err(error)),
+        Ok(_) => {}
+    }
+    let mut file = open_regular(&next_path)?;
+    let (expected, reset) = snapshot_header(&mut file, next)?;
+    if !reset.is_some_and(|anchor| hex_digest(anchor.digest) == digest) {
+        return Ok(false);
+    }
+    Ok(transfer_snapshot(&mut file, &mut std::io::sink(), reset)? == expected)
 }
 
 fn check_space(parent: &Path, bytes: u64) -> Result<(), String> {
@@ -338,6 +415,7 @@ pub struct Checkout {
     local: TempDir,
     generation: u64,
     digest: Option<[u8; 32]>,
+    reset_missing: bool,
     pub storage: Storage,
 }
 impl Checkout {
@@ -350,10 +428,10 @@ impl Checkout {
         let storage = Storage::new(local.path().to_owned())?;
         let digest = if generation > 0 {
             let mut input = open_regular(&path(&folder, generation))?;
-            let digest = digest_header(&mut input)?;
+            let (digest, reset) = snapshot_header(&mut input, generation)?;
             check_space(&parent, remaining(&mut input)?)?;
             let mut wire = NamedTempFile::new_in(local.path()).map_err(err)?;
-            if transfer(&mut input, wire.as_file_mut())? != digest {
+            if transfer_snapshot(&mut input, wire.as_file_mut(), reset)? != digest {
                 return Err("Неполная или повреждённая копия общей базы.".into());
             }
             // Close the writer before SQLite opens the private file.
@@ -369,8 +447,31 @@ impl Checkout {
             local,
             generation,
             digest,
+            reset_missing: false,
             storage,
         })
+    }
+    pub fn empty_successor(folder: &Path, local_parent: &Path, generation: u64, digest: Option<&str>, reset_missing: bool) -> Result<Self, String> {
+        let folder = directory(folder)?;
+        let parent = directory(local_parent)?;
+        separate(&folder, &parent)?;
+        let invalid = "Не удалось проверить последнее подтверждённое поколение общей базы.";
+        let digest = digest.map(|text| {
+            if text.len() != 64 || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(invalid.to_owned());
+            }
+            let mut bytes = [0; 32];
+            for (i, byte) in bytes.iter_mut().enumerate() {
+                *byte = u8::from_str_radix(&text[i * 2..i * 2 + 2], 16).map_err(err)?;
+            }
+            Ok(bytes)
+        }).transpose()?;
+        if (generation == 0) != digest.is_none() || (reset_missing && generation == 0) {
+            return Err(invalid.into());
+        }
+        let local = tempfile::tempdir_in(&parent).map_err(err)?;
+        let storage = Storage::new(local.path().to_owned())?;
+        Ok(Self { folder, local, generation, digest, reset_missing, storage })
     }
     pub fn generation(&self) -> u64 {
         self.generation
@@ -389,6 +490,7 @@ impl Checkout {
             local,
             generation: self.generation,
             digest: self.digest,
+            reset_missing: false,
             storage,
         })
     }
@@ -406,6 +508,7 @@ impl Checkout {
         }
         self.digest = Some(publication.digest);
         self.generation = generation;
+        self.reset_missing = false;
         Ok(())
     }
     pub fn prepare_publication(&self) -> Result<Publication, String> {
@@ -421,13 +524,18 @@ impl Checkout {
         let scratch = tempfile::tempdir_in(parent).map_err(err)?;
         let source = scratch.path().join("data.sqlite3");
         export_wire(&self.storage, &source)?;
-        let digest = transfer(&mut open_regular(&source)?, &mut std::io::sink())?;
+        let reset = self.reset_missing.then(|| ResetAnchor {
+            generation: self.generation,
+            digest: self.digest.expect("a reset candidate has a confirmed base digest"),
+        });
+        let digest = transfer_snapshot(&mut open_regular(&source)?, &mut std::io::sink(), reset)?;
         Ok(Publication {
             _scratch: Some(scratch),
             folder: self.folder.clone(),
             base: self.digest,
             next,
             digest,
+            reset,
             source,
             offset: 0,
         })
@@ -443,6 +551,8 @@ struct Journal {
     base: Option<[u8; 32]>,
     generation: u64,
     digest: [u8; 32],
+    #[serde(default)]
+    reset_missing: bool,
 }
 
 pub struct Publication {
@@ -451,6 +561,7 @@ pub struct Publication {
     next: u64,
     base: Option<[u8; 32]>,
     digest: [u8; 32],
+    reset: Option<ResetAnchor>,
     source: PathBuf,
     offset: u64,
 }
@@ -464,7 +575,7 @@ impl Publication {
     fn copy(&self, out: &mut impl Write) -> Result<(), String> {
         let mut input = open_regular(&self.source)?;
         input.seek(SeekFrom::Start(self.offset)).map_err(err)?;
-        if transfer(&mut input, out)? != self.digest {
+        if transfer_snapshot(&mut input, out, self.reset)? != self.digest {
             return Err("Подготовленная копия общей базы изменилась.".into());
         }
         Ok(())
@@ -477,6 +588,7 @@ impl Publication {
             generation: self.next,
             base: self.base,
             digest: self.digest,
+            reset_missing: self.reset.is_some(),
         })
         .map_err(err)?;
         let len = u32::try_from(journal.len()).map_err(err)?;
@@ -510,6 +622,7 @@ impl Publication {
             Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let prior = Self::resume(&self.folder, &parent)?;
                 if prior.next == self.next && prior.digest == self.digest && prior.base == self.base
+                    && prior.reset == self.reset
                 {
                     Ok(())
                 } else {
@@ -535,6 +648,7 @@ impl Publication {
         if !folder.is_absolute()
             || journal.generation == 0
             || ((journal.generation == 1) != journal.base.is_none())
+            || (journal.reset_missing && journal.generation == 1)
             || (journal.folder != folder
                 && directory(folder).ok().as_ref() != Some(&journal.folder))
         {
@@ -542,7 +656,15 @@ impl Publication {
         }
         separate(&journal.folder, &parent)?;
         let offset = file.stream_position().map_err(err)?;
-        if transfer(&mut file, &mut std::io::sink())? != journal.digest {
+        let reset = if journal.reset_missing {
+            Some(ResetAnchor {
+                generation: journal.generation - 1,
+                digest: journal.base.ok_or("Не определена база ожидающего сброса.")?,
+            })
+        } else {
+            None
+        };
+        if transfer_snapshot(&mut file, &mut std::io::sink(), reset)? != journal.digest {
             return Err("Неполная копия ожидающей публикации.".into());
         }
         Ok(Self {
@@ -551,6 +673,7 @@ impl Publication {
             next: journal.generation,
             base: journal.base,
             digest: journal.digest,
+            reset,
             source,
             offset,
         })
@@ -563,27 +686,36 @@ impl Publication {
             Ok(_) => {}
         }
         let mut file = open_regular(target)?;
-        if digest_header(&mut file)? != self.digest {
+        let (digest, reset) = snapshot_header(&mut file, self.next)?;
+        if digest != self.digest || reset != self.reset {
             return Err("Общая база изменилась. Обновите данные и повторите предпросмотр.".into());
         }
-        if transfer(&mut file, &mut std::io::sink())? != self.digest {
+        if transfer_snapshot(&mut file, &mut std::io::sink(), reset)? != self.digest {
             return Err("Контрольная сумма опубликованной базы не совпадает.".into());
         }
         Ok(true)
     }
     fn check_base(&self) -> Result<(), String> {
-        if advertised(&self.folder, self.next - 1)? != self.base {
+        if self.reset.is_some() {
+            if head(&self.folder)? != 0 {
+                return Err("Снимки общей базы снова доступны. Проверьте папку и повторите предпросмотр.".into());
+            }
+        } else if advertised(&self.folder, self.next - 1)? != self.base {
             return Err("Исходное поколение общей базы изменилось.".into());
         }
         Ok(())
     }
     pub fn publish(&self) -> Result<u64, String> {
-        self.check_base()?;
+        let _lock = lock_publication(&self.folder)?;
+        if self.reset.is_none() {
+            self.check_base()?;
+        }
         let target = path(&self.folder, self.next);
         if self.confirmed(&target)? {
             return Ok(self.next);
         }
-        if head(&self.folder)? != self.next - 1 {
+        let expected_head = if self.reset.is_some() { 0 } else { self.next - 1 };
+        if head(&self.folder)? != expected_head {
             if self.confirmed(&target)? {
                 return Ok(self.next);
             }
@@ -593,8 +725,12 @@ impl Publication {
         if opened_file_path(staged.as_file())? != staged.path() {
             return Err("Расположение общей папки изменилось.".into());
         }
-        staged.write_all(MAGIC).map_err(err)?;
+        staged.write_all(if self.reset.is_some() { RESET_MAGIC } else { MAGIC }).map_err(err)?;
         staged.write_all(&self.digest).map_err(err)?;
+        if let Some(anchor) = self.reset {
+            staged.write_all(&anchor.generation.to_le_bytes()).map_err(err)?;
+            staged.write_all(&anchor.digest).map_err(err)?;
+        }
         self.copy(staged.as_file_mut())?;
         staged.as_file().sync_all().map_err(err)?;
         self.check_base()?;

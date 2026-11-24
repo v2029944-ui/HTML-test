@@ -1,5 +1,5 @@
 use crate::storage::{
-    shared_runtime::{Access, Runtime, WorkspaceStatus},
+    shared_runtime::{Access, Runtime, WorkspaceResetPreview, WorkspaceStatus},
     Storage,
 };
 use tauri::{Manager, Runtime as TauriRuntime};
@@ -78,6 +78,27 @@ pub async fn shared_workspace_discard_pending(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn shared_workspace_reset_preview(
+    app: tauri::AppHandle,
+    workspace_token: String,
+) -> Result<WorkspaceResetPreview, String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Runtime>().preview_reset(&workspace_token))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn shared_workspace_reset_apply(
+    app: tauri::AppHandle,
+    workspace_token: String,
+    preview: WorkspaceResetPreview,
+) -> Result<WorkspaceStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Runtime>().reset_shared(&workspace_token, &preview))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
