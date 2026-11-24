@@ -189,6 +189,8 @@
     unifiedCatalogApply:(revision,source,hash,confirmed)=>tracked('unified_catalog_apply',{revision,source,hash,confirmed},'saves'),
     unifiedRenameOrganizations:(revision,names,destination)=>tracked('unified_rename_organizations',{revision,names,destination},'saves'),
     unifiedClearReports:revision=>tracked('unified_clear_reports',{revision},'saves'),
+    unifiedReportDeletionCount:(revision,scope)=>tracked('unified_report_deletion_count',{revision,scope},'reads'),
+    unifiedDeleteReports:(revision,scope,confirmedCount)=>tracked('unified_delete_reports',{revision,scope,confirmedCount},'saves'),
     managementReportPage:(revision,filter,after=null,limit=50)=>tracked('unified_report_page',{revision,filter,after,limit},'reads'),
     managementReportWindow:(revision,filter,pageIndex=0,limit=50)=>tracked('unified_report_window',{revision,filter,pageIndex,limit},'reads'),
     managementReportSummary:(revision,filter)=>tracked('unified_report_summary',{revision,filter},'reads'),

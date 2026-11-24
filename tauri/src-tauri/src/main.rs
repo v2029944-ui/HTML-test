@@ -1822,6 +1822,8 @@ fn main() {
             unified_group_audit_page,
             unified_rename_organizations,
             unified_clear_reports,
+            unified_report_deletion_count,
+            unified_delete_reports,
             unified_report_page,
             unified_report_summary,
             unified_report_org_page,

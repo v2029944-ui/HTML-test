@@ -1381,6 +1381,58 @@ def check_delete_without_backup(page, temporary, confirmations):
     assert remaining[1:]==stored[1:]
     assert_rejected(lambda:api(page,'nativeDeleteReport',revision,rows[1]['id']),
                     'An old single-delete selection was accepted','stale storage revision')
+    for stamp in ('2030-01-05','2030-01-04'):
+        report=page.locator('#reports .calendar-source').filter(has_text=stamp).first
+        report.get_by_role('checkbox').check()
+    selected=page.locator('#unifiedDeleteSelectedReports')
+    selected.click()
+    prompt='Удалить 2 отчёта из личной базы?'
+    dialog,owner=confirmations.find_dialog(prompt)
+    confirmations.answer(dialog,owner,prompt,2)
+    expect(selected).to_be_focused()
+    expect(selected).to_be_enabled()
+    assert backup_contents(database)==remaining
+    selected.press('Enter')
+    dialog,owner=confirmations.find_dialog(prompt)
+    confirmations.answer(dialog,owner,prompt,1)
+    wait_for_app_state(page,'window.unifiedUI.snapshot?.reports==='+str(before['reports']+3),
+        'Confirmed selected report deletion',90_000)
+    after_selection=backup_contents(database)
+    assert after_selection[0]==[row for row in stored[0] if row[0] not in {r['id'] for r in rows[:3]}]
+    assert after_selection[1:]==stored[1:]
+
+    period=page.locator('#unifiedDeletePeriodReports')
+    period.click()
+    calendar=page.get_by_role('dialog',name='Период удаления отчётов')
+    calendar.get_by_role('button',name='Отмена',exact=True).click()
+    expect(calendar).to_have_count(0)
+    expect(period).to_be_focused()
+    period.press('Enter')
+    expect(calendar).to_be_visible()
+    page.keyboard.press('Escape')
+    expect(calendar).to_have_count(0)
+    expect(period).to_be_focused()
+    period.press('Enter')
+    calendar.get_by_role('button',name='Месяцы',exact=True).click()
+    calendar.locator('[data-stamp="2030-01-01"]').click()
+    calendar.get_by_role('button',name='Подтвердить',exact=True).click()
+    prompt='Удалить 3 отчёта за период 01.01.2030 — 31.01.2030 из личной базы?'
+    dialog,owner=confirmations.find_dialog(prompt)
+    confirmations.answer(dialog,owner,prompt,1)
+    expect(calendar).to_have_count(0)
+    wait_for_app_state(page,'window.unifiedUI.snapshot?.reports==='+str(before['reports']),
+        'Confirmed calendar-period report deletion',90_000)
+    after_period=backup_contents(database)
+    assert after_period[0]==[row for row in stored[0] if row[0] not in {r['id'] for r in rows}]
+    assert after_period[1:]==stored[1:]
+
+    all_reports=page.locator('#unifiedDeleteAllReports')
+    all_reports.click()
+    prompt='Удалить все '+str(before['reports'])
+    dialog,owner=confirmations.find_dialog(prompt)
+    confirmations.answer(dialog,owner,prompt,2)
+    expect(all_reports).to_be_focused()
+    assert backup_contents(database)==after_period
     navigate(page,'storage')
     clear_snapshot=api(page,'nativeSettingsBootstrap')
     clear_revision=clear_snapshot['revision']

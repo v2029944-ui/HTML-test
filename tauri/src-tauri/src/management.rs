@@ -1272,6 +1272,7 @@ pub use unified_settings_io::{UnifiedSettingsReview,UnifiedCatalogReceipt};
 pub(super) use unified_settings_io::PreparedCatalogSettings;
 #[path = "unified_data_admin.rs"]
 mod unified_data_admin;
+pub use unified_data_admin::UnifiedReportDeletion;
 pub use reports::{
     ManagementPeriod, ManagementReport, ManagementReportCursor, ManagementReportFilter,
     ManagementReportSummary,
