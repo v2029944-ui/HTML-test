@@ -117,18 +117,28 @@ fn unavailable_interval_preserves_only_the_complete_sides_values_on_screen_and_i
         .unwrap();
     let first = page.iter().find(|x| x.name == "Работа 00").unwrap();
     assert!(first.amount.is_none());
-    assert_eq!(first.available.as_ref().unwrap().amount, Some(-10.));
-    let table: DetailCsvOptions =
-        serde_json::from_value(json!({"section":"comparison","metric":"amount","before":before}))
-            .unwrap();
-    let path = dir.path().join("partial.csv");
-    store
-        .reference_detail_csv(r, &scope, &selection, None, &table, &path)
-        .unwrap();
-    let data = std::fs::read_to_string(path).unwrap();
-    assert!(data.contains("\"Работа / группа\";\"Значение раньше\""));
-    assert!(data.lines().any(|line| line == "\"Работа 00\";\"-10\""));
-    assert!(!data.contains("Разница"));
+    let available = first.available.as_ref().unwrap();
+    assert_eq!(available.amount, Some(-10.));
+    assert_eq!(available.count, Some(-1.));
+    assert_eq!(available.average, None);
+    let zero = page.iter().find(|x| x.name == "Работа 01").unwrap();
+    let available = zero.available.as_ref().unwrap();
+    assert_eq!((available.amount, available.count, available.average), (Some(0.), Some(1.), Some(0.)));
+    for (metric, negative, zero) in [
+        ("amount", Some("-10"), "0"), ("count", Some("-1"), "1"), ("average", None, "0"),
+    ] {
+        let table: DetailCsvOptions = serde_json::from_value(json!({
+            "section":"comparison","metric":metric,"before":before,
+        })).unwrap();
+        let path = dir.path().join(format!("partial-{metric}.csv"));
+        store.reference_detail_csv(r, &scope, &selection, None, &table, &path).unwrap();
+        let data = std::fs::read_to_string(path).unwrap();
+        assert!(data.contains(r#""Работа / группа";"Значение раньше""#), "{data}");
+        let negative = negative.map(|n| format!(r#""Работа 00";"{n}""#));
+        assert_eq!(data.lines().find(|line| line.starts_with(r#""Работа 00";"#)), negative.as_deref(), "{data}");
+        assert!(data.lines().any(|line| line == format!(r#""Работа 01";"{zero}""#)), "{data}");
+        assert!(!data.contains("Разница"), "{data}");
+    }
 }
 
 #[test]
