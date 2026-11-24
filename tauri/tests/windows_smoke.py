@@ -1009,6 +1009,15 @@ def check_partial_amount_charts(page, temporary, output):
         expect(row).to_contain_text(fmt(amount))
         expect(row).to_contain_text('—')
 
+    navigate(page,'comparison')
+    wait_for_text(page,'#comparisonCoverage','базового и анализируемого периодов',90_000)
+    comparison=page.locator('#comparisonTable table').first
+    expect(comparison).to_be_visible(timeout=90_000)
+    expect(comparison).to_contain_text('Значение сейчас')
+    expect(comparison).to_contain_text(fmt(140))
+    expect(comparison).not_to_contain_text('Изменение, %')
+    page.locator('#comparison').screenshot(path=str(output/'windows-sql-partial-comparison.png'))
+
 
 def check_omitted_detail_evidence(page, temporary, output):
     source=temporary/'omitted-detail.xlsx';original=omitted_detail_xlsx();source.write_bytes(original)
@@ -1255,13 +1264,14 @@ def check_extended(page):
     expect(reset).to_be_hidden()
     expect(editor).to_be_focused()
     expect(page.locator('#comparison .detail-date-scope')).to_contain_text('01.11.2023')
-    # The partial December data remains visible against a missing November baseline.
+    # Both missing intervals show a reason, with no meaningless pager/CSV.
     common_period(page,'Месяц','2023-12-01',base='prevMonth')
     wait_for_text(page,'#comparisonCoverage','базового и анализируемого периодов',90_000)
-    expect(page.locator('#comparisonTable table').first).to_be_visible()
-    expect(page.locator('#comparisonTable table').first).to_contain_text('Значение сейчас')
-    expect(page.locator('#comparisonTable table').first).not_to_contain_text('Изменение, %')
-    page.locator('#comparison').screenshot(path=str(ROOT/'tauri/test-artifacts/windows-sql-partial-comparison.png'))
+    expect(page.locator('#comparisonTable')).to_contain_text('Нет доступных значений для сравнения')
+    expect(page.locator('#comparisonTable table')).to_have_count(0)
+    expect(page.locator('#comparisonTable .change-pagination')).to_have_count(0)
+    expect(page.locator('#comparisonTable button')).to_have_count(0)
+    page.locator('#comparison').screenshot(path=str(ROOT/'tauri/test-artifacts/windows-sql-empty-comparison.png'))
     common_period(page,'Месяц','2024-02-01',base='prevMonth')
     wait_for_app_state(page,'window.unifiedUI.scope?.baseFrom==="2024-01-01"','January shared baseline')
     wait_for_text(page,'#comparisonCoverage','Первый интервал: Полные данные',90_000)
