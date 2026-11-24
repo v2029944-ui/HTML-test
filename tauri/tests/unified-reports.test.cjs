@@ -88,6 +88,38 @@ test('empty explicit sheet selection cannot silently become automatic import',as
 test('twelve canonical calendar months, leap days, close day/month restores focus',async()=>{
  const ui=mount();await ui.refresh();assert.equal(ui.nodes.reportCalendar.children.length,12);const feb=ui.nodes.reportCalendar.children[1];await feb.click();const buttons=ui.nodes.calendarDetails.querySelectorAll('button');assert.equal(buttons.length,30);const day=buttons.at(-1);await day.click();await flush();let all=ui.nodes.calendarDetails.querySelectorAll('button');const closeDay=all.find(b=>b.textContent==='Закрыть подробности дня');await closeDay.click();assert.equal(day.focused,true);await buttons[0].click();assert.equal(feb.focused,true);assert.equal(ui.nodes.calendarDetails.children.length,0);
 });
+test('daily calendar keeps absent reports, unusable reports and confirmed zero totals distinct',async()=>{
+ const headers=[['02',0,1,1],['03',1,0,0],['04',1,0,0],['05',1,0,0],['06',1,0,0]];
+ const ui=mount({
+  unifiedCalendar:async(revision,year)=>({revision,year,days:headers.map(([day,day_reports,week_reports,warnings])=>({
+   date:`${year}-01-${day}`,day_reports,week_reports,month_reports:0,warnings,organizations:4,complete:null
+  }))}),
+  nativeDailyRollup:async(_rev,from,_to,grain)=>({granularity:grain,next_cursor:null,points:grain==='day'?
+   [['01',0,4,null],['02',0,4,null],['03',0,4,null],['04',4,0,0],['05',1,3,2],['06',4,0,5]].map(([day,available_reports,missing,count])=>({
+    start:from.slice(0,8)+day,days:1,missing,available_reports,complete:missing===0,
+    total:{count:missing?null:count,amount:missing?null:count,average:count>0?1:null},
+    available_total:{count,amount:count,average:count>0?1:null}
+   })):[]})
+ });
+ await ui.window.unifiedReports.openView('calendar');
+ await ui.nodes.reportCalendar.children[0].click();
+ const root=ui.nodes.calendarDetails;
+ const dayButtons=root.querySelectorAll('button').slice(1,7);
+ assert.deepEqual(dayButtons.map(b=>b.className),[
+  'calendar-day calendar-missing','calendar-day calendar-missing','calendar-day calendar-error',
+  'calendar-day calendar-complete','calendar-day calendar-warn','calendar-day calendar-complete'
+ ]);
+ assert.match(dayButtons[1].attrs['aria-label'],/Нет дневного отчёта/);
+ assert.match(dayButtons[2].attrs['aria-label'],/Ошибка/);
+ assert.match(dayButtons[3].attrs['aria-label'],/Нулевые итоги/);
+ const legend=root.querySelectorAll('*').find(el=>el.attrs['aria-label']==='Обозначения дней календаря');
+ assert.ok(legend);
+ assert.match(text(legend),/Нет дневного отчёта.*Ошибка.*нулевые итоги/i);
+ await dayButtons[2].click();
+ assert.match(text(root),/Дневной отчёт сохранён\. Пригодных данных нет/);
+ await dayButtons[3].click();
+ assert.match(text(root),/Количество: 0 · Сумма: 0/);
+});
 test('old deferred calendar replies cannot replace a newer snapshot',async()=>{
  let resolve;const ui=mount({unifiedCalendar:(rev,year)=>rev===1?new Promise(r=>resolve=r):Promise.resolve({year,days:[]})});const pending=ui.refresh();await flush();ui.UI.revision=2;await ui.refresh();resolve({year:2024,days:[{date:'2024-02-29',day_reports:1,warnings:999}]});await pending;assert.equal(ui.nodes.reportCalendar.children.length,12);assert.doesNotMatch(text(ui.nodes.reportCalendar),/999/);
 });
