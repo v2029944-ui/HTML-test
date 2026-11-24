@@ -721,3 +721,30 @@ test('one metric and one work can be compared across three selected departments'
  assert.deepEqual(Array.from(charts[0][4].categories),['A','B','C']);
  assert.match(f.nodes.get('comparisonHelp').textContent,/Показатели сравнения/);
 });
+
+test('department comparison opens work history with the locally selected average',async()=>{
+ const totals={count:2,amount:-10,average:-5};
+ const f=fixture({
+  nativeAnalysisOrganizations:async()=>['A','B'].map(org=>({org,complete:true,missing:0,total:totals})),
+  nativeWorkTimeline:async()=>({granularity:'period',points:[{start:'2024-01-01',missing:0,total:totals}]})
+ });
+ const history=[];
+ f.UI.drawChart=(_periods,_orgs,metric,_root,options)=>{
+  if(options.categories[0]==='work:Work')history.push([metric,options.data[0].get('work:Work')[metric]]);
+ };
+ f.window.referenceDetail={active:'comparison'};
+ f.UI.state.selectedMetrics=new Set(['count']);
+ f.publish({organizations:['A','B']});
+ f.nodes.get('comparisonMode').value='organizations';
+ for(const row of f.nodes.get('comparisonMetrics').children){
+  const input=row.children[0];
+  if(input.value==='amount')continue;
+  input.checked=input.value==='average';input.dispatch('change');
+ }
+ await settle();
+ const table=f.tables.findLast(table=>table.metric==='average');
+ assert.ok(table);
+ assert.deepEqual(Array.from(table.options.csvRows[1].slice(1)),[-5,-5,0,0]);
+ table.rows[1][0].dispatch('click');await settle();
+ assert.deepEqual(history,[['average',-5]]);
+});
