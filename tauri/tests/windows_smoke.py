@@ -1377,6 +1377,7 @@ def check_delete_without_backup(page, temporary, confirmations):
     dialog,owner=confirmations.find_dialog(prompt)
     confirmations.answer(dialog,owner,prompt,2)
     expect(selected).to_be_focused()
+    expect(selected).to_be_enabled()
     assert backup_contents(database)==remaining
     selected.press('Enter')
     dialog,owner=confirmations.find_dialog(prompt)

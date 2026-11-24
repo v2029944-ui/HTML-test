@@ -239,6 +239,41 @@ test('bulk report selection survives scrolling and passes only confirmed report 
  assert.equal(ui.nodes.unifiedDeleteSelectedReports.disabled,true);
 });
 
+test('bulk deletion keeps its actions unavailable until a partially published refresh settles',async()=>{
+ const row={id:'a',start:'2024-01-01',end:'2024-01-01',report_type:'day',rows:1,amount:5,warnings:0,organizations:1};
+ let completeRefresh,opened=0;
+ const ui=mount({
+  managementReportWindow:async()=>({rows:[row],total_rows:1}),
+  managementReportSummary:async()=>({reports:1,rows:1,latest:row.start}),
+  unifiedReportDeletionCount:async()=>1,
+  unifiedDeleteReports:async()=>({revision:2,deleted:1}),
+  unifiedClearReports:async()=>({revision:2,deleted:1}),
+ });
+ ui.window.referenceCalendar={valid:()=>true,syncField(){},open:()=>{opened++;}};
+ ui.UI.refresh=()=>{
+  ui.UI.revision=2;
+  ui.snapshot();
+  return new Promise(resolve=>{completeRefresh=resolve;});
+ };
+ await ui.window.unifiedReports.openView('list');
+ const check=ui.nodes.reports.querySelectorAll('*').find(node=>node.type==='checkbox');
+ check.checked=true;await check.fire('change');
+ const removing=ui.nodes.unifiedDeleteSelectedReports.click();
+ await flush();
+ assert.ok(completeRefresh,'the updated list is visible while refresh listeners are still running');
+ const period=ui.nodes.unifiedDeletePeriodReports,all=ui.nodes.unifiedDeleteAllReports;
+ for(const control of [period,all]){
+  assert.equal(control.disabled,false,'the browser must keep focus during the operation');
+  assert.equal(control.attrs['aria-disabled'],'true','another operation cannot start during refresh');
+ }
+ await period.click();
+ assert.equal(opened,0);
+ completeRefresh();await removing;
+ assert.equal(period.attrs['aria-disabled'],'false');
+ await period.click();
+ assert.equal(opened,1,'the calendar opens on the first available click');
+});
+
 test('period deletion uses the chosen calendar range and blocks stale confirmation',async()=>{
  const calls=[];let calendar,accept;
  const ui=mount({

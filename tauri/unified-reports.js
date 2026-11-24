@@ -59,7 +59,7 @@ function init(){
  const selectionStatus=el('span','');selectionStatus.setAttribute('role','status');
  const hasBulkDeletion=Boolean(api.unifiedReportDeletionCount&&api.unifiedDeleteReports);
  if(hasBulkDeletion){
-  const actions=el('div',undefined,'actions');actions.setAttribute('role','group');actions.setAttribute('aria-label','Удаление отчётов');
+  const actions=el('div',undefined,'actions report-delete-actions');actions.setAttribute('role','group');actions.setAttribute('aria-label','Удаление отчётов');
   actions.append(deleteSelected,deletePeriod);if(api.unifiedClearReports)actions.append(deleteAll);actions.append(selectionStatus);
   $('reports').before(actions);
  }
@@ -68,7 +68,10 @@ function init(){
   deleteSelected.disabled=unavailable||!selectedReportIds.size;
   deletePeriod.disabled=unavailable||!window.referenceCalendar;
   deleteAll.disabled=unavailable;
-  for(const control of [deleteSelected,deletePeriod,deleteAll])control.setAttribute('aria-busy',String(deleteReportsBusy));
+  for(const control of [deleteSelected,deletePeriod,deleteAll]){
+   control.setAttribute('aria-busy',String(deleteReportsBusy));
+   control.setAttribute('aria-disabled',String(deleteReportsBusy||control.disabled));
+  }
   selectionStatus.textContent=selectedReportIds.size?'Выбрано: '+selectedReportIds.size:'';
  }
  function deletionContext(){
