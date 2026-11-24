@@ -213,6 +213,58 @@ test('confirmed import rejects parameter edits and revision changes during backu
  {const {ui,calls,answer}=await reviewedReplacement(),backup=deferred();ui.UI.api.chooseSqliteBackupPath=()=>{calls.pickers++;return backup.promise;};const pending=ui.nodes.saveImport.click();answer.resolve(true);await flush();assert.equal(calls.pickers,1);assert.equal(calls.applies,0);ui.UI.revision=2;backup.resolve('/tmp/backup.sqlite3');await pending;assert.equal(calls.applies,0);}
 });
 test('confirmed report delete uses only its revision and id even when no backup picker is available',async()=>{const {ui,calls,answer,action}=await deletableReport();delete ui.UI.api.chooseSqliteBackupPath;const args=[];ui.UI.api.nativeDeleteReport=async(...values)=>args.push(values);const pending=action.click();answer.resolve(true);await pending;assert.equal(calls.pickers,0);assert.deepEqual(JSON.parse(JSON.stringify(args)),[[1,'r']]);});
+
+test('bulk report selection survives scrolling and passes only confirmed report IDs',async()=>{
+ const calls=[],answers=[false,true],reports=Array.from({length:51},(_,i)=>({id:String(i),start:'2024-01-01',end:'2024-01-01',report_type:'day',rows:1,amount:2,warnings:0,organizations:1}));
+ const ui=mount({
+  managementReportWindow:async(_rev,_filter,index)=>({rows:reports.slice(index*50,index*50+50),total_rows:51}),
+  managementReportSummary:async()=>({reports:51,rows:51,amount:102,latest:'2024-01-01'}),
+  unifiedReportDeletionCount:async(rev,scope)=>{calls.push(['preview',rev,scope]);return scope.ids.length;},
+  unifiedDeleteReports:async(...args)=>{calls.push(['delete',...args]);return {deleted:2};},
+ });
+ ui.window.confirm=message=>{assert.match(message,/2 отчёта/);return answers.shift();};
+ await ui.window.unifiedReports.openView('list');
+ const checked=ui.nodes.reports.querySelectorAll('*').find(x=>x.type==='checkbox');
+ checked.checked=true;await checked.fire('change');
+ await ui.nodes.reports.scrollWindow.go(1);
+ const second=ui.nodes.reports.querySelectorAll('*').find(x=>x.type==='checkbox');
+ second.checked=true;await second.fire('change');
+ await ui.nodes.unifiedDeleteSelectedReports.click();
+ assert.equal(calls.length,1);
+ await ui.nodes.unifiedDeleteSelectedReports.click();
+ assert.deepEqual(JSON.parse(JSON.stringify(calls)),[
+  ['preview',1,{kind:'selected',ids:['0','50']}],['preview',1,{kind:'selected',ids:['0','50']}],
+  ['delete',1,{kind:'selected',ids:['0','50']},2],
+ ]);
+ assert.equal(ui.nodes.unifiedDeleteSelectedReports.disabled,true);
+});
+
+test('period deletion uses the chosen calendar range and blocks stale confirmation',async()=>{
+ const calls=[];let calendar,accept;
+ const ui=mount({
+  managementReportWindow:async()=>({rows:[],total_rows:73}),
+  managementReportSummary:async()=>({reports:73,rows:73,amount:146,latest:'2024-02-15'}),
+  unifiedReportDeletionCount:async(rev,scope)=>{calls.push(['preview',rev,scope]);return 12;},
+  unifiedDeleteReports:async(...args)=>{calls.push(['delete',...args]);return {deleted:12};},
+  unifiedClearReports:async(...args)=>{calls.push(['clear',...args]);return {deleted:73};},
+ });
+ ui.window.referenceCalendar={open:options=>{calendar=options;},syncField(){},valid:date=>Boolean(date),period:(day,unit)=>{
+  assert.equal(day,'2024-02-11');assert.equal(unit,'month');return ['2024-02-01','2024-02-29'];
+ }};
+ ui.UI.notice=()=>{};
+ ui.window.confirm=message=>{assert.match(message,/12 отчётов.*01\.02\.2024.*29\.02\.2024/s);return new Promise(resolve=>{accept=resolve;});};
+ ui.window.referenceCalendar.stamp=date=>date.split('-').reverse().join('.');
+ await ui.window.unifiedReports.openView('list');
+ await ui.nodes.unifiedDeletePeriodReports.click();
+ assert.deepEqual([...calendar.variants.keys()],['week','month','year']);
+ const pending=calendar.apply('2024-02-11','month');await flush();
+ ui.UI.revision=2;accept(true);await pending;
+ assert.deepEqual(JSON.parse(JSON.stringify(calls)),[['preview',1,{kind:'period',from:'2024-02-01',to:'2024-02-29'}]]);
+ await ui.window.unifiedReports.openView('list');
+ ui.window.confirm=message=>{assert.match(message,/все 73 отчёта/i);return true;};
+ await ui.nodes.unifiedDeleteAllReports.click();
+ assert.deepEqual(calls.at(-1),['clear',2]);
+});
 test('successful XLSX commit remains successful when view refresh fails',async()=>{
  let applies=0;
  const ui=mount({chooseWideXlsx:async()=>'/tmp/book.xlsx',nativeLegacyImportApply:async()=>{applies++;return {reports:1,rows:2,revision:2};}});

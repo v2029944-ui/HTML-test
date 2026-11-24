@@ -440,6 +440,45 @@ pub async fn unified_clear_reports(
 }
 
 #[tauri::command]
+pub async fn unified_report_deletion_count(
+    app: AppHandle,
+    revision: i64,
+    scope: crate::storage::UnifiedReportDeletion,
+    workspace_token: Option<String>,
+) -> Result<i64, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Read,
+            |store| store.unified_report_deletion_count(revision, &scope),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn unified_delete_reports(
+    app: AppHandle,
+    revision: i64,
+    scope: crate::storage::UnifiedReportDeletion,
+    confirmed_count: i64,
+    workspace_token: Option<String>,
+) -> Result<ManagementReceipt, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Write,
+            |store| store.unified_delete_reports(revision, &scope, confirmed_count, &ManagementJob::new()),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn unified_report_page(
     app: AppHandle,
     revision: i64,

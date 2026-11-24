@@ -211,6 +211,8 @@
 #refNative .calendar-source {display:grid;gap:.45rem;padding-block:.8rem}
 #refNative .calendar-source p {margin:0;font-size:.9rem;overflow-wrap:anywhere}
 #refNative .report-card-actions {display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin-top:.15rem}
+#refNative .report-selection-label {display:inline-flex;align-items:center;gap:.4rem;padding-inline-end:.35rem}
+#refNative .report-selection-label input {margin:0;accent-color:var(--ui-accent,#f5c542)}
 #refNative .reports-page-footer {margin-top:.65rem}
 #refNative .reports-page-footer > span:empty {display:none}
 

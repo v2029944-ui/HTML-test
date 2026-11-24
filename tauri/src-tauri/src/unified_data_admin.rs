@@ -3,6 +3,59 @@
 //! to reports, source ownership and diagnostics commit in one SQLite transaction.
 use super::*;
 
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum UnifiedReportDeletion {
+    Selected { ids: Vec<String> },
+    Period { from: String, to: String },
+}
+
+fn plan_report_deletion(c: &Connection, scope: &UnifiedReportDeletion) -> Result<i64, String> {
+    c.execute_batch("CREATE TEMP TABLE report_delete_targets(id TEXT PRIMARY KEY) WITHOUT ROWID;")
+        .map_err(err)?;
+    match scope {
+        UnifiedReportDeletion::Selected { ids } => {
+            if !(1..=500).contains(&ids.len()) {
+                return Err("Можно выбрать от 1 до 500 отчётов за один раз.".into());
+            }
+            let mut insert = c.prepare("INSERT OR IGNORE INTO temp.report_delete_targets SELECT id FROM reports WHERE id=?1").map_err(err)?;
+            for id in ids {
+                label(id)?;
+                if id.is_empty() || insert.execute([id]).map_err(err)? != 1 {
+                    return Err("Выбор содержит неизвестный или повторный отчёт.".into());
+                }
+            }
+        }
+        UnifiedReportDeletion::Period { from, to } => {
+            if !valid_date(from) || !valid_date(to) || from > to {
+                return Err("Некорректные даты периода удаления.".into());
+            }
+            let days = (NaiveDate::parse_from_str(to, "%Y-%m-%d").map_err(err)?
+                - NaiveDate::parse_from_str(from, "%Y-%m-%d").map_err(err)?).num_days();
+            if days > 365 {
+                return Err("Период удаления не может превышать 366 дней.".into());
+            }
+            c.execute("INSERT INTO temp.report_delete_targets SELECT id FROM reports
+                WHERE period_start BETWEEN ?1 AND ?2 AND period_end BETWEEN period_start AND ?2", params![from,to]).map_err(err)?;
+        }
+    }
+    let untracked: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM temp.report_delete_targets t
+        LEFT JOIN management_report_meta m ON m.report_id=t.id
+        LEFT JOIN report_source_diagnostic_links l ON l.report_id=t.id
+        WHERE m.report_id IS NULL OR (m.shared_source_artifact<>0 AND l.report_id IS NULL))", [], |r|r.get(0)).map_err(err)?;
+    if untracked {
+        return Err("Не удалось проверить сохранённые сведения о выбранных отчётах. Обновите данные и проверьте список.".into());
+    }
+    let orphan: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM temp.report_delete_targets t
+        JOIN report_source_diagnostic_links l ON l.anchor_id=t.id
+        LEFT JOIN temp.report_delete_targets member ON member.id=l.report_id
+        WHERE member.id IS NULL)", [], |r|r.get(0)).map_err(err)?;
+    if orphan {
+        return Err("Выбранный отчёт хранит общие замечания Excel для других отчётов. Для его удаления выберите также все отчёты, которые используют эти замечания.".into());
+    }
+    c.query_row("SELECT COUNT(*) FROM temp.report_delete_targets", [], |r|r.get(0)).map_err(err)
+}
+
 fn normalized_org(s: &str) -> String {
     s.to_lowercase()
         .trim_end_matches(['.', ',', ';', ':'])
@@ -138,6 +191,42 @@ fn rename_report(c: &Connection, root: i64) -> Result<(), String> {
 }
 
 impl Storage {
+    pub fn unified_report_deletion_count(&self, expected: i64, scope: &UnifiedReportDeletion) -> Result<i64, String> {
+        let mut live = self.management_connect()?;
+        let tx = live.transaction().map_err(err)?;
+        check_revision(&tx, expected)?;
+        check_metadata_bounds(&tx)?;
+        plan_report_deletion(&tx, scope)
+    }
+
+    pub fn unified_delete_reports(&self, expected: i64, scope: &UnifiedReportDeletion, confirmed_count: i64, job: &ManagementJob) -> Result<ManagementReceipt, String> {
+        let live = self.management_connect()?;
+        job.run(&live, || {
+            let tx = rusqlite::Transaction::new_unchecked(&live, rusqlite::TransactionBehavior::Immediate).map_err(err)?;
+            check_revision(&tx, expected)?;
+            check_metadata_bounds(&tx)?;
+            check_delete_integrity(&tx)?;
+            let count = plan_report_deletion(&tx, scope)?;
+            if count == 0 || count != confirmed_count {
+                return Err("Список отчётов изменился. Проверьте выбор заново.".into());
+            }
+            // Remove non-anchors first so that the existing trigger can reject
+            // any surviving references when a selected anchor is deleted.
+            let deleted_members = tx.execute("DELETE FROM reports WHERE id IN (SELECT t.id
+                FROM temp.report_delete_targets t WHERE NOT EXISTS
+                (SELECT 1 FROM report_source_diagnostic_links l WHERE l.anchor_id=t.id))", []).map_err(err)?;
+            job.check()?;
+            let deleted_anchors = tx.execute("DELETE FROM reports WHERE id IN (SELECT id FROM temp.report_delete_targets)", []).map_err(err)?;
+            let deleted = (deleted_members + deleted_anchors) as i64;
+            if deleted != count {
+                return Err("Удалено неожиданное число отчётов. Изменения отменены.".into());
+            }
+            let revision = read_model::revision(&tx)?;
+            job.finish(tx)?;
+            Ok(ManagementReceipt { revision, deleted, cleanup_error: None })
+        })
+    }
+
     pub fn unified_rename_organizations(
         &self,
         expected: i64,
@@ -325,6 +414,13 @@ mod tests {
         rows
     }
 
+    fn index_deletion_fixture(store: &Storage, revision: i64) {
+        for id in ["a", "b"] {
+            store.index_report(id, revision).unwrap();
+            store.management_index_report(id, revision, &ManagementJob::new()).unwrap();
+        }
+    }
+
     #[test]
     fn unified_org_swap_retains_c3_links_unknown_fields_and_fresh_backup() {
         let dir = tempdir().unwrap();
@@ -451,6 +547,53 @@ mod tests {
             "ok"
         );
         assert_eq!(fs::read(source).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn scoped_report_deletion_checks_containment_revision_and_count() {
+        let dir = tempdir().unwrap();
+        let store = fixture(dir.path());
+        let c = store.management_connect().unwrap();
+        c.execute("INSERT INTO reports VALUES('overlap','week','2026-11-30','2026-12-06','weekly.xlsx','{\"rows\":[]}')", []).unwrap();
+        let revision = store.revision().unwrap();
+        index_deletion_fixture(&store, revision);
+        let period = UnifiedReportDeletion::Period { from: "2026-11-01".into(), to: "2026-11-30".into() };
+        assert_eq!(store.unified_report_deletion_count(revision, &period).unwrap(), 2);
+        assert!(store.unified_delete_reports(revision - 1, &period, 2, &ManagementJob::new()).is_err());
+        assert!(store.unified_delete_reports(revision, &period, 1, &ManagementJob::new()).is_err());
+        assert_eq!(links(&store).len(), 2);
+        let receipt = store.unified_delete_reports(revision, &period, 2, &ManagementJob::new()).unwrap();
+        assert_eq!(receipt.deleted, 2);
+        assert_eq!(c.query_row("SELECT id FROM reports", [], |r| r.get::<_, String>(0)).unwrap(), "overlap");
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM metric_report_docs", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+        assert!(links(&store).is_empty());
+        assert_eq!(c.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0)).unwrap(), "ok");
+    }
+
+    #[test]
+    fn selected_report_deletion_preserves_surviving_diagnostics_and_rolls_back_faults() {
+        let dir = tempdir().unwrap();
+        let store = fixture(dir.path());
+        let revision = store.revision().unwrap();
+        index_deletion_fixture(&store, revision);
+        let selection = |ids: &[&str]| UnifiedReportDeletion::Selected { ids: ids.iter().map(|id| (*id).into()).collect() };
+        assert!(store.unified_report_deletion_count(revision, &selection(&["a"])).is_err());
+        assert!(store.unified_report_deletion_count(revision, &selection(&["b", "unknown"])).is_err());
+        assert!(store.unified_report_deletion_count(revision, &selection(&["b", "b"])).is_err());
+        let c = store.management_connect().unwrap();
+        c.execute_batch("CREATE TRIGGER fail_anchor BEFORE DELETE ON reports WHEN OLD.id='a' BEGIN SELECT RAISE(ABORT,'injected delete fault'); END;").unwrap();
+        let before = store.load().unwrap();
+        assert!(store.unified_delete_reports(revision, &selection(&["a", "b"]), 2, &ManagementJob::new()).unwrap_err().contains("injected delete fault"));
+        assert_eq!(store.revision().unwrap(), revision);
+        assert_eq!(store.load().unwrap(), before);
+        assert_eq!(links(&store).len(), 2);
+        let cancelled = ManagementJob::new();
+        assert!(cancelled.cancel());
+        assert!(store.unified_delete_reports(revision, &selection(&["b"]), 1, &cancelled).is_err());
+        assert_eq!(store.load().unwrap(), before);
+        assert_eq!(store.unified_delete_reports(revision, &selection(&["b"]), 1, &ManagementJob::new()).unwrap().deleted, 1);
+        assert_eq!(store.load().unwrap()["reports"], json!([before["reports"][0].clone()]));
+        assert_eq!(links(&store), vec![("a".into(), "a".into())]);
     }
 
     #[test]

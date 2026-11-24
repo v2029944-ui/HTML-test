@@ -49,6 +49,67 @@ function init(){
  const reportPager=el('div',undefined,'reports-page-footer'),reportPageStatus=el('span','');
  reportPager.id='unifiedReportsPager';reportPageStatus.id='unifiedReportsPage';reportPageStatus.setAttribute('role','status');
  reportPager.append(reportPageStatus);$('reports').after(reportPager);
+ const selectedReportIds=new Set(),selectionLimit=500;
+ let reportSummary=null,deleteReportsBusy=false;
+ const deleteSelected=button('Удалить выбранные…',()=>deleteReports({kind:'selected',ids:[...selectedReportIds]}));
+ const deletePeriod=button('Удалить за период…',chooseDeletionPeriod);
+ const deleteAll=button('Удалить все отчёты…',()=>deleteReports(null));
+ deleteSelected.id='unifiedDeleteSelectedReports';deletePeriod.id='unifiedDeletePeriodReports';deleteAll.id='unifiedDeleteAllReports';
+ deletePeriod.setAttribute('aria-haspopup','dialog');
+ const selectionStatus=el('span','');selectionStatus.setAttribute('role','status');
+ const hasBulkDeletion=Boolean(api.unifiedReportDeletionCount&&api.unifiedDeleteReports);
+ if(hasBulkDeletion){
+  const actions=el('div',undefined,'actions');actions.setAttribute('role','group');actions.setAttribute('aria-label','Удаление отчётов');
+  actions.append(deleteSelected,deletePeriod);if(api.unifiedClearReports)actions.append(deleteAll);actions.append(selectionStatus);
+  $('reports').before(actions);
+ }
+ function syncDeletionActions(){
+  const unavailable=!Number.isSafeInteger(UI.revision)||!reportSummary?.reports;
+  deleteSelected.disabled=unavailable||!selectedReportIds.size;
+  deletePeriod.disabled=unavailable||!window.referenceCalendar;
+  deleteAll.disabled=unavailable;
+  for(const control of [deleteSelected,deletePeriod,deleteAll])control.setAttribute('aria-busy',String(deleteReportsBusy));
+  selectionStatus.textContent=selectedReportIds.size?'Выбрано: '+selectedReportIds.size:'';
+ }
+ function deletionContext(){
+  const rev=UI.revision,currentGeneration=generation,token=window.sharedWorkspace?.state?.workspace_token;
+  return {rev,current:()=>UI.revision===rev&&generation===currentGeneration&&uploadMode==='list'&&window.sharedWorkspace?.state?.workspace_token===token};
+ }
+ function chooseDeletionPeriod(){
+  if(deleteReportsBusy)return;
+  const cal=window.referenceCalendar,context=deletionContext();
+  const dates={has:date=>cal.valid(date)&&Number(date.slice(0,4))<=9998};
+  const initial=dates.has(reportSummary?.latest||'')?reportSummary.latest:new Date().toISOString().slice(0,10);
+  const available={...dates,values:function*(){yield initial;}};
+  cal.open({anchor:deletePeriod,title:'Период удаления отчётов',initial,unit:'week',allowed:available,
+   variants:new Map(['week','month','year'].map(unit=>[unit,available])),apply:(date,unit)=>{
+    if(!context.current())return;
+    const [from,to]=cal.period(date,unit);
+    return deleteReports({kind:'period',from,to},context);
+   }});
+ }
+ async function deleteReports(scope,{rev,current}=deletionContext()){
+  if(deleteReportsBusy||!Number.isSafeInteger(rev)||!current())return;
+  deleteReportsBusy=true;syncDeletionActions();
+  try{
+   const count=scope?await api.unifiedReportDeletionCount(rev,scope):reportSummary?.reports;
+   if(!current())return;
+   if(!Number.isSafeInteger(count)||count<0)throw Error('Не удалось определить число отчётов.');
+   if(!count){UI.notice?.('За выбранный период отчётов нет.');return;}
+   const quantity=count+' '+reportNoun(count),cal=window.referenceCalendar;
+   const target=!scope?'все '+quantity:scope.kind==='period'?quantity+' за период '+cal.stamp(scope.from)+' — '+cal.stamp(scope.to):quantity;
+   const detail=scope?.kind==='period'?'\nБудут удалены отчёты, полностью входящие в выбранные даты.':'';
+   const database=window.sharedWorkspace?.state?.mode==='shared'?'общей':'личной';
+   if(await window.confirm('Удалить '+target+' из '+database+' базы?'+detail+'\nФайлы Excel сохранятся.')!==true)return;
+   if(!current())throw Error('Данные изменились. Проверьте список отчётов заново.');
+   const receipt=scope?await api.unifiedDeleteReports(rev,scope,count):await api.unifiedClearReports(rev);
+   reportSummary=null;selectedReportIds.clear();
+   try{await UI.refresh();UI.notice?.('Удалено: '+receipt.deleted+' '+reportNoun(receipt.deleted)+'.');}
+   catch(error){UI.notice?.('Отчёты удалены, но не удалось обновить список: '+String(error.message||error),true);}
+  }catch(error){UI.notice?.('Не удалось удалить отчёты: '+String(error.message||error),true);}
+  finally{deleteReportsBusy=false;syncDeletionActions();}
+ }
+ syncDeletionActions();
  window.sqlRowScroll.retire($('qualityPrev'),$('qualityNext'));
  $('qualityPage').parentElement.className='reports-page-footer';
  async function reportOrgs(id,root,rev,index=0){
@@ -65,10 +126,22 @@ function init(){
   $('qualitySource').value='saved';syncQualityPeriods();$('qualityPeriod').value='all';setQualityDates(report.start,report.start);
   $('qualitySearch').value='';$('qualityReportSource').value=report.source_name||'';qualityOffset=0;void openUploadView('quality');$('qualityHeading').scrollIntoView?.({block:'start',behavior:'smooth'});
  });}
- function reportCard(r,rev){
+ function reportCard(r,rev,selectable=false){
   const card=el('section',undefined,'calendar-source');
   card.append(el('strong',(kinds[r.report_type]||r.report_type)+' · '+r.start+' — '+r.end),el('p','Excel: '+(r.source_name||'источник не сохранён')),el('p','Строк: '+show(r.rows)+' · Сумма: '+UI.fmt(r.amount,'amount')+' · Замечаний: '+show(r.warnings)));
   const actions=el('div',undefined,'report-card-actions');actions.append(qualityAction(r));
+  if(selectable){
+   const label=el('label',undefined,'report-selection-label'),check=el('input');check.type='checkbox';
+   check.checked=selectedReportIds.has(r.id);check.setAttribute('aria-label','Выбрать отчёт '+r.start+' — '+r.end+(r.source_name?' · '+r.source_name:''));
+   check.addEventListener('change',()=>{
+    if(deleteReportsBusy||UI.revision!==rev){check.checked=selectedReportIds.has(r.id);return;}
+    if(!check.checked)selectedReportIds.delete(r.id);
+    else if(selectedReportIds.size<selectionLimit)selectedReportIds.add(r.id);
+    else{check.checked=false;UI.notice?.('Можно выбрать до '+selectionLimit+' отчётов. Для большего числа используйте удаление за период или удаление всех отчётов.');}
+    syncDeletionActions();
+   });
+   label.append(check,el('span','Выбрать'));actions.prepend(label);
+  }
   const orgs=el('details'),list=el('p');orgs.append(el('summary','Подразделения ('+r.organizations+')'),list);let loaded=false;orgs.addEventListener('toggle',()=>{if(orgs.open&&!loaded){loaded=true;void reportOrgs(r.id,list,rev);}});card.append(orgs,actions);
   if(api.nativeDeleteReport){let deleting=false;const action=button('Удалить отчёт',async()=>{
    if(deleting||UI.revision!==rev)return;deleting=true;action.disabled=true;
@@ -90,15 +163,16 @@ function init(){
    const [{rows,total_rows:total},summary]=await Promise.all([api.managementReportWindow(rev,filter,index,LIMIT),api.managementReportSummary(rev,filter)]);
    if(!live(rev,ticket,reportTicket))return;
    if(!Array.isArray(rows)||rows.length>LIMIT)throw Error('Некорректная страница отчётов');
+   reportSummary=summary;syncDeletionActions();
    $('reportCount').textContent=summary.reports+' периодов · '+summary.rows+' строк · '+UI.fmt(summary.amount,'amount');
    root.replaceChildren();
-   for(const r of rows){root.append(reportCard(r,rev));if(kinds[r.report_type]&&validDate(r.start))savedQualityPeriods.add(r.report_type+':'+r.start);}
+   for(const r of rows){root.append(reportCard(r,rev,hasBulkDeletion));if(kinds[r.report_type]&&validDate(r.start))savedQualityPeriods.add(r.report_type+':'+r.start);}
    if($('qualitySource').value!=='pending')syncQualityPeriods();
    if(!rows.length)root.append(el('p','Отчёты не найдены.'));
    reportIndex=index;reportPageStatus.textContent='';
    window.sqlRowScroll.attach(root,{index,size:LIMIT,count:rows.length,total,footer:reportPager,label:'Страницы загруженных отчётов',go:i=>live(rev,ticket,reportTicket)&&loadReports(i)});
    if(year===null)year=Number((summary.latest||new Date().toISOString()).slice(0,4));
-  }catch(error){if(live(rev,ticket,reportTicket)){window.sqlRowScroll.reset(root);reportPageStatus.textContent='Список недоступен';status('reportCount','Не удалось прочитать отчёты: '+String(error.message||error));root.replaceChildren();}}
+  }catch(error){if(live(rev,ticket,reportTicket)){reportSummary=null;syncDeletionActions();window.sqlRowScroll.reset(root);reportPageStatus.textContent='Список недоступен';status('reportCount','Не удалось прочитать отчёты: '+String(error.message||error));root.replaceChildren();}}
  }
  // Keep the year trigger mounted while the request changes status, so both
  // confirmation and Escape return focus to the very button that opened it.
@@ -685,6 +759,7 @@ function init(){
  }
  window.nativeWorkspaceRefresh=async()=>{await UI.refresh();return true;};
  UI.onSnapshot(snapshot=>{
+  selectedReportIds.clear();reportSummary=null;syncDeletionActions();
   const folder=activeWorkspace();
   if(folder!==workspaceFolder){
    workspaceFolder=folder;++sourceTicket;sourcePath=null;sourceFolderContext=null;sheets=[];wideSheetRows=[];
