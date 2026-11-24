@@ -818,7 +818,7 @@ def omitted_detail_xlsx():
 
 
 def trend_zero_workbook(organizations):
-    dates=['2019-01-01','2019-01-02','2019-01-03']
+    dates=['2019-01-01','2019-01-02','2019-01-04']
     rows=[['Работа',*[date for date in dates for _ in range(2)],'Итого за период','Итого за период'],
           ['',*(['Количество','Сумма']*4)]]
     for index,org in enumerate(organizations):
@@ -848,7 +848,7 @@ def check_filtered_zero_chart(page, temporary, output):
         filters.locator(':scope > summary').click()
     select_filter_period(filters, 'День', 'range')
     choose_calendar_date(page,filters.locator('[data-date="start"]'),'2019-01-01')
-    choose_calendar_date(page,filters.locator('[data-date="end"]'),'2019-01-03')
+    choose_calendar_date(page,filters.locator('[data-date="end"]'),'2019-01-04')
     navigate(page,'chartPanel')
     page.locator('#chartBreakdown').select_option('works')
     page.locator('[data-reference-line]').click()
@@ -857,16 +857,27 @@ def check_filtered_zero_chart(page, temporary, output):
     chart=page.locator('#chartsContainer')
     expect(chart.locator('svg [data-chart-tooltip*="000 Проверка нуля"]').first).to_be_visible()
     expect(chart.locator('svg [data-chart-tooltip*="02.01.2019"]').first).to_be_visible()
+    expect(chart.locator('svg [data-chart-tooltip*="03.01.2019"]').first).to_be_visible()
     toggle.check()
-    expect(chart.locator('svg text').filter(has_text='Скрыт ноль').first).to_be_visible()
-    expect(chart).not_to_contain_text('нет отчётов за')
+    gap=chart.locator('svg text').filter(has_text='Пропуск').first
+    expect(gap).to_be_visible()
+    expect(gap.locator('title')).to_contain_text('Нет данных за 03.01.2019')
+    expect(gap.locator('title')).to_contain_text('Скрыты подтверждённые нулевые периоды: 02.01.2019')
     expect(chart.locator('svg [data-chart-tooltip*="02.01.2019"]')).to_have_count(0)
+    expect(chart.locator('svg [data-chart-tooltip*="03.01.2019"]')).to_have_count(0)
+    expect(chart.locator('svg polyline.chart-series')).to_have_count(0)
     chart.screenshot(path=str(output/'windows-sql-filtered-zero.png'))
     page.locator('#chartPanel [data-chart="table"]').click()
     table=page.locator('#dataTable table').first
     expect(table).to_contain_text('01.01.2019')
-    expect(table).to_contain_text('03.01.2019')
+    expect(table).to_contain_text('04.01.2019')
     expect(table).not_to_contain_text('02.01.2019')
+    expect(table).not_to_contain_text('03.01.2019')
+
+    request=page.evaluate('window.unifiedUI.request(window.referenceFilters.scope)')
+    target=temporary/'trend-filtered-zeros-and-absent.csv'
+    api(page,'referenceTrendCsv',request,{'table':'works','metrics':['count'],'hideEmpty':True,'matchChart':True},str(target))
+    assert target.read_text(encoding='utf-8-sig').splitlines()[0].endswith(';"2019-01-01";"2019-01-04"')
 
     # A single selected period cannot form a line, and responsive chart
     # controls must remain usable in every theme and compact UI size.

@@ -133,6 +133,7 @@ pub struct TimelineSummary {
     pub granularity: String,
     pub points: Vec<TimelinePoint>,
     pub zero_buckets_with_nonzero_works: Vec<String>,
+    pub buckets_with_reports: Vec<String>,
 }
 #[derive(Debug, Serialize)]
 pub struct WorkTrendSummary {
@@ -162,6 +163,7 @@ pub struct OrganizationTrends {
     pub granularity: String,
     pub selected_organizations: i64,
     pub series: Vec<OrganizationTrendSeries>,
+    pub buckets_with_reports: Vec<String>,
 }
 #[derive(Debug, Serialize)]
 pub struct RankingSummary {
@@ -1400,6 +1402,41 @@ fn range_rows(
     }
     Ok(out)
 }
+// A missing analytic value may still have a stored report. Keep incomplete,
+// duplicate and overlapping reports visible, even if none can supply a value.
+// Invalid reports have no trusted organization index, so keep their dates for
+// every organization selection. Weekly reports can overlap within six days.
+fn fill_timeline_report_buckets(c: &Connection, mode: i64, s: &AnalysisScope) -> Result<(), String> {
+    c.execute_batch("CREATE TEMP TABLE timeline_report_buckets(label TEXT PRIMARY KEY) WITHOUT ROWID;")
+        .map_err(err)?;
+    c.execute(r#"
+        WITH bounds AS (
+            SELECT CASE ?1 WHEN 1 THEN substr(start,1,7)
+                           WHEN 2 THEN date(start,'-'||((cast(strftime('%w',start) AS integer)+6)%7)||' days')
+                           WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END AS label,
+                   CASE WHEN ?2='week' THEN date(start,'-6 days') ELSE start END AS first_start,
+                   CASE WHEN ?2='week' THEN date(start,'+6 days') ELSE start END AS last_start
+            FROM temp.an_periods WHERE slot=1
+        )
+        INSERT INTO temp.timeline_report_buckets
+        SELECT DISTINCT b.label FROM bounds b
+        WHERE EXISTS (
+            SELECT 1 FROM analysis_filter_items f CROSS JOIN temp.an_candidates a
+            WHERE f.id=?3 AND a.org=f.item AND a.start BETWEEN b.first_start AND b.last_start
+        ) OR EXISTS (
+            SELECT 1 FROM reports r INDEXED BY reports_by_period JOIN analysis_reports a ON a.report_id=r.id
+            WHERE r.report_type=?2 AND r.period_start BETWEEN b.first_start AND b.last_start AND a.valid=0
+        )"#, params![mode, &s.report_type, &s.organizations]).map_err(err)?;
+    Ok(())
+}
+
+fn timeline_report_buckets(c: &Connection, mode: i64, s: &AnalysisScope) -> Result<Vec<String>, String> {
+    fill_timeline_report_buckets(c, mode, s)?;
+    let mut stmt = c.prepare("SELECT label FROM temp.timeline_report_buckets ORDER BY label").map_err(err)?;
+    let rows = stmt.query_map([], |row| row.get(0)).map_err(err)?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(err)
+}
+
 // Aggregate missing evidence separately to avoid multiplying amounts by detail rows.
 const TIMELINE_BUCKET_TOTALS: &str = r#"
             WITH buckets AS (
@@ -1527,6 +1564,7 @@ impl Storage {
             granularity: granularity.into(),
             points,
             zero_buckets_with_nonzero_works,
+            buckets_with_reports: timeline_report_buckets(&tx, mode, s)?,
         })
     }
     /// Up to eight individually verified organization series, up to 124 points
@@ -1629,6 +1667,7 @@ impl Storage {
             granularity: granularity.into(),
             selected_organizations,
             series,
+            buckets_with_reports: timeline_report_buckets(&tx, mode, s)?,
         })
     }
     /// Day-source only calendar rollups. A report from a different source

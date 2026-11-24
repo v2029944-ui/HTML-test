@@ -216,8 +216,10 @@ async function calculate(shared=null){
  finally{if(valid(mine,revision))for(const id of overviewResults){$(id).inert=false;$(id).setAttribute('aria-busy','false');}}
 }
 function descriptors(points,granularity,s){return window.analysisSummary.timelinePeriods(points,granularity,s,O.periodEnd);}
-const allPeriodsHidden='Фильтр скрыл все подтверждённые нулевые периоды в этой выборке. Снимите фильтр нулевых периодов, чтобы увидеть их.';
+const allPeriodsHidden='Фильтр скрыл все периоды в этой выборке. Отключите скрытие нулевых периодов и периодов без отчётов, чтобы увидеть их.';
 function confirmedZero(point){return point&&point.missing===0&&point.total?.count===0&&point.total?.amount===0;}
+function reportBuckets(result){return Array.isArray(result.buckets_with_reports)?new Set(result.buckets_with_reports):null;}
+function withoutReports(point,buckets){return point.missing>0&&buckets!==null&&!buckets.has(point.start);}
 function chartInterval(s){const to=s.source==='daily'?s.to:O.periodEnd(s.to,s.displayType);return O.displayDay(s.from)+(to===s.from?'':' — '+O.displayDay(to));}
 function plotSection(root,metric,title=titles[metric]){const section=UI.el('section',null,'metric-chart'),plot=UI.el('div',null,'metric-plot');section.append(UI.el('h3',title),plot);root.append(section);return plot;}
 function chartExport(scope,isCurrent,table,metrics){
@@ -258,13 +260,16 @@ async function renderCharts(index=seriesIndex,paging=false){
   for(let i=4;i<rows.length;i+=4){const batch=await Promise.all(rows.slice(i,i+4).map(row=>api.nativeWorkTimeline(revision,s.type,s.from,s.to,s.organizations,null,row.key,null,s.source==='daily'?s.displayType:null,s.selectedNames)));if(!isCurrent())return;series.push(...batch);}
   if(series.some(item=>item.granularity!==totals.granularity||item.points.length!==totals.points.length||item.points.some((p,i)=>p.start!==totals.points[i].start)))throw Error('Несовпадающие границы SQL-серий. Повторите расчёт.');
   const nonzeroWorkBuckets=new Set(totals.zero_buckets_with_nonzero_works);
-  const keep=totals.points.map(p=>!$('hideEmptyPeriods').checked||!confirmedZero(p)||nonzeroWorkBuckets.has(p.start)),points=totals.points.filter((p,i)=>keep[i]),periods=descriptors(points,totals.granularity,s);
-  const hiddenPeriods=descriptors(totals.points.filter((_,i)=>!keep[i]),totals.granularity,s);
+  const buckets=reportBuckets(totals),hide=$('hideEmptyPeriods').checked;
+  const hiddenZero=p=>confirmedZero(p)&&!nonzeroWorkBuckets.has(p.start);
+  const points=hide?totals.points.filter(p=>!hiddenZero(p)&&!withoutReports(p,buckets)):totals.points;
+  const periods=descriptors(points,totals.granularity,s);
+  const hiddenPeriods=hide?descriptors(totals.points.filter(hiddenZero),totals.granularity,s):[];
   window.referenceDetail?.setChartPeriodCount?.(points.length);
   const data=points.map((p,i)=>{if(p.missing!==0)return null;const index=totals.points.indexOf(p);return new Map(rows.map((row,j)=>[row.key,series[j].points[index].missing===0?series[j].points[index].total:{count:null,amount:null,average:null}]));});
   const root=state.chart==='table'?$('dataTable'):$('chartsContainer');
   for(const id of chartResults)clear(id,'',$(id)!==root);
-  const filteredAll=hiddenPeriods.length>0&&!points.length;
+  const filteredAll=totals.points.length>0&&!points.length;
   if(filteredAll)clear(state.chart==='table'?'dataTable':'chartsContainer',allPeriodsHidden,false);
   for(const metric of chosenMetrics())if(state.chart==='table'){
    const raw=[['Итого по выбранным работам',...points.map(p=>p.missing===0?p.total[metric]:null)],...rows.map(row=>[row.name,...data.map(map=>map?.get(row.key)?.[metric]??null)])];
@@ -280,14 +285,20 @@ async function departmentCharts(base,isCurrent){
  if(!all&&!base.allNames&&!selectedRows.size)throw Error('Нет отмеченных работ. Выберите работы или учитывайте все выполненные работы.');
  const [trends,organizations]=await Promise.all([api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(0,8),null,s.source==='daily'?s.displayType:null,s.selectedNames),api.nativeAnalysisOrganizations(s.revision,s.type,s.from,s.to,s.organizations,null,s.selectedNames)]);
  if(!isCurrent())return;
+ let buckets=reportBuckets(trends);
  for(let offset=8;offset<s.organizations.length;offset+=8){
   const page=await api.nativeOrganizationTrends(s.revision,s.type,s.from,s.to,s.organizations.slice(offset,offset+8),null,s.source==='daily'?s.displayType:null,s.selectedNames);
   if(!isCurrent())return;
   trends.series.push(...page.series);
+  const extra=reportBuckets(page);
+  if(buckets&&extra){for(const start of extra)buckets.add(start);}else buckets=null;
  }
  for(const id of ['chartsContainer','dataTable','chartOrgTotals'])clear(id);
- const rawSeries=trends.series||[],first=rawSeries[0]?.points||[],keep=first.map((p,i)=>!$('hideEmptyPeriods').checked||!rawSeries.every(series=>confirmedZero(series.points[i]))),points=first.filter((p,i)=>keep[i]),periods=descriptors(points,trends.granularity,s);
- const hiddenPeriods=descriptors(first.filter((_,i)=>!keep[i]),trends.granularity,s);
+ const rawSeries=trends.series||[],first=rawSeries[0]?.points||[],hide=$('hideEmptyPeriods').checked;
+ const zeros=first.map((_,i)=>hide&&rawSeries.every(series=>confirmedZero(series.points[i])));
+ const keep=first.map((p,i)=>!hide||(!zeros[i]&&!withoutReports(p,buckets)));
+ const points=first.filter((_,i)=>keep[i]),periods=descriptors(points,trends.granularity,s);
+ const hiddenPeriods=descriptors(first.filter((_,i)=>zeros[i]),trends.granularity,s);
  window.referenceDetail?.setChartPeriodCount?.(points.length);
  const data=first.map((p,i)=>new Map(rawSeries.map(series=>[series.organization,series.points[i]?.missing===0?series.points[i].total:{count:null,amount:null,average:null}]))).filter((p,i)=>keep[i]);
  function pointNotice(i,shown=s.organizations){
@@ -295,7 +306,7 @@ async function departmentCharts(base,isCurrent){
   const missing=rawSeries.filter(series=>shown.includes(series.organization)&&series.points[index]?.missing>0).map(series=>series.organization);
   return missing.length?'Нет полного отчёта: '+missing.join(', ')+'.':'';
  }
- const filteredAll=hiddenPeriods.length>0&&!points.length;
+ const filteredAll=first.length>0&&!points.length;
  if(filteredAll)clear(state.chart==='table'?'dataTable':'chartsContainer',allPeriodsHidden,false);
  if(state.chart==='table'){
   const raw=s.organizations.flatMap(org=>chosen.map(metric=>[org,titles[metric],...data.map(map=>map.get(org)?.[metric]??null)]));
