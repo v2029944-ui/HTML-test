@@ -356,8 +356,8 @@ def verify_shared_to_personal_transfer(client, folder):
     page = client.page
     before = generations(folder)
     page.locator('#reportTransferDirection').select_option('toPersonal')
-    page.locator('#reportTransferFrom').fill('2024-01-01')
-    page.locator('#reportTransferTo').fill('2024-01-02')
+    set_calendar_field(page, 'reportTransferFrom', '2024-01-01')
+    set_calendar_field(page, 'reportTransferTo', '2024-01-02')
     preview = page.locator('#personalTransferPreview')
     preview.click()
     expect(page.locator('#personalTransferSummary')).to_contain_text('Общая база: 2 отчётов')
