@@ -1027,6 +1027,27 @@ def check_partial_amount_charts(page, temporary, output):
     expect(comparison).not_to_contain_text('Изменение, %')
     page.locator('#comparison').screenshot(path=str(output/'windows-sql-partial-comparison.png'))
 
+    work={'key':'work:Сумма известна','kind':'work','name':'Сумма известна'}
+    try:
+        page.evaluate('orgs => window.referenceFilters.setOrganizations(orgs)',[first,second])
+        page.evaluate('work => window.referenceFilters.setWorks(false,[[work.key,work]])',work)
+        page.locator('#refComparisonModes [data-value="organizations"]').click()
+        trends=page.locator('#comparisonDynamicsPlots')
+        expect(trends.locator('h3')).to_have_count(1)
+        expect(trends.locator('h3')).to_contain_text('Сумма')
+        expect(trends.locator('.chart-legend span')).to_have_text([first,second])
+        expect(trends.locator('svg polyline.chart-series')).to_have_count(2)
+        for name,amount in [(first,20),(second,30)]:
+            expect(trends.locator(f'svg circle[data-chart-tooltip*="{name}"][data-chart-tooltip*="01.01.2018: {fmt(amount)}"]')).to_be_visible()
+        expect(trends.locator('svg circle[data-chart-tooltip*="03.01.2018"]')).to_have_count(0)
+        expect(trends.locator('.chart-period-notices summary')).to_be_visible()
+        expect(comparison).to_contain_text(work['name'])
+        trends.screenshot(path=str(output/'windows-sql-department-range-comparison.png'))
+    finally:
+        page.locator('#refComparisonModes [data-value="periods"]').click()
+        page.evaluate('() => window.referenceFilters.setWorks(true,[])')
+        page.evaluate('orgs => window.referenceFilters.setOrganizations(orgs)',snapshot['org_names'])
+
 
 def check_omitted_detail_evidence(page, temporary, output):
     source=temporary/'omitted-detail.xlsx';original=omitted_detail_xlsx();source.write_bytes(original)
@@ -1934,7 +1955,7 @@ def run():
                 check_filtered_zero_chart(page,tmp,output)
                 report['checks'].append('Imported 10, 0, 20 into SQLite and verified hidden zero in the installed chart and table')
                 check_partial_amount_charts(page,tmp,output)
-                report['checks'].append('Partial Excel amounts appear in installed department lines and tables; a missing day has no plotted value')
+                report['checks'].append('Partial Excel amounts appear in installed lines and tables; comparison shows one work across two departments over a date range with no value for a missing day')
                 check_omitted_detail_evidence(page,tmp,output)
                 report['checks'].append('Native omitted-detail tags distinguish invalid data, unknown organizations, invalid controls and included unnamed rows; persisted totals remain 3 and 8 with explicit acknowledgment')
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))

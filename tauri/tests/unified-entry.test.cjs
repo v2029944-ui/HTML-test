@@ -176,3 +176,11 @@ test('a monthly bucket of imported weeks spans the actual reports across month a
  assert.equal(periods[0].start,'2023-12-01');assert.equal(O.displayPeriod(periods[0]),'27.12.2023 — 02.01.2024');
  assert.equal(periods[1].start,'2024-01-01');assert.equal(O.displayPeriod(periods[1]),'03.01.2024 — 06.02.2024');
 });
+
+test('installed department comparison presents charts before the table',()=>{
+ const html=prepareHtml(original);
+ const order=(source,...ids)=>ids.map(id=>source.indexOf('id="'+id+'"')).every((offset,i,offsets)=>offset>=0&&(i===0||offset>offsets[i-1]));
+ assert.ok(order(html,'comparisonMetrics','comparisonDynamics','comparisonCharts','comparisonTable'));
+ assert.match(html,/<h3 id="comparisonDynamicsHeading">Линейный график по периодам<\/h3>/);
+ assert.ok(order(original,'comparisonTable','comparisonCharts','comparisonDynamics'));
+});
