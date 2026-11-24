@@ -564,6 +564,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                             results = plot.evaluate('''(root, mode) => {
                                 const svg=root.querySelector('svg[role=img]'), legend=root.querySelector('.chart-legend');
                                 if (!svg || !legend) return {unavailable:root.innerText};
+                                const plot=svg.parentElement, pager=root.querySelector('[data-sql-scroll-host="chart-periods"]');
                                 const marks=[...svg.querySelectorAll('[data-chart-tooltip]')];
                                 const labels=[...legend.querySelectorAll('[role=listitem]')];
                                 const matches=marks.every(mark => {
@@ -574,10 +575,14 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                                       (mode==='bar'||sample.tagName!=='polygon'||sample.points.length===mark.points.length);
                                 });
                                 return {marks:marks.length,labels:labels.length,matches,
+                                  isolatedScroll:plot!==root && getComputedStyle(plot).overflowX==='auto' &&
+                                    Boolean(plot.compareDocumentPosition(legend)&Node.DOCUMENT_POSITION_FOLLOWING) &&
+                                    (!pager || Boolean(pager.compareDocumentPosition(legend)&Node.DOCUMENT_POSITION_FOLLOWING)),
                                   scroll:root.scrollHeight-root.clientHeight,legendScroll:legend.scrollHeight-legend.clientHeight};
                             }''', mode)
                             if 'unavailable' not in results:
                                 assert results['matches'] and results['labels'] >= 2, results
+                                assert results['isolatedScroll'], results
                                 assert results['scroll'] <= 1 and results['legendScroll'] <= 1, results
                             inventory.append({'step': step + '-geometry', **results})
                         page.locator('#chartOrientation').select_option('vertical')

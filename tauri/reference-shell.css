@@ -889,18 +889,13 @@
 
 
 #sharedHeader,#reportShell {width:100%;max-width:none;zoom:1}
-#reportShell {--filter-sidebar-width:272px;--filter-sidebar-gap:12px;position:sticky;top:0;z-index:8;overflow:visible;overflow-anchor:none;background:var(--ui-bg)}
+#reportShell {--filter-sidebar-min-width:208px;--filter-sidebar-max-width:272px;--filter-sidebar-gap:12px;position:sticky;top:0;z-index:8;overflow:visible;overflow-anchor:none;background:var(--ui-bg)}
 #reportShell>.report-filter {margin:0 auto;width:min(calc(100% - 2 * var(--gutter)),calc(var(--max) - 2 * var(--gutter)));border:1px solid var(--ui-line);border-radius:9px}
 #reportShell .filter-fold > summary {position:sticky;top:0;z-index:1;background:var(--ui-surface);border-radius:inherit}
 #reportShell .filter-fold summary {min-height:42px;padding-block:9px}
 #reportShell .filter-summary {display:inline;font-size:12px;line-height:1.3}
-#reportShell .report-filter .filter-periods {
-  display:flex;flex-wrap:wrap;align-items:flex-end;
-}
-#reportShell .filter-periods > .lbl {flex:1 1 max-content;min-width:0;max-width:100%}
-#reportShell .filter-periods > .lbl:has([data-compare]) {min-width:min(100%,17em)}
-#reportShell .filter-options {align-items:stretch}
-#reportShell .filter-options > .lbl > :is(select,button) {margin-block-start:auto}
+#reportShell .report-filter :is(.filter-periods,.filter-options) {align-items:stretch}
+#reportShell :is(.filter-periods,.filter-options) > .lbl > :is(select,button) {margin-block-start:auto}
 #reportShell .filter-shortcuts {border:0;padding:0;min-width:0;gap:5px}
 #reportShell .preset-fields {min-width:0;display:grid;gap:3px;align-content:start}
 #reportShell .preset-title {font:550 var(--date-label-font)/16px var(--date-family,system-ui,sans-serif);color:var(--ui-muted)}
@@ -925,6 +920,7 @@
 #sharedHeader .main-nav button[aria-current=page]{border-bottom-color:transparent}
 @media(min-width:1050px) {
  #reportShell .filter-content {grid-template-rows:auto auto auto auto;row-gap:5px}
+ #reportShell .report-filter :is(.filter-periods,.filter-options) {align-self:stretch}
  #reportShell .report-dates {grid-row:2 / span 3;grid-template-rows:subgrid}
  #reportShell .filter-shortcuts {display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:subgrid;grid-row:2 / span 3;align-self:stretch;row-gap:5px}
  #reportShell .preset-fields {grid-row:2;align-self:start}
@@ -1130,6 +1126,10 @@ body:has(#refRoot)>footer {display:none}
 #refNative #uploadEntryCard:has(#desktopSource:not([hidden])) {grid-column:1/-1}
 @media(min-width:1000px){
  #refNative .upload-layout {grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+ #refNative .upload-layout:not(:has(#importPreview:not(:empty))):has(#desktopSource[hidden]) .upload-sources {
+  margin-block-start:calc(12px + var(--label-leading) + var(--field-gap));
+ }
+ #refNative .upload-sources > button {min-height:var(--control-height)}
  #refNative #uploadReviewCard {grid-column:1/-1}
  #refNative .upload-layout:has(#desktopSource:not([hidden])) #uploadParameterCard {grid-column:1/-1}
  #refNative .upload-layout:has(#importPreview:not(:empty)):has(#desktopSource[hidden]) #uploadReviewCard {grid-column:2;grid-row:1 / span 2}

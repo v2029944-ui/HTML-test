@@ -87,13 +87,17 @@ test('generated drawChart uses pointNotice at missing points as safe text and re
  }
  const document={activeElement:null,createElement:tag=>new Node(tag),createElementNS:(_,tag)=>new Node(tag)};
  const {script}=require('../unified-build.cjs').buildUnified(original),context={window:{},document};vm.runInNewContext(script,context);
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../unified-horizontal-bars.js'),'utf8'),context);
  vm.runInNewContext("workSeriesColor=()=> '#123456';",context);
  const O=context.window.unifiedOriginal,root=new Node('div'),periods=[{type:'year',start:'2023-01-01',end:'2023-12-31'},{type:'year',start:'2024-01-01',end:'2024-12-31'}];
  const seen=[],message='Неполные данные: пропусков 4 <img src=x>';
  O.drawChart(periods,new Set(['А','Б']),'count',root,{categories:['work:one'],data:[null,null],pointNotice:i=>{seen.push(i);return i===0?message:null;}});
  const all=node=>[node,...node.children.flatMap(all)],nodes=all(root);
  assert.deepEqual(seen,[0,1]);
- assert.equal(nodes.find(n=>n.tagName==='svg').attributes.viewBox,'0 0 1640 280');
+ const plot=root.children.find(n=>n.className==='chart-plot-scroll');
+ const legend=root.children.find(n=>n.className==='chart-legend');
+ assert.equal(plot.children[0].attributes.viewBox,'0 0 1640 420');
+ assert.ok(root.children.indexOf(plot)<root.children.indexOf(legend));
  const markers=nodes.filter(n=>n.tagName==='text'&&n.dataset.chartTooltip);
  assert.equal(markers.length,2);
  assert.ok(markers.every(n=>n.textContent==='!'&&n.attributes.tabindex==='0'&&n.attributes['aria-label']===n.dataset.chartTooltip));
