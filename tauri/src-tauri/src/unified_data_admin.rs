@@ -571,6 +571,33 @@ mod tests {
     }
 
     #[test]
+    fn single_report_deletion_preserves_diagnostics_until_the_last_linked_day() {
+        let dir = tempdir().unwrap();
+        let store = fixture(dir.path());
+        let revision = store.revision().unwrap();
+        let before = store.load().unwrap();
+        let blocked = store
+            .management_delete_report(revision, "a", &ManagementJob::new())
+            .unwrap_err();
+        assert_eq!(store.load().unwrap(), before);
+        assert_eq!(store.revision().unwrap(), revision);
+        let deleted = store
+            .management_delete_report(revision, "b", &ManagementJob::new())
+            .unwrap();
+        assert_eq!(deleted.deleted, 1);
+        assert!(blocked.contains("общие замечания Excel"), "{blocked}");
+        assert_eq!(links(&store), vec![("a".into(), "a".into())]);
+        let reopened = Storage::new(dir.path().to_owned()).unwrap();
+        assert_eq!(reopened.load().unwrap()["reports"], json!([before["reports"][0]]));
+        let last = reopened
+            .management_delete_report(deleted.revision, "a", &ManagementJob::new())
+            .unwrap();
+        assert_eq!(last.deleted, 1);
+        assert!(links(&reopened).is_empty());
+        assert_eq!(reopened.load().unwrap()["reports"], json!([]));
+    }
+
+    #[test]
     fn selected_report_deletion_preserves_surviving_diagnostics_and_rolls_back_faults() {
         let dir = tempdir().unwrap();
         let store = fixture(dir.path());

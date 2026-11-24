@@ -1411,6 +1411,21 @@ def backup_contents(path):
 
 def check_delete_without_backup(page, temporary, confirmations):
     """Last destructive fixture: real confirmation and SQLite, no Save dialog."""
+    # The earlier trend fixture is a wide Excel report with shared source diagnostics.
+    wide_file = temporary/'trend-zero.xlsx'
+    original_wide = wide_file.read_bytes()
+    snapshot = api(page,'nativeSettingsBootstrap')
+    wide = api(page,'managementReportPage',snapshot['revision'],{'from':'2019-01-01','to':'2019-01-04'},None,20)
+    assert [row['start'] for row in wide]==['2019-01-04','2019-01-02','2019-01-01'],wide
+    anchor=wide[-1]['id']
+    assert_rejected(lambda:api(page,'nativeDeleteReport',snapshot['revision'],anchor),
+                    'A deletion removed the shared diagnostic anchor','общие замечания Excel')
+    deleted=api(page,'nativeDeleteReport',snapshot['revision'],wide[0]['id'])
+    assert deleted['deleted']==1 and wide_file.read_bytes()==original_wide
+    days=api(page,'unifiedCalendar',deleted['revision'],2019)['days']
+    assert not any(day['date']=='2019-01-04' for day in days),days
+    evidence=api(page,'nativeReportQualityPage',deleted['revision'],wide[1]['id'],'source',0,50)
+    assert evidence['evidence']['document_id']==anchor,evidence
     source=temporary/'delete-without-backup.xlsx'
     source.write_bytes(daily_workbook_bytes())
     original=source.read_bytes()
@@ -1919,7 +1934,7 @@ def run():
                 report['checks'].append('Native omitted-detail tags distinguish invalid data, unknown organizations, invalid controls and included unnamed rows; persisted totals remain 3 and 8 with explicit acknowledgment')
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 check_delete_without_backup(page,tmp,confirmations)
-                report['checks'].append('Single report and clear-all deletion keep Cancel/Close/Escape, reject stale revisions and preserve settings, metrics and XLSX without a backup chooser')
+                report['checks'].append('Single, selected, period and clear-all deletion preserve settings, XLSX and shared diagnostics, protect surviving linked reports, and reject stale revisions')
             with independent('Print all thirteen changes'), installed_page(print_probe_phase=True) as (page,_,pid):
                 ready(page,0)
                 check_print_all_changes(page,tmp,output,pid,api,quality_evidence_xlsx,open_daily_overview)

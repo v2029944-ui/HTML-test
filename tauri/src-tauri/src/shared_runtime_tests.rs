@@ -89,6 +89,95 @@ fn other_client_publication_invalidates_selection_and_sync_pulls_latest() {
 }
 
 #[test]
+fn shared_deletions_survive_a_second_clients_sync_and_restart() {
+    use super::super::{ManagementJob, ReadFilter, UnifiedReportDeletion};
+
+    fn reindex(store: &Storage, revision: i64) -> Result<(), String> {
+        for header in store.report_page(revision, &ReadFilter::default(), None, 10)? {
+            store.index_unified_startup_report(&header, revision, &ManagementJob::new())?;
+        }
+        Ok(())
+    }
+
+    let (_first_root, writer) = runtime_fixture();
+    let (reader_root, reader) = runtime_fixture();
+    let folder = tempfile::tempdir().unwrap();
+    let personal = reader.status().unwrap();
+    reader.execute(Some(&personal.workspace_token), Access::Write, |store| {
+        store.save(data("personal"))
+    }).unwrap();
+    let team = connect(&writer, folder.path());
+    let revision = writer.execute(Some(&team.workspace_token), Access::Write, |store| {
+        let reports = (1..=5).map(|day| {
+            let stamp = format!("2024-02-{day:02}");
+            json!({"id":format!("day-{day}"),"type":"day","start":stamp,"end":stamp,"organizations":["A"],
+                "rows":[{"organization":"A","work":"W","count":day,"amount":day * 10}]})
+        }).collect::<Vec<_>>();
+        let mut payload = data("unused");
+        payload["reports"] = json!(reports);
+        store.save(payload)?;
+        let revision = store.revision()?;
+        for day in 1..=5 {
+            let id = format!("day-{day}");
+            store.index_report(&id, revision)?;
+            store.management_index_report(&id, revision, &ManagementJob::new())?;
+        }
+        Ok(revision)
+    }).unwrap();
+    connect(&reader, folder.path());
+    let mut observed = reader.sync().unwrap();
+    let mut revision = revision;
+    for (scope, count, remaining) in [
+        (UnifiedReportDeletion::Selected { ids: vec!["day-1".into()] }, 1, 4),
+        (UnifiedReportDeletion::Selected { ids: vec!["day-2".into(), "day-3".into()] }, 2, 2),
+        (UnifiedReportDeletion::Period { from: "2024-02-04".into(), to: "2024-02-04".into() }, 1, 1),
+    ] {
+        let receipt = writer.execute(Some(&team.workspace_token), Access::Write, |store| {
+            assert_eq!(store.unified_report_deletion_count(revision, &scope)?, count);
+            if remaining == 4 {
+                return store.management_delete_report(revision, "day-1", &ManagementJob::new());
+            }
+            store.unified_delete_reports(revision, &scope, count, &ManagementJob::new())
+        }).unwrap();
+        assert_eq!(receipt.deleted, count);
+        revision = receipt.revision;
+        observed = reader.sync().unwrap();
+        reader.execute(Some(&observed.workspace_token), Access::Read, |store| {
+            reindex(store, revision)?;
+            let days = store.unified_calendar(revision, 2024)?.days;
+            let expected: Vec<_> = (6 - remaining..=5).map(|day| format!("2024-02-{day:02}")).collect();
+            assert_eq!(days.iter().map(|day| day["date"].as_str().unwrap()).collect::<Vec<_>>(), expected);
+            let totals = store.aggregate(revision, &ReadFilter::default())?;
+            let expected_count: i64 = (6 - remaining..=5).sum();
+            assert_eq!((totals.rows, totals.count, totals.amount), (remaining, expected_count as f64, Some(expected_count as f64 * 10.0)));
+            Ok(())
+        }).unwrap();
+    }
+    drop(reader);
+    let reader = Runtime::new(reader_root.path().to_owned()).unwrap();
+    let after = reader.sync().unwrap();
+    assert_eq!(after.generation, observed.generation);
+    reader.execute(Some(&after.workspace_token), Access::Read, |store| {
+        reindex(store, revision)?;
+        assert_eq!(store.unified_calendar(revision, 2024)?.days[0]["date"], "2024-02-05");
+        let reports = store.report_page(revision, &ReadFilter::default(), None, 10)?;
+        assert_eq!(reports.iter().map(|report| report.id.as_str()).collect::<Vec<_>>(), ["day-5"]);
+        assert_eq!(store.aggregate(revision, &ReadFilter::default())?.amount, Some(50.0));
+        let conn = store.connect()?;
+        let integrity: String = conn.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap();
+        assert_eq!(integrity, "ok");
+        for table in ["report_rows", "report_row_index", "management_report_meta", "management_report_orgs"] {
+            let ids: Vec<String> = conn.prepare(&format!("SELECT DISTINCT report_id FROM {table}")).unwrap()
+                .query_map([], |row| row.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
+            assert_eq!(ids, ["day-5"], "{table}");
+        }
+        Ok(())
+    }).unwrap();
+    let personal = reader.disconnect(Some(&after.workspace_token)).unwrap();
+    assert_eq!(read(&reader, &personal.workspace_token)["reports"][0]["id"], "personal");
+}
+
+#[test]
 fn failed_mutation_is_discarded_without_publication_and_local_config_is_not_shared() {
     let (_a, a) = runtime_fixture();
     let (_b, b) = runtime_fixture();
