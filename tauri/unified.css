@@ -1,5 +1,7 @@
 /* Same canonical interface; only requested issue fixes and bounded-data notices. */
 body{min-width:0}
+:root[data-theme="light"]:is([data-palette="neon"],[data-palette="corporate"],[data-palette="paper"]){--axis:var(--plot-label)}
+:root[data-theme="light"][data-palette="paper"]{--selected-border:var(--accent)}
 .table-scroll{overflow-x:auto;overflow-y:visible;max-height:none}
 label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;max-width:100%;font:inherit}
 .period-pair input{width:100%;min-width:0;background:var(--surface);color:var(--text);border:1px solid var(--field-border);padding:9px 12px;border-radius:var(--radius-control)}

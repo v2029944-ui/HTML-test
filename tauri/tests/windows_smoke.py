@@ -407,6 +407,7 @@ def check_runtime(page):
       const {theme,palette,design,uiSize}=document.documentElement.dataset;
       return [theme,palette,design,uiSize].join('/')==='dark/paper/compact/large';
     }''')
+    check_palette_contrast(page)
     page.locator('#appearanceTheme').select_option('system')
     page.locator('#appearancePreset').select_option('minimal')
     page.locator('#appearanceSize').select_option('standard')
@@ -426,6 +427,33 @@ def check_runtime(page):
     assert page.locator('#categoryFilter').evaluate('el => el.open')
     dropdown.press('Enter')
     assert not page.locator('#categoryFilter').evaluate('el => el.open')
+
+
+def check_palette_contrast(page):
+    pairs = [('--text', '--surface', 4.5), ('--muted', '--subtle', 4.5),
+             ('--on-accent', '--accent-fill', 4.5), ('--on-accent', '--accent-hover', 4.5),
+             ('--axis', '--surface', 3), ('--selected-border', '--selected', 3)]
+    pairs.extend((f'--plot-{index}', '--surface', 3) for index in range(8))
+    names = sorted({name for foreground, background, _ in pairs for name in (foreground, background)})
+
+    def luminance(color):
+        assert re.fullmatch(r'#[0-9a-f]{6}', color, re.IGNORECASE), color
+        channels = [int(color[index:index+2], 16) / 255 for index in (1, 3, 5)]
+        linear = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in channels]
+        return sum(value * weight for value, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+
+    for theme in ('light', 'dark'):
+        page.locator('#appearanceTheme').select_option(theme)
+        for palette in ('neon', 'glass', 'corporate', 'paper', 'industrial'):
+            page.locator('#appearancePalette').select_option(palette)
+            colors = page.evaluate('''names => {
+              const style = getComputedStyle(document.documentElement);
+              return Object.fromEntries(names.map(name => [name, style.getPropertyValue(name).trim()]));
+            }''', names)
+            for foreground, background, minimum in pairs:
+                low, high = sorted([luminance(colors[foreground]), luminance(colors[background])])
+                ratio = (high + 0.05) / (low + 0.05)
+                assert ratio >= minimum, (palette, theme, foreground, background, ratio, minimum)
 
 
 def set_folder(page, folder, filenames):
