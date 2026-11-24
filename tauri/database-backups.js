@@ -9,6 +9,9 @@
     let review = null, saved = null, pending = null, busy = false, sequence = 0, launchMessage = '';
     const workspace = () => window.sharedWorkspace?.state;
     const personal = () => workspace()?.mode === 'personal';
+    const scheduleToggle = byId('scheduledBackupEnabled');
+    const hasSchedule = typeof api.nativeScheduledBackup === 'function';
+    let scheduleToken, scheduleState = null, scheduleBusy = false, scheduleError = '';
     const current = () => ({
       token: workspace()?.workspace_token, revision: ui.revision, generation: ui.generation
     });
@@ -23,6 +26,46 @@
     function status(id, message) {
       byId(id).textContent = message;
       if (id === 'databaseBackupStatus') byId(id).hidden = !message;
+    }
+    function renderSchedule() {
+      if (!hasSchedule) return;
+      const out = byId('scheduledBackupStatus');
+      byId('scheduledBackupControl').hidden = false;
+      out.hidden = false;
+      if (!scheduleBusy || !scheduleState) scheduleToggle.checked = scheduleState?.enabled === true;
+      scheduleToggle.disabled = scheduleBusy || !scheduleState || !same(current());
+      const stamp = scheduleState?.lastSuccess;
+      const last = Number.isSafeInteger(stamp)
+        ? 'Последняя успешная копия: ' + new Date(stamp).toLocaleString('ru-RU') + '. Файл: ' + scheduleState.lastPath
+        : 'Ежедневная копия ещё не создавалась.';
+      const details = 'Приложение хранит семь последних ежедневных копий этой базы. Копирование выполняется, пока приложение открыто и база выбрана.';
+      const error = scheduleError || scheduleState?.error;
+      const message = [last, details, error ? 'Не удалось выполнить резервное копирование. ' + error : ''].filter(Boolean).join(' ');
+      if (out.textContent !== message) out.textContent = message;
+    }
+    async function updateSchedule(choice = null) {
+      if (typeof api.nativeScheduledBackup !== 'function') return;
+      const context = current(), token = context.token;
+      if (scheduleToken !== token) {
+        scheduleToken = token;
+        scheduleState = null;
+        scheduleError = '';
+      }
+      if (scheduleBusy || !same(context)) { renderSchedule(); return; }
+      scheduleBusy = true;
+      renderSchedule();
+      try {
+        const result = await api.nativeScheduledBackup(choice);
+        if (token !== workspace()?.workspace_token) return;
+        scheduleState = result;
+        scheduleError = '';
+      } catch (error) {
+        if (token === workspace()?.workspace_token) scheduleError = error?.message || String(error);
+      } finally {
+        scheduleBusy = false;
+        if (token !== workspace()?.workspace_token) void updateSchedule();
+        else renderSchedule();
+      }
     }
     function render() {
       const ready = same(current()), local = personal();
@@ -100,6 +143,8 @@
     let lastToken;
     async function refresh() {
       const id = ++sequence, context = current();
+      if (scheduleToken !== context.token || !scheduleState) void updateSchedule();
+      else renderSchedule();
       if (context.token !== lastToken) {
         lastToken = context.token;
         saved = null;
@@ -123,7 +168,12 @@
       render();
     }
     ui.onSnapshot(refresh);
+    if (scheduleToggle) scheduleToggle.addEventListener('change', () => updateSchedule(scheduleToggle.checked));
+    if (hasSchedule) window.setInterval?.(() => {
+      if (scheduleState?.enabled || !scheduleState) void updateSchedule();
+    }, 60_000);
     render();
+    renderSchedule();
   }
   window.databaseBackups = Object.freeze({init});
 })();
