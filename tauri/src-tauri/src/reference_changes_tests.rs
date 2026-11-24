@@ -113,9 +113,11 @@ fn independent_unequal_intervals_require_complete_org_coverage_and_keep_real_wor
     assert_eq!(result.comparable, ["A", "Empty"]);
     assert_eq!(
         (result.total, result.searched, result.significant),
-        (4, 4, 3)
+        (5, 5, 3)
     );
-    assert!(result.rows.iter().all(|r| r.org == "A"));
+    let partial = result.rows.iter().find(|r| r.org == "B").unwrap();
+    assert!(partial.after.is_some());
+    assert_eq!((partial.delta,partial.percent),(None,None));
     assert!(result.rows.iter().all(|r| r.name != "Combined"));
     let work = result.rows.iter().find(|r| r.name == "Work").unwrap();
     assert_eq!(
@@ -230,8 +232,9 @@ fn missing_periods_are_not_zero_filled_and_negative_baselines_keep_percent() {
     let mut q = request(revision);
     let missing = store.reference_changes(&q).unwrap();
     assert!(missing.comparable.is_empty());
-    assert!(missing.rows.is_empty());
-    assert_eq!(missing.total, 0);
+    assert_eq!(missing.total, 1);
+    let observed = &missing.rows[0];
+    assert_eq!((observed.before,observed.after,observed.delta,observed.percent),(Some(-100.),Some(-50.),None,None));
     assert!(missing.leader.is_none());
     q.to = q.from.clone();
     let found = store.reference_changes(&q).unwrap();
@@ -385,7 +388,9 @@ fn comparable_sample_and_totals_match_overview_changes_comparison_and_exports() 
             reports.push(json!({"id":id,"type":"day","start":start,"end":start,"organizations":present,"rows":rows,"warnings":["Сохранённое контрольное замечание"]}));
         }
         let revision=prepare(&store,reports);let mut q=request(revision);q.base_to="2024-01-02".into();q.organizations=organizations.iter().map(|org|org.to_string()).collect();
-        let changes=store.reference_changes(&q).unwrap();assert_eq!(changes.comparable,["A","B","Empty"]);assert_eq!(changes.rows.len(),3);
+        let changes=store.reference_changes(&q).unwrap();assert_eq!(changes.comparable,["A","B","Empty"]);assert_eq!(changes.rows.len(),4);
+        let incomplete=changes.rows.iter().find(|row|row.org=="D").unwrap();
+        assert_eq!((incomplete.before,incomplete.after,incomplete.delta),(Some(if missing_base{10000.}else{20000.}),Some(if missing_current{10000.}else{20000.}),None));
         let query=ComparisonQuery{before:q.baseline(),after:q.current(),percent:0.,min_count:0.,min_amount:0.};
         store.reference_scope(&q,|scope| {
             let overview=store.analysis_comparison_dashboard(revision,scope,&query)?;
@@ -406,7 +411,7 @@ fn comparable_sample_and_totals_match_overview_changes_comparison_and_exports() 
             assert_eq!(comparison.summary.before.total.amount,Some(before));assert_eq!(comparison.summary.after.total.amount,Some(210.));
             let measure=comparison.summary.amount.as_ref().unwrap();assert_eq!(measure.delta,210.-before);assert_eq!(measure.percent.is_none(),zero_base);
             assert_eq!(window.rows.len(),1);assert_eq!(window.rows[0].amount.as_ref().unwrap().base,before);assert_eq!(window.rows[0].amount.as_ref().unwrap().current,210.);
-            assert_eq!(changes.rows.iter().map(|row|row.before.unwrap()).sum::<f64>(),before);assert_eq!(changes.rows.iter().map(|row|row.after.unwrap()).sum::<f64>(),210.);
+            assert_eq!(changes.rows.iter().filter(|row|row.org!="D").map(|row|row.before.unwrap()).sum::<f64>(),before);assert_eq!(changes.rows.iter().filter(|row|row.org!="D").map(|row|row.after.unwrap()).sum::<f64>(),210.);
             Ok(())
         }).unwrap();
         let summary=dir.path().join("summary.csv");let change_csv=dir.path().join("changes.csv");store.reference_summary_csv(&q,&summary).unwrap();store.reference_changes_csv(&q,&change_csv).unwrap();
@@ -426,7 +431,8 @@ fn no_common_sample_exports_unknown_comparison_totals_instead_of_zero() {
     let dir=tempdir().unwrap();let store=Storage::new(dir.path().into()).unwrap();
     let revision=prepare(&store,vec![json!({"id":"base","type":"day","start":"2024-01-01","end":"2024-01-01","organizations":["A","B"],"rows":[row("A","Work",1.,10.),row("B","Work",2.,20.)]}),json!({"id":"current","type":"day","start":"2024-01-10","end":"2024-01-10","organizations":["Empty","D"],"rows":[row("Empty","Work",3.,30.),row("D","Work",4.,40.)]})]);
     let mut q=request(revision);q.to=q.from.clone();q.organizations=vec!["A".into(),"B".into(),"Empty".into(),"D".into()];
-    let result=store.reference_changes(&q).unwrap();assert!(result.comparable.is_empty());assert!(result.rows.is_empty());
+    let result=store.reference_changes(&q).unwrap();assert!(result.comparable.is_empty());assert_eq!(result.rows.len(),4);
+    assert!(result.rows.iter().all(|row| row.delta.is_none() && row.before.is_some()!=row.after.is_some()));
     for (summary,file) in [(true,"summary.csv"),(false,"changes.csv")] {
         let path=dir.path().join(file);if summary{store.reference_summary_csv(&q,&path).unwrap();}else{store.reference_changes_csv(&q,&path).unwrap();}
         let csv=fs::read_to_string(path).unwrap();assert!(csv.contains("\"Сопоставимые подразделения\";\"0\";\"4\";\"\""));assert!(csv.contains("\"Сумма\";\"\";\"\";\"\";\"\""));
@@ -508,4 +514,30 @@ fn print_streams_the_complete_sorted_filter_from_one_snapshot_in_bounded_batches
     cancelled.store(false, Ordering::Release);
     q.revision -= 1;
     assert!(store.reference_changes_print(&q, Arc::clone(&cancelled), |_| panic!("stale revision emitted rows")).is_err());
+}
+
+#[test]
+fn reference_changes_show_observed_values_without_fabricating_deltas() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut unknown = row("A", "Work", 4., 0.);
+    unknown["amount"] = Value::Null;
+    let revision = prepare(&store, vec![
+        report("base", "2024-01-01", json!([row("A", "Work", 2., 20.)])),
+        report("now", "2024-01-10", json!([row("A", "Work", 3., 30.),unknown])),
+        json!({"id":"b","type":"day","start":"2024-01-10","end":"2024-01-10",
+            "organizations":["B"],"rows":[row("B","Work",5.,40.)]})
+    ]);
+    let mut q = request(revision);
+    q.kind = "significant".into();
+    let result = store.reference_changes(&q).unwrap();
+    assert!(result.comparable.is_empty());
+    assert_eq!(result.significant, 0);
+    assert_eq!(result.rows.len(), 2);
+    assert_eq!((result.rows[0].before, result.rows[0].after, result.rows[0].delta), (Some(20.),Some(30.),None));
+    assert_eq!((result.rows[1].before, result.rows[1].after, result.rows[1].delta), (None,Some(40.),None));
+    let path = dir.path().join("changes.csv");
+    store.reference_changes_csv(&q,&path).unwrap();
+    let csv = fs::read_to_string(path).unwrap();
+    assert!(csv.lines().any(|line| line == r#""Work";"B";"";"40";"";"""#));
 }

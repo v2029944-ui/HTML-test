@@ -2094,3 +2094,57 @@ fn selectable_ranking_filters_names_before_the_limit() {
         assert!(eligible.rows.iter().all(|row| row.name != "Group" && row.name.len() <= 512));
     }
 }
+
+#[test]
+fn partial_analytics_keeps_observed_amounts_and_report_gaps_separate() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    data["reports"] = json!([
+        {"id":"first","type":"day","start":"2024-01-01","end":"2024-01-01","organizations":["A","B"],"rows":[
+            {"organization":"A","work":"Wash","count":2,"amount":20},
+            {"organization":"B","work":"Wash","count":3,"amount":null}
+        ]},
+        {"id":"second","type":"day","start":"2024-01-02","end":"2024-01-02","organizations":["B"],"rows":[
+            {"organization":"B","work":"Wash","count":4,"amount":30}
+        ]}
+    ]);
+    let revision = prepare(&store, &data);
+    let selected = scope(&store, revision, "day", &["A","B"], None);
+    let range = RangeQuery { from:"2024-01-01".into(), to:"2024-01-03".into() };
+    let summary = store.analysis_range_summary(revision, &selected, &range).unwrap();
+    assert_eq!(summary.total.amount, None);
+    assert_eq!(summary.available_total.amount, Some(50.));
+    assert_eq!(summary.available_total.count, Some(9.));
+    assert_eq!(summary.available_total.average, None);
+    let timeline = serde_json::to_value(store.analysis_timeline(revision, &selected, &range).unwrap()).unwrap();
+    assert_eq!(timeline["points"][0]["available_total"]["amount"], 20.);
+    assert_eq!(timeline["points"][1]["available_total"]["amount"], 30.);
+    assert!(timeline["points"][2]["available_total"]["count"].is_null());
+    let departments = serde_json::to_value(store.analysis_organization_page(revision, &selected, &range, None, 50).unwrap()).unwrap();
+    assert_eq!(departments[0]["available_total"]["amount"], 20.);
+    assert_eq!(departments[1]["available_total"]["amount"], 30.);
+    let by_org = serde_json::to_value(store.analysis_organization_trends(revision, &selected, &range).unwrap()).unwrap();
+    assert!(by_org["series"][1]["points"][0]["available_total"]["amount"].is_null());
+    assert_eq!(by_org["series"][1]["points"][0]["available_total"]["count"], 3.);
+    let detail = serde_json::to_value(store.analysis_work_timeline(revision, &selected, &range, None, "work:Wash").unwrap()).unwrap();
+    assert_eq!(detail["points"][1]["available_total"]["amount"], 30.);
+    let q = ComparisonQuery {
+        before: RangeQuery { from:"2023-12-31".into(), to:"2024-01-01".into() },
+        after: RangeQuery { from:"2024-01-02".into(), to:"2024-01-03".into() },
+        percent:0., min_count:0., min_amount:0.
+    };
+    let page = serde_json::to_value(store.analysis_comparison_window(revision, &selected, &q, None, 0, 50).unwrap()).unwrap();
+    assert_eq!(page["rows"][0]["observed_before"]["amount"], 20.);
+    assert_eq!(page["rows"][0]["observed_after"]["amount"], 30.);
+    assert!(page["rows"][0]["amount"].is_null());
+    let selection = ChangeQuery { method:"range".into(), from:range.from.clone(),to:range.to.clone(),
+        percent:0., min_count:0., min_amount:0. };
+    let structure = store.advanced_composition(revision,&selected,&selection,None,&q.before,"structure","amount",None).unwrap();
+    assert_eq!(structure["currentAvailable"],true);
+    assert_eq!(structure["currentComplete"],false);
+    assert_eq!(structure["total"],50.);
+    assert_eq!(structure["rows"][0]["current"],50.);
+    assert!(structure["rows"][0]["share"].is_null());
+
+}

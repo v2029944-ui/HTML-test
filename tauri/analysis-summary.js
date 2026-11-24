@@ -36,5 +36,11 @@
       return {type,start,actualStart,end,partial:actualStart !== start || end !== calendarEnd};
     });
   }
-  window.analysisSummary = Object.freeze({titles,read,timelinePeriods,displayedChange,itemLabel});
+  function observed(item) {
+    return item?.available_total ?? item?.total ?? null;
+  }
+  function incomplete(item) {
+    return item?.complete === false || item?.missing > 0 || (Number.isFinite(observed(item)?.count) && item?.total?.amount == null);
+  }
+  window.analysisSummary = Object.freeze({titles,read,timelinePeriods,displayedChange,itemLabel,observed,incomplete});
 })();

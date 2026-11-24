@@ -87,6 +87,7 @@ pub struct RangeSummary {
     pub available_reports: i64,
     /// Observed-only totals, never an estimate for missing reports; null if no reports.
     pub available_total: AnalysisTotals,
+    pub amount_missing_rows: bool,
     pub invalid_reports: i64,
     pub duplicate_issues: i64,
     pub overlap_issues: i64,
@@ -127,6 +128,7 @@ pub struct TimelinePoint {
     pub periods: i64,
     pub missing: i64,
     pub total: AnalysisTotals,
+    pub available_total: AnalysisTotals,
 }
 #[derive(Debug, Serialize)]
 pub struct TimelineSummary {
@@ -152,6 +154,7 @@ pub struct OrganizationTrendPoint {
     pub periods: i64,
     pub missing: i64,
     pub total: AnalysisTotals,
+    pub available_total: AnalysisTotals,
 }
 #[derive(Debug, Serialize)]
 pub struct OrganizationTrendSeries {
@@ -191,6 +194,7 @@ pub struct OrganizationSummary {
     pub complete: bool,
     pub missing: i64,
     pub total: AnalysisTotals,
+    pub available_total: AnalysisTotals,
 }
 #[derive(Debug, Serialize)]
 pub struct AnalysisIssue {
@@ -302,6 +306,10 @@ pub struct ComparisonValue {
     /// Exact values of the sole complete side when a delta cannot be computed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub available: Option<AnalysisTotals>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_before: Option<AnalysisTotals>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_after: Option<AnalysisTotals>,
 }
 
 fn bounded(s: &str) -> Result<(), String> {
@@ -346,6 +354,15 @@ fn totals(count: f64, amount: Option<f64>, complete: bool) -> Result<AnalysisTot
             None
         },
     })
+}
+// Keep strict totals for comparisons. Partial absolute amounts only sum the
+// known cells; an average needs a sum for every observed quantity.
+fn observed_totals(count: f64, amount: Option<f64>, known_amount: Option<f64>, observed: bool) -> Result<AnalysisTotals, String> {
+    let mut result = totals(count, amount, observed)?;
+    if observed && amount.is_none() {
+        result.amount = known_amount.map(finite).transpose()?;
+    }
+    Ok(result)
 }
 fn date(s: &str) -> Result<NaiveDate, String> {
     if !valid_date(s) {
@@ -1216,9 +1233,9 @@ fn workspace(c: &Connection, expected: i64, s: &AnalysisScope) -> Result<(), Str
  CREATE TEMP TABLE an_issues(report_id TEXT,org TEXT,kind TEXT,other_report_id TEXT,PRIMARY KEY(report_id,org,kind,other_report_id)) WITHOUT ROWID;
  CREATE TEMP TABLE an_valid(org TEXT,start TEXT,end TEXT,report_id TEXT,warned INTEGER,PRIMARY KEY(org,start)) WITHOUT ROWID;
  CREATE TEMP TABLE an_periods(slot INTEGER,start TEXT,PRIMARY KEY(slot,start)) WITHOUT ROWID;
- CREATE TEMP TABLE an_values(slot INTEGER,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,active INTEGER,PRIMARY KEY(slot,org,key)) WITHOUT ROWID;
+ CREATE TEMP TABLE an_values(slot INTEGER,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,active INTEGER,known_amount REAL,PRIMARY KEY(slot,org,key)) WITHOUT ROWID;
  CREATE TEMP TABLE an_missing(slot INTEGER,org TEXT,start TEXT,PRIMARY KEY(slot,org,start)) WITHOUT ROWID;
- CREATE TEMP TABLE an_combined(slot INTEGER,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,active INTEGER,PRIMARY KEY(slot,key)) WITHOUT ROWID;").map_err(err)?;
+ CREATE TEMP TABLE an_combined(slot INTEGER,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,active INTEGER,known_amount REAL,PRIMARY KEY(slot,key)) WITHOUT ROWID;").map_err(err)?;
     c.execute("INSERT INTO temp.an_candidates SELECT o.org,r.period_start,r.period_end,r.id,a.warned FROM reports r JOIN analysis_reports a ON a.report_id=r.id AND a.valid=1 JOIN analysis_orgs o ON o.report_id=r.id JOIN analysis_filter_items f ON f.id=?1 AND f.item=o.org WHERE r.report_type=?2",params![s.organizations,s.report_type]).map_err(err)?;
     c.execute("INSERT INTO temp.an_issues SELECT r.id,'','invalid','' FROM reports r JOIN analysis_reports a ON a.report_id=r.id WHERE r.report_type=?1 AND a.valid=0",[&s.report_type]).map_err(err)?;
     // A valid day/month can overlap only the same start; a seven-day window
@@ -1249,8 +1266,8 @@ fn fill_range(c: &Connection, s: &AnalysisScope, q: &RangeQuery, slot: i64) -> R
     }
     drop(insert);
     c.execute("INSERT INTO temp.an_missing SELECT ?1,f.item,p.start FROM analysis_filter_items f CROSS JOIN temp.an_periods p LEFT JOIN temp.an_valid v ON v.org=f.item AND v.start=p.start WHERE f.id=?2 AND p.slot=?1 AND v.report_id IS NULL",params![slot,s.organizations]).map_err(err)?;
-    c.execute("INSERT INTO temp.an_values SELECT ?1,v.org,COALESCE(g.key,'work:'||x.work),COALESCE(g.name,x.work),CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,SUM(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) FROM temp.an_valid v JOIN temp.an_periods p ON p.slot=?1 AND p.start=v.start JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work WHERE (?2 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?2 AND f.item=COALESCE(g.name,x.work))) GROUP BY v.org,COALESCE(g.key,'work:'||x.work)",params![slot,s.names]).map_err(err)?;
-    c.execute("INSERT INTO temp.an_combined SELECT slot,key,name,kind,SUM(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,MAX(active) FROM temp.an_values WHERE slot=?1 GROUP BY key",[slot]).map_err(err)?;
+    c.execute("INSERT INTO temp.an_values SELECT ?1,v.org,COALESCE(g.key,'work:'||x.work),COALESCE(g.name,x.work),CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,SUM(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0),SUM(x.amount) FROM temp.an_valid v JOIN temp.an_periods p ON p.slot=?1 AND p.start=v.start JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work WHERE (?2 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?2 AND f.item=COALESCE(g.name,x.work))) GROUP BY v.org,COALESCE(g.key,'work:'||x.work)",params![slot,s.names]).map_err(err)?;
+    c.execute("INSERT INTO temp.an_combined SELECT slot,key,name,kind,SUM(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,MAX(active),SUM(known_amount) FROM temp.an_values WHERE slot=?1 GROUP BY key",[slot]).map_err(err)?;
     validate_numbers(c, "SELECT count,amount FROM temp.an_combined")?;
     validate_numbers(c, "SELECT count,amount FROM temp.an_values")?;
     validate_numbers(
@@ -1274,6 +1291,15 @@ fn validate_numbers(c: &Connection, sql: &str) -> Result<(), String> {
 }
 fn count_sql(c: &Connection, sql: &str) -> Result<i64, String> {
     c.query_row(sql, [], |r| r.get(0)).map_err(err)
+}
+fn selected_organization_count(c: &Connection, s: &AnalysisScope) -> Result<i64, String> {
+    c.query_row("SELECT COUNT(*) FROM analysis_filter_items WHERE id=?1",
+        [&s.organizations], |r| r.get(0)).map_err(err)
+}
+fn observed_reports(c: &Connection, slot: i64, org: Option<&str>) -> Result<bool, String> {
+    c.query_row("SELECT EXISTS(SELECT 1 FROM temp.an_valid v
+        JOIN temp.an_periods p ON p.slot=?1 AND p.start=v.start WHERE ?2 IS NULL OR v.org=?2)",
+        params![slot,org], |r| r.get(0)).map_err(err)
 }
 fn complete(c: &Connection, slot: i64, org: Option<&str>) -> Result<bool, String> {
     c.query_row("SELECT EXISTS(SELECT 1 FROM temp.an_periods WHERE slot=?1) AND NOT EXISTS(SELECT 1 FROM temp.an_missing WHERE slot=?1 AND (?2 IS NULL OR org=?2)) AND EXISTS(SELECT 1 FROM temp.an_valid WHERE ?2 IS NULL OR org=?2)",params![slot,org],|r|r.get(0)).map_err(err)
@@ -1300,7 +1326,7 @@ fn range_summary(c: &Connection, s: &AnalysisScope, slot: i64) -> Result<RangeSu
             |r| r.get(0),
         )
         .map_err(err)?;
-    let (values,count,amount):(i64,f64,Option<f64>)=c.query_row("SELECT COUNT(*),COALESCE(SUM(count),0),CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END FROM temp.an_combined WHERE slot=?1",[slot],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
+    let (values,count,amount,known_amount):(i64,f64,Option<f64>,Option<f64>)=c.query_row("SELECT COUNT(*),COALESCE(SUM(count),0),CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount) FROM temp.an_combined WHERE slot=?1",[slot],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(err)?;
     let complete = periods > 0 && organizations > 0 && missing == 0;
     let available_reports: i64 = c.query_row(
         "SELECT COUNT(*) FROM temp.an_valid v
@@ -1334,7 +1360,8 @@ fn range_summary(c: &Connection, s: &AnalysisScope, slot: i64) -> Result<RangeSu
         values,
         total: totals(count, amount, complete)?,
         available_reports,
-        available_total: totals(count, amount, available_reports > 0)?,
+        available_total: observed_totals(count, amount, known_amount, available_reports > 0)?,
+        amount_missing_rows: amount.is_none(),
         invalid_reports: count_sql(
             c,
             "SELECT COUNT(*) FROM temp.an_issues WHERE kind='invalid'",
@@ -1449,7 +1476,7 @@ const TIMELINE_BUCKET_TOTALS: &str = r#"
                 FROM temp.an_missing WHERE slot=1 GROUP BY label
             ), values_by_bucket AS (
                 SELECT CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count, CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active
+                       SUM(x.count) AS count, CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active, SUM(x.amount) AS known_amount
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN analysis_filter_items f ON f.id=?2 AND f.item=v.org
@@ -1461,7 +1488,7 @@ const TIMELINE_BUCKET_TOTALS: &str = r#"
                 GROUP BY label
             )
             SELECT b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(v.count,0),CASE WHEN v.count IS NULL THEN 0 ELSE v.amount END, COALESCE(v.active,0), b.first_start, b.last_start
+                   COALESCE(v.count,0),CASE WHEN v.count IS NULL THEN 0 ELSE v.amount END, COALESCE(v.active,0), b.first_start, b.last_start, v.known_amount
             FROM buckets b
             LEFT JOIN missing m ON m.label=b.label
             LEFT JOIN values_by_bucket v ON v.label=b.label
@@ -1541,6 +1568,7 @@ impl Storage {
             [], |r| r.get(0),
         ).map_err(err)?;
         let (mode, granularity) = timeline_grouping(s,q,grouping,period_count)?;
+        let organizations = selected_organization_count(&tx, s)?;
         let mut stmt = tx.prepare(TIMELINE_BUCKET_TOTALS).map_err(err)?;
         let mut rows = stmt.query(params![mode, &s.organizations, &s.names]).map_err(err)?;
         let mut points = Vec::new();
@@ -1549,6 +1577,7 @@ impl Storage {
                 return Err("Analysis timeline exceeds 124 points".into());
             }
             let missing: i64 = row.get(2).map_err(err)?;
+            let periods: i64 = row.get(1).map_err(err)?;
             points.push(TimelinePoint {
                 first_start: row.get(6).map_err(err)?,
                 last_start: row.get(7).map_err(err)?,
@@ -1557,6 +1586,8 @@ impl Storage {
                 periods: row.get(1).map_err(err)?,
                 missing,
                 total: totals(row.get(3).map_err(err)?, row.get(4).map_err(err)?, missing == 0)?,
+                available_total: observed_totals(row.get(3).map_err(err)?, row.get(4).map_err(err)?,
+                    row.get(8).map_err(err)?, missing < periods * organizations)?,
             });
         }
         let zero_buckets_with_nonzero_works = zero_buckets_with_nonzero_works(&tx, mode, s, &points)?;
@@ -1618,7 +1649,7 @@ impl Storage {
             ), values_by_bucket AS (
                 SELECT v.org,
                        CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count,CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active
+                       SUM(x.count) AS count,CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active, SUM(x.amount) AS known_amount
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN selected s ON s.org=v.org
@@ -1630,7 +1661,7 @@ impl Storage {
                 GROUP BY v.org,label
             )
             SELECT s.org,b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(v.count,0),CASE WHEN v.count IS NULL THEN 0 ELSE v.amount END, COALESCE(v.active,0), b.first_start, b.last_start
+                   COALESCE(v.count,0),CASE WHEN v.count IS NULL THEN 0 ELSE v.amount END, COALESCE(v.active,0), b.first_start, b.last_start, v.known_amount
             FROM selected s CROSS JOIN buckets b
             LEFT JOIN missing m ON m.org=s.org AND m.label=b.label
             LEFT JOIN values_by_bucket v ON v.org=s.org AND v.label=b.label
@@ -1653,6 +1684,7 @@ impl Storage {
             if current.points.len() >= 124 {
                 return Err("Organization series exceeds 124 points".into());
             }
+            let periods: i64 = row.get(2).map_err(err)?;
             current.points.push(OrganizationTrendPoint {
                 first_start: row.get(7).map_err(err)?,
                 last_start: row.get(8).map_err(err)?,
@@ -1661,6 +1693,8 @@ impl Storage {
                 periods:row.get(2).map_err(err)?,
                 missing,
                 total:totals(row.get(4).map_err(err)?,row.get(5).map_err(err)?,missing==0)?,
+                available_total: observed_totals(row.get(4).map_err(err)?,row.get(5).map_err(err)?,
+                    row.get(9).map_err(err)?,missing < periods)?,
             });
         }
         Ok(OrganizationTrends{
@@ -1843,7 +1877,7 @@ impl Storage {
                 WHERE slot=1 AND (?2 IS NULL OR org=?2) GROUP BY label
             ), aggregates AS (
                 SELECT CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count,CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active
+                       SUM(x.count) AS count,CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active, SUM(x.amount) AS known_amount
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
@@ -1853,18 +1887,20 @@ impl Storage {
                 GROUP BY label
             )
             SELECT b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END, COALESCE(a.active,0), b.first_start, b.last_start
+                   COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END, COALESCE(a.active,0), b.first_start, b.last_start, a.known_amount
             FROM buckets b
             LEFT JOIN missing m ON m.label=b.label
             LEFT JOIN aggregates a ON a.label=b.label
             ORDER BY b.label
         "#;
+        let organizations = if organization.is_some() { 1 } else { selected_organization_count(&tx, s)? };
         let mut stmt = tx.prepare(sql).map_err(err)?;
         let mut rows = stmt.query(params![mode,organization,key]).map_err(err)?;
         let mut points=Vec::new();
         while let Some(row)=rows.next().map_err(err)? {
             if points.len()>=124 {return Err("Work timeline exceeds 124 points".into());}
             let missing:i64=row.get(2).map_err(err)?;
+            let periods:i64=row.get(1).map_err(err)?;
             points.push(TimelinePoint{
                 first_start: row.get(6).map_err(err)?,
                 last_start: row.get(7).map_err(err)?,
@@ -1873,6 +1909,8 @@ impl Storage {
                 periods:row.get(1).map_err(err)?,
                 missing,
                 total:totals(row.get(3).map_err(err)?,row.get(4).map_err(err)?,missing==0)?,
+                available_total:observed_totals(row.get(3).map_err(err)?,row.get(4).map_err(err)?,
+                    row.get(8).map_err(err)?,missing < periods * organizations)?,
             });
         }
         Ok(WorkTrendSummary {
@@ -2018,10 +2056,11 @@ impl Storage {
         let tx = c.transaction().map_err(err)?;
         workspace(&tx, expected, s)?;
         fill_range(&tx, s, q, 1)?;
-        let mut stmt=tx.prepare("SELECT f.item,(SELECT COUNT(*) FROM temp.an_missing m WHERE slot=1 AND m.org=f.item),COALESCE(SUM(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END FROM analysis_filter_items f LEFT JOIN temp.an_values v ON v.slot=1 AND v.org=f.item WHERE f.id=?1 AND (?2 IS NULL OR f.item>?2) GROUP BY f.item ORDER BY f.item LIMIT ?3").map_err(err)?;
+        let mut stmt=tx.prepare("SELECT f.item,(SELECT COUNT(*) FROM temp.an_missing m WHERE slot=1 AND m.org=f.item),COALESCE(SUM(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount) FROM analysis_filter_items f LEFT JOIN temp.an_values v ON v.slot=1 AND v.org=f.item WHERE f.id=?1 AND (?2 IS NULL OR f.item>?2) GROUP BY f.item ORDER BY f.item LIMIT ?3").map_err(err)?;
         let mut rows = stmt
             .query(params![s.organizations, after, n])
             .map_err(err)?;
+        let periods = count_sql(&tx, "SELECT COUNT(*) FROM temp.an_periods WHERE slot=1")?;
         let mut out = Vec::new();
         while let Some(r) = rows.next().map_err(err)? {
             let missing: i64 = r.get(1).map_err(err)?;
@@ -2030,6 +2069,8 @@ impl Storage {
                 complete: missing == 0,
                 missing,
                 total: totals(r.get(2).map_err(err)?, r.get(3).map_err(err)?, missing == 0)?,
+                available_total: observed_totals(r.get(2).map_err(err)?, r.get(3).map_err(err)?,
+                    r.get(4).map_err(err)?, missing < periods)?,
             })
         }
         Ok(out)
@@ -2317,7 +2358,7 @@ fn comparison(
     org_check(c, s, org)?;
     fill_range(c, s, &q.before, 1)?;
     fill_range(c, s, &q.after, 2)?;
-    c.execute_batch("CREATE TEMP TABLE an_comparison(key TEXT PRIMARY KEY,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL) WITHOUT ROWID;").map_err(err)?;
+    c.execute_batch("CREATE TEMP TABLE an_comparison(key TEXT PRIMARY KEY,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL,b_known REAL,a_known REAL) WITHOUT ROWID;").map_err(err)?;
     let table = if org.is_some() {
         "temp.an_values"
     } else {
@@ -2328,8 +2369,8 @@ fn comparison(
     } else {
         "AND ?1 IS NULL"
     };
-    c.execute(&format!("INSERT INTO temp.an_comparison WITH b AS (SELECT * FROM {table} WHERE slot=1 {predicate}),a AS (SELECT * FROM {table} WHERE slot=2 {predicate}),keys AS (SELECT key FROM b UNION SELECT key FROM a) SELECT keys.key,COALESCE(b.name,a.name),COALESCE(b.kind,a.kind),COALESCE(b.count,0),CASE WHEN b.key IS NULL THEN 0 ELSE b.amount END,COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END FROM keys LEFT JOIN b USING(key) LEFT JOIN a USING(key)"),[org]).map_err(err)?;
-    c.execute("INSERT INTO temp.an_comparison SELECT 'absent:'||f.item,f.item,'work',0,0,0,0 FROM analysis_filter_items f WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM temp.an_comparison a WHERE a.name=f.item)",[&s.names]).map_err(err)?;
+    c.execute(&format!("INSERT INTO temp.an_comparison WITH b AS (SELECT * FROM {table} WHERE slot=1 {predicate}),a AS (SELECT * FROM {table} WHERE slot=2 {predicate}),keys AS (SELECT key FROM b UNION SELECT key FROM a) SELECT keys.key,COALESCE(b.name,a.name),COALESCE(b.kind,a.kind),COALESCE(b.count,0),CASE WHEN b.key IS NULL THEN 0 ELSE b.amount END,COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END,b.known_amount,a.known_amount FROM keys LEFT JOIN b USING(key) LEFT JOIN a USING(key)"),[org]).map_err(err)?;
+    c.execute("INSERT INTO temp.an_comparison SELECT 'absent:'||f.item,f.item,'work',0,0,0,0,NULL,NULL FROM analysis_filter_items f WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM temp.an_comparison a WHERE a.name=f.item)",[&s.names]).map_err(err)?;
     Ok((complete(c, 1, org)?, complete(c, 2, org)?))
 }
 fn comparison_value(
@@ -2364,6 +2405,8 @@ fn comparison_value(
             None
         },
         average: average_change(bt.average, at.average, q.percent)?,
+        observed_before: None,
+        observed_after: None,
         available: match (b,a) {
             (true,false) => Some(bt),
             (false,true) => Some(at),
@@ -2492,10 +2535,19 @@ impl Storage {
         let (before,after)=comparison(&tx,s,q,org)?;
         let total_rows=count_sql(&tx,"SELECT count(*) FROM temp.an_comparison")?;
         let offset=crate::storage::direct_page_offset(page_index,size,total_rows)?;
-        let mut statement=tx.prepare("SELECT key,name,kind,bc,ba,cc,ca FROM temp.an_comparison ORDER BY key LIMIT ?1 OFFSET ?2").map_err(err)?;
+        let b_observed = observed_reports(&tx,1,org)?;
+        let a_observed = observed_reports(&tx,2,org)?;
+        let mut statement=tx.prepare("SELECT key,name,kind,bc,ba,cc,ca,b_known,a_known FROM temp.an_comparison ORDER BY key LIMIT ?1 OFFSET ?2").map_err(err)?;
         let mut result=statement.query(params![limit,offset]).map_err(err)?;
         let mut rows=Vec::new();
-        while let Some(row)=result.next().map_err(err)? {rows.push(comparison_value(row,q,before,after)?);}
+        while let Some(row)=result.next().map_err(err)? {
+            let mut value = comparison_value(row,q,before,after)?;
+            value.observed_before = Some(observed_totals(row.get(3).map_err(err)?, row.get(4).map_err(err)?,
+                row.get(7).map_err(err)?, b_observed)?);
+            value.observed_after = Some(observed_totals(row.get(5).map_err(err)?, row.get(6).map_err(err)?,
+                row.get(8).map_err(err)?, a_observed)?);
+            rows.push(value);
+        }
         Ok(SqlPage {rows,total_rows})
     }
     pub fn analysis_comparison_page(

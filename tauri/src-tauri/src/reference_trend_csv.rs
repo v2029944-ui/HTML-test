@@ -33,13 +33,15 @@ fn organization_totals_csv(
     tx: &Connection,
     scope: &AnalysisScope,
     metrics: &[TrendMetric],
+    match_chart: bool,
     destination: &Path,
 ) -> Result<(), String> {
     let mut stmt = tx.prepare(
         "SELECT f.item,(SELECT count(*) FROM an_missing m WHERE slot=1 AND m.org=f.item),
-         coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END FROM analysis_filter_items f
+         coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount) FROM analysis_filter_items f
          LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item WHERE f.id=?1 GROUP BY f.item ORDER BY f.item"
     ).map_err(err)?;
+    let periods = count_sql(tx,"SELECT COUNT(*) FROM temp.an_periods WHERE slot=1")?;
     let mut rows = stmt.query([&scope.organizations]).map_err(err)?;
     export(destination, |w| {
         let mut head = vec![Text("Подразделение")];
@@ -49,8 +51,15 @@ fn organization_totals_csv(
         while let Some(row) = rows.next().map_err(err)? {
             let name: String = row.get(0).map_err(err)?;
             let missing: i64 = row.get(1).map_err(err)?;
-            let value = totals(row.get(2).map_err(err)?, row.get(3).map_err(err)?, missing == 0)?;
-            let coverage = if missing == 0 { "Полные данные".to_owned() } else { format!("Пропусков: {missing}") };
+            let amount: Option<f64> = row.get(3).map_err(err)?;
+            let value = if match_chart {
+                observed_totals(row.get(2).map_err(err)?, amount, row.get(4).map_err(err)?, missing < periods)?
+            } else {
+                totals(row.get(2).map_err(err)?, amount, missing == 0)?
+            };
+            let coverage = if missing > 0 { format!("Пропусков: {missing}") }
+                else if match_chart && amount.is_none() { "Есть строки без суммы".into() }
+                else { "Полные данные".into() };
             let mut line = vec![Text(&name)];
             line.extend(metrics.iter().map(|m| Number(m.value(&value))));
             line.push(Text(&coverage));
@@ -58,6 +67,18 @@ fn organization_totals_csv(
         }
         Ok(())
     })
+}
+
+fn trend_csv_totals(row: &rusqlite::Row<'_>, match_chart: bool, organizations: i64) -> Result<AnalysisTotals, String> {
+    let count = row.get(0).map_err(err)?;
+    let amount = row.get(1).map_err(err)?;
+    let missing: i64 = row.get(2).map_err(err)?;
+    if match_chart {
+        let periods: i64 = row.get(4).map_err(err)?;
+        observed_totals(count, amount, row.get(3).map_err(err)?, missing < periods * organizations)
+    } else {
+        totals(count, amount, missing == 0)
+    }
 }
 
 impl Storage {
@@ -79,11 +100,12 @@ impl Storage {
         workspace(&tx,revision,scope)?;
         fill_range(&tx,scope,range,1)?;
         if options.table == TrendTable::OrganizationTotals {
-            return organization_totals_csv(&tx, scope, &options.metrics, destination);
+            return organization_totals_csv(&tx, scope, &options.metrics, options.match_chart, destination);
         }
         let periods=count_sql(&tx,"SELECT count(*) FROM an_periods WHERE slot=1")?;
         let (mode,_)=timeline_grouping(scope,range,grouping,periods)?;
         let works=options.table==TrendTable::Works;
+        let organizations=selected_organization_count(&tx,scope)?;
         let member=if works {"coalesce(g.key,'work:'||x.work)"} else {"v.org"};
         tx.execute("CREATE TEMP TABLE trend_dates AS SELECT start,
             CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start,'-'||((cast(strftime('%w',start) AS integer)+6)%7)||' days')
@@ -92,14 +114,14 @@ impl Storage {
             CREATE TEMP TABLE trend_missing AS SELECT m.org,d.label,count(*) missing
             FROM an_missing m JOIN trend_dates d USING(start) WHERE m.slot=1 GROUP BY m.org,d.label;
             CREATE UNIQUE INDEX trend_org_missing ON trend_missing(org,label);
-            CREATE TEMP TABLE trend_series(member TEXT,label TEXT,qty REAL,money REAL,PRIMARY KEY(member,label)) WITHOUT ROWID;").map_err(err)?;
-        tx.execute(&format!("INSERT INTO trend_series SELECT {member},d.label,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END
+            CREATE TEMP TABLE trend_series(member TEXT,label TEXT,qty REAL,money REAL,known_amount REAL,PRIMARY KEY(member,label)) WITHOUT ROWID;").map_err(err)?;
+        tx.execute(&format!("INSERT INTO trend_series SELECT {member},d.label,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount)
             FROM trend_dates d JOIN an_valid v ON v.start=d.start JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
             LEFT JOIN analysis_groups g ON g.work=x.work WHERE ?1 IS NULL OR EXISTS(
                 SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=coalesce(g.name,x.work))
             GROUP BY {member},d.label"),[&scope.names]).map_err(err)?;
         tx.execute_batch("CREATE TEMP TABLE trend_buckets(
-            label TEXT PRIMARY KEY,periods INTEGER,missing INTEGER,qty REAL,money REAL,active INTEGER,first_start TEXT,last_start TEXT
+            label TEXT PRIMARY KEY,periods INTEGER,missing INTEGER,qty REAL,money REAL,active INTEGER,first_start TEXT,last_start TEXT,known_amount REAL
         ) WITHOUT ROWID;").map_err(err)?;
         // The screen and export must aggregate the original rows in the same order.
         // Adding per-member floating-point sums can change the last displayed cent.
@@ -124,10 +146,11 @@ impl Storage {
             "(?1=0 OR b.active<>0 OR b.missing<>0)".into()
         };
         let mut axis = tx.prepare(&format!(
-            "SELECT label, first_start, last_start FROM trend_buckets b WHERE {visible} ORDER BY label"
+            "SELECT label, first_start, last_start, missing, money IS NULL FROM trend_buckets b WHERE {visible} ORDER BY label"
         )).map_err(err)?;
         let mut dates = axis.query([hide]).map_err(err)?;
         let mut labels = Vec::new();
+        let mut quality = Vec::new();
         while let Some(row) = dates.next().map_err(err)? {
             let label: String = row.get(0).map_err(err)?;
             let first: String = row.get(1).map_err(err)?;
@@ -141,6 +164,15 @@ impl Storage {
                 format!("{first} — {through}")
             };
             labels.push(heading);
+            let missing: i64 = row.get(3).map_err(err)?;
+            let incomplete_amount: bool = row.get(4).map_err(err)?;
+            let status = match (missing > 0, incomplete_amount) {
+                (true, true) => format!("Пропусков: {missing}; есть строки без суммы"),
+                (true, false) => format!("Пропусков: {missing}"),
+                (false, true) => "Есть строки без суммы".into(),
+                (false, false) => String::new(),
+            };
+            quality.push(status);
         }
         let members=if works {"SELECT n.key,n.label FROM unified_names n
             LEFT JOIN analysis_filter_items f ON f.id=?1 AND f.item=n.name WHERE ?1 IS NULL OR f.id IS NOT NULL
@@ -149,7 +181,7 @@ impl Storage {
         let mut names=tx.prepare(members).map_err(err)?;
         let mut names=names.query([if works {scope.names.as_deref()} else {Some(scope.organizations.as_str())}]).map_err(err)?;
         let mut points=tx.prepare(&format!("SELECT coalesce(s.qty,0.0),CASE WHEN s.member IS NULL THEN 0.0 ELSE s.money END,
-            CASE WHEN ?3 THEN b.missing ELSE coalesce(m.missing,0) END
+            CASE WHEN ?3 THEN b.missing ELSE coalesce(m.missing,0) END,s.known_amount,b.periods
             FROM trend_buckets b LEFT JOIN trend_series s ON s.member=?2 AND s.label=b.label
             LEFT JOIN trend_missing m ON m.org=?2 AND m.label=b.label WHERE {visible} ORDER BY b.label")).map_err(err)?;
         export(destination,|w|{
@@ -159,10 +191,11 @@ impl Storage {
             csv_record(w,&head)?;
             if works {
                 let metric=options.metrics[0];let mut line=vec![Text("Итого по выбранным работам")];
-                let mut stmt=tx.prepare(&format!("SELECT qty,money,missing FROM trend_buckets b WHERE {visible} ORDER BY label")).map_err(err)?;
+                let mut stmt=tx.prepare(&format!("SELECT qty,money,missing,known_amount,periods FROM trend_buckets b WHERE {visible} ORDER BY label")).map_err(err)?;
                 let mut rows=stmt.query([hide]).map_err(err)?;
                 while let Some(r)=rows.next().map_err(err)?{
-                    line.push(Number(metric.value(&totals(r.get(0).map_err(err)?,r.get(1).map_err(err)?,r.get::<_,i64>(2).map_err(err)?==0)?)));
+                    let value=trend_csv_totals(r,options.match_chart,organizations)?;
+                    line.push(Number(metric.value(&value)));
                 }
                 csv_record(w,&line)?;
             }
@@ -171,14 +204,18 @@ impl Storage {
                 let mut values=Vec::with_capacity(labels.len());
                 let mut rows=points.query(params![hide,key,works]).map_err(err)?;
                 while let Some(r)=rows.next().map_err(err)? {
-                    let count:f64=r.get(0).map_err(err)?;let amount:Option<f64>=r.get(1).map_err(err)?;
-                    let missing:i64=r.get(2).map_err(err)?;
-                    values.push(totals(count,amount,missing==0)?);
+                    values.push(trend_csv_totals(r,options.match_chart,if works {organizations} else {1})?);
                 }
                 for metric in &options.metrics {
                     let mut line=vec![Text(&name)];if !works {line.push(Text(metric.label()));}
                     line.extend(values.iter().map(|value|Number(metric.value(value))));csv_record(w,&line)?;
                 }
+            }
+            if options.match_chart && quality.iter().any(|status| !status.is_empty()) {
+                let mut notes=vec![Text("Качество данных")];
+                if !works {notes.push(Text("Все выбранные подразделения"));}
+                notes.extend(quality.iter().map(|status|Text(status)));
+                csv_record(w,&notes)?;
             }
             Ok(())
         })
@@ -278,7 +315,7 @@ mod tests {
             let header = csv.lines().next().unwrap();
             assert!(header.ends_with(";\"2024-01-01\";\"2024-01-03\";\"2024-01-04\";\"2024-01-05\";\"2024-01-07\""), "{header}");
             if table == TrendTable::Works {
-                assert!(csv.lines().any(|line| line == r#""W";"20";"";"";"";"""#));
+                assert!(csv.lines().any(|line| line == r#""W";"20";"40";"";"";"""#));
             } else {
                 assert!(csv.lines().any(|line| line == r#""A";"Сумма";"20";"40";"";"";"""#));
             }
@@ -325,7 +362,7 @@ mod tests {
         store.reference_trend_csv(rev, &scope, &q, Some("day"), &chart_options, &chart_csv).unwrap();
         let chart = fs::read_to_string(chart_csv).unwrap();
         assert!(chart.starts_with("\u{feff}\"Работа / группа\";\"2024-01-01\";\"2024-01-03\"\r\n"));
-        assert!(chart.lines().any(|line| line == r#""Work 52";"52";"""#));
+        assert!(chart.lines().any(|line| line == r#""Work 52";"52";"5""#));
         let points=store.analysis_timeline_grouped(rev,&scope,&q,Some("day")).unwrap().points;
         assert!(!points[1].has_activity && points[3].has_activity);
         let orgcsv=dir.path().join("orgs.csv");

@@ -302,7 +302,7 @@ impl Storage {
     }
 }
 fn write_structure(w: &mut impl Write, page: &Value) -> Result<(), String> {
-    if page["currentComplete"] != true {
+    if page["currentComplete"] != true && page["currentAvailable"] != true {
         return Err("Incomplete current interval".into());
     }
     let complete = page["baseComplete"] == true;
@@ -349,6 +349,9 @@ fn write_structure(w: &mut impl Write, page: &Value) -> Result<(), String> {
         let mut record = vec![Text(&name)];
         record.extend(keys.iter().map(|key| Number(row[*key].as_f64())));
         csv_record(w, &record)?;
+    }
+    if page["currentComplete"] != true {
+        csv_record(w,&[Text("Качество данных"),Text("Частичные значения; доли не рассчитываются")])?;
     }
     Ok(())
 }
@@ -411,69 +414,49 @@ fn write_comparison(
     b: bool,
     a: bool,
 ) -> Result<(), String> {
-    if !b && !a {
+    let before = range_summary(tx, s, 1)?;
+    let after = range_summary(tx, s, 2)?;
+    let before_observed = before.available_reports > 0;
+    let after_observed = after.available_reports > 0;
+    if !before_observed && !after_observed {
         return Err("Incomplete comparison intervals".into());
     }
-    if b && a {
-        headers(
-            w,
-            &[
-                "Работа / группа",
-                "Значение раньше",
-                "Значение сейчас",
-                "Разница",
-                "Изменение, %",
-            ],
-        )?;
+    let both_observed = before_observed && after_observed;
+    if both_observed {
+        headers(w, &["Работа / группа", "Значение раньше", "Значение сейчас", "Разница", "Изменение, %"])?;
     } else {
-        headers(
-            w,
-            &[
-                "Работа / группа",
-                if b {
-                    "Значение раньше"
-                } else {
-                    "Значение сейчас"
-                },
-            ],
-        )?;
+        headers(w, &["Работа / группа", if before_observed {"Значение раньше"} else {"Значение сейчас"}])?;
     }
-    let mut emit =
-        |name: &str, base: &AnalysisTotals, current: &AnalysisTotals| -> Result<(), String> {
-            let old = value(base, metric);
-            let new = value(current, metric);
-            if b && a {
-                let m = average_change(old, new, 0.)?;
-                csv_record(
-                    w,
-                    &[
-                        Text(name),
-                        Number(old),
-                        Number(new),
-                        Number(m.delta),
-                        Number(m.percent),
-                    ],
-                )
-            } else {
-                csv_record(w, &[Text(name), Number(if b { old } else { new })])
-            }
-        };
-    emit(
-        "Итого по выбранным работам",
-        &range_summary(tx, s, 1)?.total,
-        &range_summary(tx, s, 2)?.total,
-    )?;
-    let mut stmt = tx
-        .prepare("SELECT name,bc,ba,cc,ca,kind FROM an_comparison ORDER BY key")
-        .map_err(err)?;
+    let mut emit = |name: &str, base: &AnalysisTotals, current: &AnalysisTotals, strict_before: &AnalysisTotals,
+                    strict_after: &AnalysisTotals| -> Result<(), String> {
+        let old = value(base, metric);
+        let new = value(current, metric);
+        if both_observed {
+            let m = average_change(value(strict_before, metric), value(strict_after, metric), 0.)?;
+            csv_record(w, &[Text(name), Number(old), Number(new), Number(m.delta), Number(m.percent)])
+        } else {
+            csv_record(w, &[Text(name), Number(if before_observed {old} else {new})])
+        }
+    };
+    if value(&before.available_total,metric).is_some() || value(&after.available_total,metric).is_some() {
+        emit("Итого по выбранным работам", &before.available_total, &after.available_total, &before.total, &after.total)?;
+    }
+    let mut stmt = tx.prepare("SELECT name,bc,ba,cc,ca,kind,b_known,a_known FROM an_comparison ORDER BY key").map_err(err)?;
     let mut rows = stmt.query([]).map_err(err)?;
     while let Some(r) = rows.next().map_err(err)? {
         let name = work_label(&r.get::<_, String>(0).map_err(err)?, &r.get::<_, String>(5).map_err(err)?);
-        let before = totals(r.get(1).map_err(err)?, r.get(2).map_err(err)?, b)?;
-        let after = totals(r.get(3).map_err(err)?, r.get(4).map_err(err)?, a)?;
-        if value(&before, metric).is_some() || value(&after, metric).is_some() {
-            emit(&name, &before, &after)?;
+        let bc = r.get(1).map_err(err)?;
+        let ba = r.get(2).map_err(err)?;
+        let ac = r.get(3).map_err(err)?;
+        let aa = r.get(4).map_err(err)?;
+        let base = observed_totals(bc,ba,r.get(6).map_err(err)?,before_observed)?;
+        let current = observed_totals(ac,aa,r.get(7).map_err(err)?,after_observed)?;
+        if value(&base, metric).is_some() || value(&current, metric).is_some() {
+            emit(&name, &base, &current, &totals(bc,ba,b)?, &totals(ac,aa,a)?)?;
         }
+    }
+    if (before_observed && (!b || before.amount_missing_rows)) || (after_observed && (!a || after.amount_missing_rows)) {
+        csv_record(w, &[Text("Качество данных"), Text("Частичные значения по доступным отчётам и заполненным суммам")])?;
     }
     Ok(())
 }
@@ -489,11 +472,12 @@ fn ordered_organization_totals(
 ) -> Result<Vec<OrganizationSummary>, String> {
     let mut stmt = tx.prepare(
         "SELECT f.item,(SELECT count(*) FROM an_missing m WHERE m.slot=1 AND m.org=f.item),
-                coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END
+                coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount)
          FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item
          WHERE f.id=?1 GROUP BY f.ordinal,f.item ORDER BY f.ordinal"
     ).map_err(err)?;
     let mut rows = stmt.query([&s.organizations]).map_err(err)?;
+    let periods = count_sql(tx,"SELECT COUNT(*) FROM temp.an_periods WHERE slot=1")?;
     let mut result = Vec::new();
     while let Some(row) = rows.next().map_err(err)? {
         let missing = row.get(1).map_err(err)?;
@@ -503,6 +487,8 @@ fn ordered_organization_totals(
             complete,
             missing,
             total: totals(row.get(2).map_err(err)?, row.get(3).map_err(err)?, complete)?,
+            available_total: observed_totals(row.get(2).map_err(err)?, row.get(3).map_err(err)?,
+                row.get(4).map_err(err)?, missing < periods)?,
         });
     }
     Ok(result)
@@ -529,7 +515,7 @@ fn visit_all_organization_works(
     ).map_err(err)?;
     let mut names = names.query(params![limit, offset]).map_err(err)?;
     let mut amounts = tx.prepare(
-        "SELECT coalesce(v.count,0),CASE WHEN v.key IS NULL THEN 0 ELSE v.amount END
+        "SELECT coalesce(v.count,0),CASE WHEN v.key IS NULL THEN 0 ELSE v.amount END,v.known_amount
          FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.key=?2
          WHERE f.id=?1 ORDER BY f.ordinal"
     ).map_err(err)?;
@@ -548,6 +534,8 @@ fn visit_all_organization_works(
                 complete: org.complete,
                 missing: org.missing,
                 total: totals(row.get(0).map_err(err)?, row.get(1).map_err(err)?, org.complete)?,
+                available_total: observed_totals(row.get(0).map_err(err)?, row.get(1).map_err(err)?,
+                    row.get(2).map_err(err)?, org.available_total.count.is_some())?,
             });
         }
         visit(OrganizationWorkValues { entry, rows })?;
@@ -593,7 +581,6 @@ fn write_organizations(
         .ok_or("Missing baseline organization")?;
     let organizations = ordered_organization_totals(tx, s)?;
     let orgs: Vec<_> = organizations.iter().map(|org| org.org.clone()).collect();
-    let summary: Vec<_> = organizations.iter().map(|org| value(&org.total, &table.metric)).collect();
     let base_index = orgs
         .iter()
         .position(|o| o == base)
@@ -607,54 +594,61 @@ fn write_organizations(
         }
     }
     headers(w, &head.iter().map(String::as_str).collect::<Vec<_>>())?;
-    let mut emit = |name: &str, values: &[Option<f64>]| -> Result<(), String> {
+    let mut emit = |name: &str, values: &[OrganizationSummary]| -> Result<(), String> {
+        let base = value(&values[base_index].total, &table.metric);
         let mut line = vec![Text(name)];
-        for (i, n) in values.iter().enumerate() {
-            line.push(Number(*n));
+        for (i, row) in values.iter().enumerate() {
+            line.push(Number(value(&row.available_total, &table.metric)));
             if i != base_index {
-                let m = average_change(values[base_index], *n, 0.)?;
+                let m = average_change(base, value(&row.total, &table.metric), 0.)?;
                 line.push(Number(m.delta));
                 line.push(Number(m.percent));
             }
         }
         csv_record(w, &line)
     };
-    emit("Итого по выбранным работам", &summary)?;
+    emit("Итого по выбранным работам", &organizations)?;
     if s.names.is_none() {
-        visit_all_organization_works(tx, s, &organizations, None, |item| {
-            let values: Vec<_> = item.rows.iter().map(|org| value(&org.total, &table.metric)).collect();
-            emit(&item.entry.name, &values)
-        })?;
-        return Ok(());
+        visit_all_organization_works(tx, s, &organizations, None, |item| emit(&item.entry.name, &item.rows))?;
+    } else {
+        let mut names = tx.prepare(
+            "SELECT f.item, CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END
+             FROM analysis_filter_items f LEFT JOIN analysis_group_names g ON g.name=f.item
+             WHERE f.id=?1 ORDER BY f.ordinal"
+        ).map_err(err)?;
+        let mut names = names.query([&s.names]).map_err(err)?;
+        tx.execute(
+            "CREATE INDEX an_values_name_org ON an_values(slot,name,org)",
+            [],
+        )
+        .map_err(err)?;
+        let mut amounts=tx.prepare("SELECT f.ordinal,coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount) FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.name=?2 WHERE f.id=?1 GROUP BY f.ordinal ORDER BY f.ordinal").map_err(err)?;
+        while let Some(row) = names.next().map_err(err)? {
+            let name: String = row.get(0).map_err(err)?;
+            let mut cells = Vec::with_capacity(orgs.len());
+            let mut values = amounts.query(params![s.organizations, name]).map_err(err)?;
+            while let Some(r) = values.next().map_err(err)? {
+                let org = organizations.get(cells.len()).ok_or("Unexpected organization")?;
+                let count = r.get(1).map_err(err)?;
+                let amount = r.get(2).map_err(err)?;
+                cells.push(OrganizationSummary {
+                    org: org.org.clone(), complete: org.complete, missing: org.missing,
+                    total: totals(count, amount, org.complete)?,
+                    available_total: observed_totals(count, amount, r.get(3).map_err(err)?, org.available_total.count.is_some())?,
+                });
+            }
+            if cells.len() != orgs.len() {
+                return Err("Organization count changed".into());
+            }
+            let kind: String = row.get(1).map_err(err)?;
+            emit(&work_label(&name, &kind), &cells)?;
+        }
     }
-    let mut names = tx.prepare(
-        "SELECT f.item, CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END
-         FROM analysis_filter_items f LEFT JOIN analysis_group_names g ON g.name=f.item
-         WHERE f.id=?1 ORDER BY f.ordinal"
-    ).map_err(err)?;
-    let mut names = names.query([&s.names]).map_err(err)?;
-    tx.execute(
-        "CREATE INDEX an_values_name_org ON an_values(slot,name,org)",
-        [],
-    )
-    .map_err(err)?;
-    let mut amounts=tx.prepare("SELECT f.ordinal,coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.name=?2 WHERE f.id=?1 GROUP BY f.ordinal ORDER BY f.ordinal").map_err(err)?;
-    while let Some(row) = names.next().map_err(err)? {
-        let name: String = row.get(0).map_err(err)?;
-        let mut cells = Vec::with_capacity(orgs.len());
-        let mut values = amounts.query(params![s.organizations, name]).map_err(err)?;
-        while let Some(r) = values.next().map_err(err)? {
-            let ok = organizations.get(cells.len()).ok_or("Unexpected organization")?.complete;
-            cells.push(value(
-                &totals(r.get(1).map_err(err)?, r.get(2).map_err(err)?, ok)?,
-                &table.metric,
-            ));
+    for org in &organizations {
+        if org.missing > 0 || org.total.amount.is_none() {
+            let status = if org.missing > 0 {format!("Пропусков: {}",org.missing)} else {"Есть строки без суммы".into()};
+            csv_record(w, &[Text("Качество данных"),Text(&org.org),Text(&status)])?;
         }
-        if cells.len() != orgs.len() {
-            return Err("Organization count changed".into());
-        }
-        let kind: String = row.get(1).map_err(err)?;
-        emit(&work_label(&name, &kind), &cells)?;
     }
     Ok(())
 }
