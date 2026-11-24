@@ -1332,6 +1332,18 @@ async fn native_backup_sqlite(
 }
 
 #[tauri::command]
+async fn native_scheduled_backup(
+    app: tauri::AppHandle,
+    enabled: Option<bool>,
+    workspace_token: Option<String>,
+) -> Result<storage::ScheduledBackupStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<storage::shared_runtime::Runtime>()
+            .scheduled_backup(workspace_token.as_deref(), enabled)
+    }).await.map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 async fn native_open_backup_folder(app: tauri::AppHandle, destination: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let last = app.state::<LastBackup>();
@@ -1876,6 +1888,7 @@ fn main() {
             native_analysis_range_page,
             native_export_range_csv,
             native_backup_sqlite,
+            native_scheduled_backup,
             native_open_backup_folder,
             native_restore_pending,
             native_restore_preview,

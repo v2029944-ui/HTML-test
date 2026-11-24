@@ -290,6 +290,7 @@
       return nativePicker('save',{title:'Сохранить резервную копию SQLite',defaultPath,filters:[{name:'База SQLite',extensions:['sqlite3']}]});
     },
     nativeBackupSqlite:destination=>tracked('native_backup_sqlite',{destination},'saves'),
+    nativeScheduledBackup:enabled=>tracked('native_scheduled_backup',{enabled},'saves'),
     nativeOpenBackupFolder:destination=>tracked('native_open_backup_folder',{destination},'reads'),
     nativeRestorePending:()=>tracked('native_restore_pending',{},'reads'),
     chooseRestoreBackupPath:async()=>{

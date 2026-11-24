@@ -3,10 +3,10 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const code = fs.readFileSync(path.join(__dirname, '../database-backups.js'), 'utf8');
 const markup = fs.readFileSync(path.join(__dirname, '../database-panel.html'), 'utf8');
-function mount(mode = 'personal') {
+function mount(mode = 'personal', nativeScheduledBackup) {
   const nodes = new Map(), calls = [], messages = [];
   for (const [, id] of markup.matchAll(/id="([^"]+)"/g)) nodes.set(id, {
-    textContent: '', addEventListener(event, fn) { this.click = fn; }
+    textContent: '', addEventListener(event, fn) { this[event] = fn; }
   });
   const state = {mode, available: true, pending: false, workspace_token: 'first'};
   const inputs = {source: '/test/seed.sqlite3', destination: '/test/out.sqlite3', accept: false, scheduled: false};
@@ -22,13 +22,20 @@ function mount(mode = 'personal') {
     nativeRestoreSchedule: async (...args) => { calls.push(['schedule', ...args]); inputs.scheduled = true; return {restartRequired: true}; },
     nativeRestoreCancel: async () => { calls.push(['cancel']); inputs.scheduled = false; return true; }
   };
+  if (nativeScheduledBackup) api.nativeScheduledBackup = async choice => {
+    calls.push(['daily',choice]);
+    return nativeScheduledBackup(choice);
+  };
   let refresh;
   const ui = {api, $: id => nodes.get(id), snapshot: {reports: 3}, revision: 2, generation: 1,
     onSnapshot(fn) { refresh = fn; }, notice(...args) {messages.push(args);} };
-  const window = {unifiedUI: ui, sharedWorkspace: {state}, confirm: async question => { calls.push(['confirm', question]); return inputs.accept; }};
+  let scheduleTick;
+  const window = {unifiedUI: ui, sharedWorkspace: {state}, setInterval: tick=>{ scheduleTick=tick; },
+    confirm: async question => { calls.push(['confirm', question]); return inputs.accept; }};
   vm.runInNewContext(code, {window});
   window.databaseBackups.init();
-  return {ui, api, inputs, state, calls, messages, hash, refresh, node: ui.$, click: id => nodes.get(id).click()};
+  return {ui, api, inputs, state, calls, messages, hash, refresh, node: ui.$,
+    tick: () => scheduleTick(), click: id => nodes.get(id).click()};
 }
 test('backup is labelled for the selected base; reveal is bound to a successfully saved path', async () => {
   const f = mount('shared'); await f.refresh();
@@ -82,4 +89,38 @@ test('failed backup or a changed workspace inside the chooser cannot expose a ne
   f.api.nativeBackupSqlite=async()=>assert.fail('stale chooser wrote');
   await f.click('exportBackup'); assert.equal(f.node('openBackupFolder').hidden,true);
   assert.match(f.messages.at(-1)[0],/изменились/);
+});
+test('scheduled backup is opt-in and keeps the last success visible if a later write fails', async () => {
+  const completed=Date.UTC(2026,10,24,12);
+  let enabled=false, lastSuccess=null, error=null;
+  const f=mount('personal',async choice=>{
+    if (choice!==null) enabled=choice;
+    return {enabled,lastSuccess,lastPath:lastSuccess?'/test/verified.sqlite3':null,error};
+  });
+  await f.refresh();
+  await new Promise(resolve=>setImmediate(resolve));
+  const toggle=f.node('scheduledBackupEnabled');
+  assert.equal(toggle.checked,false);
+  assert.equal(toggle.disabled,false);
+  assert.match(f.node('scheduledBackupStatus').textContent,/не создавалась/);
+  f.tick();
+  assert.deepEqual(f.calls,[['daily',null]],'the timer must not request a backup while disabled');
+
+  toggle.checked=true;
+  lastSuccess=completed;
+  await toggle.change();
+  assert.deepEqual(f.calls,[['daily',null],['daily',true]]);
+  assert.match(f.node('scheduledBackupStatus').textContent,/verified\.sqlite3/);
+
+  error='Нет места на диске';
+  f.tick();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.match(f.node('scheduledBackupStatus').textContent,/verified\.sqlite3/);
+  assert.match(f.node('scheduledBackupStatus').textContent,/Нет места на диске/);
+  assert.equal(toggle.checked,true);
+
+  error=null;toggle.checked=false;
+  await toggle.change();
+  assert.equal(toggle.checked,false);
+  assert.match(f.node('scheduledBackupStatus').textContent,/verified\.sqlite3/);
 });

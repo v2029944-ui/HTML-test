@@ -49,6 +49,8 @@
     <div class="actions"><button id="exportBackup" type="button" class="button secondary">Сохранить копию активной базы</button>
       <button id="openBackupFolder" type="button" class="button secondary" hidden>Открыть папку с копией</button></div>
     <p id="databaseBackupStatus" role="status" hidden></p>
+    <label id="scheduledBackupControl" hidden><input id="scheduledBackupEnabled" type="checkbox"> Ежедневная копия выбранной базы</label>
+    <p id="scheduledBackupStatus" role="status" hidden></p>
   </section>
   <section class="panel"><h2>Восстановление личной базы</h2>
     <p class="muted">Проверьте файл .sqlite3 и сравните число отчётов. Личная база заменится только после подтверждения и следующего запуска приложения. Перед заменой приложение создаст страховочную копию.</p>

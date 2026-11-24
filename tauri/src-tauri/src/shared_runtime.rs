@@ -528,6 +528,24 @@ impl Runtime {
         }
         Ok(value)
     }
+    /// Keep the schedule and its verified snapshots local to this installation.
+    pub fn scheduled_backup(
+        &self, workspace_token: Option<&str>, enabled: Option<bool>,
+    ) -> Result<super::ScheduledBackupStatus, String> {
+        let key = {
+            let state = self.state.lock().map_err(err)?;
+            if workspace_token != Some(state.token.as_str()) {
+                return Err("Выбранная база изменилась. Обновите данные и повторите действие.".into());
+            }
+            match state.selection.folder.as_ref() {
+                Some(folder) => format!("shared-{:x}", Sha256::digest(folder.to_string_lossy().as_bytes())),
+                None => "personal".into(),
+            }
+        };
+        self.execute(workspace_token, Access::Read, |store| {
+            store.scheduled_backup(&self.root, &key, enabled)
+        })
+    }
     /// Preview existing local reports against the currently connected team.
     pub fn preview_personal_transfer(
         &self, workspace_token: Option<&str>, page: usize,

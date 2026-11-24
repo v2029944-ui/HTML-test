@@ -38,6 +38,9 @@ pub mod shared_folder;
 
 #[path = "backup.rs"]
 mod backup;
+#[path = "scheduled_backup.rs"]
+mod scheduled_backup;
+pub use scheduled_backup::ScheduledBackupStatus;
 #[path = "report_transfer.rs"]
 mod report_transfer;
 pub use report_transfer::{TransferPreview, TransferReceipt, TransferRow};

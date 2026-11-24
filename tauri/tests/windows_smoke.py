@@ -1593,6 +1593,31 @@ def check_backup_and_replace(page, temporary, snapshot):
     return original
 
 
+def check_scheduled_backup(page):
+    navigate(page,'databases')
+    control=page.locator('#scheduledBackupEnabled')
+    expect(control).to_be_enabled()
+    assert not control.is_checked()
+    expect(page.locator('#scheduledBackupStatus')).to_contain_text('ещё не создавалась')
+    revision=api(page,'nativeRevision')
+    control.click()
+    wait_for_text(page,'#scheduledBackupStatus','Последняя успешная копия:',90_000)
+    assert control.is_checked()
+    status=api(page,'nativeScheduledBackup',None)
+    assert status['enabled'] and status['lastSuccess']>0 and status['error'] is None,status
+    path=Path(status['lastPath'])
+    assert path.is_file()
+    reviewed=api(page,'nativeRestorePreview',str(path))
+    assert reviewed['reportCount']==366
+    assert api(page,'nativeRevision')==revision
+    control.click()
+    expect(control).to_be_enabled()
+    assert not control.is_checked()
+    stopped=api(page,'nativeScheduledBackup',None)
+    assert not stopped['enabled'] and stopped['lastSuccess']==status['lastSuccess']
+    assert path.is_file()
+
+
 def check_folder_rule_and_revocation(page, workbook, confirmations):
     navigate(page,'upload')
     page.locator('#uploadSourceFolder').click()
@@ -1887,6 +1912,8 @@ def run():
                 original=check_backup_and_replace(page,tmp,snapshot)
                 assert workbook.read_bytes()==original_xlsx
                 report['checks'].append('SQLite online backup quick-check, no overwrite, and atomic 366-report replacement with a verified pre-import backup')
+                check_scheduled_backup(page)
+                report['checks'].append('Opt-in scheduled SQLite backup is available for verified restore and disabling it retains the last successful copy')
                 navigate(page,'upload')
                 page.locator('#unifiedUploadQuality').click()
                 wait_for_text(page,'#qualitySummary','Отсутствие замечаний само по себе не подтверждает полноту',90_000)
