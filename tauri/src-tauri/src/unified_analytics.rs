@@ -242,7 +242,9 @@ fn prepare_unified(
     c.execute(&format!("DELETE FROM unified_values WHERE NOT coalesce(({direction}),0) OR instr(normalized_name,?1)=0"),[normalized(&o.search)]).map_err(err)?;
     let normal = any(o, |m| format!("{m}_significant AND NOT {m}_small"));
     let small = any(o, |m| format!("{m}_small AND {m}_notable"));
-    c.execute_batch(&format!("ALTER TABLE unified_values ADD COLUMN normal INTEGER; ALTER TABLE unified_values ADD COLUMN small INTEGER; UPDATE unified_values SET normal=coalesce({normal},0),small=NOT coalesce({normal},0) AND coalesce({small},0);
+    // The correlated lookup must not scan the filtered rows for every pair.
+    c.execute_batch(&format!("CREATE INDEX temp.unified_values_pair_key ON unified_values(start,org,key);
+      ALTER TABLE unified_values ADD COLUMN normal INTEGER; ALTER TABLE unified_values ADD COLUMN small INTEGER; UPDATE unified_values SET normal=coalesce({normal},0),small=NOT coalesce({normal},0) AND coalesce({small},0);
       DELETE FROM an_changes WHERE NOT EXISTS(SELECT 1 FROM unified_values u WHERE (u.start,u.org,u.key)=(an_changes.start,an_changes.org,an_changes.key));
       CREATE TEMP TABLE unified_visible AS SELECT * FROM unified_values WHERE {}",if o.mode=="strong" {"normal OR small"}else{"1"})).map_err(err)?;
     let order = if !normalized(&o.search).is_empty() {
