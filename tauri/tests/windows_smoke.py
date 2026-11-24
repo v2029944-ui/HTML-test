@@ -985,6 +985,10 @@ def check_partial_amount_charts(page, temporary, output):
     choose_calendar_date(page,filters.locator('[data-date="start"]'),'2018-01-01')
     choose_calendar_date(page,filters.locator('[data-date="end"]'),'2018-01-03')
     filters.locator('[data-measure]').select_option('amount')
+    filters.locator('#sum-base').select_option('prev')
+    wait_for_app_state(page,
+        'window.unifiedUI.scope?.baseFrom==="2017-12-29" && window.unifiedUI.scope?.baseTo==="2017-12-31"',
+        'Partial analytics baseline matches the missing three-day interval')
     navigate(page,'chartPanel')
     page.locator('#chartBreakdown').select_option('organizations')
     layout=page.locator('#chartSeriesLayout')
