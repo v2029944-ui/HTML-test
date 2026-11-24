@@ -1188,7 +1188,8 @@ impl Storage {
         }
 
         // Explicit backup callers retain the original report before indexing.
-        self.management_delete_report(expected, id, job)
+        self.prepare_single_report_deletion(expected, id, job)?;
+        self.management_delete_reports(expected, &[id.to_owned()], job)
     }
     pub fn management_delete_report(
         &self,
@@ -1196,13 +1197,22 @@ impl Storage {
         id: &str,
         job: &ManagementJob,
     ) -> Result<ManagementReceipt, String> {
+        self.prepare_single_report_deletion(expected, id, job)?;
+        let scope = UnifiedReportDeletion::Selected { ids: vec![id.to_owned()] };
+        self.unified_delete_reports(expected, &scope, 1, job)
+    }
+    fn prepare_single_report_deletion(
+        &self,
+        expected: i64,
+        id: &str,
+        job: &ManagementJob,
+    ) -> Result<(), String> {
         label(id)?;
         job.check()?;
         check_revision(&self.management_connect()?, expected)?;
         self.index_report(id, expected)?;
         job.check()?;
-        self.management_index_report(id, expected, &ManagementJob::new())?;
-        self.management_delete_reports(expected, &[id.to_owned()], job)
+        self.management_index_report(id, expected, &ManagementJob::new())
     }
     pub fn management_delete_reports(
         &self,
