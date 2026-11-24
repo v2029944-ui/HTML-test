@@ -18,7 +18,7 @@ function mount(options={}){
  const window={confirm:options.confirm||(()=>true),nativeWorkspaceRefresh:async()=>{calls.push('refresh');return true;},desktopAPI:{
   nativeFolderImportSession:async enabled=>{calls.push(['session',enabled]);return enabled?'session-1':null;},
   nativeFolderImportPreview:async request=>{calls.push(['preview',request]);return options.preview?options.preview(request,preview):preview;},
-  nativeFolderImportApply:async(request,token)=>{calls.push(['apply',request,token]);return {reports:1,revision:request.revision+1};},
+  nativeFolderImportApply:async(request,token)=>{calls.push(['apply',request,token]);return options.apply?options.apply(request):{reports:1,revision:request.revision+1};},
   list:async()=>snapshot
  }};
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-folder-auto-import.js'),'utf8'),{
@@ -43,11 +43,65 @@ test('background import defaults off and passes only selected-folder metadata to
  assert.equal(x.calls.find(c=>c[0]==='apply')[2],x.preview.reviewToken);
  await x.auto.updateSnapshot(x.snapshot);assert.equal(x.requests('apply').length,1);
 });
-test('replacements, overlaps and warnings require manual review without writes',async()=>{
- for(const field of ['replacements','cross_type_overlaps','issues']){
-  const x=mount();if(field==='issues')x.preview.quality.issues=1;else x.preview.conflicts[field]=1;
+test('duplicates, replacements, overlaps and warnings require manual review without writes',async()=>{
+ for(const field of ['new_reports','replacements','cross_type_overlaps','issues']){
+  const x=mount();if(field==='issues')x.preview.quality.issues=1;else x.preview.conflicts[field]=field==='new_reports'?0:1;
   await x.toggle(true);assert.equal(x.requests('apply').length,0,field);
  }
+});
+test('file status and last successful sync follow committed reports and the selected workspace',async()=>{
+ const x=mount({apply:request=>{
+  if(request.name==='failed.xlsx')throw Error('write failed');
+  return {reports:1,revision:request.revision+1};
+ },preview:(request,review)=>request.name==='overlap.xlsx'?{...review,conflicts:{...review.conflicts,cross_type_overlaps:1}}:review});
+ x.add('failed.xlsx');x.add('overlap.xlsx');
+ const result=(name,snapshot=x.snapshot)=>x.auto.fileStatus(snapshot.folder,snapshot.files.find(file=>file.name===name),snapshot.rules[name]);
+ await x.toggle(true);
+ assert.equal(result('one.xlsx'),'imported');
+ assert.equal(result('failed.xlsx'),'manual');
+ assert.equal(result('overlap.xlsx'),'manual');
+ assert.deepEqual(x.requests('apply').map(request=>request.name),['one.xlsx','failed.xlsx']);
+ const stamp=x.auto.lastSuccessfulImport(x.snapshot.folder);
+ assert.ok(Number.isFinite(stamp)&&stamp>0);
+ const changed=structuredClone(x.snapshot);
+ changed.files[0].nativeSignature='different';
+ assert.equal(result('one.xlsx',changed),null);
+ await x.auto.updateSnapshot(null);
+ assert.equal(x.auto.lastSuccessfulImport(x.snapshot.folder),stamp);
+ await x.toggle(false);
+ await x.auto.stopForWorkspaceChange();
+ assert.equal(x.auto.lastSuccessfulImport(x.snapshot.folder),null);
+ assert.equal(result('one.xlsx'),null);
+});
+test('a rejected import never sets a successful sync time',async()=>{
+ const x=mount({apply:()=>{throw Error('write failed');}});
+ await x.toggle(true);
+ assert.equal(x.auto.lastSuccessfulImport(x.snapshot.folder),null);
+});
+test('a failed scan invalidates in-flight review without applying it',async()=>{
+ const review=deferred(),started=deferred();
+ const x=mount({preview:()=>{started.resolve();return review.result;}});
+ const enabling=x.toggle(true);
+ await started.result;
+ const failedScan=x.auto.updateSnapshot(null);
+ review.resolve(x.preview);
+ await Promise.all([enabling,failedScan]);
+ assert.deepEqual(x.requests('apply'),[]);
+ assert.equal(x.auto.lastSuccessfulImport(x.snapshot.folder),null);
+});
+test('a late receipt from the previous workspace cannot mark the same folder as synced',async()=>{
+ const apply=deferred(),started=deferred();
+ const x=mount({apply:()=>{started.resolve();return apply.result;}});
+ const enabling=x.toggle(true);
+ await started.result;
+ x.auto.forgetWorkspaceSession();
+ const reloaded=x.auto.updateSnapshot(x.snapshot);
+ apply.resolve({reports:1,revision:2});
+ await Promise.all([enabling,reloaded]);
+ assert.equal(x.auto.lastSuccessfulImport(x.snapshot.folder),null);
+ assert.equal(x.auto.fileStatus(x.snapshot.folder,x.snapshot.files[0],x.snapshot.rules['one.xlsx']),null);
+ await x.toggle(true);
+ assert.deepEqual(x.requests('preview').map(request=>request.revision),[1,1]);
 });
 test('disabling during preview revokes the native lease and prevents a new apply',async()=>{
  const pending=deferred(), started=deferred();

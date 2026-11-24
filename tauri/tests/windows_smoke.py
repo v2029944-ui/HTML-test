@@ -1598,7 +1598,10 @@ def check_folder_rule_and_revocation(page, workbook, confirmations):
     page.locator('#uploadSourceFolder').click()
     wait_for_app_state(page,'typeof window.nativeFolderReady!=="undefined"','Native folder controller startup')
     page.evaluate('window.nativeFolderReady')
-    assert not page.locator('#sourceAutoImport').is_checked()
+    toggle=page.locator('#sourceAutoImport')
+    sync_status=page.locator('#sourceFolderLastSync')
+    assert not toggle.is_checked()
+    expect(sync_status).to_contain_text('ещё не было')
     listing=api(page,'list')
     assert {file['name'] for file in listing['files']}=={workbook.name}
     row=page.locator('#sourceFolderRows tr').filter(has_text=workbook.name)
@@ -1613,13 +1616,17 @@ def check_folder_rule_and_revocation(page, workbook, confirmations):
     assert rule['format']=='daily-wide' and rule['year']==2024
     assert api(page,'nativeSettingsBootstrap')['reports']==366
 
+    def save_rule(source, kind, start):
+        listing=api(page,'list')
+        file=next(item for item in listing['files'] if item['name']==source.name)
+        assert file['nativeSignature']
+        return api(page,'nativeSetRuleChecked',file['name'],{'type':kind,'start':start,'sheet':'','format':'legacy'},
+                   listing['revision'],listing['folder'],file['nativeSignature'])
+
+    fixture=daily_workbook_bytes()
     auto_probe=workbook.with_name('auto-probe.xlsx')
-    auto_probe.write_bytes(daily_workbook_bytes())
-    listing=api(page,'list')
-    file=next(item for item in listing['files'] if item['name']==auto_probe.name)
-    assert file['nativeSignature']
-    api(page,'nativeSetRuleChecked',file['name'],{'type':'day','start':'2025-01-01','sheet':'','format':'legacy'},
-        listing['revision'],listing['folder'],file['nativeSignature'])
+    auto_probe.write_bytes(fixture)
+    save_rule(auto_probe,'day','2025-01-01')
     current=api(page,'list')
     source=next(item for item in current['files'] if item['name']==auto_probe.name)
     session=api(page,'nativeFolderImportSession',True)
@@ -1633,7 +1640,56 @@ def check_folder_rule_and_revocation(page, workbook, confirmations):
     assert_rejected(lambda:api(page,'nativeFolderImportApply',request,review['reviewToken']),
                     'A revoked folder session allowed a native commit','выключен','сеанс')
     assert api(page,'nativeSettingsBootstrap')['reports']==366
-    auto_probe.unlink()
+    expect(sync_status).to_contain_text('ещё не было')
+
+    toggle.click()
+    prompt='Разрешить в этом сеансе автоматически добавлять новые отчёты из настроенной папки?'
+    dialog,owner=confirmations.find_dialog(prompt)
+    confirmations.answer(dialog,owner,prompt,1)
+    file_rows=page.locator('#sourceFolderRows tr')
+    expect(file_rows.filter(has_text=auto_probe.name)).to_contain_text('Отчёты добавлены автоимпортом',timeout=90_000)
+    expect(row).to_contain_text('Требует ручной проверки',timeout=90_000)
+    expect(sync_status).to_contain_text('Последний успешный автоимпорт из папки:')
+    sync_time=sync_status.inner_text()
+    after_import=api(page,'nativeRevision')
+    imported=api(page,'managementReportPage',after_import,{'report_type':'day','from':'2025-01-01','to':'2025-01-06'},None,50)
+    assert sorted(report['start'] for report in imported)==[f'2025-01-{day:02}' for day in range(1,7)]
+    assert api(page,'nativeSettingsBootstrap')['reports']==372
+    stored=backup_contents(confirmations.database)[0]
+
+    duplicate=workbook.with_name('auto-duplicate.xlsx')
+    overlap=workbook.with_name('auto-overlap.xlsx')
+    duplicate.write_bytes(fixture)
+    save_rule(duplicate,'day','2025-01-01')
+    overlap.write_bytes(fixture)
+    after_rules=save_rule(overlap,'week','2025-01-01')
+    page.evaluate('window.unifiedReports.refreshFolder()')
+    for source in (duplicate,overlap):
+        expect(file_rows.filter(has_text=source.name)).to_contain_text('Требует ручной проверки',timeout=90_000)
+    assert api(page,'nativeRevision')==after_rules
+    assert backup_contents(confirmations.database)[0]==stored
+    expect(sync_status).to_have_text(sync_time)
+
+    toggle.click()
+    wait_for_text(page,'#sourceAutoStatus','Автоматический импорт выключен.')
+    listing=api(page,'list')
+    session=api(page,'nativeFolderImportSession',True)
+    try:
+        def preview(source):
+            file=next(item for item in listing['files'] if item['name']==source.name)
+            return api(page,'nativeFolderImportPreview',{
+                'session':session,'folder':listing['folder'],'revision':listing['revision'],
+                'name':source.name,'signature':file['nativeSignature']})
+
+        assert_rejected(lambda:preview(duplicate),'A duplicate file can replace another source',
+                        'another source\'s overlapping period')
+        assert preview(overlap)['conflicts']['cross_type_overlaps']>0
+    finally:
+        api(page,'nativeFolderImportSession',False)
+    assert api(page,'nativeRevision')==after_rules
+    for source in (auto_probe,duplicate,overlap):
+        assert source.read_bytes()==fixture
+        source.unlink()
 
 @contextmanager
 def windows_test_workspace(parent=None):
@@ -1921,7 +1977,7 @@ def run():
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 assert api(page,'list')['folder']
                 check_folder_rule_and_revocation(page,workbook,confirmations)
-                report['checks'].append('Normal restart preserves native SQLite and opens the canonical dashboard despite obsolete preferences; folder rule and revoked session are verified')
+                report['checks'].append('Normal restart preserves native SQLite; folder autoimport shows the last success, records six new reports and blocks an existing source, a duplicate, an overlap and a revoked session')
                 data_file=Path(api(page,'info')['dataFile'])
                 safety_before=set(data_file.parent.glob('.analiz-restore-safety-*.sqlite3'))
                 reviewed=api(page,'nativeRestorePreview',str(snapshot))
@@ -1931,7 +1987,7 @@ def run():
                 verify_live=tmp/'still-live.sqlite3'
                 api(page,'nativeBackupSqlite',str(verify_live))
                 still_live=backup_contents(verify_live)
-                assert len(still_live[0])==366 and still_live[0]!=original[0]
+                assert len(still_live[0])==372 and still_live[0]!=original[0]
                 assert api(page,'list')['rules'][workbook.name]['year']==2024
                 report['checks'].append('Pending restore leaves the changed live SQLite and its Excel rules in place until restart')
 

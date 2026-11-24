@@ -12,7 +12,7 @@ class Node {
   setAttribute(name,value){this[name]=value;}
 }
 function mount(options={}){
-  const ids=['sourceFolderChoose','sourceFolderRefresh','sourceFolderLocation','sourceFolderStatus','sourceFolderRows','sourceFolderCount','sourceRuleFile','sourceRuleFormat','sourceRuleType','sourceRuleStart','sourceRuleSheet','sourceRuleYear','sourceRuleSave','sourceRuleStatus'];
+  const ids=['sourceFolderChoose','sourceFolderRefresh','sourceFolderLocation','sourceFolderStatus','sourceFolderLastSync','sourceFolderRows','sourceFolderCount','sourceRuleFile','sourceRuleFormat','sourceRuleType','sourceRuleStart','sourceRuleSheet','sourceRuleYear','sourceRuleSave','sourceRuleStatus'];
   const nodes=Object.fromEntries(ids.map(id=>[id,new Node('div')]));
   let listing=options.listing===undefined?{folder:null,revision:12,files:[],rules:{}}:options.listing;
   const calls=[],confirmations=[];let onChanged=null;let unsubscribed=false;
@@ -36,13 +36,13 @@ function mount(options={}){
     sqlRowScroll:require('./scroll-window-fixture.cjs'),
     desktopAPI:api,
     confirm:message=>{calls.push('confirm');confirmations.push(message);return options.confirm?options.confirm(message):options.consent!==false;},
-    nativeFolderAutoImport:options.autoEnabled?{isEnabled:()=>true,updateSnapshot:()=>{}}:undefined,
+    nativeFolderAutoImport:options.autoImport??(options.autoEnabled?{isEnabled:()=>true,updateSnapshot:()=>{}}:undefined),
     nativeWorkspaceRefresh:async()=>{
       calls.push('sql_refresh');
       if(options.refreshFails)throw Error('stale view');
       return true;
     },
-    addEventListener:(name,callback)=>{if(name==='pagehide')window.onHide=callback;}
+    addEventListener:(name,callback)=>{if(name==='pagehide')window.onHide=callback;if(name==='native-folder-import-status')window.onFolderImportStatus=callback;}
   };
   nodes.__created=[];const document={getElementById:id=>nodes[id],createElement:tag=>{const node=new Node(tag);nodes.__created.push(node);return node;}};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../native-folder-status.js'),'utf8'),{window,document});
@@ -109,6 +109,26 @@ test('invalid Rust listing or unavailable folder reports an error instead of inv
   const error=mount({failList:true});
   await error.window.nativeFolderReady;
   assert.match(error.nodes.sourceFolderStatus.textContent,/disk unavailable/);
+});
+
+test('autoimport updates visible rows and sync time without recreating their controls',async()=>{
+ const files=['import.xlsx','review.xlsx','locked.xlsx'].map(name=>({name,size:1,nativeSignature:name==='locked.xlsx'?null:'sig',tooLarge:false}));
+ let completed=false;
+ const panel=mount({listing:{folder:'C:/Excel',revision:12,files,rules:{'import.xlsx':{},'review.xlsx':{}}},autoImport:{
+  updateSnapshot(){},lastSuccessfulImport:()=>completed?Date.UTC(2026,10,24,12,0):null,
+  fileStatus:(_,file)=>completed?(file.name==='import.xlsx'?'imported':'manual'):null
+ }});
+ await panel.window.nativeFolderReady;
+ const {nodes}=panel,table=nodes.sourceFolderRows;
+ assert.match(table.children[2].children[2].textContent,/недоступен/i);
+ assert.match(nodes.sourceFolderLastSync.textContent,/ещё не было/i);
+ const action=table.children[0].children[3].children[0];
+ completed=true;panel.window.onFolderImportStatus();
+ assert.equal(table.children[0].children[3].children[0],action);
+ assert.match(table.children[0].children[2].textContent,/добавлены автоимпортом/i);
+ assert.match(table.children[1].children[2].textContent,/ручной проверки/i);
+ assert.match(nodes.sourceFolderLastSync.textContent,/Последний успешный автоимпорт/);
+ assert.ok(nodes.sourceFolderLastSync.textContent.endsWith(new Date(Date.UTC(2026,10,24,12,0)).toLocaleString('ru-RU')));
 });
 
 test('failed SQL revision refresh after folder selection is not mistaken for a failed folder change',async()=>{
