@@ -10,7 +10,7 @@
 .sql-pager .sql-page-options {position:fixed;inset:auto;margin:0;padding:.65em;box-sizing:border-box;width:max-content;max-width:calc(100vw - 8px);max-height:calc(100vh - 8px);overflow:auto;color:var(--text,#eaf0f6);background:var(--surface,#1b222c);border:1px solid var(--border,#455367);border-radius:9px;box-shadow:0 .35em 1.4em #0006;font:inherit}
 .sql-page-entry {display:flex;flex-wrap:wrap;align-items:flex-end;gap:.35em}
 .sql-page-choices {display:grid;grid-template-columns:minmax(0,1fr);gap:.35em;margin-top:.5em;max-width:24em;max-height:min(14em,42vh);overflow:auto;align-content:start;overscroll-behavior:contain;scrollbar-gutter:stable}
-.sql-pager [data-page-action=ranges] {margin-top:.45em}
+.sql-pager .sql-page-options [data-page-action=ranges] {margin-block-start:.5em}
 .sql-pager [data-page-action=ranges][hidden] {display:none}
 .sql-pager .sql-page-entry label {display:grid;gap:.15em;margin:0;font:inherit;color:inherit}
 .sql-pager .sql-page-entry input {box-sizing:border-box;min-width:0;width:7em;max-width:100%;font:inherit;color:var(--text,#eaf0f6);background:var(--field-bg,#151b22);border:1px solid var(--field-border,#455367);border-radius:5px;min-height:2.1em;padding:.25em .4em}
