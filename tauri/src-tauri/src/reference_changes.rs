@@ -364,7 +364,7 @@ impl Storage {
             prepare_reference(&tx,q,scope)?;
             export(destination,|writer| {
                 comparison_csv_context(writer,&tx,q,scope,"Анализируемый период")?;
-                csv_record(writer,&[Cell::Text("Качество данных"),Cell::Text("В строках таблицы изменения рассчитаны по доступным отчётам за оба интервала. Пропуски не считаются нулём.")])?;
+                csv_record(writer,&[Cell::Text("Качество данных"),Cell::Text("Изменения в таблице рассчитываются по доступным отчётам, если данные есть за оба интервала. Пропуски не считаются нулём.")])?;
                 csv_record(writer,&[Cell::Text("Показатель строк"),Cell::Text(if q.metric=="amount"{"Сумма"}else{"Количество / объём"})])?;
                 csv_record(writer,&[Cell::Text("Фильтр позиций"),Cell::Text(&q.kind)])?;
                 csv_record(writer,&[Cell::Text("Поиск работ"),Cell::Text(&q.search)])?;

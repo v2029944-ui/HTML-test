@@ -434,8 +434,7 @@ def check_reference_data(page, output):
 
     def csv_export(method, path, *, coverage='complete'):
         has_comparison = coverage == 'complete'
-        filters = (request('significant', percent=0, minCount=0, minAmount=0)
-                   if coverage == 'partial' and method == 'referenceChangesCsv' else request())
+        filters = request()
         _api(page, method, filters, str(path))
         raw = path.read_bytes()
         assert raw.startswith(b'\xef\xbb\xbf')
@@ -462,8 +461,8 @@ def check_reference_data(page, output):
                 assert all(row[0] == 'Альфа' and _number(row[2]) == 155 and
                            _number(row[3]) == 145 and _number(row[4]) == -10 for row in data), rows
             elif coverage == 'partial':
-                assert all(row[0] == 'Альфа' and [_number(n) for n in row[2:4]] == [5, 5]
-                           and row[4:] == ['', ''] for row in data), rows
+                assert all(row[0] == 'Альфа' and [_number(n) for n in row[2:6]] == [5, 5, 0, 0]
+                           for row in data), rows
         sample = next(row for row in rows if row and row[0] == 'Сопоставимые подразделения')
         assert sample[1:3] == [('4' if has_comparison else '0'), '4'], rows
         assert sample[3] == (', '.join(organizations) if has_comparison else ''), rows
@@ -597,15 +596,19 @@ def check_reference_data(page, output):
                 reason, 'База: пропусков отчётов — 4', 'Анализ: пропусков отчётов — 4')), frame
             csv_export('referenceSummaryCsv', scratch / 'partial-summary.csv', coverage='partial')
             navigate('Анализ изменений')
-            expect(page.locator('#s2 .match-note')).to_contain_text('Доступные значения')
+            expect(page.locator('#s2 .table-empty')).to_contain_text('Значимых изменений нет')
+            page.locator('#s2 .match-note').get_by_role('button', name='Показать все 4', exact=True).click()
+            settled('#s2')
             expect(page.locator('#s2 .changes-table tbody tr')).to_have_count(4)
-            expect(page.locator('#s2 .quality-notice')).to_contain_text(reason)
+            expect(page.locator('#s2 .quality-notice')).to_contain_text('изменения по доступным отчётам')
+            expect(page.locator('#s2 .quality-notice')).to_contain_text('Пропусков: 8')
             frame = print_view('#s2', comparable=0, scenario='partial')
-            assert reason in frame['context'] and len(frame['changes']) == 4, frame
-            assert all([_number(n) for n in row[2:4]] == [5, 5] and row[4:6] == ['—', '—']
-                       for row in frame['changes']), frame
+            assert 'Изменения в таблице рассчитываются по доступным отчётам' in frame['context'], frame
+            assert len(frame['changes']) == 4, frame
+            assert all([_number(n) for n in row[2:6]] == [5, 5, 0, 0] for row in frame['changes']), frame
             csv_export('referenceChangesCsv', scratch / 'partial-changes.csv', coverage='partial')
             record('03b-both-intervals-partial', '#s2')
+            page.locator('#s2 .match-note').get_by_role('button', name='Только значимые', exact=True).click()
 
             navigate('Сводка')
             select_period('День', '2023-12-29', '2023-12-30')
