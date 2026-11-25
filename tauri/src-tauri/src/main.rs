@@ -6,7 +6,7 @@ mod storage;
 #[path = "commands/native_shared_runtime.rs"]
 mod native_shared_runtime;
 use native_shared_runtime::{shared_workspace_status,shared_workspace_choose_folder,shared_workspace_connect,shared_workspace_sync,shared_workspace_disconnect,shared_workspace_discard_pending,shared_workspace_transfer_preview,shared_workspace_transfer_apply};
-use native_shared_runtime::{shared_workspace_reset_apply, shared_workspace_reset_preview};
+use native_shared_runtime::{shared_workspace_reset_apply, shared_workspace_reset_preview, shared_workspace_set_snapshot_retention};
 #[path = "commands/native_import.rs"]
 mod native_import;
 #[path = "commands/native_management.rs"]
@@ -1831,6 +1831,7 @@ fn main() {
             shared_workspace_discard_pending,
             shared_workspace_reset_preview,
             shared_workspace_reset_apply,
+            shared_workspace_set_snapshot_retention,
             shared_workspace_transfer_preview,
             shared_workspace_transfer_apply,
             reference_changes,
