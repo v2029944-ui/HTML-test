@@ -23,6 +23,7 @@ TIMEOUT = 90_000
 
 
 def _number(text):
+    text = text.rstrip().removesuffix(' п. п.')
     raw = re.sub(r'[^0-9,.\-]', '', text.replace('−', '-'))
     return float(raw.replace(',', '.')) if raw else None
 
