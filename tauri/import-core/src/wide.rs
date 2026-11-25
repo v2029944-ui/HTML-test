@@ -1,8 +1,8 @@
 //! Disk-backed shared-work daily import. Only <=1024 column pairs and bounded
 //! sheet metadata are resident; financial rows and diagnostics stay in SQLite.
-use crate::excel_date::{excel_serial_date, typed_excel_date};
-use crate::report_stage::{self, cell, normalize, number, page_limit};
-use crate::{check_cancel, fail, ConversionSummary, LegacyOptions, Result, Stage, TripleMapping};
+use crate::excel_date::{excel_serial_date, setup_date_styles, typed_excel_date, uses_1904_epoch};
+use crate::report_stage::{self, normalize, number, page_limit};
+use crate::{cell, check_cancel, fail, ConversionSummary, LegacyOptions, Result, Stage, TripleMapping};
 use chrono::{Datelike, Duration, Local, Months, NaiveDate};
 use regex::Regex;
 use rusqlite::{params, OptionalExtension};
@@ -266,7 +266,7 @@ impl Stage<'_> {
     fn wide_setup(&self, cancel: &AtomicBool) -> Result<()> {
         self.db.execute_batch(WIDE_SCHEMA)?;
         self.db.execute_batch("CREATE INDEX IF NOT EXISTS cells_by_column ON cells(sheet,col_num,row_num)")?;
-        self.setup_date_styles(cancel)
+        setup_date_styles(&self.db, cancel)
     }
     /// Validated display-name to worksheet component mapping from workbook relationships.
     pub fn sheet_names(&self) -> Result<Vec<(String, String)>> {
@@ -549,7 +549,7 @@ impl Stage<'_> {
         }
         if active.is_empty() { return Ok(false); }
         self.wide_setup(cancel)?;
-        let date1904 = self.uses_1904_epoch()?;
+        let date1904 = uses_1904_epoch(&self.db)?;
         for sheet in active {
             let Some(info) = self.info(sheet, None, 2, orgs, &p, cancel)? else { return Ok(false); };
             let mut previous: Option<NaiveDate> = None;
@@ -565,10 +565,6 @@ impl Stage<'_> {
             if !adjacent { return Ok(false); }
         }
         Ok(true)
-    }
-
-    fn uses_1904_epoch(&self) -> Result<bool> {
-        Ok(self.db.query_row("SELECT EXISTS(SELECT 1 FROM nodes n JOIN attributes a ON a.component=n.component AND a.seq=n.seq AND a.key='date1904' WHERE n.component='xl/workbook.xml' AND n.tag='workbookPr' AND a.value IN ('1','true'))",[],|r|r.get(0))?)
     }
 
     pub fn detect_wide(
@@ -780,7 +776,7 @@ impl Stage<'_> {
             {
                 return Err(fail("sequential period refers to an unused worksheet"));
             }
-            let date1904 = self.uses_1904_epoch()?;
+            let date1904 = uses_1904_epoch(&self.db)?;
             let mut summary = ConversionSummary::default();
             let mut occupied = BTreeMap::<NaiveDate, NaiveDate>::new();
             let confirmed_start = cfg.start.as_deref().map(parse_start).transpose()?;

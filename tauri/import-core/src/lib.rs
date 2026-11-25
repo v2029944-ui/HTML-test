@@ -1,4 +1,5 @@
 //! Disk-backed XLSX ingestion. No report conversion or live-database writes here.
+mod legacy_layout;
 mod prepared;
 mod report_stage;
 pub use prepared::{
@@ -14,9 +15,9 @@ use quick_xml::{
     events::{BytesStart, Event},
     NsReader,
 };
+pub use legacy_layout::{LegacyOptions, TripleMapping};
 pub use report_stage::{
-    ConversionSummary, LegacyOptions, ReportInfo, ReportIssue, ReportOrganization, ReportRow,
-    ReportTotal, TripleMapping,
+    ConversionSummary, ReportInfo, ReportIssue, ReportOrganization, ReportRow, ReportTotal,
 };
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
@@ -85,13 +86,13 @@ pub struct Cell {
 }
 pub struct StageArea {
     root: PathBuf,
-    _lock: File,
+    recovery_lock: File,
 }
 pub struct Stage<'a> {
     db: Connection,
     dir: TempDir,
-    _area: &'a StageArea,
-    pub stats: Stats,
+    _recovery_lock: &'a File,
+    stats: Stats,
     pub source_hash: String,
     source_path: PathBuf,
     opened_source: Option<File>,
@@ -127,7 +128,7 @@ impl StageArea {
                 }
             }
         }
-        Ok(Self { root, _lock: lock })
+        Ok(Self { root, recovery_lock: lock })
     }
     pub fn ingest(
         &self,
@@ -203,7 +204,7 @@ impl StageArea {
         let mut stage = Stage {
             dir,
             db,
-            _area: self,
+            _recovery_lock: &self.recovery_lock,
             stats: Stats::default(),
             source_hash: hash.clone(),
             bound_hash: hash,
@@ -296,6 +297,9 @@ impl Stage<'_> {
     }
     pub fn path(&self) -> &Path {
         self.dir.path()
+    }
+    pub fn stats(&self) -> &Stats {
+        &self.stats
     }
     /// Keyset page: the cursor is row * 2048 + column, zero-based.
     pub fn page(&self, sheet: &str, after: i64, limit: usize) -> Result<Vec<Cell>> {
@@ -407,6 +411,17 @@ fn attributes(e: &BytesStart<'_>) -> Result<Vec<(String, String)>> {
         ));
     }
     Ok(out)
+}
+fn cell(col: u32, row: u32) -> String {
+    let mut c = col;
+    let mut bytes = Vec::with_capacity(3);
+    while c > 0 {
+        c -= 1;
+        bytes.push(b'A' + (c % 26) as u8);
+        c /= 26;
+    }
+    bytes.reverse();
+    format!("{}{row}", String::from_utf8(bytes).unwrap())
 }
 fn address(s: &str, l: Limits) -> Result<(u32, u32)> {
     let mut col = 0u32;

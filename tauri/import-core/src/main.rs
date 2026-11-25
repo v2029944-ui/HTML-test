@@ -153,15 +153,16 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         };
         eprintln!(
             "{}",
-            serde_json::json!({"ingest_ms":ingest.as_millis(),"conversion_ms":convert_start.elapsed().as_millis(),"cells":stage.stats.cells,"reports":summary.reports,"rows":summary.rows,"issues":summary.issues,"stage_bytes":std::fs::metadata(stage.path().join("stage.sqlite3"))?.len(),"peak_after_read_kib":read_peak,"peak_after_convert_kib":peak_kib()})
+            serde_json::json!({"ingest_ms":ingest.as_millis(),"conversion_ms":convert_start.elapsed().as_millis(),"cells":stage.stats().cells,"reports":summary.reports,"rows":summary.rows,"issues":summary.issues,"stage_bytes":std::fs::metadata(stage.path().join("stage.sqlite3"))?.len(),"peak_after_read_kib":read_peak,"peak_after_convert_kib":peak_kib()})
         );
         if std::env::args().nth(5).as_deref() != Some("--summary-only") {
             output_reports(&stage, kind == "wide")?;
         }
         return Ok(());
     }
-    println!("source_bytes={} cells={} empty_cells={} shared_strings={} unpacked_bytes={} elapsed_ms={} sha256={}",std::fs::metadata(source)?.len(),stage.stats.cells,stage.stats.empty_cells,stage.stats.strings,stage.stats.unpacked_bytes,start.elapsed().as_millis(),stage.source_hash);
-    for (name, bytes) in &stage.stats.components {
+    let stats = stage.stats();
+    println!("source_bytes={} cells={} empty_cells={} shared_strings={} unpacked_bytes={} elapsed_ms={} sha256={}",std::fs::metadata(source)?.len(),stats.cells,stats.empty_cells,stats.strings,stats.unpacked_bytes,start.elapsed().as_millis(),stage.source_hash);
+    for (name, bytes) in &stats.components {
         println!("component={name} bytes={bytes}");
     }
     Ok(())
