@@ -149,6 +149,16 @@
 #sheet .filter-checkboxes label{display:flex;gap:10px;align-items:center;min-height:34px;box-sizing:border-box;margin:0;padding:5px 8px;border-radius:5px}
 #sheet .filter-checkboxes label:hover{background:#26313d}
 #sheet .filter-checkboxes input{margin:0;accent-color:var(--ui-accent,#f5c542)}
+.work-group-option::before {
+  content:"";
+  display:inline-block;
+  inline-size:1em;
+  block-size:.78em;
+  margin-inline-end:.4em;
+  vertical-align:-.02em;
+  background:currentColor;
+  clip-path:polygon(0 0,40% 0,52% 22%,100% 22%,100% 100%,0 100%);
+}
 .filter-list-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 #sheet .filter-list-actions button{font-size:13px;min-height:32px;padding:4px 8px}
 .filter-list-actions output{margin-left:auto;color:#b2becb;font-size:12px}

@@ -196,9 +196,10 @@ function listShell(title,anchor,described){
  actions.className='filter-list-actions';list.className='filter-checkboxes';pages.className='filter-list-actions';
  box.append(query,actions,list,pages);return {box,query,actions,list,count,pages};
 }
-function checkbox(list,text,checked,change){
+function checkbox(list,text,checked,change,textClass){
  const label=make('label'),input=make('input');input.type='checkbox';input.checked=checked;
- input.onchange=()=>change(input);label.append(input,make('span',text));list.append(label);return input;
+ const caption=make('span',text);if(textClass)caption.className=textClass;
+ input.onchange=()=>change(input);label.append(input,caption);list.append(label);return input;
 }
 function chooseOrgs(anchor){
  const {box,query,actions,list,count}=listShell('Подразделения',anchor);
@@ -240,14 +241,15 @@ function chooseWorks(anchor){
    :'Для индивидуального выбора доступны только работы и группы с уникальными названиями допустимой длины.'));
   const explicitOnly=search||nameCount>limit||hasUnselectable;
   for(const row of rows){
-   const input=checkbox(list,row.name+(row.kind==='group'?' (группа)':''),everything||selected.has(row.key),field=>{
+   const group=row.kind==='group';
+   const input=checkbox(list,row.name+(group?' (группа)':''),everything||selected.has(row.key),field=>{
     if(everything){
      if(explicitOnly){field.checked=true;UI.notice('Для индивидуального выбора нажмите «Снять выбор».',true);return;}
      everything=false;for(const item of rows)selected.set(item.key,item);
     }
     if(field.checked&&selected.size===limit&&!selected.has(row.key)){field.checked=false;UI.notice('Можно выбрать до 50 отдельных работ или все работы.',true);return;}
     if(field.checked)selected.set(row.key,row);else selected.delete(row.key);update();
-   });
+   },group?'work-group-option':null);
    if(everything&&explicitOnly)input.disabled=true;
   }
   if(!rows.length)list.append(make('p',search?'Совпадений нет.':'Нет позиций для индивидуального выбора.'));
