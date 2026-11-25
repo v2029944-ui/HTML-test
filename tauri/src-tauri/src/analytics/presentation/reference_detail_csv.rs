@@ -478,19 +478,22 @@ fn write_comparison(
     } else {
         headers(w, &["Работа / группа", if before_observed {"Значение раньше"} else {"Значение сейчас"}])?;
     }
-    let mut emit = |name: &str, base: &AnalysisTotals, current: &AnalysisTotals, strict_before: &AnalysisTotals,
-                    strict_after: &AnalysisTotals| -> Result<(), String> {
+    let mut emit = |name: &str, base: &AnalysisTotals, current: &AnalysisTotals,
+                    comparable_before: Option<f64>, comparable_after: Option<f64>| -> Result<(), String> {
         let old = value(base, metric);
         let new = value(current, metric);
         if both_observed {
-            let m = average_change(value(strict_before, metric), value(strict_after, metric), 0.)?;
+            let m = average_change(comparable_before, comparable_after, 0.)?;
             csv_record(w, &[Text(name), Number(old), Number(new), Number(m.delta), Number(m.percent)])
         } else {
             csv_record(w, &[Text(name), Number(if before_observed {old} else {new})])
         }
     };
     if value(&before.available_total,metric).is_some() || value(&after.available_total,metric).is_some() {
-        emit("Итого по выбранным работам", &before.available_total, &after.available_total, &before.total, &after.total)?;
+        let comparable = |period: &RangeSummary| {
+            if metric == "amount" { period.comparison_amount() } else { value(&period.available_total,metric) }
+        };
+        emit("Итого по выбранным работам", &before.available_total, &after.available_total, comparable(&before), comparable(&after))?;
     }
     let mut stmt = tx.prepare("SELECT name,bc,ba,cc,ca,kind,b_known,a_known FROM an_comparison ORDER BY key").map_err(err)?;
     let mut rows = stmt.query([]).map_err(err)?;
@@ -503,11 +506,12 @@ fn write_comparison(
         let base = observed_totals(bc,ba,r.get(6).map_err(err)?,before_observed)?;
         let current = observed_totals(ac,aa,r.get(7).map_err(err)?,after_observed)?;
         if value(&base, metric).is_some() || value(&current, metric).is_some() {
-            emit(&name, &base, &current, &totals(bc,ba,b)?, &totals(ac,aa,a)?)?;
+            emit(&name, &base, &current, value(&totals(bc,ba,before_observed)?,metric),
+                value(&totals(ac,aa,after_observed)?,metric))?;
         }
     }
     if (before_observed && (!b || before.amount_missing_rows)) || (after_observed && (!a || after.amount_missing_rows)) {
-        csv_record(w, &[Text("Качество данных"), Text("Частичные значения по доступным отчётам и заполненным суммам")])?;
+        csv_record(w, &[Text("Качество данных"), Text("Частичные значения и изменения по доступным отчётам. Пропуски не считаются нулём.")])?;
     }
     Ok(())
 }

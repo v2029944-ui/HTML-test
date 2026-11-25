@@ -304,7 +304,7 @@ test('reference comparison uses exact shared intervals and preserves selected or
  assert.deepEqual([...exports[0][0].request.organizations],['A','B']);assert.equal(exports[0][0].section,'comparison');
  assert.deepEqual({...exports[0][0].before},{from:'2024-01-01',to:'2024-01-04'});assert.equal(exports[0][1],'/tmp/ref.csv');
  const note=f.nodes.get('comparisonCoverage').children[0];
- assert.match(note.textContent,/Сопоставимые подразделения: 1 из 2/);
+ assert.match(note.textContent,/Полные отчёты у 1 из 2 подразделений/);
  note.children.at(-1).dispatch('click');assert.deepEqual(applied,['A']);
  f.window.referenceDetail.active='storage';await assert.rejects(exportView.export(),/изменились/);assert.equal(exports.length,1);
 });
@@ -324,7 +324,7 @@ test('reference regularity retains incomplete organizations and matches the chos
  assert.match(f.nodes.get('regularityCoverage').textContent,/Полных периодов анализа: 0 из 1/);
 });
 
-test('reference comparison and its CSV keep four selected organizations and omit deltas for incomplete intervals',async()=>{
+test('reference comparison and its CSV keep four organizations and calculate differences on available totals',async()=>{
  for(const [missingBefore,missingAfter,zeroBase]of [[false,true,false],[true,false,false],[true,true,false],[false,true,true]]){
   const selected=['A','B','C','D'],exports=[],calls=[];
   const baseline=zeroBase?0:90,current=210;
@@ -340,8 +340,8 @@ test('reference comparison and its CSV keep four selected organizations and omit
   f.publish({from:'2024-01-10',to:'2024-01-11',baseFrom:'2024-01-01',baseTo:'2024-01-02',organizations:selected,selectedNames:[],selectedKeys:[],allNames:true});
   await f.window.unifiedExtended.openComparison();
   assert.match(f.nodes.get('comparisonHelp').textContent,/Область расчёта: все работы/);assert.equal(calls.length,1);assert.deepEqual(calls[0].slice(2,6),['2024-01-01','2024-01-02','2024-01-10','2024-01-11']);
-  const amount=f.tables.find(table=>table.root==='comparisonTable'&&table.metric==='amount');assert.ok(amount);assert.deepEqual([...amount.options.csvRows[0].slice(1,4)],[baseline,current,null]);assert.equal(amount.options.csvRows[0][4],null);
-  const text=f.nodes.get('comparisonCoverage').textContent;assert.match(text,/Сопоставимые подразделения: 3 из 4/);assert.equal((text.match(/Неполные данные/g)||[]).length,1);assert.match(text,/Сравнить только сопоставимые/);if(missingBefore)assert.match(text,/D · базовый период · пропусков: 1/);if(missingAfter)assert.match(text,/D · анализируемый период · пропусков: 1/);
+  const amount=f.tables.find(table=>table.root==='comparisonTable'&&table.metric==='amount');assert.ok(amount);assert.deepEqual([...amount.options.csvRows[0].slice(1)],[baseline,current,current-baseline,zeroBase?null:(current-baseline)/baseline*100]);
+  const text=f.nodes.get('comparisonCoverage').textContent;assert.match(text,/Полные отчёты у 3 из 4 подразделений/);assert.equal((text.match(/Неполные данные/g)||[]).length,1);assert.match(text,/Сравнить только с полными отчётами/);if(missingBefore)assert.match(text,/D · базовый период · пропусков: 1/);if(missingAfter)assert.match(text,/D · анализируемый период · пропусков: 1/);
   assert.equal(text.includes('Первый интервал: Полные данные'),!missingBefore);
   assert.equal(text.includes('Второй интервал: Полные данные'),!missingAfter);
   assert.equal(f.nodes.get('comparisonCoverage').children.filter(n=>/\bwarn\b|comparison-warning/.test(n.className)).length,1);
@@ -664,20 +664,23 @@ test('switching comparison type clears the previous results before SQL completes
  assert.match(table.textContent,/20/);
 });
 
-test('comparison displays both partial intervals without calculating deltas from them',async()=>{
+test('comparison shows differences for both observed partial intervals with one coverage warning',async()=>{
  const unknown={count:null,amount:null,average:null};
  const summary=amount=>({complete:false,periods:2,missing:1,available_reports:1,total:unknown,available_total:{amount,count:amount/10,average:10}});
  const f=fixture({
   nativeAnalysisOrganizations:async(_rev,_kind,_from,_to,orgs)=>orgs.map(org=>({org,complete:false,missing:1,total:unknown})),
   nativeAnalysisCompare:async(...args)=>{assert.deepEqual([...args[6]],['A','B']);return {summary:{before:summary(20),after:summary(30)}};},
-  unifiedComparisonWindow:async()=>({rows:[{key:'work:W',name:'W',kind:'work',observed_before:{amount:20},observed_after:{amount:30}}],total_rows:1})
+  unifiedComparisonWindow:async()=>({rows:[{key:'work:W',name:'W',kind:'work',amount:{delta:10,percent:50},observed_before:{amount:20},observed_after:{amount:30}}],total_rows:1})
  });
  f.window.referenceDetail={active:'comparison'};
  f.publish({organizations:['A','B']});
  await f.window.unifiedExtended.openComparison();
  const table=f.tables.find(t=>t.root==='comparisonTable'&&t.metric==='amount');
- assert.ok(table);assert.deepEqual(Array.from(table.options.csvRows[1]),['W',20,30,null,null]);
- assert.match(f.nodes.get('comparisonCoverage').textContent,/неполн/i);
+ assert.ok(table);assert.deepEqual(Array.from(table.options.csvRows[0].slice(1)),[20,30,10,50]);
+ assert.deepEqual(Array.from(table.options.csvRows[1]),['W',20,30,10,50]);
+ const coverage=f.nodes.get('comparisonCoverage');
+ assert.match(coverage.textContent,/разница.*по доступным отч[её]там/i);
+ assert.equal(coverage.children.length,1);
 });
 
 test('department comparison graphs one selected metric, preserving zero and missing values',async()=>{

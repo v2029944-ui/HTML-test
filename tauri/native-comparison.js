@@ -29,6 +29,7 @@ function validMeasure(m){
  return m===null||(m&&finite(m.base)&&finite(m.current)&&finite(m.delta)&&
    (m.percent===null||finite(m.percent)));
 }
+const hasReports=period=>period.complete||period.available_reports>0;
 function showSummary(host,label,measure){
  const card=elt('div');card.className='comparison-metric';
  card.append(elt('strong',label));
@@ -46,9 +47,9 @@ function renderRanking(){
  const metric=$('comparisonRankMetric').value==='count'?'count':'amount';
  const list=metric==='count'?data.top_count:data.top_amount;
  if(!Array.isArray(list)||list.length>12)throw Error('Некорректный объём рейтинга');
- if(!data.summary.before.complete||!data.summary.after.complete){
-   if(list.length)throw Error('Неполное сравнение содержит запрещённый рейтинг');
-   status('comparisonRankStatus','Подборка скрыта: один из диапазонов неполный.',true);
+ if(!hasReports(data.summary.before)||!hasReports(data.summary.after)){
+   if(list.length)throw Error('Рейтинг требует отчётов за оба диапазона');
+   status('comparisonRankStatus','Подборка скрыта: за один из диапазонов нет пригодных отчётов.',true);
    return;
  }
  let max=0;
@@ -88,8 +89,8 @@ function draw(){
     !validMeasure(s.count)||!validMeasure(s.amount))
    throw Error('Некорректный ответ SQL-сравнения');
  const both=s.before.complete&&s.after.complete;
- if(!both&&(s.count!==null||s.amount!==null))
-   throw Error('Неполные итоги не могут иметь изменения');
+ if((!hasReports(s.before)||!hasReports(s.after))&&(s.count!==null||s.amount!==null))
+   throw Error('Расчёт изменения требует отчётов за оба диапазона');
  showSummary(metrics,'Количество / объём',s.count);
  showSummary(metrics,'Сумма',s.amount);
  for(const org of data.divisions){
@@ -112,7 +113,7 @@ function draw(){
  status('comparisonStatus',
    'Сравнение выполнено. Базовый диапазон: '+(s.before.complete?'полный':'есть пропуски')+
    '; текущий диапазон: '+(s.after.complete?'полный':'есть пропуски')+
-   '. Подразделения сравниваются по собственной полноте. Единицы исходных отчётов не подтверждены.',
+   (both?'.':'. Итоги рассчитаны по доступным отчётам.')+' Единицы исходных отчётов не подтверждены.',
    !both);
 }
 function show(result){
