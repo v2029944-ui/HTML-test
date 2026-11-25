@@ -139,21 +139,23 @@ function init(){
  syncDeletionActions();
  window.sqlRowScroll.retire($('qualityPrev'),$('qualityNext'));
  $('qualityPage').parentElement.className='reports-page-footer';
- async function reportOrgs(id,root,rev,index=0){
+ async function reportOrgs(id,root,rev,index=0,itemTag='span'){
   const current=()=>UI.revision===rev&&root.isConnected;
   try{
    const {rows,total_rows:total}=await api.managementReportOrgWindow(rev,id,index,LIMIT);
    if(!current())return;
-   root.replaceChildren(...rows.map(row=>el('span',row[1]+' ')));
+   root.replaceChildren(...rows.map(row=>el(itemTag,itemTag==='li'?row[1]:row[1]+' ')));
+   if(!rows.length)root.append(el(itemTag,'Подразделения не указаны.'));
    root.dataset.sqlScrollHost='report-organizations';
-   window.sqlRowScroll.attach(root,{index,size:LIMIT,count:rows.length,total,label:'Подразделения отчёта',go:i=>current()&&reportOrgs(id,root,rev,i)});
-  }catch(error){if(current()){window.sqlRowScroll.reset(root);root.textContent='Не удалось прочитать подразделения: '+String(error.message||error);}}
+   if(itemTag!=='li'||total>LIMIT)window.sqlRowScroll.attach(root,{index,size:LIMIT,count:rows.length,total,label:'Подразделения отчёта',go:i=>current()&&reportOrgs(id,root,rev,i,itemTag)});
+   else window.sqlRowScroll.reset(root);
+  }catch(error){if(current()){window.sqlRowScroll.reset(root);root.replaceChildren(el(itemTag,'Не удалось прочитать подразделения: '+String(error.message||error)));}}
  }
  function qualityAction(report){return button('Контроль качества',()=>{
   $('qualitySource').value='saved';syncQualityPeriods();$('qualityPeriod').value='all';setQualityDates(report.start,report.start);
   $('qualitySearch').value='';$('qualityReportSource').value=report.source_name||'';qualityOffset=0;void openUploadView('quality');$('qualityHeading').scrollIntoView?.({block:'start',behavior:'smooth'});
  });}
- function reportCard(r,rev,selectable=false){
+ function reportCard(r,rev,{selectable=false,showOrganizations=false}={}){
   const token=workspaceState()?.workspace_token,fromDatabases=selectable&&reportsInDatabases();
   const current=()=>UI.revision===rev&&workspaceReady()&&workspaceState()?.workspace_token===token&&
    (!fromDatabases||(reportsInDatabases()&&reportListActive()));
@@ -173,7 +175,15 @@ function init(){
    });
    label.append(check,el('span','Выбрать'));actions.prepend(label);
   }
-  const orgs=el('details'),list=el('p');orgs.append(el('summary','Подразделения ('+r.organizations+')'),list);let loaded=false;orgs.addEventListener('toggle',()=>{if(orgs.open&&!loaded){loaded=true;void reportOrgs(r.id,list,rev);}});card.append(orgs,actions);
+  if(showOrganizations){
+   const list=el('ul',undefined,'calendar-source-organizations');
+   list.append(el('li','Загрузка…'));card.append(el('h6','Подразделения'),list);
+   void reportOrgs(r.id,list,rev,0,'li');
+  }else{
+   const orgs=el('details'),list=el('p');orgs.append(el('summary','Подразделения ('+r.organizations+')'),list);
+   let loaded=false;orgs.addEventListener('toggle',()=>{if(orgs.open&&!loaded){loaded=true;void reportOrgs(r.id,list,rev);}});card.append(orgs);
+  }
+  card.append(actions);
   if(api.nativeDeleteReport){let deleting=false;const action=button('Удалить отчёт',async()=>{
    if(deleting||!current())return;deleting=true;action.disabled=true;
    const destination=fromDatabases?' из '+databaseScope().target:'';
@@ -205,7 +215,7 @@ function init(){
    reportSummary=summary;syncDeletionActions();
    $('reportCount').textContent=summary.reports+' периодов · '+summary.rows+' строк · '+UI.fmt(summary.amount,'amount');
    root.replaceChildren();
-   for(const r of rows){root.append(reportCard(r,rev,hasBulkDeletion));if(kinds[r.report_type]&&validDate(r.start))savedQualityPeriods.add(r.report_type+':'+r.start);}
+   for(const r of rows){root.append(reportCard(r,rev,{selectable:hasBulkDeletion}));if(kinds[r.report_type]&&validDate(r.start))savedQualityPeriods.add(r.report_type+':'+r.start);}
    if($('qualitySource').value!=='pending')syncQualityPeriods();
    if(!rows.length)root.append(el('p','Отчёты не найдены.'));
    reportIndex=index;reportPageStatus.textContent='';
@@ -244,6 +254,9 @@ function init(){
   do{const result=await api.nativeDailyRollup(rev,from,to,granularity,UI.snapshot.org_names,after,50);if(UI.revision!==rev)return [];if(!Array.isArray(result.points)||result.points.length>50)throw Error('Некорректная сводка календаря');points.push(...result.points);after=result.next_cursor;if(points.length>366)throw Error('Превышен размер календаря');}while(after);
   return points;
  }
+ function calendarDayError(header,point){
+  return header?.day_invalid_reports>0||(header?.day_reports>0&&!(point?.available_reports>0));
+ }
  async function loadCalendar(){
   const rev=UI.revision,ticket=++calendarTicket;clearDetails();$('reportCalendar').replaceChildren();calendarData=null;dayPoints=new Map();monthPoints=[];
   if(!Number.isSafeInteger(rev)){setCalendarLoading(false);return;}
@@ -254,30 +267,35 @@ function init(){
    const y=annual[0];calendarStatus(year+' год'+(y?' · '+(y.complete?'Дневные итоги: ':'Дневные, доступная часть: ')+UI.fmt((y.complete?y.total:y.available_total)?.amount,'amount'):''));
    for(let n=0;n<12;n++){
     const [start,end]=monthBounds(n),p=monthly.find(x=>x.start===start),days=headers.days.filter(x=>x.date>=start&&x.date<=end),warnings=days.reduce((s,d)=>s+d.warnings,0),loaded=days.filter(d=>d.day_reports>0).length;
-    const complete=p?.complete===true,hasSources=days.length>0,kind=complete&&!warnings?'complete':p?.missing||warnings?'error':hasSources?'warn':'missing';
-    const b=button('',()=>void openMonth(n,b));b.className='calendar-period calendar-'+kind;b.dataset.month=start.slice(0,7);b.setAttribute('aria-expanded','false');b.setAttribute('aria-controls','calendarDetails');
+    const complete=p?.complete===true,hasSources=days.length>0;
+    const hasError=days.some(day=>day.invalid_reports>0||calendarDayError(day,dayPoints.get(day.date)));
+    const hasWarnings=warnings>0||days.some(day=>day.warned);
+    const kind=!hasSources?'missing':hasError?'error':complete&&!hasWarnings?'complete':'warn';
+    const label={missing:'Нет загруженных данных',error:'Есть ошибки в отчётах',warn:complete?'Есть замечания':'Полнота не подтверждена',complete:'Полнота подтверждена'}[kind];
+    const b=button('',()=>void openMonth(n,b,label));b.className='calendar-period calendar-'+kind;b.dataset.month=start.slice(0,7);b.setAttribute('aria-expanded','false');b.setAttribute('aria-controls','calendarDetails');
     const sources=['day','week','month'].filter(t=>days.some(d=>d[t+'_reports']>0)).map(t=>kinds[t]);
-    b.append(el('strong',monthName(n)),el('small',complete?'Полнота подтверждена':hasSources?'Полнота не подтверждена':'Нет загруженных данных'),el('small','Дней: '+loaded+' · Пропусков: '+show(p?.missing)),el('small','Замечаний: '+warnings),el('small','Источники: '+(sources.join(', ')||'нет')));
+    b.append(el('strong',monthName(n)),el('small',label),el('small','Дней: '+loaded+' · Пропусков: '+show(p?.missing)),el('small',hasWarnings&&!warnings?'Есть замечания по источникам':'Замечаний: '+warnings),el('small','Источники: '+(sources.join(', ')||'нет')));
     if(p?.available_reports)b.append(el('small',(complete?'Дневные итоги: ':'Дневные, доступная часть: ')+UI.fmt((complete?p.total:p.available_total)?.count,'count')+' · '+UI.fmt((complete?p.total:p.available_total)?.amount,'amount')));
     $('reportCalendar').append(b);
    }
   }catch(error){if(live(rev,ticket,calendarTicket)){calendarStatus(year+' год · Не удалось прочитать календарь: '+String(error.message||error));$('reportCalendar').replaceChildren();clearDetails();}}
   finally{if(live(rev,ticket,calendarTicket))setCalendarLoading(false);}
  }
- async function sourceList(root,filter,rev,index=0){
+ async function sourceList(root,filter,rev,{index=0,showOrganizations=false}={}){
   const token=detailTicket,current=()=>live(rev,token,detailTicket)&&root.isConnected;
   try{
    const {rows,total_rows:total}=await api.managementReportWindow(rev,reportFilter(filter),index,LIMIT);
    if(!current())return;
-   root.replaceChildren(...rows.map(r=>reportCard(r,rev)));
+   root.replaceChildren(...rows.map(r=>reportCard(r,rev,{showOrganizations})));
    if(!rows.length)root.append(el('p','Источники не найдены. Отсутствие отчёта не означает нулевые показатели.'));
    root.dataset.sqlScrollHost='report-sources';
-   window.sqlRowScroll.attach(root,{index,size:LIMIT,count:rows.length,total,label:'Источники выбранного периода',go:i=>current()&&sourceList(root,filter,rev,i)});
+   if(!showOrganizations||total>LIMIT)window.sqlRowScroll.attach(root,{index,size:LIMIT,count:rows.length,total,label:'Источники выбранного периода',go:i=>current()&&sourceList(root,filter,rev,{index:i,showOrganizations})});
+   else window.sqlRowScroll.reset(root);
   }catch(error){if(current()){window.sqlRowScroll.reset(root);root.replaceChildren(el('p','Не удалось прочитать источники: '+String(error.message||error)));}}
  }
- async function openMonth(n,trigger){
+ async function openMonth(n,trigger,label){
   clearDetails();selectedMonth=n;const rev=UI.revision,[from,to]=monthBounds(n),root=$('calendarDetails'),p=monthPoints.find(p=>p.start===from);
-  trigger.setAttribute('aria-expanded','true');root.append(el('h3',monthName(n)+' '+year+' · '+(p?.complete?'Полнота подтверждена':'Полнота не подтверждена')),button('Закрыть подробности месяца',()=>clearDetails(trigger)),el('p','Дневные отчёты · пропусков: '+show(p?.missing)+'. Недельные и месячные суммы по дням не распределяются.'));
+  trigger.setAttribute('aria-expanded','true');root.append(el('h3',monthName(n)+' '+year+' · '+label),button('Закрыть подробности месяца',()=>clearDetails(trigger)),el('p','Дневные отчёты · пропусков: '+show(p?.missing)+'. Недельные и месячные суммы по дням не распределяются.'));
   const legend=el('ul',undefined,'calendar-day-legend muted small');
   legend.setAttribute('aria-label','Обозначения дней календаря');
   for(const [kind,label] of [['missing','Нет дневного отчёта'],['error','Ошибка в дневных данных'],['warn','Неполнота или замечания'],['complete','Есть данные, включая нулевые итоги']])
@@ -289,17 +307,20 @@ function init(){
   for(let d=1;d<=Number(to.slice(8));d++){
    const date=from.slice(0,8)+String(d).padStart(2,'0'),point=dayPoints.get(date),header=calendarData.days.find(h=>h.date===date),exists=point?.available_reports>0;
    const stored=exists||header?.day_reports>0,complete=point?.complete===true,totals=complete?point.total:point?.available_total;
-   const zero=complete&&totals?.count===0&&totals.amount===0;
-   const kind=!stored?'missing':!exists?'error':complete&&!header?.warnings?'complete':'warn';
+   const warned=header?.day_warned??(header?.warnings>0);
+   const kind=!stored?'missing':calendarDayError(header,point)?'error':complete&&!warned?'complete':'warn';
+   const zero=kind!=='error'&&complete&&totals?.count===0&&totals.amount===0;
    const label={missing:'Нет дневного отчёта',error:'Ошибка в дневных данных',warn:'Неполнота или замечания',complete:'Полнота подтверждена'}[kind];
    const b=button('',()=>{
-    detail.replaceChildren(el('h4',date),button('Закрыть подробности дня',()=>{detail.replaceChildren();b.focus({preventScroll:true});}));
-    detail.append(el('p',kind==='error'?'Дневной отчёт сохранён. Пригодных данных нет.':zero?'Нулевые итоги. '+label+'.':label+'.'));
+    const heading=el('div',undefined,'calendar-day-heading');
+    heading.append(el('h4',date),button('Закрыть подробности дня',()=>{detail.replaceChildren();b.focus({preventScroll:true});}));
+    const message=kind==='error'&&!exists?'Дневной отчёт сохранён. Пригодных данных нет.':zero?'Нулевые итоги. '+label+'.':label+'.';
+    detail.replaceChildren(heading,el('p',message,'calendar-day-status calendar-'+kind));
     if(exists)detail.append(el('p','Количество: '+UI.fmt(totals?.count,'count')+' · Сумма: '+UI.fmt(totals?.amount,'amount')));
-    const list=el('div');detail.append(list);void sourceList(list,{from:date,to:date},rev);
+    const list=el('div');detail.append(el('h5','Источники'),list);void sourceList(list,{from:date,to:date},rev,{showOrganizations:true});
    });
    b.className='calendar-day calendar-'+kind;
-   b.append(el('strong',d),el('small',zero?'Нулевые итоги':{missing:'Нет отчёта',error:'Ошибка',warn:complete?'Замечания':'Неполнота',complete:'Есть данные'}[kind]));
+   b.append(el('strong',d),el('small',kind==='error'?'Ошибка':zero?'Ноль':{missing:'Нет отчёта',warn:complete?'Замечания':'Неполнота',complete:'Есть данные'}[kind]));
    b.setAttribute('aria-label',date+': '+(zero?'Нулевые итоги. ':'')+label);
    if(exists)b.append(el('small','Кол.: '+UI.fmt(totals?.count,'count')),el('small','Сум.: '+UI.fmt(totals?.amount,'amount')));grid.append(b);
   }

@@ -21,7 +21,7 @@
     } else if (panel) {
       close = () => $(panel.id === 'analyticsDetails' ? 'closeAnalyticsDetails' : 'closeChangeDetails').click();
     } else if (target.closest('#calendarDetails, #reportCalendar')) {
-      const day = $('calendarDetails').querySelector('.calendar-day-details > button');
+      const day = $('calendarDetails').querySelector('.calendar-day-heading > button');
       const month = $('calendarDetails').querySelector(':scope > button');
       if (day || month) close = () => (day || month).click();
     }
