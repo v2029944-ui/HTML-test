@@ -472,7 +472,9 @@ def check_reference_data(page, output):
                 (org, 'неполные базовый и анализируемый интервалы') for org in organizations
             }, rows
             totals = rows.index(['Показатель', 'Было', 'Стало', 'Изменение', 'Изменение, %'])
-            assert [row[1:] for row in rows[totals + 1:totals + 4]] == [[''] * 4] * 3, rows
+            assert [[_number(value) for value in row[1:]] for row in rows[totals + 1:totals + 4]] == [
+                [20, 20, 0, 0], [2, 2, 0, 0], [10, 10, 0, 0]
+            ], rows
         try:
             _api(page, method, filters, str(path))
         except PlaywrightError:

@@ -36,7 +36,8 @@ function setBusy(id,busy){
  for(const node of root?.querySelectorAll('button')||[])if(node.textContent.includes('Печать')){node.inert=busy;node.disabled=busy||!(id==='#s1'?summaryData:changeData);}
 }
 function captions(s,roots=['#s1','#s2']){for(const root of roots){const n=$(root+' .report-range');if(!n)continue;n.replaceChildren(el('span',s?visibleRange(s):'Выберите периоды и подразделения'));if(s){n.append(el('span','Сравнение с '+baseRange(s)),el('span','Все работы'));const a=el('a','Изменить период');a.href='#reportShell';a.addEventListener('click',event=>{event.preventDefault();window.referenceFilters.openFilters();});n.append(a);}}}
-const canCompare=summary=>[summary?.before,summary?.after].every(period=>period?.complete||period?.available_reports>0);
+const hasReports=period=>period?.complete||period?.available_reports>0;
+const canCompare=summary=>hasReports(summary?.before)&&hasReports(summary?.after);
 const partialComparison=summary=>canCompare(summary)&&!(summary.before.complete&&summary.after.complete);
 function summaryCards(values,comparison,comparable,totalOrganizations){
  const cards=all('#s1 .metric-card');for(const [i,metric]of ['amount','count','average'].entries()){
@@ -197,7 +198,7 @@ async function loadChanges(s,captured,current,focusAnchor){
 
 }
 function openSample(anchor){const data=summaryData,s=scope;if(!data||data.scope!==s)return;const root=resultDialog('Состав сравнения',anchor);document.getElementById('sheet')?.addEventListener('close',()=>{if(scope===s&&anchor?.isConnected)anchor.focus({preventScroll:true});},{once:true});const summary=data.result.summary;root.append(el('p',comparisonStatus(data.comparable.length,s.organizations.length,summary)),el('p','База: '+baseRange(s)+' · Анализ: '+visibleRange(s)));const list=el('ul');for(const org of s.organizations){const d=data.result.divisions.find(row=>row.organization===org),before=Number.isFinite(d?.before?.count),after=Number.isFinite(d?.after?.count);list.append(el('li',org+': '+(before&&after?'включено':!before&&!after?'неполные базовый и анализируемый интервалы':!before?'неполный базовый интервал':'неполный анализируемый интервал')));}root.append(list);
- if(canCompare(summary)){
+ if(hasReports(summary.before)||hasReports(summary.after)){
   const table=el('table');table.className='sample-values';table.setAttribute('aria-label','Итоги по доступным отчётам');
   writeTable(table,['Показатель','Базовый период','Анализируемый период'],['amount','count'].map(metric=>[titles[metric],fmt(observed(summary.before)?.[metric],metric),fmt(observed(summary.after)?.[metric],metric)]));
   root.append(table);
@@ -245,8 +246,8 @@ function printContext(root,s,comparable,overview){
  }
  const history=historicalQuality(overview?.summary?.after);
  if(history)root.append(el('p',history));
- if(canCompare(summary)){
-  root.append(el('h2','Сравнение по доступным отчётам'));
+ if(hasReports(summary?.before)||hasReports(summary?.after)){
+  root.append(el('h2',canCompare(summary)?'Сравнение по доступным отчётам':'Доступные итоги по периодам'));
   printTable(root,['Показатель','Было','Стало','Изменение','Изменение, %'],['amount','count','average'].map(metric=>[titles[metric],fmt(observed(summary.before)?.[metric],metric),fmt(observed(summary.after)?.[metric],metric),displayedChange(summary[metric]?.delta,metric).value,pct(summary[metric]?.percent)]),'print-comparison');
  }
  root.append(el('p','Пропуски не считаются нулём. Замечания импорта сами по себе не исключают отчёт. Наличие отчётов не подтверждает полноту источника.'));

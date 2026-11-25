@@ -346,10 +346,12 @@ test('missing baseline explains an unavailable comparison while preserving an ob
  await f.s1.querySelector('.metric-sample').click();
  const sample=f.document.getElementById('sheet');
  assert.match(sample.textContent,/За базовый интервал нет пригодных данных/);
+ assert.deepEqual(sample.querySelector('.sample-values tbody tr').children.map(n=>n.textContent),['Сумма','—','0,00']);
  await sample.close();
- let printed;
- f.window.print=()=>{printed=f.document.getElementById('referencePrintDocument').textContent;};
+ let printed,totals;
+ f.window.print=()=>{const root=f.document.getElementById('referencePrintDocument');printed=root.textContent;totals=root.querySelector('.print-comparison tbody tr').children.map(n=>n.textContent);};
  const print=f.s2.querySelectorAll('button').find(button=>button.textContent==='Печать / PDF');
  await print.click();
  assert.match(printed,/За базовый интервал нет пригодных данных/);
+ assert.deepEqual(totals,['Сумма','—','0,00','—','—']);
 });
