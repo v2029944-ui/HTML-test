@@ -1704,6 +1704,7 @@ def check_folder_rule_and_revocation(page, workbook, confirmations):
     expect(row).to_contain_text('Требует ручной проверки',timeout=90_000)
     expect(sync_status).to_contain_text('Последний успешный автоимпорт из папки:')
     sync_time=sync_status.inner_text()
+    wait_for_text(page,'#unifiedIndexStatus','Локальная база SQLite. Отчётов: 372',90_000)
     after_import=api(page,'nativeRevision')
     imported=api(page,'managementReportPage',after_import,{'report_type':'day','from':'2025-01-01','to':'2025-01-06'},None,50)
     assert sorted(report['start'] for report in imported)==[f'2025-01-{day:02}' for day in range(1,7)]
