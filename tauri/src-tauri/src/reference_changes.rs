@@ -199,11 +199,8 @@ fn order(q: &ReferenceChangesRequest) -> &'static str {
     }
 }
 const CHANGE_KIND_FILTER:&str="(?1='all' OR (?1='significant' AND (
-    kind<>'' OR (NOT EXISTS(SELECT 1 FROM ref_changes WHERE delta IS NOT NULL) AND (before IS NOT NULL OR after IS NOT NULL))
+    kind<>'' OR (delta IS NULL AND (before IS NOT NULL OR after IS NOT NULL))
 )) OR kind=?1)";
-fn partial_fallback(c:&Connection, q:&ReferenceChangesRequest) -> Result<bool,String> {
-    Ok(q.kind=="significant" && count_sql(c,"SELECT NOT EXISTS(SELECT 1 FROM ref_changes WHERE delta IS NOT NULL)")?!=0)
-}
 fn change_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ReferenceChangeRow> {
     Ok(ReferenceChangeRow {
         name: row.get(0)?,
@@ -309,7 +306,7 @@ impl Storage {
                 params![q.kind,search],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))
             ).map_err(err)?;
             let rows=tx.prepare(&(filtered_rows_sql(q)+" LIMIT 12 OFFSET ?3")).map_err(err)?.query_map(params![q.kind,search,i64::from(q.page)*12],change_row).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
-            Ok(ReferenceChangesPage {rows,total,searched,significant,counts,leader,comparable,partial_fallback:partial_fallback(&tx,q)?})
+            Ok(ReferenceChangesPage {rows,total,searched,significant,counts,leader,comparable,partial_fallback:q.kind=="significant"&&total>significant})
         })
     }
     /// Print all matching rows from one snapshot without sending an unbounded IPC response.

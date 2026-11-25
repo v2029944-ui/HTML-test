@@ -481,6 +481,15 @@ fn reference_usual_uses_whole_equal_windows_and_excludes_partial_samples() {
     assert_eq!(current.rows[0]["count"]["current"], 3.0);
     assert_eq!(current.used, 0);
     assert!(current.rows[0]["count"]["base"].is_null());
+    let observed = run("2024-01-02", "2024-01-03");
+    assert!(!observed.current_complete);
+    assert_eq!(observed.rows[0]["count"]["current"], 2.0);
+    assert_eq!(observed.rows[0]["amount"]["current"], 94.0);
+    assert_eq!(observed.rows[0]["average"]["current"], 47.0);
+    for metric in ["count", "amount", "average"] {
+        assert!(observed.rows[0][metric]["delta"].is_null());
+        assert!(observed.rows[0][metric]["percent"].is_null());
+    }
     let with_sample = run("2024-01-03", "2024-01-04");
     assert_eq!(with_sample.used, 1);
     assert_eq!(with_sample.rows[0]["count"]["base"], 3.0);
@@ -488,6 +497,23 @@ fn reference_usual_uses_whole_equal_windows_and_excludes_partial_samples() {
     let partial_sample = run("2024-01-04", "2024-01-06");
     assert_eq!(partial_sample.used, 0);
     assert!(partial_sample.rows[0]["count"]["base"].is_null());
+    let mut data = store.load().unwrap();
+    data["reports"][1]["rows"].as_array_mut().unwrap().retain(|row| row["work"] != "ЯРКАЯ услуга");
+    store.save(data).unwrap();
+    let revision = store.revision().unwrap();
+    store.analysis_index_report("d0", revision).unwrap();
+    store.analysis_index_report("d1", revision).unwrap();
+    store.analysis_index_settings(revision).unwrap();
+    let organizations = store.analysis_filter_create(revision, "organizations").unwrap();
+    store.analysis_filter_append(revision, &organizations, &["A".into()]).unwrap();
+    store.analysis_filter_seal(revision, &organizations).unwrap();
+    let scope = AnalysisScope { organizations, ..scope };
+    let query = ChangeQuery { from: "2024-01-02".into(), to: "2024-01-03".into(), ..query() };
+    let observed_zero = store.unified_pattern_page(revision, &scope, &query, None, "usual", 4, &options, None).unwrap();
+    assert_eq!(observed_zero.rows[0]["count"]["current"], 0.0);
+    assert_eq!(observed_zero.rows[0]["amount"]["current"], 0.0);
+    assert!(observed_zero.rows[0]["average"]["current"].is_null());
+    assert!(observed_zero.rows[0]["count"]["delta"].is_null());
 }
 
 #[test]

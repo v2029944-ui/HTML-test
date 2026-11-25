@@ -113,13 +113,13 @@ impl Calendar {
             _ => "1",
         };
         c.execute_batch(&format!("INSERT INTO adv_coverage SELECT label,org,max(warned) FROM adv_reports GROUP BY label,org HAVING count(*)={expected};
-            CREATE TEMP TABLE adv_facts(label TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,active INTEGER,PRIMARY KEY(label,org,key)) WITHOUT ROWID;")).map_err(err)?;
+            CREATE TEMP TABLE adv_facts(label TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,known_amount REAL,active INTEGER,PRIMARY KEY(label,org,key)) WITHOUT ROWID;")).map_err(err)?;
         c.execute("INSERT INTO adv_facts SELECT v.label,v.org,coalesce(g.key,'work:'||x.work),coalesce(g.name,x.work),
-            CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,max(x.count<>0 OR x.amount IS NULL OR x.amount<>0)
+            CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount),max(x.count<>0 OR x.amount IS NULL OR x.amount<>0)
             FROM adv_reports v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work
             WHERE (?1 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=coalesce(g.name,x.work)))
             GROUP BY v.label,v.org,coalesce(g.key,'work:'||x.work)",[&s.names]).map_err(err)?;
-        validate_numbers(c, "SELECT count,amount FROM adv_facts")
+        validate_numbers(c, "SELECT count,known_amount FROM adv_facts")
     }
 }
 
@@ -341,11 +341,13 @@ pub struct PatternPage {
     pub current_from: String,
     pub current_to: String,
     pub current_complete: bool,
+    pub current_amount_incomplete: bool,
 }
 
 fn usual_metric(
     base: Option<f64>,
     current: Option<f64>,
+    observed_current: Option<f64>,
     used: i64,
     percent: f64,
 ) -> Result<Value, String> {
@@ -365,7 +367,7 @@ fn usual_metric(
         _ => "insufficient",
     };
     Ok(
-        json!({"base":base,"current":current,"delta":change.delta,"percent":change.percent,"status":status}),
+        json!({"base":base,"current":observed_current,"delta":change.delta,"percent":change.percent,"status":status}),
     )
 }
 
@@ -493,8 +495,8 @@ impl Storage {
         tx.execute_batch("CREATE TEMP TABLE adv_complete(label TEXT PRIMARY KEY) WITHOUT ROWID;
           CREATE TEMP TABLE adv_dates(label TEXT,slot INTEGER,batch INTEGER,complete INTEGER,PRIMARY KEY(label,slot)) WITHOUT ROWID;
           CREATE TEMP TABLE adv_tail(label TEXT PRIMARY KEY,distance INTEGER) WITHOUT ROWID;
-          CREATE TEMP TABLE adv_combined(key TEXT,label TEXT,count REAL,amount REAL,active INTEGER,PRIMARY KEY(key,label)) WITHOUT ROWID;
-          INSERT INTO adv_combined SELECT key,label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,max(active) FROM adv_facts GROUP BY key,label;
+          CREATE TEMP TABLE adv_combined(key TEXT,label TEXT,count REAL,amount REAL,known_amount REAL,active INTEGER,PRIMARY KEY(key,label)) WITHOUT ROWID;
+          INSERT INTO adv_combined SELECT key,label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),max(active) FROM adv_facts GROUP BY key,label;
           CREATE TEMP TABLE adv_keys(key TEXT PRIMARY KEY,name TEXT,kind TEXT) WITHOUT ROWID;
           INSERT INTO adv_keys SELECT key,name,kind FROM adv_facts GROUP BY key;").map_err(err)?;
         tx.execute("INSERT INTO adv_complete SELECT label FROM adv_coverage GROUP BY label HAVING count(*)=(SELECT count(*) FROM analysis_filter_items WHERE id=?1)",[&s.organizations]).map_err(err)?;
@@ -551,9 +553,18 @@ impl Storage {
             &tx,
             "SELECT count(*) FROM adv_dates WHERE slot=1 AND complete",
         )?;
+        let current_complete = used == i64::from(count);
+        let (current_observed, current_amount_incomplete) = if usual && options.is_some() {
+            tx.query_row("SELECT
+                EXISTS(SELECT 1 FROM adv_dates d JOIN adv_reports r USING(label) WHERE d.slot=1),
+                EXISTS(SELECT 1 FROM adv_dates d JOIN adv_facts f USING(label) WHERE d.slot=1 AND f.amount IS NULL)",
+                [], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?
+        } else {
+            (false, false)
+        };
         if usual {
             tx.execute_batch("INSERT INTO adv_keys VALUES('','Итого по выбранным работам','total');
-                INSERT INTO adv_combined SELECT '',label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,max(active) FROM adv_combined GROUP BY label;").map_err(err)?;
+                INSERT INTO adv_combined SELECT '',label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),max(active) FROM adv_combined GROUP BY label;").map_err(err)?;
         } else {
             d = calendar.last;
             let mut distance = 0;
@@ -597,15 +608,20 @@ impl Storage {
             }else{legacy_keys.next()};
             let Some((key,name,kind))=next_key else {break};
             let mut row = if usual {
-                let (bc,ba,ac,aa):(f64,Option<f64>,f64,Option<f64>)=tx.query_row("SELECT
+                let (bc,ba,ac,aa,known_amount):(f64,Option<f64>,f64,Option<f64>,Option<f64>)=tx.query_row("SELECT
                     coalesce(sum(count) FILTER(WHERE slot=0),0),CASE WHEN COUNT(*) FILTER(WHERE slot=0)=0 THEN 0 WHEN COUNT(amount) FILTER(WHERE slot=0)=COUNT(*) FILTER(WHERE slot=0) THEN SUM(amount) FILTER(WHERE slot=0) END,
-                    coalesce(sum(count) FILTER(WHERE slot=1),0),CASE WHEN COUNT(*) FILTER(WHERE slot=1)=0 THEN 0 WHEN COUNT(amount) FILTER(WHERE slot=1)=COUNT(*) FILTER(WHERE slot=1) THEN SUM(amount) FILTER(WHERE slot=1) END
-                    FROM adv_combined JOIN adv_dates USING(label) WHERE key=?1 AND complete",[&key],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(err)?;
+                    coalesce(sum(count) FILTER(WHERE slot=1),0),CASE WHEN COUNT(*) FILTER(WHERE slot=1)=0 THEN 0 WHEN COUNT(amount) FILTER(WHERE slot=1)=COUNT(*) FILTER(WHERE slot=1) THEN SUM(amount) FILTER(WHERE slot=1) END,
+                    SUM(known_amount) FILTER(WHERE slot=1)
+                    FROM adv_combined JOIN adv_dates USING(label) WHERE key=?1 AND (slot=1 OR complete)",[&key],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(err)?;
                 let base = totals(bc, ba, previous > 0)?;
-                let now = totals(ac, aa, used == i64::from(count))?;
-                json!({"count":usual_metric(base.count.map(|v|v/previous as f64),now.count,previous,q.percent)?,
-                    "amount":usual_metric(base.amount.map(|v|v/previous as f64),now.amount,previous,q.percent)?,
-                    "average":usual_metric(base.average,now.average,previous,q.percent)?})
+                let now = totals(ac, aa, current_complete)?;
+                let shown = options
+                    .map(|_| observed_totals(ac, aa, known_amount, current_observed))
+                    .transpose()?;
+                let shown = shown.as_ref().unwrap_or(&now);
+                json!({"count":usual_metric(base.count.map(|v|v/previous as f64),now.count,shown.count,previous,q.percent)?,
+                    "amount":usual_metric(base.amount.map(|v|v/previous as f64),now.amount,shown.amount,previous,q.percent)?,
+                    "average":usual_metric(base.average,now.average,shown.average,previous,q.percent)?})
             } else {
                 regularity_row(
                     &tx,
@@ -638,7 +654,7 @@ impl Storage {
             let offset=match page_index {Some(index)=>crate::storage::direct_page_offset(index,50,total_rows)?,None=>cursor_offset};
             let order=if term.is_empty(){"key"}else{"(instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key"};
             if let Some((path,table))=csv {
-                super::reference_detail_csv::export_patterns(&tx,path,table,s,q,&term,order,used,previous,&calendar.kind,&baseline_from.to_string(),&baseline_to.to_string())?;
+                super::reference_detail_csv::export_patterns(&tx,path,table,s,q,&term,order,used,previous,current_complete,current_amount_incomplete,&calendar.kind,&baseline_from.to_string(),&baseline_to.to_string())?;
             } else {
             let mut query=tx.prepare(&format!("SELECT data FROM unified_patterns WHERE ?1 IS NOT NULL ORDER BY {order} LIMIT 51 OFFSET ?2")).map_err(err)?;
             let mut result=query.query(params![term,offset]).map_err(err)?;
@@ -657,7 +673,8 @@ impl Storage {
             baseline_to: baseline_to.to_string(),
             current_from: first.to_string(),
             current_to: calendar.last.to_string(),
-            current_complete: used == i64::from(count),
+            current_complete,
+            current_amount_incomplete,
         })
     }
 }
@@ -674,6 +691,18 @@ fn percent_of(value: f64, total: f64, valid: bool) -> Result<Option<f64>, String
     } else {
         Ok(None)
     }
+}
+
+pub(super) fn observed_contribution_rows(c: &Connection, metric: &str) -> Result<String, String> {
+    let (before, after) = match metric {
+        "count" => ("bc", "cc"),
+        "amount" => ("coalesce(ba,b_known)", "coalesce(ca,a_known)"),
+        _ => return Err("Select amount or count".into()),
+    };
+    let before = if observed_reports(c, 1, None)? { before } else { "NULL" };
+    let after = if observed_reports(c, 2, None)? { after } else { "NULL" };
+    Ok(format!("SELECT key,name,kind,{before} AS base,{after} AS current FROM an_comparison
+        WHERE key NOT LIKE 'absent:%' AND ({before} IS NOT NULL OR {after} IS NOT NULL)"))
 }
 
 impl Storage {
@@ -734,7 +763,7 @@ impl Storage {
         workspace(&tx, revision, s)?;
         let (base_complete, mut current_complete) = comparison(&tx, s, &q, None)?;
         let mut result = json!({"baseComplete":base_complete,"currentComplete":current_complete,"total_rows":0,"rows":[],"next":null});
-        if mode == "contributions" && !(current_complete && base_complete) {
+        if mode == "contributions" && page_index.is_none() && !(current_complete && base_complete) {
             return Ok(result);
         }
         if mode == "structure" && !observed_reports(&tx,2,None)? {
@@ -753,6 +782,28 @@ impl Storage {
             .map_err(err)?;
         current_complete &= at.is_some();
         result["currentComplete"] = json!(current_complete);
+        let base_complete = base_complete && bt.is_some();
+        result["baseComplete"] = json!(base_complete);
+        if mode == "contributions" && !(base_complete && current_complete) {
+            if let Some(index) = page_index {
+                let source = observed_contribution_rows(&tx, metric)?;
+                let total = count_sql(&tx, &format!("SELECT count(*) FROM ({source})"))?;
+                let offset = crate::storage::direct_page_offset(index, 50, total)?;
+                let mut stmt = tx.prepare(&format!("{source} ORDER BY key LIMIT 50 OFFSET ?1")).map_err(err)?;
+                let mut data = stmt.query([offset]).map_err(err)?;
+                let mut rows = Vec::new();
+                while let Some(row) = data.next().map_err(err)? {
+                    let base = row.get::<_,Option<f64>>(3).map_err(err)?.map(finite).transpose()?;
+                    let current = row.get::<_,Option<f64>>(4).map_err(err)?.map(finite).transpose()?;
+                    rows.push(json!({"key":row.get::<_,String>(0).map_err(err)?,
+                        "name":row.get::<_,String>(1).map_err(err)?,"kind":row.get::<_,String>(2).map_err(err)?,
+                        "base":base,"current":current,"delta":null,"percent":null,"contribution":null}));
+                }
+                result["rows"] = json!(rows);
+                result["total_rows"] = json!(total);
+            }
+            return Ok(result);
+        }
         // The structure can list observed values even where the full
         // denominator is unknown. Such rows never receive shares.
         let a = if mode == "structure" && metric == "amount" { "coalesce(ca,a_known)" } else { a };
@@ -762,11 +813,6 @@ impl Storage {
         let Some(at) = current_total else { return Ok(result); };
         if mode == "structure" {
             result["currentAvailable"] = json!(true);
-        }
-        let base_complete = base_complete && bt.is_some();
-        result["baseComplete"] = json!(base_complete);
-        if mode == "contributions" && !base_complete {
-            return Ok(result);
         }
         let bt = bt.map(finite).transpose()?;
         finite(at)?;

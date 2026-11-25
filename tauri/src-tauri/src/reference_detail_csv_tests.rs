@@ -93,6 +93,80 @@ fn detail_csv_validates_scope_destination_and_formula_safe_filter_text() {
 }
 
 #[test]
+fn usual_csv_exports_observed_values_with_coverage_notice_and_empty_deltas() {
+    let (dir, store, revision, scope) = fixture();
+    let q = ChangeQuery { from: "2024-01-02".into(), to: "2024-01-03".into(), ..query() };
+    let table: DetailCsvOptions = serde_json::from_value(json!({
+        "section":"usual","metric":"amount","window":4,
+        "options":{"search":"яркая","status":"all","range_window":true}
+    })).unwrap();
+    let path = dir.path().join("observed-usual.csv");
+    store.reference_detail_csv(revision, &scope, &q, None, &table, &path).unwrap();
+    let data = std::fs::read_to_string(path).unwrap();
+    assert!(data.contains("Текущий интервал неполон. Показаны доступные значения."));
+    assert!(data.lines().any(|line| line == r#""ЯРКАЯ услуга";"";"94";"";"";"Недостаточно данных""#), "{data}");
+}
+
+#[test]
+fn usual_csv_labels_partial_sums_even_with_complete_calendar_coverage() {
+    let (dir, store, _, scope) = fixture();
+    let mut data = store.load().unwrap();
+    data["reports"][1]["rows"][74]["amount"] = Value::Null;
+    store.save(data).unwrap();
+    let revision = store.revision().unwrap();
+    store.analysis_index_report("d0", revision).unwrap();
+    store.analysis_index_report("d1", revision).unwrap();
+    store.analysis_index_settings(revision).unwrap();
+    let organizations = store.analysis_filter_create(revision, "organizations").unwrap();
+    store.analysis_filter_append(revision, &organizations, &["A".into()]).unwrap();
+    store.analysis_filter_seal(revision, &organizations).unwrap();
+    let scope = AnalysisScope { organizations, ..scope };
+    let q = ChangeQuery { from: "2024-01-01".into(), to: "2024-01-02".into(), ..query() };
+    let options = json!({"search":"яркая","status":"all","range_window":true});
+    let page = store.unified_pattern_page(revision, &scope, &q, None, "usual", 4, &serde_json::from_value(options.clone()).unwrap(), None).unwrap();
+    assert!(page.current_complete);
+    assert_eq!(page.rows[0]["amount"]["current"], 84.0);
+    assert!(page.rows[0]["average"]["current"].is_null());
+    let table: DetailCsvOptions = serde_json::from_value(json!({
+        "section":"usual","metric":"amount","window":4,"options":options
+    })).unwrap();
+    let path = dir.path().join("usual-missing-amount.csv");
+    store.reference_detail_csv(revision, &scope, &q, None, &table, &path).unwrap();
+    let data = std::fs::read_to_string(path).unwrap();
+    assert!(data.contains("В некоторых строках сумма не указана."));
+    assert!(data.lines().any(|line| line == r#""ЯРКАЯ услуга";"";"84";"";"";"Недостаточно данных""#), "{data}");
+}
+
+#[test]
+fn contributions_with_incomplete_coverage_keep_observed_rows_across_pages_and_csv() {
+    let (dir, store, revision, scope) = fixture();
+    let q = ChangeQuery { from: "2024-01-02".into(), to: "2024-01-03".into(), ..query() };
+    let before = RangeQuery { from: "2024-01-01".into(), to: "2024-01-01".into() };
+    let first = store.advanced_composition_at_page(revision, &scope, &q, None, &before, "contributions", "amount", 12, 0).unwrap();
+    let last = store.advanced_composition_at_page(revision, &scope, &q, None, &before, "contributions", "amount", 12, 1).unwrap();
+    assert_eq!(first["currentComplete"], false);
+    assert_eq!(first["total_rows"], 75);
+    assert_eq!(first["rows"].as_array().unwrap().len(), 50);
+    assert!(first["check"].is_null());
+    let row = last["rows"].as_array().unwrap().iter().find(|row| row["name"] == "ЯРКАЯ услуга").unwrap();
+    assert_eq!((row["base"].as_f64(), row["current"].as_f64()), (Some(84.), Some(94.)));
+    assert!(row["delta"].is_null() && row["percent"].is_null() && row["contribution"].is_null());
+    let zero = &first["rows"][1];
+    assert_eq!((zero["base"].as_f64(), zero["current"].as_f64()), (Some(0.), Some(0.)));
+    let table: DetailCsvOptions = serde_json::from_value(json!({
+        "section":"contributions","metric":"amount","before":before
+    })).unwrap();
+    let path = dir.path().join("observed-contributions.csv");
+    store.reference_detail_csv(revision, &scope, &q, None, &table, &path).unwrap();
+    let csv = std::fs::read_to_string(path).unwrap();
+    let notice = csv.find("Показаны доступные значения.").unwrap();
+    let header = csv.find(r#""Услуга / группа";"Значение раньше""#).unwrap();
+    assert!(notice < header, "{csv}");
+    assert!(csv.lines().any(|line| line == r#""ЯРКАЯ услуга";"84";"94";"";"";"""#), "{csv}");
+    assert!(csv.lines().any(|line| line == r#""Работа 01";"0";"0";"";"";"""#), "{csv}");
+}
+
+#[test]
 fn unavailable_interval_preserves_only_the_complete_sides_values_on_screen_and_in_csv() {
     let (dir, store, r, scope) = fixture();
     let mut selection = query();
