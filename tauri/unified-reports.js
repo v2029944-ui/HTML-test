@@ -278,18 +278,30 @@ function init(){
  async function openMonth(n,trigger){
   clearDetails();selectedMonth=n;const rev=UI.revision,[from,to]=monthBounds(n),root=$('calendarDetails'),p=monthPoints.find(p=>p.start===from);
   trigger.setAttribute('aria-expanded','true');root.append(el('h3',monthName(n)+' '+year+' · '+(p?.complete?'Полнота подтверждена':'Полнота не подтверждена')),button('Закрыть подробности месяца',()=>clearDetails(trigger)),el('p','Дневные отчёты · пропусков: '+show(p?.missing)+'. Недельные и месячные суммы по дням не распределяются.'));
+  const legend=el('ul',undefined,'calendar-day-legend muted small');
+  legend.setAttribute('aria-label','Обозначения дней календаря');
+  for(const [kind,label] of [['missing','Нет дневного отчёта'],['error','Ошибка в дневных данных'],['warn','Неполнота или замечания'],['complete','Есть данные, включая нулевые итоги']])
+   legend.append(el('li',label,'calendar-'+kind));
+  root.append(legend);
   const grid=el('div',undefined,'calendar-day-grid'),detail=el('div',undefined,'calendar-day-details');detail.setAttribute('aria-live','polite');
   for(const name of ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'])grid.append(el('span',name,'calendar-weekday'));
   for(let i=0;i<(new Date(from+'T12:00:00Z').getUTCDay()+6)%7;i++)grid.append(el('span'));
   for(let d=1;d<=Number(to.slice(8));d++){
    const date=from.slice(0,8)+String(d).padStart(2,'0'),point=dayPoints.get(date),header=calendarData.days.find(h=>h.date===date),exists=point?.available_reports>0;
+   const stored=exists||header?.day_reports>0,complete=point?.complete===true,totals=complete?point.total:point?.available_total;
+   const zero=complete&&totals?.count===0&&totals.amount===0;
+   const kind=!stored?'missing':!exists?'error':complete&&!header?.warnings?'complete':'warn';
+   const label={missing:'Нет дневного отчёта',error:'Ошибка в дневных данных',warn:'Неполнота или замечания',complete:'Полнота подтверждена'}[kind];
    const b=button('',()=>{
     detail.replaceChildren(el('h4',date),button('Закрыть подробности дня',()=>{detail.replaceChildren();b.focus({preventScroll:true});}));
-    detail.append(el('p',point?.complete?'Полнота подтверждена':exists?'Доступна часть дневных данных; полнота не подтверждена.':'Дневной отчёт отсутствует. Это не нулевой показатель.'));
-    if(exists)detail.append(el('p','Количество: '+UI.fmt((point.complete?point.total:point.available_total)?.count,'count')+' · Сумма: '+UI.fmt((point.complete?point.total:point.available_total)?.amount,'amount')));
+    detail.append(el('p',kind==='error'?'Дневной отчёт сохранён. Пригодных данных нет.':zero?'Нулевые итоги. '+label+'.':label+'.'));
+    if(exists)detail.append(el('p','Количество: '+UI.fmt(totals?.count,'count')+' · Сумма: '+UI.fmt(totals?.amount,'amount')));
     const list=el('div');detail.append(list);void sourceList(list,{from:date,to:date},rev);
-   });b.className='calendar-day calendar-'+(point?.complete&&!header?.warnings?'complete':header?'warn':'missing');b.append(el('strong',d),el('small',point?.complete?'Есть':header?'Неполнота':'—'));b.setAttribute('aria-label',date+': '+(point?.complete?'Полнота подтверждена':header?'Полнота не подтверждена':'Нет дневных данных'));
-   if(exists)b.append(el('small','Кол.: '+UI.fmt((point.complete?point.total:point.available_total)?.count,'count')),el('small','Сум.: '+UI.fmt((point.complete?point.total:point.available_total)?.amount,'amount')));grid.append(b);
+   });
+   b.className='calendar-day calendar-'+kind;
+   b.append(el('strong',d),el('small',zero?'Нулевые итоги':{missing:'Нет отчёта',error:'Ошибка',warn:complete?'Замечания':'Неполнота',complete:'Есть данные'}[kind]));
+   b.setAttribute('aria-label',date+': '+(zero?'Нулевые итоги. ':'')+label);
+   if(exists)b.append(el('small','Кол.: '+UI.fmt(totals?.count,'count')),el('small','Сум.: '+UI.fmt(totals?.amount,'amount')));grid.append(b);
   }
   root.append(grid,detail);
   for(const [type,title] of [['week','Недельные источники'],['month','Месячные источники']]){const group=el('details'),list=el('div');group.append(el('summary',title+' — отдельно от дневных итогов'),list);let loaded=false;group.addEventListener('toggle',()=>{if(group.open&&!loaded){loaded=true;const start=new Date(from+'T12:00:00Z');if(type==='week')start.setUTCDate(start.getUTCDate()-6);void sourceList(list,{from:start.toISOString().slice(0,10),to,report_type:type},rev);}});root.append(group);}
