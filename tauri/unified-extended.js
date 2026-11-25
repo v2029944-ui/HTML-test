@@ -281,7 +281,9 @@ async function comparison(index=0,paging=false){
    warnings.push('В некоторых строках сумма не указана. Показана сумма заполненных ячеек.');
   }
   sampleNote(coverage,sample,warnings.join(' '));
-  if(beforeComplete&&afterComplete)for(const [label,total] of [['Первый интервал',summary.before],['Второй интервал',summary.after]])coverage.append(UI.el('p',label+': Полные данные · периодов '+total.periods,'muted small'));
+  for(const [label,total] of [['Первый интервал',summary.before],['Второй интервал',summary.after]]){
+   if(total.complete)coverage.append(UI.el('p',label+': Полные данные · периодов '+total.periods,'muted small'));
+  }
   contributionInput={before,after};
   if(!beforeObserved&&!afterObserved){
    clear('comparisonTable','Нет доступных значений для сравнения: оба интервала неполны. Проверьте наличие отчётов или выберите другие периоды. Пропуск не означает ноль.');

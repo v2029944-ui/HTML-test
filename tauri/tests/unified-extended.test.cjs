@@ -342,6 +342,8 @@ test('reference comparison and its CSV keep four selected organizations and omit
   assert.match(f.nodes.get('comparisonHelp').textContent,/Область расчёта: все работы/);assert.equal(calls.length,1);assert.deepEqual(calls[0].slice(2,6),['2024-01-01','2024-01-02','2024-01-10','2024-01-11']);
   const amount=f.tables.find(table=>table.root==='comparisonTable'&&table.metric==='amount');assert.ok(amount);assert.deepEqual([...amount.options.csvRows[0].slice(1,4)],[baseline,current,null]);assert.equal(amount.options.csvRows[0][4],null);
   const text=f.nodes.get('comparisonCoverage').textContent;assert.match(text,/Сопоставимые подразделения: 3 из 4/);assert.equal((text.match(/Неполные данные/g)||[]).length,1);assert.match(text,/Сравнить только сопоставимые/);if(missingBefore)assert.match(text,/D · базовый период · пропусков: 1/);if(missingAfter)assert.match(text,/D · анализируемый период · пропусков: 1/);
+  assert.equal(text.includes('Первый интервал: Полные данные'),!missingBefore);
+  assert.equal(text.includes('Второй интервал: Полные данные'),!missingAfter);
   assert.equal(f.nodes.get('comparisonCoverage').children.filter(n=>/\bwarn\b|comparison-warning/.test(n.className)).length,1);
   await amount.options.csvContext.export();assert.deepEqual([...exports[0][0].request.organizations],selected);assert.deepEqual({...exports[0][0].before},{from:'2024-01-01',to:'2024-01-02'});
   if(zeroBase){assert.equal(amount.rows[0][1],'0');assert.equal(amount.rows[0][4],'—');assert.doesNotMatch(f.nodes.get('comparisonTable').textContent,/Infinity|NaN/);}
