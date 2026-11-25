@@ -7,62 +7,66 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex, OnceLock, Weak},
+    sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Arc, Mutex, OnceLock, Weak},
     time::UNIX_EPOCH,
 };
 
-#[path = "management.rs"]
+#[path = "management/management.rs"]
 mod management;
 pub use management::*;
-#[path = "management_job.rs"]
+#[path = "management/management_job.rs"]
 mod management_job;
 pub use management_job::ManagementJob;
-#[path = "management_tree.rs"]
+#[path = "management/management_tree.rs"]
 mod management_tree;
 
-#[path = "analytics.rs"]
+#[path = "analytics/analytics.rs"]
 mod analytics;
 pub use analytics::*;
-#[path = "report_calendar.rs"]
+#[path = "reports/report_calendar.rs"]
 mod report_calendar;
 pub use report_calendar::ReportCalendar;
-#[path = "report_quality.rs"]
+#[path = "reports/report_quality.rs"]
 mod report_quality;
 pub use report_quality::{QualityScope, ReportQualityPage};
-#[path = "unified_reports.rs"]
+#[path = "reports/unified_reports.rs"]
 mod unified_reports;
 pub use unified_reports::{UnifiedQualityFilter, UnifiedQualityPage, UnifiedCalendar};
 
-#[path = "shared_runtime.rs"]
+#[path = "shared/shared_runtime.rs"]
 pub mod shared_runtime;
 
-#[path = "shared_folder.rs"]
+#[path = "shared/shared_folder.rs"]
 pub mod shared_folder;
 
-#[path = "backup.rs"]
+#[path = "database/csv_export.rs"]
+mod csv_export;
+#[path = "database/backup.rs"]
 mod backup;
-#[path = "scheduled_backup.rs"]
+#[path = "database/scheduled_backup.rs"]
 mod scheduled_backup;
 pub use scheduled_backup::ScheduledBackupStatus;
-#[path = "report_transfer.rs"]
+#[path = "shared/report_transfer.rs"]
 mod report_transfer;
 pub use report_transfer::{TransferDirection, TransferPeriod, TransferPreview, TransferReceipt, TransferRow};
-#[path = "recovery.rs"]
+#[path = "database/recovery.rs"]
 mod recovery;
 pub use recovery::RestorePreview;
-#[path = "activation.rs"]
+#[path = "database/activation.rs"]
 mod activation;
 pub use activation::{AppRestoreLock, RestoreLaunchInfo, RestoreLaunchResult, ScheduledRestore, apply_pending_restore_or_open_original};
-#[path = "metric_reports.rs"]
+#[path = "reports/metric_reports.rs"]
 mod metric_reports;
 pub use metric_reports::{kinds as metric_kinds, MetricKind, MetricReceipt, MetricReview, MetricSummary};
-#[path = "metric_xlsx.rs"]
+#[path = "reports/metric_xlsx.rs"]
 mod metric_xlsx;
 pub use metric_xlsx::{profiles as metric_xlsx_profiles, MetricXlsxProfile};
 
-#[path = "read_model.rs"]
+#[path = "database/read_model.rs"]
 mod read_model;
-#[path = "import_apply.rs"]
+#[path = "import/import_source.rs"]
+mod import_source;
+#[path = "import/import_apply.rs"]
 mod import_apply;
 pub use import_apply::{ImportConfirmation, ImportCounts, ImportJob, ImportPreview, ImportProgress, ImportReceipt};
 pub use read_model::{Aggregate, IndexedRow, ReadFilter, ReportHeader, MAX_PAGE_ROWS};
@@ -201,6 +205,14 @@ impl FolderImportCancellation {
     }
 }
 
+fn ensure_import_active(cancel: &AtomicBool) -> Result<(), String> {
+    if cancel.load(Ordering::Acquire) {
+        Err("Import cancelled before commit.".into())
+    } else {
+        Ok(())
+    }
+}
+
 fn cancel_folder_import(session: &mut Option<FolderImportSession>) {
     if let Some(active) = session.take().and_then(|previous| previous.active) {
         active.cancel();
@@ -208,7 +220,7 @@ fn cancel_folder_import(session: &mut Option<FolderImportSession>) {
 }
 
 struct FolderImportOperation<'a> {
-    store: &'a Storage,
+    sessions: &'a Mutex<Option<FolderImportSession>>,
     job: Arc<ImportJob>,
 }
 
@@ -220,7 +232,7 @@ impl FolderImportOperation<'_> {
 
 impl Drop for FolderImportOperation<'_> {
     fn drop(&mut self) {
-        if let Ok(mut session) = self.store.folder_import.lock() {
+        if let Ok(mut session) = self.sessions.lock() {
             if let Some(session) = session.as_mut() {
                 if session.active.as_ref().is_some_and(|active| Arc::ptr_eq(active, &self.job)) {
                     session.active = None;
@@ -797,7 +809,7 @@ impl Storage {
             open_checked_folder_excel(&path, &signature).map(|_| ())
         }));
         session.active = Some(job.clone());
-        Ok(FolderImportOperation { store:self, job })
+        Ok(FolderImportOperation { sessions: &self.folder_import, job })
     }
 
     pub fn checked_folder_import(&self, request: &FolderImportRequest) -> Result<(Rule, PathBuf, fs::File), String> {
@@ -1489,20 +1501,20 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "read_model_tests.rs"]
+#[path = "database/read_model_tests.rs"]
 mod read_model_tests;
 
 #[cfg(test)]
-#[path = "import_apply_tests.rs"]
+#[path = "import/import_apply_tests.rs"]
 mod import_apply_tests;
 
 #[cfg(test)]
-#[path = "import_wide_apply_tests.rs"]
+#[path = "import/import_wide_apply_tests.rs"]
 mod import_wide_apply_tests;
 #[cfg(test)]
-#[path = "analytics_tests.rs"]
+#[path = "analytics/tests/analytics_tests.rs"]
 mod analytics_tests;
 
 #[cfg(test)]
-#[path = "management_tests.rs"]
+#[path = "management/management_tests.rs"]
 mod management_tests;

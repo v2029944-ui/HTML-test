@@ -1,7 +1,7 @@
 # D2a bounded analysis API
 
 This additive backend is compiled by `storage-core` from production
-`src-tauri/src/analytics.rs`. No Tauri commands or frontend changes are included.
+`src-tauri/src/analytics/analytics.rs`. No Tauri commands or frontend changes are included.
 D1 `aggregate()` remains a raw-detail aggregate; use the `analysis_*` APIs below
 for report completeness, overlap exclusions, grouped metrics and changes.
 

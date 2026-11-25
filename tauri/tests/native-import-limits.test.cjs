@@ -8,8 +8,8 @@ const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 test('native import limits are visible before file choices and match bounded Rust limits',()=>{
  const html=read('tauri/native-workspace.html');
  const limits=read('tauri/import-core/src/lib.rs');
- const kinds=read('tauri/src-tauri/src/metric_reports.rs');
- const mapping=read('tauri/src-tauri/src/metric_xlsx.rs');
+ const kinds=read('tauri/src-tauri/src/reports/metric_reports.rs');
+ const mapping=read('tauri/src-tauri/src/reports/metric_xlsx.rs');
 
  assert.match(limits,/NATIVE_XLSX_ARCHIVE_LIMIT:\s*u64\s*=\s*100\s*\*\s*1024\s*\*\s*1024/);
  assert.match(limits,/archive_bytes:\s*NATIVE_XLSX_ARCHIVE_LIMIT/);
@@ -35,8 +35,8 @@ test('native import limits are visible before file choices and match bounded Rus
 });
 
 test('native limit failures give concrete Russian actions without reducing existing guardrails',()=>{
- const xlsx=read('tauri/src-tauri/src/metric_xlsx.rs');
- const json=read('tauri/src-tauri/src/metric_reports.rs');
+ const xlsx=read('tauri/src-tauri/src/reports/metric_xlsx.rs');
+ const json=read('tauri/src-tauri/src/reports/metric_reports.rs');
  for(const item of [
   [xlsx,/не более 30 МиБ.*уменьшите его размер/],
   [xlsx,/более 10 000 строк.*Уменьшите число строк/],
