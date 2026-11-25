@@ -118,7 +118,7 @@ async function history(entry,s,organization,target,trigger){
  panel.hidden=false;title.textContent=entry.name+(organization?' · '+organization:'');
  title.focus({preventScroll:true});panel.scrollIntoView?.({block:'nearest'});
  const task=loading(prefix+'History',[content.id]);
- try{const grouping=historyGrouping(s);const result=await api.nativeWorkTimeline(s.revision,s.type,s.from,s.to,s.organizations,organization,entry.key,null,grouping,s.selectedNames||[]);if(!task.valid())return;content.replaceChildren();content.append(UI.el('p','Динамика за '+caption(s)+'. Пропуски не считаются нулём. Данные представлены по периодам.','muted small'));plotTimeline(result,entry,grouping?{...s,displayType:grouping}:s,content,target==='change'?[...changeMetrics]:metrics());}
+ try{const grouping=historyGrouping(s);const result=await api.nativeWorkTimeline(s.revision,s.type,s.from,s.to,s.organizations,organization,entry.key,null,grouping,s.selectedNames||[]);if(!task.valid())return;content.replaceChildren();content.append(UI.el('p','Динамика за '+caption(s)+'. Пропуски не считаются нулём. Данные представлены по периодам.','muted small'));plotTimeline(result,entry,grouping?{...s,displayType:grouping}:s,content,target==='change'?[...changeMetrics]:(s.historyMetrics??metrics()));}
  catch(error){task.error(error);}finally{task.done();}
 }
 
@@ -352,6 +352,7 @@ async function departmentComparison(task,index){
  const unknown={count:null,amount:null,average:null};
  const byOrganization=new Map(organizations.map(row=>[row.org,row]));
  const totals=new Map(s.organizations.map(org=>[org,observed(byOrganization.get(org))??unknown]));
+ const historyScope={...s,historyMetrics:chosen};
  for(const metric of chosen){const raw=[],rows=[];
   const cells=(org,values)=>{
    const row=values.find(o=>o.org===org),base=values.find(o=>o.org===baseOrg);
@@ -361,7 +362,7 @@ async function departmentComparison(task,index){
   const make=(label,values)=>[label,...s.organizations.flatMap(org=>cells(org,values).map((n,i)=>i===0?fmt(n,metric):i===1?delta(n,metric):percent(n)))];
   const makeRaw=(label,values)=>[label,...s.organizations.flatMap(org=>cells(org,values))];
   rows.push(make('Итого по выбранным работам',organizations));raw.push(makeRaw('Итого по выбранным работам',organizations));
-  for(const item of perName){const button=workPage?itemButton(item.entry,s,null,'analytics',item.entry.name):itemButton(item.entry,s);
+  for(const item of perName){const button=workPage?itemButton(item.entry,historyScope,null,'analytics',item.entry.name):itemButton(item.entry,historyScope);
    rows.push(make(button,item.rows));raw.push(makeRaw(workPage?item.entry.name:entryLabel(item.entry),item.rows));}
   UI.table($('comparisonTable'),metric,caption(range),['Работа / группа',...s.organizations.flatMap(org=>org===baseOrg?[org]:[org,org+' · разница',org+' · %'])],rows,{csvRows:raw,csvContext:fullExport(task,request(s),'organizations',metric,{baseOrg})});
   const plot=UI.el('div',null,'metric-plot');$('comparisonCharts').append(UI.el('h3',titles[metric]+' · '+caption(range)),plot);
