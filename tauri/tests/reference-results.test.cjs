@@ -30,19 +30,31 @@ function fixture(overrides={}){
  const file=path.join(__dirname,'../reference-results.js');if(fs.existsSync(file))vm.runInNewContext(fs.readFileSync(file,'utf8'),{window,document,Intl,Number,Date,Set,Map,Promise,setTimeout,clearTimeout,console,Blob,TextEncoder,AbortController,URL:{createObjectURL:blob=>{downloads.push(blob);return 'blob:test';},revokeObjectURL(){}}});
  return {window,document,api,scope,s1,s2,calls,exports,notices,downloads,full,total};
 }
-test('summary presents observed partial totals separately from the comparable sample',async()=>{
+test('summary presents observed partial totals for all selected organizations',async()=>{
  const f=fixture();assert.ok(f.window.referenceResults,'SQL reference results controller must be present');
  const incomplete={...f.full,complete:false,missing:1,single_missing:{org:'B',start:'2024-01-02'},total:{count:null,amount:null,average:null},available_total:{count:7,amount:70,average:10}};
  f.api.nativeAnalysisCompare=async(...args)=>{f.calls.push(args);return {summary:{before:f.full,after:args[6].length===2?incomplete:f.full},divisions:args[6].map(organization=>({organization,before:f.total,after:organization==='B'?{count:null,amount:null,average:null}:f.total})),top_amount:[],top_count:[]};};
  f.api.nativeAnalysisOrganizations=async()=>[{org:'A',complete:true,missing:0,total:f.total},{org:'B',complete:false,missing:1,total:{count:null,amount:null,average:null}}];f.api.nativeAnalysisRange=async()=>incomplete;f.scope.organizations=['A','B'];
  f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);
- assert.match(f.s1.querySelector('.metric-value').textContent,/70/);assert.match(f.s1.querySelector('.quality-notice').textContent,/1 из 2/);assert.ok(f.calls.some(x=>x[6].length===1&&x[6][0]==='A'));assert.doesNotMatch(f.s1.textContent,/₽|ед\./);
+ assert.match(f.s1.querySelector('.metric-value').textContent,/70/);assert.match(f.s1.querySelector('.quality-notice').textContent,/1 из 2/);assert.equal(f.calls.length,1);assert.deepEqual([...f.calls[0][6]],['A','B']);assert.doesNotMatch(f.s1.textContent,/₽|ед\./);
  assert.match(f.s1.querySelector('.quality-notice').textContent,/B · 02\.01\.2024: нет пригодного отчёта/);
  assert.match(f.s1.querySelector('.report-range').textContent,/2 янв\. 2024/);
  for(const screen of [f.s1,f.s2]) assert.match(screen.querySelector('.report-range').children[1].textContent,/^Сравнение с /);
  await f.s1.querySelector('.metric-sample').click();const cells=f.document.querySelectorAll('.sample-values tbody tr');
- assert.deepEqual(cells.map(row=>row.children.map(c=>c.textContent)),[['Сумма','100,00','100,00'],['Количество / объём','10,000','10,000']]);
+ assert.deepEqual(cells.map(row=>row.children.map(c=>c.textContent)),[['Сумма','100,00','70,00'],['Количество / объём','10,000','7,000']]);
  incomplete.missing=2;await f.window.referenceResults.refresh(f.scope);assert.doesNotMatch(f.s1.querySelector('.quality-notice').textContent,/02\.01\.2024/);
+});
+test('summary cards and leaders compare available reports when every organization has gaps',async()=>{
+ const f=fixture();
+ const period=(amount,missing)=>({...f.full,complete:false,missing,total:{count:null,amount:null,average:null},available_total:{count:amount/10,amount,average:10}});
+ const amount={base:100,current:140,delta:40,percent:40};
+ f.api.nativeAnalysisCompare=async()=>({summary:{before:period(100,1),after:period(140,2),amount},
+  divisions:[{organization:'A',before:{count:null},after:{count:null}}],top_amount:[{name:'Ремонт',kind:'work',amount}],top_count:[]});
+ f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);
+ assert.match(f.s1.querySelector('.metric-delta').textContent,/\+40,00/);
+ assert.match(f.s1.querySelector('.insight-card').textContent,/Ремонт/);
+ const note=f.s1.querySelector('.quality-notice').textContent;
+ assert.match(note,/по доступным отчётам/);assert.match(note,/Пропусков: 3/);
 });
 test('summary keeps quantities and reports unavailable amounts in complete periods',async()=>{
  const f=fixture();
@@ -153,16 +165,16 @@ test('change table has one read-only metric and headings follow the active categ
  f.scope.metric='count';await f.window.referenceResults.refresh(f.scope);assert.equal(f.s2.querySelector('[data-current-change-metric]').textContent,'Количество / объём');
 });
 
-test('summary print distinguishes observed totals from the same comparable sample on both sides',async()=>{
+test('summary print uses the same observed comparison as the cards',async()=>{
  const f=fixture();f.scope.organizations=['A','B'];
  const partial={...f.full,complete:false,missing:1,available_total:{count:15,amount:150,average:10},total:{count:null,amount:null,average:null}};
- f.api.nativeAnalysisCompare=async(...args)=>({summary:{before:f.full,after:args[6].length===2?partial:f.full},divisions:args[6].map(organization=>({organization,before:f.total,after:organization==='B'?{count:null,amount:null,average:null}:f.total})),top_amount:[],top_count:[]});
+ f.api.nativeAnalysisCompare=async(...args)=>({summary:{before:f.full,after:partial,amount:{delta:50,percent:50}},divisions:args[6].map(organization=>({organization,before:f.total,after:organization==='B'?{count:null,amount:null,average:null}:f.total})),top_amount:[],top_count:[]});
  f.api.nativeAnalysisOrganizations=async()=>[{org:'A',complete:true,total:f.total},{org:'B',complete:false,total:{count:null,amount:null,average:null}}];f.api.nativeAnalysisRange=async()=>({...partial,available_total:{count:5,amount:50,average:10}});
  f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);
  let proof;f.window.print=()=>{const root=f.document.getElementById('referencePrintDocument');proof={text:root.textContent,comparison:root.querySelector('.print-comparison tbody').textContent,observed:root.querySelector('.print-observed tbody').textContent};};
  const anchor=f.s1.querySelectorAll('button').find(n=>n.textContent==='Печать / PDF');await anchor.click();
- assert.match(proof.text,/Область работ: Все работы/);assert.match(proof.text,/Сопоставимые подразделения: 1 из 2/);assert.match(proof.text,/Исключены из сравнения: B/);
- assert.match(proof.comparison,/100,00100,00/);assert.match(proof.observed,/150,00/);assert.equal(anchor.focused,true);
+ assert.match(proof.text,/Область работ: Все работы/);assert.match(proof.text,/Полные отчёты у 1 из 2/);assert.match(proof.text,/B: неполный анализируемый интервал/);
+ assert.match(proof.comparison,/100,00150,00\+50,00/);assert.match(proof.observed,/150,00/);assert.equal(anchor.focused,true);
 });
 
 test('same-revision summary and changes keep their own completed captions and rows during SQL, then clear explicitly on failure',async()=>{
@@ -181,7 +193,7 @@ test('same-revision summary and changes keep their own completed captions and ro
 });
 
 test('zero-base comparison prints confirmed zero without a negative sign and leaves percent unavailable',async()=>{
- const f=fixture();f.api.nativeAnalysisCompare=async()=>({summary:{before:{...f.full,total:{amount:-0,count:-0,average:null}},after:f.full,amount:{delta:100,percent:null},count:{delta:10,percent:null}},divisions:[{organization:'A',before:{amount:-0,count:-0,average:null},after:f.total}],top_amount:[],top_count:[]});
+ const f=fixture(),zero={amount:-0,count:-0,average:null};f.api.nativeAnalysisCompare=async()=>({summary:{before:{...f.full,total:zero,available_total:zero},after:f.full,amount:{delta:100,percent:null},count:{delta:10,percent:null}},divisions:[{organization:'A',before:zero,after:f.total}],top_amount:[],top_count:[]});
  f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);
  let rows;f.window.print=()=>{rows=f.document.getElementById('referencePrintDocument').querySelectorAll('.print-comparison tbody tr').map(row=>row.children.map(cell=>cell.textContent));};
  await f.s1.querySelectorAll('button').find(n=>n.textContent==='Печать / PDF').click();

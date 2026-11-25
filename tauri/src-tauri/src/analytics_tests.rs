@@ -1217,10 +1217,11 @@ fn comparison_dashboard_complete_partial_and_signed_changes() {
     let partial=store.analysis_comparison_dashboard(rev,&selected,&q).unwrap();
     assert!(partial.summary.before.complete);
     assert!(!partial.summary.after.complete);
-    assert!(partial.summary.amount.is_none());
-    assert!(partial.summary.count.is_none());
-    assert!(partial.top_amount.is_empty());
-    assert!(partial.top_count.is_empty());
+    for measure in [&partial.summary.amount, &partial.summary.count] {
+        assert!(measure.is_some());
+    }
+    assert!(!partial.top_amount.is_empty());
+    assert!(!partial.top_count.is_empty());
     let a=&partial.divisions[0];
     assert_eq!(a.organization,"A");
     assert_eq!(a.amount.as_ref().unwrap().delta,-59.);

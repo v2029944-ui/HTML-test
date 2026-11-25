@@ -93,6 +93,11 @@ pub struct RangeSummary {
     pub overlap_issues: i64,
     pub import_warning_reports: i64,
 }
+impl RangeSummary {
+    fn comparison_amount(&self) -> Option<f64> {
+        self.available_total.amount.filter(|_| !self.amount_missing_rows)
+    }
+}
 #[derive(Debug, Serialize)]
 pub struct AnalysisNameOption {
     pub name: String,
@@ -2448,9 +2453,8 @@ impl Storage {
         })
     }
     /// One bounded, revision-consistent comparison of two exact date ranges.
-    /// Returns no work rankings when either selected range is incomplete;
-    /// division comparisons are independently hidden when their own history
-    /// is incomplete. All aggregation occurs in SQLite.
+    /// Totals and work rankings compare observed reports in both ranges.
+    /// Division coverage remains available for the diagnostics.
     pub fn analysis_comparison_dashboard(
         &self,
         expected: i64,
@@ -2463,13 +2467,13 @@ impl Storage {
         let (before_complete, after_complete) = comparison(&tx, s, q, None)?;
         let before = range_summary(&tx, s, 1)?;
         let after = range_summary(&tx, s, 2)?;
-        let count = if let (Some(b), Some(a)) = (before.total.count, after.total.count) {
+        let count = if let (Some(b), Some(a)) = (before.available_total.count, after.available_total.count) {
             Some(measure(b, a, q.min_count, q.percent)?)
         } else { None };
-        let amount = if let (Some(b), Some(a)) = (before.total.amount, after.total.amount) {
+        let amount = if let (Some(b), Some(a)) = (before.comparison_amount(), after.comparison_amount()) {
             Some(measure(b, a, q.min_amount, q.percent)?)
         } else { None };
-        let average = average_change(before.total.average, after.total.average, q.percent)?;
+        let average = average_change(before.available_total.average, after.available_total.average, q.percent)?;
         let summary = ComparisonSummary {
             before, after,
             values: count_sql(&tx, "SELECT COUNT(*) FROM temp.an_comparison")?,
@@ -2510,7 +2514,7 @@ impl Storage {
         drop(stmt);
         let mut top_amount=Vec::new();
         let mut top_count=Vec::new();
-        if before_complete && after_complete {
+        if summary.before.available_reports > 0 && summary.after.available_reports > 0 {
             for metric in ["amount","count"] {
                 let sql = "SELECT key,name,kind,bc,ba,cc,ca FROM temp.an_comparison
                     WHERE ?1='count' OR (ba IS NOT NULL AND ca IS NOT NULL)
@@ -2519,7 +2523,10 @@ impl Storage {
                 let mut ranking = tx.prepare(sql).map_err(err)?;
                 let mut values=ranking.query([metric]).map_err(err)?;
                 while let Some(row)=values.next().map_err(err)? {
-                    let item=comparison_value(row,q,true,true)?;
+                    let mut item=comparison_value(row,q,true,true)?;
+                    if !(before_complete && after_complete) {
+                        item.status = None;
+                    }
                     if metric=="amount" {top_amount.push(item);}
                     else {top_count.push(item);}
                 }

@@ -69,6 +69,9 @@ fn partial_date_ranges_compare_loaded_reports_in_tables_and_csv() {
         assert_eq!((work.before, work.after, work.delta, work.percent), (Some(20.), Some(30.), Some(10.), Some(50.)), "{label}");
         let query = ComparisonQuery { before:q.baseline(), after:q.current(), percent:0., min_count:0., min_amount:0. };
         store.reference_scope(&q, |scope| {
+            let dashboard = store.analysis_comparison_dashboard(revision, scope, &query)?;
+            assert_eq!(dashboard.summary.amount.as_ref().map(|value| value.delta), Some(10.), "{label}");
+            assert_eq!(dashboard.top_amount[0].amount.as_ref().map(|value| value.delta), Some(10.), "{label}");
             let window = store.analysis_comparison_window(revision, scope, &query, None, 0, 50)?;
             assert_eq!(window.rows[0].amount.as_ref().map(|value| value.delta), Some(10.), "{label}");
             let options = serde_json::from_value(json!({"section":"comparison","metric":"amount","before":{"from":q.base_from,"to":q.base_to}})).unwrap();
@@ -495,14 +498,16 @@ fn comparable_sample_and_totals_match_overview_changes_comparison_and_exports() 
             assert!(csv.contains("\"Сопоставимые подразделения\";\"3\";\"4\";\"A, B, Empty\""),"CSV must declare the exact common sample: {csv}");
             let reason=if missing_base&&missing_current{"неполные базовый и анализируемый интервалы"}else if missing_base{"неполный базовый интервал"}else{"неполный анализируемый интервал"};
             assert!(csv.contains(&format!("\"Состав сравнения\";\"D\";\"{reason}\"")));
-            assert!(csv.contains(if zero_base{"\"Сумма\";\"0\";\"210\";\"210\";\"\""}else{"\"Сумма\";\"90\";\"210\";\"120\";"}));
+            let total_before = before + if zero_base { 0. } else { 90. };
+            let total_after = after + 210.;
+            assert!(csv.contains(&format!("\"Сумма\";\"{total_before}\";\"{total_after}\";\"{}\";",total_after-total_before)), "{csv}");
         }
         assert_eq!(store.revision().unwrap(),revision);
     }
 }
 
 #[test]
-fn no_common_sample_exports_unknown_comparison_totals_instead_of_zero() {
+fn disjoint_organizations_keep_aggregate_comparison_without_per_organization_deltas() {
     let dir=tempdir().unwrap();let store=Storage::new(dir.path().into()).unwrap();
     let revision=prepare(&store,vec![json!({"id":"base","type":"day","start":"2024-01-01","end":"2024-01-01","organizations":["A","B"],"rows":[row("A","Work",1.,10.),row("B","Work",2.,20.)]}),json!({"id":"current","type":"day","start":"2024-01-10","end":"2024-01-10","organizations":["Empty","D"],"rows":[row("Empty","Work",3.,30.),row("D","Work",4.,40.)]})]);
     let mut q=request(revision);q.to=q.from.clone();q.organizations=vec!["A".into(),"B".into(),"Empty".into(),"D".into()];
@@ -510,7 +515,7 @@ fn no_common_sample_exports_unknown_comparison_totals_instead_of_zero() {
     assert!(result.rows.iter().all(|row| row.delta.is_none() && row.before.is_some()!=row.after.is_some()));
     for (summary,file) in [(true,"summary.csv"),(false,"changes.csv")] {
         let path=dir.path().join(file);if summary{store.reference_summary_csv(&q,&path).unwrap();}else{store.reference_changes_csv(&q,&path).unwrap();}
-        let csv=fs::read_to_string(path).unwrap();assert!(csv.contains("\"Сопоставимые подразделения\";\"0\";\"4\";\"\""));assert!(csv.contains("\"Сумма\";\"\";\"\";\"\";\"\""));
+        let csv=fs::read_to_string(path).unwrap();assert!(csv.contains("\"Сопоставимые подразделения\";\"0\";\"4\";\"\""));assert!(csv.contains("\"Сумма\";\"30\";\"70\";\"40\";"));
     }
 }
 

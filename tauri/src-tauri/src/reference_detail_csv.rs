@@ -475,7 +475,7 @@ fn write_comparison(
     };
     if value(&before.available_total,metric).is_some() || value(&after.available_total,metric).is_some() {
         let comparable = |period: &RangeSummary| {
-            if metric == "amount" && period.amount_missing_rows { None } else { value(&period.available_total,metric) }
+            if metric == "amount" { period.comparison_amount() } else { value(&period.available_total,metric) }
         };
         emit("Итого по выбранным работам", &before.available_total, &after.available_total, comparable(&before), comparable(&after))?;
     }

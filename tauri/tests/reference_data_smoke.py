@@ -409,7 +409,7 @@ def check_reference_data(page, output):
             assert len({tuple(row[:2]) for row in rows}) == len(rows), frame
             if screen == '#s2':
                 assert 'Строк: ' + str(total_rows) + ' ·' in frame['context'], frame
-            assert len(frame['comparison']) == (3 if comparable else 0), frame
+            assert len(frame['comparison']) == (3 if comparable or scenario == 'partial' else 0), frame
             assert f'Сопоставимые подразделения: {comparable} из 4' in frame['context'], frame
             assert 'Область работ: Все работы' in frame['context'], frame
             if expected_values is not None:
@@ -589,11 +589,13 @@ def check_reference_data(page, output):
             assert (current['from'], current['to'], current['baseFrom'], current['baseTo']) == (
                 '2024-12-31', '2025-01-01', '2023-12-31', '2024-01-01'), current
             summary(20, 2)
-            reason = 'Ни у одного выбранного подразделения нет пригодных отчётов за весь базовый и анализируемый интервалы.'
+            reason = 'Сравнение по доступным отчётам'
             expect(page.locator('#s1 .quality-notice')).to_contain_text(reason)
+            expect(page.locator('#s1 .metric-delta').first).to_contain_text('Без изменений')
             frame = print_view('#s1', comparable=0, scenario='partial')
             assert all(text in frame['context'] for text in (
                 reason, 'База: пропусков отчётов — 4', 'Анализ: пропусков отчётов — 4')), frame
+            assert [_number(n) for n in frame['comparison'][0][1:5]] == [20, 20, 0, 0], frame
             csv_export('referenceSummaryCsv', scratch / 'partial-summary.csv', coverage='partial')
             navigate('Анализ изменений')
             expect(page.locator('#s2 .table-empty')).to_contain_text('Значимых изменений нет')
