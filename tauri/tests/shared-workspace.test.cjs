@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const script=name=>fs.readFileSync(path.join(__dirname,'..',name+'.js'),'utf8');
 const personal={mode:'personal',folder:null,generation:null,available:true,error:null,pending:false,workspace_token:'private'};
-const team={...personal,mode:'shared',folder:'fixture/team',generation:0,workspace_token:'team-0'};
+const team={...personal,mode:'shared',folder:'fixture/team',generation:0,workspace_token:'team-0',retention_enabled:false,retention_limit:3};
 
 function fixture(initial=personal) {
   const calls=[],refreshes=[],nodes=new Map(),handlers=new Map(),timers=new Map(),timerIds={value:0};
@@ -32,6 +32,10 @@ function fixture(initial=personal) {
     if(name==='shared_workspace_reset_apply'){
       assert.equal(args.workspaceToken,scenario.server.workspace_token);
       return scenario.server={...team,generation:4,workspace_token:'reset-4'};
+    }
+    if(name==='shared_workspace_set_snapshot_retention'){
+      assert.equal(args.workspaceToken,scenario.server.workspace_token);
+      return scenario.server={...scenario.server,retention_enabled:args.enabled};
     }
     if(name==='shared_workspace_transfer_preview'){
       assert.equal(args.workspaceToken,scenario.server.workspace_token);
@@ -132,6 +136,23 @@ test('reset confirms the exact share and missing generation without touching per
     await blocked.click('sharedWorkspaceReset');
     assert.equal(blocked.calls.length,1);
   }
+});
+
+test('snapshot retention confirms the shared folder and limit before enabling automatic deletion',async()=>{
+  const f=fixture(team);await f.window.sharedWorkspace.init();
+  const button=f.node('sharedSnapshotRetention');
+  assert.equal(button.hidden,false);
+  await f.click('sharedSnapshotRetention');
+  assert.match(f.scenario.confirmation,/fixture\/team/);
+  assert.match(f.scenario.confirmation,/до 3 последних снимков/);
+  assert.match(f.scenario.confirmation,/обновите приложение на всех компьютерах/i);
+  assert.equal(f.calls.filter(call=>call.name==='shared_workspace_set_snapshot_retention').length,0);
+  f.scenario.accept=true;await f.click('sharedSnapshotRetention');
+  assert.equal(f.window.sharedWorkspace.state.retention_enabled,true);
+  assert.match(button.textContent,/Выключить/);
+  assert.match(f.node('sharedSnapshotRetentionStatus').textContent,/до 3 снимков/);
+  await f.click('sharedSnapshotRetention');
+  assert.equal(f.window.sharedWorkspace.state.retention_enabled,false);
 });
 
 test('a registered offline share can be replaced on the first selection without invoking its old lease',async()=>{

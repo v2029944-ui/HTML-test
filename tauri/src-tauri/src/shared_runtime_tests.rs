@@ -89,6 +89,54 @@ fn other_client_publication_invalidates_selection_and_sync_pulls_latest() {
 }
 
 #[test]
+fn enabled_retention_keeps_three_snapshots_and_delayed_client_can_sync() {
+    let (_a, writer) = runtime_fixture();
+    let (reader_root, reader) = runtime_fixture();
+    let folder = tempfile::tempdir().unwrap();
+    let team = connect(&writer, folder.path());
+    let write = |number| writer.execute(Some(&team.workspace_token), Access::Write, |store| {
+        store.save(data(&format!("report-{number}")))
+    }).unwrap();
+    write(1);
+    assert_eq!(connect(&reader, folder.path()).generation, Some(1));
+    let snapshots = || fs::read_dir(folder.path()).unwrap().flatten().filter(|entry| {
+        entry.file_name().to_string_lossy().ends_with(".snapshot")
+    }).count();
+    for number in 2..=8 { write(number); }
+    assert_eq!(snapshots(), 8, "retention starts disabled");
+    assert!(writer.set_snapshot_retention("stale", true).is_err());
+    assert_eq!(snapshots(), 8);
+    let enabled = writer.set_snapshot_retention(&team.workspace_token, true).unwrap();
+    assert!(enabled.retention_enabled);
+    assert_eq!(enabled.retention_limit, 3);
+    assert_eq!(snapshots(), 3);
+    write(9);
+    assert_eq!(snapshots(), 3);
+    assert!(!folder.path().join("analiz-generation-00000000000000000001.snapshot").exists());
+    drop(reader);
+    let reader = Runtime::new(reader_root.path().to_owned()).unwrap();
+    let fresh = reader.sync().unwrap();
+    assert!(fresh.available, "{:?}", fresh.error);
+    assert_eq!(fresh.generation, Some(9));
+    assert_eq!(read(&reader, &fresh.workspace_token)["reports"][0]["id"], "report-9");
+    let history = folder.path().join(".analiz-retention-v1.bin");
+    let history_bytes = fs::read(&history).unwrap();
+    fs::write(&history, b"corrupt").unwrap();
+    write(10);
+    let status = writer.status().unwrap();
+    assert_eq!(status.generation, Some(10));
+    assert!(status.available && !status.pending && status.retention_warning.is_some());
+    assert_eq!(snapshots(), 4);
+    fs::write(&history, history_bytes).unwrap();
+    write(11);
+    assert!(writer.status().unwrap().retention_warning.is_none());
+    assert_eq!(snapshots(), 3);
+    assert!(!writer.set_snapshot_retention(&team.workspace_token, false).unwrap().retention_enabled);
+    write(12);
+    assert_eq!(snapshots(), 4, "turning retention off preserves further snapshots");
+}
+
+#[test]
 fn explicit_reset_preserves_prior_snapshots_and_the_other_clients_personal_data() {
     let (_a, writer) = runtime_fixture();
     let (reader_root, reader) = runtime_fixture();
