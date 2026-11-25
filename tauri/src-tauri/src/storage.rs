@@ -188,9 +188,34 @@ struct FolderImportSession {
     active: Option<Arc<ImportJob>>,
 }
 
-pub struct FolderImportOperation<'a> {
+// The window can cancel the selected import without taking the database lock.
+pub(super) struct FolderImportCancellation(Arc<Mutex<Option<FolderImportSession>>>);
+
+impl FolderImportCancellation {
+    pub(super) fn close_window(&self, owner: &str) {
+        if let Ok(mut session) = self.0.lock() {
+            if session.as_ref().is_some_and(|current| current.owner == owner) {
+                cancel_folder_import(&mut session);
+            }
+        }
+    }
+}
+
+fn cancel_folder_import(session: &mut Option<FolderImportSession>) {
+    if let Some(active) = session.take().and_then(|previous| previous.active) {
+        active.cancel();
+    }
+}
+
+struct FolderImportOperation<'a> {
     store: &'a Storage,
-    pub job: Arc<ImportJob>,
+    job: Arc<ImportJob>,
+}
+
+impl FolderImportOperation<'_> {
+    fn run<T>(self, action: impl FnOnce(&ImportJob) -> Result<T, String>) -> Result<T, String> {
+        action(&self.job)
+    }
 }
 
 impl Drop for FolderImportOperation<'_> {
@@ -723,21 +748,40 @@ impl Storage {
         read_model::revision(&conn)
     }
 
+    pub(super) fn folder_import_cancellation(&self) -> FolderImportCancellation {
+        FolderImportCancellation(Arc::clone(&self.folder_import))
+    }
+
+    pub(super) fn inherit_folder_import(&mut self, source: &Self) {
+        self.folder_import = Arc::clone(&source.folder_import);
+        self.folder_import_serial.store(
+            source.folder_import_serial.load(Ordering::SeqCst),
+            Ordering::SeqCst,
+        );
+    }
+
+    pub fn with_folder_import<T>(
+        &self,
+        owner: &str,
+        request: &FolderImportRequest,
+        action: impl FnOnce(&ImportJob) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.begin_folder_import(owner, request)?.run(action)
+    }
+
     pub fn set_folder_import_session(&self, owner: &str, enabled: bool) -> Result<Option<String>, String> {
         let mut session = self.folder_import.lock().map_err(err)?;
         if session.as_ref().is_some_and(|current| current.owner != owner) {
             return Err("Auto import is controlled by another window.".into());
         }
-        if let Some(previous) = session.take() {
-            if let Some(active) = previous.active { active.cancel(); }
-        }
+        cancel_folder_import(&mut session);
         if !enabled { return Ok(None); }
         let token = self.folder_import_serial.fetch_add(1, Ordering::Relaxed).to_string();
         *session = Some(FolderImportSession { token:token.clone(), owner:owner.into(), active:None });
         Ok(Some(token))
     }
 
-    pub fn begin_folder_import(&self, owner: &str, request: &FolderImportRequest) -> Result<FolderImportOperation<'_>, String> {
+    fn begin_folder_import(&self, owner: &str, request: &FolderImportRequest) -> Result<FolderImportOperation<'_>, String> {
         if !safe_excel_name(&request.name) || request.folder.is_empty() || request.folder.len() > 32767
             || request.revision < 0 || request.signature.is_empty() || request.signature.len() > 256
         {

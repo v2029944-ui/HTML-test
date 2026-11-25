@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Mutex,
     },
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -64,7 +64,7 @@ struct State {
 }
 pub struct Runtime {
     root: PathBuf,
-    sessions: Mutex<Arc<Mutex<Option<super::FolderImportSession>>>>,
+    sessions: Mutex<super::FolderImportCancellation>,
     state: Mutex<State>,
 }
 fn token() -> String {
@@ -118,7 +118,7 @@ impl Runtime {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Selection::default(),
             Err(e) => return Err(err(e)),
         };
-        let sessions = Mutex::new(Arc::clone(&personal.folder_import));
+        let sessions = Mutex::new(personal.folder_import_cancellation());
         let runtime = Self {
             root,
             sessions,
@@ -254,7 +254,7 @@ impl Runtime {
         if let Some(config) = &state.selection.config {
             checkout.storage.install_local_config(config)?;
         }
-        *self.sessions.lock().map_err(err)? = Arc::clone(&checkout.storage.folder_import);
+        *self.sessions.lock().map_err(err)? = checkout.storage.folder_import_cancellation();
         state.checkout = Some(checkout);
         state.available = true;
         state.error = None;
@@ -342,7 +342,7 @@ impl Runtime {
         self.save_selection(&selection)?;
         state.grants.remove(grant);
         state.selection = selection;
-        *self.sessions.lock().map_err(err)? = Arc::clone(&checkout.storage.folder_import);
+        *self.sessions.lock().map_err(err)? = checkout.storage.folder_import_cancellation();
         state.checkout = Some(checkout);
         state.available = true;
         state.error = None;
@@ -359,7 +359,7 @@ impl Runtime {
         }
         self.save_selection(&Selection::default())?;
         state.selection = Selection::default();
-        *self.sessions.lock().map_err(err)? = Arc::clone(&state.personal.folder_import);
+        *self.sessions.lock().map_err(err)? = state.personal.folder_import_cancellation();
         state.checkout = None;
         state.available = true;
         state.error = None;
@@ -520,7 +520,7 @@ impl Runtime {
         }
         if let Some(mut candidate) = pending.candidate.take() {
             candidate.confirm_publication(generation, pending.publication.as_ref().unwrap())?;
-            *self.sessions.lock().map_err(err)? = Arc::clone(&candidate.storage.folder_import);
+            *self.sessions.lock().map_err(err)? = candidate.storage.folder_import_cancellation();
             state.checkout = Some(candidate);
         } else {
             self.pull(state)?;
@@ -573,11 +573,7 @@ impl Runtime {
         }
         let checkout = state.checkout.as_ref().ok_or("Общая база недоступна.")?;
         let mut candidate = checkout.fork(&self.cache_dir(&state)?)?;
-        candidate.storage.folder_import = Arc::clone(&checkout.storage.folder_import);
-        candidate.storage.folder_import_serial.store(
-            checkout.storage.folder_import_serial.load(Ordering::SeqCst),
-            Ordering::SeqCst,
-        );
+        candidate.storage.inherit_folder_import(&checkout.storage);
         let value = action(&candidate.storage)?;
         state.selection.config = Some(candidate.storage.local_config()?);
         self.save_selection(&state.selection)?;
@@ -682,18 +678,7 @@ impl Runtime {
         // Cancellation is independent of the data lock: an import may hold that
         // lock while waiting for SQLite or parsing a large workbook.
         if let Ok(sessions) = self.sessions.lock() {
-            if let Ok(mut session) = sessions.lock() {
-                if session
-                    .as_ref()
-                    .is_some_and(|current| current.owner == owner)
-                {
-                    if let Some(previous) = session.take() {
-                        if let Some(active) = previous.active {
-                            active.cancel();
-                        }
-                    }
-                }
-            }
+            sessions.close_window(owner);
         }
     }
 }
