@@ -2,8 +2,8 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 class Node{
  constructor(tag='div',text=''){this.tagName=tag;this.textContent=text??'';this.children=[];this.events={};this.value='';this.dataset={};this.open=false;this.disabled=false;}
- append(...nodes){for(const n of nodes){n.parentNode=this;this.children.push(n);}}
- insertBefore(node,before){node.parentNode=this;const i=this.children.indexOf(before);if(i<0)this.children.push(node);else this.children.splice(i,0,node);}
+ append(...nodes){for(const n of nodes){if(n.parentNode)n.parentNode.children=n.parentNode.children.filter(child=>child!==n);n.parentNode=this;this.children.push(n);}}
+ insertBefore(node,before){if(node.parentNode)node.parentNode.children=node.parentNode.children.filter(child=>child!==node);node.parentNode=this;const i=this.children.indexOf(before);if(i<0)this.children.push(node);else this.children.splice(i,0,node);}
  replaceChildren(...nodes){this.children=[];this.append(...nodes);}
  addEventListener(type,fn){this.events[type]=fn;}
  querySelectorAll(tag){return this.children.flatMap(n=>[...(n.tagName===tag?[n]:[]),...n.querySelectorAll(tag)]);}
@@ -14,17 +14,20 @@ class Node{
  remove(){if(this.parentNode)this.parentNode.children=this.parentNode.children.filter(n=>n!==this);this.parentNode=null;this.isConnected=false;}
  focus(){this.focused=true;}
  select(){this.selected=true;}
- fire(type='click'){return this.events[type]?.({preventDefault(){}});}
+ fire(type='click',event={}){return this.events[type]?.({preventDefault(){},stopPropagation(){},...event});}
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 function mount(){
  const html=fs.readFileSync(path.resolve(__dirname,'../../index.html'),'utf8'),nodes={};for(const [,id]of html.matchAll(/id="([^"]+)"/g))nodes[id]=new Node();
- const body=new Node(),groupsParent=new Node(),backupPanel=new Node(),backupActions=new Node(),backupLabel=new Node();body.append(groupsParent,backupPanel);groupsParent.append(nodes.groupList);backupPanel.append(backupActions);backupActions.append(backupLabel);backupLabel.append(nodes.importBackup);
+ const body=new Node(),groupsParent=new Node(),backupPanel=new Node(),backupActions=new Node(),backupLabel=new Node();body.append(groupsParent,backupPanel);groupsParent.append(nodes.groupList,nodes.groupSearchCount,nodes.groupCoverage,nodes.groupEditor,nodes.groupAuditPanel);
+ const editListParent=new Node(),editSearchParent=new Node(),auditFilters=new Node(),auditSearchLabel=new Node('label'),searchLabel=new Node('label');
+ nodes.groupEditor.append(editSearchParent,editListParent);editSearchParent.append(searchLabel);nodes.workSearch.tagName='input';searchLabel.append(nodes.workSearch);editListParent.append(nodes.worksList);
+ nodes.groupAuditPanel.append(auditFilters,nodes.groupAuditResults);auditFilters.append(auditSearchLabel);auditSearchLabel.append(nodes.groupAuditSearch);backupPanel.append(backupActions);backupActions.append(backupLabel);backupLabel.append(nodes.importBackup);
  const reads=[],writes=[],messages=[],questions=[],pickers=[],snapshots=[],views={},scopes=[];let confirm=true,prompt=null,backup=null,source=null,handler=null;
  const api={unifiedManagementPage:async(...args)=>{reads.push(args);if(handler)return handler(...args);const kind=args[1];return {rows:kind==='works'?[{name:'Работа '+args[4],group:'g1'}]:kind==='groups'?[{handle:'g1',id:'group-1',name:'Группа',members:1}]:kind==='members'?[{name:'Работа 0',group:'g1'}]:[],total:kind==='works'?101:1,grouped:1,ungrouped:100};},
   unifiedGroupSave:async(...args)=>{writes.push(['save',...args]);return {revision:8};},unifiedWorkAssign:async(...args)=>{writes.push(['assign',...args]);return {revision:8};},nativeSettingsEdit:async(...args)=>{writes.push(['settings',...args]);return {revision:8};},nativeGroupRename:async(...args)=>{writes.push(['rename',...args]);return {revision:8};},
   chooseSqliteBackupPath:async()=>{pickers.push('backup');return backup;},unifiedClearReports:async(...args)=>{writes.push(['clear',...args]);return {revision:8};},unifiedRenameOrganizations:async(...args)=>{writes.push(['org',...args]);return {revision:8};},chooseGroupsImport:async()=>source,unifiedGroupsPreview:async()=>({hash:'hash',groups:2,works:3}),unifiedGroupsImport:async(...args)=>{writes.push(['import',...args]);return {revision:8};},chooseXlsx:async()=>source,unifiedCatalogPreview:async()=>({hash:'catalog-hash',catalog:3}),unifiedCatalogApply:async(...args)=>{writes.push(['catalog',...args]);return {revision:8};},chooseRestoreBackupPath:async()=>source,nativeRestorePreview:async()=>({verification:'a'.repeat(64),reportCount:2}),chooseRestoreDestination:async()=>{pickers.push('restore');return backup;},nativeRestoreCopy:async(...args)=>{writes.push(['copy',...args]);return {verification:'a'.repeat(64),reportCount:2};},nativeRestoreSchedule:async(...args)=>{writes.push(['schedule',...args]);return {restartRequired:true,reportCount:2};},nativeRestoreCancel:async()=>{writes.push(['cancel']);return true;},nativeBackupSqlite:async(...args)=>{writes.push(['backup',...args]);return 7;}};
- const UI={api,$:id=>nodes[id],el:(tag,text)=>new Node(tag,text),revision:null,state:{reports:[],settings:{orgNames:['А','Б','В','Г']}},notice:(...x)=>messages.push(x),onSnapshot:fn=>snapshots.push(fn),onView:(view,fn)=>views[view]=fn,onScope:fn=>scopes.push(fn),setPeriodInput:(id,kind,date)=>{nodes[id].value=date;},range:(kind,from,to,source)=>({displayType:kind,from,to,source}),scope:{revision:7,displayType:'day',source:'daily',organizations:['А'],selectedNames:['Only selected'],from:'2024-01-01',to:'2024-01-31'},request:scope=>scope,refresh:async()=>snapshot(8)};
+ const UI={api,$:id=>nodes[id],el:(tag,text,cls)=>Object.assign(new Node(tag,text),{className:cls}),revision:null,state:{reports:[],settings:{orgNames:['А','Б','В','Г']}},notice:(...x)=>messages.push(x),onSnapshot:fn=>snapshots.push(fn),onView:(view,fn)=>views[view]=fn,onScope:fn=>scopes.push(fn),setPeriodInput:(id,kind,date)=>{nodes[id].value=date;},range:(kind,from,to,source)=>({displayType:kind,from,to,source}),scope:{revision:7,displayType:'day',source:'daily',organizations:['А'],selectedNames:['Only selected'],from:'2024-01-01',to:'2024-01-31'},request:scope=>scope,refresh:async()=>snapshot(8)};
  const sharedWorkspace={state:{mode:'personal',workspace_token:'personal',available:true,pending:false}};
  const window={sharedWorkspace,sqlRowScroll:require('./scroll-window-fixture.cjs'),unifiedUI:UI,confirm:text=>{questions.push(text);return confirm;},prompt:(...args)=>{questions.push(args[0]);return prompt;},crypto:{randomUUID:()=> 'new-id'}};
  function snapshot(revision,reports=12){UI.revision=revision;UI.snapshot={revision,reports};for(const fn of snapshots)fn(UI.snapshot);}
@@ -82,19 +85,136 @@ test('catalog committed before refresh failure stays saved and requires refreshi
 });
 test('selected works survive pages and search and save through one atomic API',async()=>{const m=mount();m.snapshot(7);m.views.groups();await tick();const check=m.nodes.worksList.children[1].children[0];check.checked=true;await check.fire('change');await m.nodes.worksList.scrollWindow.go(1);const other=m.nodes.worksList.children[1].children[0];other.checked=true;await other.fire('change');m.nodes.workSearch.value='unknown';await m.nodes.workSearch.fire('input');m.nodes.groupName.value='Новая';await m.nodes.saveGroup.fire();assert.deepEqual(JSON.parse(JSON.stringify(m.writes)),[['save',7,null,'new-id','Новая',['Работа 0','Работа 50']]]);});
 test('deferred stale pages cannot resurrect rows after snapshot invalidation',async()=>{const m=mount();let resolve;m.setHandler((r,kind)=>kind==='works'?new Promise(done=>resolve=done):({rows:[],total:0}));m.snapshot(7);m.views.groups();await tick();m.snapshot(null);resolve({rows:[{name:'stale'}],total:1});await tick();assert.equal(m.nodes.worksList.children.length,0);assert.equal(m.nodes.workNext.disabled,true);});
-test('moving a member uses a single server assignment; stale member actions cannot write',async()=>{const m=mount();m.snapshot(7);m.views.groups();await tick();const group=m.nodes.groupList.children[0];group.open=true;await group.fire('toggle');await tick();const memberContainer=group.children[2].children[1],row=memberContainer.children[0],select=row.querySelectorAll('select')[0];select.value='';await select.fire('change');assert.deepEqual(m.writes[0],['assign',7,'Работа 0',null]);await select.fire('change');assert.equal(m.writes.length,1);});
-test('member destination chooser jumps directly with unchanged selection and filter',async()=>{
+test('moving a member uses the Group picker and cannot assign from a stale dialog',async()=>{
+ const m=mount();m.snapshot(7);m.views.groups();await tick();const group=m.nodes.groupList.children[0];group.open=true;await group.fire('toggle');await tick();
+ const assignment=actionByText(group.children[2],'Группа');
+ const opening=assignment.fire();await tick();
+ const picker=m.body.querySelectorAll('dialog').find(n=>n.id==='groupPickerDialog');
+ assert.equal(picker.open,true);
+ await actionByText(picker,'Без группы').fire();await opening;
+ assert.deepEqual(m.writes[0],['assign',7,'Работа 0',null]);
+ await assignment.fire();assert.equal(m.writes.length,1);
+});
+test('group picker returns focus on Escape and selecting the current group does not write',async()=>{
+ const m=mount();m.snapshot(7);m.views.groups();await tick();
+ const group=m.nodes.groupList.children[0];group.open=true;await group.fire('toggle');
+ const assignment=actionByText(group.children[2],'Группа');
+ for(const action of ['cancel','escape','current']){
+  assignment.focused=false;
+  const opening=assignment.fire();await tick();
+  const picker=m.body.querySelectorAll('dialog').find(n=>n.id==='groupPickerDialog');
+  assert.equal(picker.querySelectorAll('input')[0].focused,true);
+  if(action==='cancel')await picker.fire('cancel');
+  else if(action==='escape')await picker.fire('keydown',{key:'Escape'});
+  else await actionByText(picker,'Группа').fire();
+  await opening;
+  assert.equal(assignment.focused,true);
+  assert.equal(m.writes.length,0);
+ }
+});
+test('confirmed group move focuses the refreshed group or the group search if it disappeared',async()=>{
+ for(const survives of [true,false]){
+  const m=mount();m.snapshot(7);m.views.groups();await tick();
+  const group=m.nodes.groupList.children[0];group.open=true;await group.fire('toggle');
+  const assignment=actionByText(group.children[2],'Группа'),refresh=m.UI.refresh;
+  m.UI.refresh=async()=>{
+   assignment.isConnected=false;
+   if(!survives)m.setHandler(()=>({rows:[],total:0,grouped:0}));
+   await refresh();
+  };
+  const opening=assignment.fire();await tick();
+  const picker=m.body.querySelectorAll('dialog').find(n=>n.id==='groupPickerDialog');
+  await actionByText(picker,'Без группы').fire();await opening;
+  assert.equal(m.writes.length,1);
+  if(survives)assert.equal(m.nodes.groupList.children[0].children[0].focused,true);
+  else assert.equal(m.nodes.groupSearch.focused,true);
+ }
+});
+test('expanded members load every bounded SQLite page without per-member reads or pagination',async()=>{
+ const m=mount();
+ m.setHandler((_rev,kind,_query,_group,offset,limit)=>{
+  if(kind==='groups')return {total:1,rows:[{name:'Group',handle:'g0',id:'id0',members:101}]};
+  if(kind==='members')return {total:101,rows:Array.from({length:Math.min(101-offset,limit)},(_,i)=>({name:'Work '+(offset+i),group:'g0'}))};
+  return {total:210,grouped:101,ungrouped:109,rows:[{name:'Work 0'}]};
+ });
+ m.snapshot(7);m.views.groups();await tick();
+ assert.equal(m.nodes.groupSearchCount.parentNode,m.nodes.groupCoverage.parentNode);
+ assert.equal(m.nodes.groupSearchCount.className,m.nodes.groupCoverage.className);
+ assert.match(m.nodes.groupCoverage.textContent,/101/);
+ const group=m.nodes.groupList.children[0],members=group.children[2],before=m.reads.length;
+ group.open=true;await group.fire('toggle');await tick();
+ assert.deepEqual(m.reads.slice(before),[[7,'members','','g0',0,50],[7,'members','','g0',50,50],[7,'members','','g0',100,50]]);
+ assert.equal(members.children.filter(row=>row.className==='group-member').length,101);
+ assert.equal(members.scrollWindow,undefined);
+ assert.equal(members.querySelectorAll('button').filter(row=>row.textContent==='Группа').length,101);
+ assert.equal(members.querySelectorAll('input').length,0);
+});
+test('group picker searches across SQLite pages and applies only an explicit choice',async()=>{
  const m=mount();m.setHandler((_rev,kind,query,_group,offset)=>{
-  if(kind==='groups')return {total:125,rows:[{name:'Group '+offset,handle:'g'+offset,id:'id'+offset,members:1}]};
-  return {total:1,rows:[{name:'A',group:'g0'}]};
+  if(kind==='groups')return query==='Север'?{total:1,rows:[{name:'Север',handle:'g51',id:'id51',members:1}]}:{total:60,rows:Array.from({length:Math.min(50,60-offset)},(_,i)=>({name:'Group '+(offset+i),handle:'g'+(offset+i),id:'id'+(offset+i),members:1}))};
+  return {total:1,grouped:1,ungrouped:0,rows:[{name:'A',group:'g0'}]};
  });
  m.snapshot(7);m.views.groups();await tick();const group=m.nodes.groupList.children[0];group.open=true;await group.fire('toggle');await tick();
- const member=group.children[2].children[1].children[0],label=member.querySelectorAll('label').find(n=>n.dataset.sqlScrollHost==='group-destinations');
- const search=member.querySelectorAll('input')[0];search.value='Group';await actionByText(member,'Найти').fire();const before=m.reads.length;
- search.value='Другое имя, поиск ещё не запущен';
- await label.scrollWindow.go(2);
- assert.deepEqual(m.reads.slice(before),[[7,'groups','Group',null,100,50]]);
- assert.equal(label.children[0].value,'g0');assert.equal(m.writes.length,0);
+ const opening=actionByText(group.children[2],'Группа').fire();await tick();
+ const picker=m.body.querySelectorAll('dialog').find(n=>n.id==='groupPickerDialog');
+ const search=picker.querySelectorAll('input')[0];
+ await actionByText(picker,'Показать ещё').fire();
+ assert.deepEqual(m.reads.at(-1),[7,'groups','',null,50,50]);
+ search.value='Север';await search.fire('input');
+ assert.deepEqual(m.reads.at(-1),[7,'groups','Север',null,0,50]);
+ assert.equal(m.writes.length,0);
+ await actionByText(picker,'Север').fire();await opening;
+ assert.deepEqual(m.writes[0],['assign',7,'A','g51']);
+});
+test('editing and audit share one visible search and result list',async()=>{
+ const m=mount();
+ m.api.unifiedGroupAuditPage=async()=>({rows:[{key:'work:a',name:'Работа А',group:'g1',active:true}],total:1,coverage:{complete:true}});
+ m.snapshot(7);m.views.groups();await tick();
+ assert.equal(m.nodes.groupEditor.hidden,true);
+ await m.nodes.createGroup.fire();await tick();
+ assert.equal(m.nodes.groupEditor.hidden,false);
+ assert.equal(m.nodes.groupEditor.open,true);
+ m.nodes.groupAuditPanel.open=true;await m.nodes.groupAuditPanel.fire('toggle');await tick();
+ assert.equal(m.nodes.groupEditor.open,false);
+ assert.equal(m.nodes.groupEditor.hidden,true);
+ assert.equal(m.nodes.worksList.parentNode,m.nodes.groupAuditResults);
+ assert.ok(m.nodes.groupAuditPanel.querySelectorAll('input').includes(m.nodes.workSearch));
+ assert.ok(!m.nodes.groupEditor.querySelectorAll('input').includes(m.nodes.workSearch));
+ const opening=actionByText(m.nodes.worksList,'Группа').fire();await tick();
+ const picker=m.body.querySelectorAll('dialog').find(n=>n.id==='groupPickerDialog');
+ assert.ok(picker);
+ await actionByText(picker,'Отмена').fire();await opening;
+ await m.nodes.createGroup.fire();await tick();
+ assert.equal(m.nodes.groupAuditPanel.open,false);
+ assert.equal(m.nodes.groupEditor.hidden,false);
+ assert.notEqual(m.nodes.worksList.parentNode,m.nodes.groupAuditResults);
+ assert.ok(m.nodes.groupEditor.querySelectorAll('input').includes(m.nodes.workSearch));
+ m.nodes.groupEditor.open=false;await m.nodes.groupEditor.fire('toggle');
+ assert.equal(m.nodes.groupEditor.hidden,true);
+ assert.equal(m.nodes.createGroup.focused,true);
+ assert.equal(m.writes.length,0);
+});
+test('closing an existing group editor returns focus to its edit button',async()=>{
+ const m=mount();m.snapshot(7);m.views.groups();await tick();
+ const edit=actionByText(m.nodes.groupList,'Изменить группу');
+ await edit.fire();
+ assert.equal(m.nodes.groupEditor.hidden,false);
+ m.nodes.groupEditor.open=false;await m.nodes.groupEditor.fire('toggle');
+ assert.equal(edit.focused,true);
+});
+test('failure to open a group editor leaves the active audit results intact',async()=>{
+ const m=mount();
+ m.api.unifiedGroupAuditPage=async()=>({rows:[{key:'work:a',name:'Проверенная работа',group:'g1',active:true}],total:101});
+ m.snapshot(7);m.views.groups();await tick();
+ m.nodes.groupAuditPanel.open=true;await m.nodes.groupAuditPanel.fire('toggle');
+ const original=m.nodes.worksList.children[0],pager=m.nodes.worksList.scrollWindow;
+ m.setHandler(()=>{throw Error('Не удалось прочитать состав');});
+ await actionByText(m.nodes.groupList,'Изменить группу').fire();
+ assert.equal(m.nodes.worksList.children[0],original);
+ assert.equal(m.nodes.worksList.scrollWindow,pager);
+ assert.equal(m.nodes.groupAuditPanel.open,true);
+ assert.equal(m.nodes.groupEditor.open,false);
+ assert.match(m.messages.at(-1)[0],/Не удалось прочитать состав/);
 });
 function clearDialog(m){return m.body.querySelectorAll('dialog').find(n=>n.id==='clearReportsDialog');}
 async function confirmClear(m){
@@ -116,7 +236,7 @@ test('clear dialog shows the selected personal database and actual whole-databas
 test('organization rename validates exactly four names and backs up before native mutation',async()=>{const m=mount();m.snapshot(7);const inputs=m.nodes.organizationFields.querySelectorAll('input');inputs[0].value='Б';await m.nodes.saveOrganizations.fire();assert.equal(m.writes.length,0);assert.equal(m.messages.at(-1)[1],true);inputs[0].value='АА';m.setBackup('/org-backup.sqlite3');await m.nodes.saveOrganizations.fire();assert.deepEqual(JSON.parse(JSON.stringify(m.writes)),[['org',7,['АА','Б','В','Г'],'/org-backup.sqlite3']]);assert.equal(m.UI.state.reports.length,0);});
 test('group file import is previewed and hash-confirmed; cancelled picker and denial never write',async()=>{const m=mount();m.snapshot(7);await m.nodes.importGroups.fire();assert.equal(m.writes.length,0);m.setSource('/groups.json');m.setConfirm(false);await m.nodes.importGroups.fire();assert.equal(m.writes.length,0);m.setConfirm(true);await m.nodes.importGroups.fire();assert.deepEqual(m.writes,[['import',7,'/groups.json','hash',true]]);});
 
-test('audit uses whole-name SQL query, custom dates, scoped coverage and never moves unused group labels',async()=>{const m=mount(),calls=[];m.api.unifiedGroupAuditPage=async(...args)=>{calls.push(args);return {rows:[{key:'group:one',name:'Unused group',group:'9007199254740999',members:2,active:null}],total:1,coverage:{complete:false,periods:2,missing:1}};};m.snapshot(7);for(const fn of m.scopes)fn(m.UI.scope);m.nodes.groupAuditMode.value='unused';m.nodes.groupAuditFrom.value='2024-01-02';m.nodes.groupAuditTo.value='2024-01-20';m.nodes.groupAuditSearch.value='all search';m.nodes.groupAuditPanel.open=true;await m.nodes.groupAuditPanel.fire('toggle');await tick();assert.deepEqual(JSON.parse(JSON.stringify(calls[0])),[{revision:7,displayType:'day',source:'daily',organizations:['А'],selectedNames:[],selectedKeys:[],allNames:true,from:'2024-01-02',to:'2024-01-20'},'unused','all search',0,50]);assert.equal(m.nodes.groupAuditResults.querySelectorAll('select').length,0);assert.match(m.nodes.groupAuditCoverage.textContent,/Неполные данные/);});
+test('audit uses whole-name SQL query, custom dates, scoped coverage and never moves unused group labels',async()=>{const m=mount(),calls=[];m.api.unifiedGroupAuditPage=async(...args)=>{calls.push(args);return {rows:[{key:'group:one',name:'Unused group',group:'9007199254740999',members:2,active:null}],total:1,coverage:{complete:false,periods:2,missing:1}};};m.snapshot(7);for(const fn of m.scopes)fn(m.UI.scope);m.nodes.groupAuditMode.value='unused';m.nodes.groupAuditFrom.value='2024-01-02';m.nodes.groupAuditTo.value='2024-01-20';m.nodes.workSearch.value='all search';m.nodes.groupAuditPanel.open=true;await m.nodes.groupAuditPanel.fire('toggle');await tick();assert.deepEqual(JSON.parse(JSON.stringify(calls[0])),[{revision:7,displayType:'day',source:'daily',organizations:['А'],selectedNames:[],selectedKeys:[],allNames:true,from:'2024-01-02',to:'2024-01-20'},'unused','all search',0,50]);assert.equal(m.nodes.groupAuditResults.querySelectorAll('select').length,0);assert.match(m.nodes.groupAuditCoverage.textContent,/Неполные данные/);});
 
 test('successful mutation followed by refresh failure clears stale rows and prevents duplicate writes',async()=>{const m=mount();m.snapshot(7);m.views.groups();await tick();m.UI.refresh=async()=>{throw Error('read failure');};m.setBackup('/safe.sqlite3');await confirmClear(m);assert.equal(m.writes.length,1);assert.equal(m.nodes.groupList.children.length,0);await m.nodes.clearReports.fire();assert.equal(m.writes.length,1);assert.match(m.messages.at(-1)[0],/Отчёты удалены.*Не удалось обновить/);});
 
@@ -197,7 +317,7 @@ test('audit export captures the filter for all pages and rejects a stale destina
  const m=mount(),writes=[];m.api.unifiedGroupAuditPage=async()=>({rows:[],total:64,coverage:{complete:false}});
  m.api.chooseCsvPath=async()=>'/tmp/audit.csv';m.api.unifiedGroupAuditCsv=async(...args)=>writes.push(args);
  m.snapshot(7);for(const fn of m.scopes)fn(m.UI.scope);
- m.nodes.groupAuditSearch.value='игла';m.nodes.groupAuditMode.value='unused';
+ m.nodes.workSearch.value='игла';m.nodes.groupAuditMode.value='unused';
  m.nodes.groupAuditPanel.open=true;await m.nodes.groupAuditPanel.fire('toggle');await tick();
  await actionByText(m.nodes.groupAuditPanel,'Скачать CSV').fire();
  assert.equal(writes[0][0].from,m.UI.scope.from);assert.deepEqual(writes[0].slice(1),['unused','игла','/tmp/audit.csv']);
@@ -209,9 +329,9 @@ test('audit export captures the filter for all pages and rejects a stale destina
 test('an open audit without a valid period explains the selection and never requests SQL or CSV',async()=>{
  const m=mount();let reads=0;m.api.unifiedGroupAuditPage=async()=>{reads++;throw Error('should not read');};
  m.UI.scope=null;m.snapshot(7);for(const fn of m.scopes)fn(null);m.views.groups();m.nodes.groupAuditPanel.open=true;
- await m.nodes.groupAuditPanel.fire('toggle');await m.nodes.groupAuditSearch.fire('input');await tick();
+ await m.nodes.groupAuditPanel.fire('toggle');await m.nodes.workSearch.fire('input');await tick();
  assert.equal(reads,0);assert.equal(m.nodes.groupAuditCoverage.textContent,'Выберите корректный период в аналитике.');
  assert.equal(m.nodes.groupAuditPage.textContent,'');assert.equal(m.nodes.groupAuditPrev.disabled,true);
- assert.equal(m.nodes.groupAuditNext.disabled,true);assert.equal(m.nodes.groupAuditResults.children.length,0);
+ assert.equal(m.nodes.groupAuditNext.disabled,true);assert.equal(m.nodes.worksList.children.length,0);
  assert.equal(m.messages.length,0);
 });

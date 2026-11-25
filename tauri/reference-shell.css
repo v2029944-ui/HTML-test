@@ -1078,6 +1078,24 @@ body:has(#refRoot)>footer {display:none}
  #groupCatalog .catalog-row {gap:8px;padding-inline:0}
 }
 
+/* Group members and work pages use the vertical scroll of the workspace. */
+#groupWorkspace :is(.group-members,.works-list) {max-height:none;overflow:visible}
+#groupWorkspace .group-result-counts {display:flex;flex-wrap:wrap;gap:0 1rem}
+#groupWorkspace .group-assign {justify-self:end;width:auto;min-height:34px;padding:6px 10px}
+#groupPickerDialog {
+ width:min(28rem,calc(100vw - 2rem));max-height:calc(100vh - 2rem);
+ margin:auto;padding:1.25rem;color:var(--text);background:var(--surface);
+ border:1px solid var(--border);border-radius:var(--radius-panel);
+}
+#groupPickerDialog::backdrop {background:#080b10b8}
+#groupPickerDialog[open] {display:grid;gap:.75rem}
+#groupPickerDialog :is(h2,p) {margin:0;overflow-wrap:anywhere}
+#groupPickerDialog .group-picker-choices {
+ display:grid;gap:.35rem;max-height:min(42vh,22rem);overflow:auto;padding:3px;
+}
+#groupPickerDialog .group-picker-choices button {justify-content:start;text-align:start;overflow-wrap:anywhere}
+#groupPickerDialog .group-picker-choices [aria-current="true"] {background:var(--selected)}
+
 /* A full filtered print document is independent of the visible SQL page. */
 #referencePrintDocument {display:none}
 @media print {
