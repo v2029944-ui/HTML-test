@@ -69,6 +69,17 @@
       reset.hidden = !shared || state.pending;
       reset.disabled = busy || Boolean(window.tauriOperations?.updating || window.tauriOperations?.saves);
     }
+    const retention = node('sharedSnapshotRetention'), retentionStatus = node('sharedSnapshotRetentionStatus');
+    if (retention && retentionStatus) {
+      retention.hidden = !shared || !Number.isSafeInteger(state?.retention_limit);
+      retention.disabled = busy || !state?.available || state.pending;
+      retention.textContent = state?.retention_enabled ? 'Выключить очистку снимков' : 'Включить очистку снимков';
+      const warning = state?.retention_warning ? 'Очистка снимков: ' + statusMessage(state.retention_warning) : '';
+      const description = state?.retention_enabled ? 'Автоочистка включена. В папке будет храниться до ' + state.retention_limit + ' снимков.' : '';
+      const retentionText = [description, warning].filter(Boolean).join(' ');
+      if (retentionStatus.textContent !== retentionText) retentionStatus.textContent = retentionText;
+      retentionStatus.hidden = !shared || !retentionText;
+    }
     renderTransfer();
   }
 
@@ -177,7 +188,8 @@
       const missing = preview.foundGeneration !== preview.confirmedGeneration;
       const consequence = missing
         ? '\nСнимки отсутствуют: последнее подтверждённое поколение ' + preview.confirmedGeneration + '. Продолжайте только после намеренного удаления. Чтобы вернуть отчёты, сначала восстановите исходные снимки и повторите подключение.'
-        : '\nПрежние снимки останутся в папке для восстановления.';
+        : state.retention_enabled ? '\nПри включённой автоочистке в папке будет храниться до ' + state.retention_limit + ' снимков.'
+          : '\nПрежние снимки останутся в папке для восстановления.';
       if (!await window.confirm('Создать пустую общую базу в папке:\n' + preview.folder +
           '\nПосле синхронизации коллеги увидят пустые отчёты и настройки по умолчанию. Личные базы и файлы Excel сохранятся.' + consequence)) return;
       if (token !== state.workspace_token || state.pending || window.tauriOperations?.updating || window.tauriOperations?.saves) return;
@@ -188,6 +200,24 @@
     } catch (failure) {
       error = receipt ? 'Общая база сброшена. Не удалось обновить экран: ' + statusMessage(failure) : statusMessage(failure);
       if (!receipt) try { await apply(await raw('shared_workspace_status')); } catch { /* Keep the original failure visible. */ }
+    } finally { busy = false; render(error); schedule(); }
+  }
+
+  async function changeSnapshotRetention() {
+    if (busy || state?.mode !== 'shared' || !state.available || state.pending || !Number.isSafeInteger(state.retention_limit)) return;
+    const {folder, workspace_token: token, retention_limit: limit, retention_enabled: active} = state;
+    busy = true;
+    render();
+    let error = '';
+    try {
+      if (!active && !await window.confirm('Включить автоочистку снимков в папке ' + folder + '?\n' +
+          'В папке будет храниться до ' + limit + ' последних снимков. Остальные снимки будут удалены. ' +
+          'Перед включением обновите приложение на всех компьютерах, которые работают с этой папкой.')) return;
+      if (token !== state.workspace_token || state.pending || !state.available) return;
+      await apply(await raw('shared_workspace_set_snapshot_retention', {workspaceToken: token, enabled: !active}));
+    } catch (failure) {
+      error = statusMessage(failure);
+      try { await apply(await raw('shared_workspace_status')); } catch { /* Preserve the operation error. */ }
     } finally { busy = false; render(error); schedule(); }
   }
 
@@ -343,6 +373,7 @@
     node('sharedWorkspaceConnect').addEventListener('click', connect);
     node('sharedWorkspaceDiscard').addEventListener('click', discard);
     node('sharedWorkspaceReset')?.addEventListener('click', resetShared);
+    node('sharedSnapshotRetention')?.addEventListener('click', changeSnapshotRetention);
     node('sharedWorkspaceRetry').addEventListener('click', () => check(true));
     node('personalTransferPreview')?.addEventListener('click',()=>previewTransfer(0,true));
     for(const id of transferFilterIds)node(id)?.addEventListener('change',()=>{

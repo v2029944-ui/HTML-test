@@ -15,6 +15,9 @@ const MAGIC: &[u8; 8] = b"ANALIZ02";
 const RESET_MAGIC: &[u8; 8] = b"ANALIZR2";
 const PENDING: &str = "pending.snapshot";
 
+#[path = "shared_folder_retention.rs"]
+pub(super) mod retention;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct ResetAnchor {
     generation: u64,
@@ -70,6 +73,11 @@ fn separate(shared: &Path, local: &Path) -> Result<(), String> {
 
 pub fn head(folder: &Path) -> Result<u64, String> {
     let mut latest = 0;
+    visit_generations(folder, |generation| latest = latest.max(generation))?;
+    Ok(latest)
+}
+
+fn visit_generations(folder: &Path, mut visit: impl FnMut(u64)) -> Result<(), String> {
     for entry in fs::read_dir(folder).map_err(err)? {
         let entry = entry.map_err(err)?;
         let name = entry.file_name();
@@ -86,9 +94,9 @@ pub fn head(folder: &Path) -> Result<u64, String> {
         {
             return Err("Повреждена запись поколения в общей папке.".into());
         }
-        latest = latest.max(generation);
+        visit(generation);
     }
-    Ok(latest)
+    Ok(())
 }
 
 // Paths passed here are a canonical directory plus our own fixed leaf. Check
@@ -232,7 +240,17 @@ fn advertised(folder: &Path, generation: u64) -> Result<Option<[u8; 32]>, String
 }
 
 pub fn generation_digest(folder: &Path, generation: u64) -> Result<Option<String>, String> {
-    Ok(advertised(&directory(folder)?, generation)?.map(hex_digest))
+    Ok(confirmed_digest(&directory(folder)?, generation)?.map(hex_digest))
+}
+
+fn confirmed_digest(folder: &Path, generation: u64) -> Result<Option<[u8; 32]>, String> {
+    match advertised(folder, generation) {
+        Err(error) if fs::symlink_metadata(path(folder, generation))
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) => {
+            retention::archived_digest(folder, generation)?.map(Some).ok_or(error)
+        }
+        result => result,
+    }
 }
 
 pub fn reset_follows(folder: &Path, generation: u64, digest: &str) -> Result<bool, String> {
@@ -732,16 +750,18 @@ impl Publication {
     }
     pub fn publish(&self) -> Result<u64, String> {
         let _lock = lock_publication(&self.folder)?;
-        if self.reset.is_none() {
-            self.check_base()?;
+        if self.reset.is_none() && confirmed_digest(&self.folder, self.next - 1)? != self.base {
+            return Err("Исходное поколение общей базы изменилось.".into());
         }
         let target = path(&self.folder, self.next);
         if self.confirmed(&target)? {
             return Ok(self.next);
         }
         let expected_head = if self.reset.is_some() { 0 } else { self.next - 1 };
-        if head(&self.folder)? != expected_head {
-            if self.confirmed(&target)? {
+        let found = head(&self.folder)?;
+        if found != expected_head {
+            if self.confirmed(&target)? || (found > self.next &&
+                retention::archived_digest(&self.folder,self.next)? == Some(self.digest)) {
                 return Ok(self.next);
             }
             return Err("Нарушена последовательность версий общей базы.".into());
@@ -795,6 +815,57 @@ mod tests {
         assert!(active.snapshot.fork(&other.storage, local.path()).is_err());
         assert!(active.snapshot.prepare_publication(&other.storage).is_err());
         assert_eq!(head(shared.path()).unwrap(), 0);
+    }
+
+    #[test]
+    fn retention_preserves_lost_acknowledgement_and_stops_when_history_is_corrupt() {
+        let folder = exchange_folder();
+        let client = tempfile::tempdir().unwrap();
+        let initial = Checkout::open(folder.path(), client.path()).unwrap();
+        let first = initial.snapshot.prepare_publication(&initial.storage).unwrap();
+        let shared = fs::canonicalize(folder.path()).unwrap();
+        assert_eq!(first.publish().unwrap(), 1);
+        for number in 2..=9 {
+            assert_eq!(Checkout::open(&shared, client.path()).unwrap().commit().unwrap(), number);
+        }
+        let latest = Checkout::open(&shared, client.path()).unwrap();
+        let digest = latest.snapshot.verified_digest();
+        let lock = lock_publication(&shared).unwrap();
+        assert!(retention::configure(&shared, true, 9, digest.as_deref()).is_err());
+        assert!(!retention::enabled(&shared).unwrap());
+        drop(lock);
+        let retained = path(&shared, 8);
+        let retained_bytes = fs::read(&retained).unwrap();
+        fs::write(&retained, b"corrupt").unwrap();
+        assert!(retention::configure(&shared, true, 9, digest.as_deref()).is_err());
+        assert!(path(&shared, 1).exists(), "a damaged survivor cannot replace a good older snapshot");
+        fs::write(&retained, retained_bytes).unwrap();
+        let prune_candidate = path(&shared, 2);
+        let candidate_bytes = fs::read(&prune_candidate).unwrap();
+        fs::write(&prune_candidate, b"corrupt").unwrap();
+        assert!(retention::configure(&shared, true, 9, digest.as_deref()).is_err());
+        assert!(path(&shared, 1).exists() && prune_candidate.exists(), "pruning requires verification of every candidate");
+        fs::write(prune_candidate, candidate_bytes).unwrap();
+        retention::configure(&shared, true, 9, digest.as_deref()).unwrap();
+        for number in 1..=9 {
+            assert_eq!(path(&shared, number).exists(), number >= 7);
+        }
+        assert_eq!(first.publish().unwrap(), 1, "a committed but unacknowledged publication can be retried after pruning");
+        let ledger = shared.join(".analiz-retention-v1.bin");
+        let original = fs::read(&ledger).unwrap();
+        fs::write(&ledger, b"corrupt").unwrap();
+        assert!(generation_digest(&shared, 1).is_err());
+        assert_eq!(latest.commit().unwrap(), 10);
+        let latest = Checkout::open(&shared, client.path()).unwrap();
+        assert!(retention::maintain(&shared, 10, latest.snapshot.verified_digest().as_deref()).is_err());
+        assert!(path(&shared, 7).exists(), "no snapshot is deleted without verified history");
+        fs::remove_file(&ledger).unwrap();
+        assert!(retention::maintain(&shared, 10, latest.snapshot.verified_digest().as_deref()).is_err());
+        assert!(path(&shared, 7).exists(), "a missing history cannot be replaced with a partial new one");
+        fs::write(&ledger, original).unwrap();
+        retention::maintain(&shared, 10, latest.snapshot.verified_digest().as_deref()).unwrap();
+        assert!(!path(&shared, 7).exists());
+        assert_eq!(head(&shared).unwrap(), 10);
     }
 
     #[test]

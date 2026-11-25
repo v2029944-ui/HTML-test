@@ -30,6 +30,9 @@ pub struct WorkspaceStatus {
     pub error: Option<String>,
     pub pending: bool,
     pub workspace_token: String,
+    pub retention_enabled: bool,
+    pub retention_limit: usize,
+    pub retention_warning: Option<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -59,6 +62,7 @@ struct State {
     pending: Option<Pending>,
     available: bool,
     error: Option<String>,
+    retention_warning: Option<String>,
     token: String,
     grants: Vec<PathBuf>,
 }
@@ -129,6 +133,7 @@ impl Runtime {
                 pending: None,
                 available: true,
                 error: None,
+                retention_warning: None,
                 token: token(),
                 grants: Vec::new(),
             }),
@@ -261,6 +266,8 @@ impl Runtime {
         Ok(())
     }
     fn snapshot(state: &State) -> WorkspaceStatus {
+        let retention = state.selection.folder.as_deref().filter(|_| state.available)
+            .map(shared_folder::retention::enabled).transpose();
         WorkspaceStatus {
             mode: if state.selection.folder.is_some() {
                 "shared"
@@ -278,6 +285,9 @@ impl Runtime {
             error: state.error.clone(),
             pending: state.pending.is_some(),
             workspace_token: state.token.clone(),
+            retention_enabled: retention.as_ref().is_ok_and(|value| *value == Some(true)),
+            retention_limit: shared_folder::retention::SNAPSHOTS,
+            retention_warning: state.retention_warning.clone().or_else(|| retention.err()),
         }
     }
     pub fn status(&self) -> Result<WorkspaceStatus, String> {
@@ -342,6 +352,7 @@ impl Runtime {
         self.save_selection(&selection)?;
         state.grants.remove(grant);
         state.selection = selection;
+        state.retention_warning = None;
         *self.sessions.lock().map_err(err)? = checkout.storage.folder_import_cancellation();
         state.checkout = Some(checkout);
         state.available = true;
@@ -359,6 +370,7 @@ impl Runtime {
         }
         self.save_selection(&Selection::default())?;
         state.selection = Selection::default();
+        state.retention_warning = None;
         *self.sessions.lock().map_err(err)? = state.personal.folder_import_cancellation();
         state.checkout = None;
         state.available = true;
@@ -478,6 +490,19 @@ impl Runtime {
         let state = self.state.lock().map_err(err)?;
         Self::describe_reset(&state, expected_token)
     }
+    pub fn set_snapshot_retention(&self, expected_token: &str, enabled: bool) -> Result<WorkspaceStatus, String> {
+        let mut state = self.state.lock().map_err(err)?;
+        if state.token != expected_token {
+            return Err("Выбранная база изменилась. Откройте настройки повторно.".into());
+        }
+        self.latest(&mut state)?;
+        let folder = state.selection.folder.as_deref().ok_or("Общая папка не выбрана.")?;
+        let result = shared_folder::retention::configure(folder, enabled, state.selection.highest_generation,
+            state.selection.highest_digest.as_deref());
+        state.retention_warning = result.as_ref().err().cloned();
+        result?;
+        Ok(Self::snapshot(&state))
+    }
     pub fn reset_shared(&self, expected_token: &str, expected: &WorkspaceResetPreview) -> Result<WorkspaceStatus, String> {
         let mut state = self.state.lock().map_err(err)?;
         if Self::describe_reset(&state, expected_token)? != *expected {
@@ -531,6 +556,9 @@ impl Runtime {
         state.pending = None;
         state.available = true;
         state.error = None;
+        let folder = state.selection.folder.as_deref().ok_or("Общая папка не выбрана.")?;
+        state.retention_warning = shared_folder::retention::maintain(folder, state.selection.highest_generation,
+            state.selection.highest_digest.as_deref()).err();
         Ok(())
     }
     pub fn execute<T>(

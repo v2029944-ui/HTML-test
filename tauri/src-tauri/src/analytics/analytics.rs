@@ -184,8 +184,8 @@ fn totals(count: f64, amount: Option<f64>, complete: bool) -> Result<AnalysisTot
         },
     })
 }
-// Keep strict totals for comparisons. Partial absolute amounts only sum the
-// known cells; an average needs a sum for every observed quantity.
+// Partial absolute amounts only sum the known cells. An average needs a sum
+// for every observed quantity.
 fn observed_totals(count: f64, amount: Option<f64>, known_amount: Option<f64>, observed: bool) -> Result<AnalysisTotals, String> {
     let mut result = totals(count, amount, observed)?;
     if observed && amount.is_none() {

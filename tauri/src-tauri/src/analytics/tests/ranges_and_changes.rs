@@ -410,10 +410,12 @@ fn comparison_dashboard_complete_partial_and_signed_changes() {
     let partial=store.analysis_comparison_dashboard(rev,&selected,&q).unwrap();
     assert!(partial.summary.before.complete);
     assert!(!partial.summary.after.complete);
-    assert!(partial.summary.amount.is_none());
-    assert!(partial.summary.count.is_none());
-    assert!(partial.top_amount.is_empty());
-    assert!(partial.top_count.is_empty());
+    assert_eq!(partial.summary.amount.as_ref().unwrap().delta, -59.);
+    assert!(partial.summary.count.is_some());
+    for ranking in [&partial.top_amount, &partial.top_count] {
+        assert!(!ranking.is_empty());
+        assert!(ranking.iter().all(|row| row.status.is_none()));
+    }
     let a=&partial.divisions[0];
     assert_eq!(a.organization,"A");
     assert_eq!(a.amount.as_ref().unwrap().delta,-59.);
@@ -564,6 +566,8 @@ fn partial_analytics_keeps_observed_amounts_and_report_gaps_separate() {
     assert_eq!(page["rows"][0]["observed_before"]["amount"], 20.);
     assert_eq!(page["rows"][0]["observed_after"]["amount"], 30.);
     assert!(page["rows"][0]["amount"].is_null());
+    assert_eq!(page["rows"][0]["count"]["delta"], -1.);
+    assert!(page["rows"][0]["status"].is_null());
     let selection = ChangeQuery { method:"range".into(), from:range.from.clone(),to:range.to.clone(),
         percent:0., min_count:0., min_amount:0. };
     let structure = store.advanced_composition(revision,&selected,&selection,None,&q.before,"structure","amount",None).unwrap();

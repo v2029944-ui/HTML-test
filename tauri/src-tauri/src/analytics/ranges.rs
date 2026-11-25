@@ -22,6 +22,12 @@ pub struct RangeSummary {
     pub import_warning_reports: i64,
 }
 
+impl RangeSummary {
+    pub(super) fn comparison_amount(&self) -> Option<f64> {
+        self.available_total.amount.filter(|_| !self.amount_missing_rows)
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct RankingSummary {
     pub complete: bool,

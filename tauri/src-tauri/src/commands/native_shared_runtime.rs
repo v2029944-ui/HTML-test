@@ -102,6 +102,17 @@ pub async fn shared_workspace_reset_apply(
 }
 
 #[tauri::command]
+pub async fn shared_workspace_set_snapshot_retention(
+    app: tauri::AppHandle,
+    workspace_token: String,
+    enabled: bool,
+) -> Result<WorkspaceStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || app.state::<Runtime>().set_snapshot_retention(&workspace_token, enabled))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn shared_workspace_transfer_preview(
     app: tauri::AppHandle,
     workspace_token: String,
