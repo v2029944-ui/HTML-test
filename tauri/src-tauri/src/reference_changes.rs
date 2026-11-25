@@ -151,13 +151,13 @@ fn prepare_reference(c:&Connection,q:&ReferenceChangesRequest,s:&AnalysisScope)-
         let aa: Option<f64> = row.get(5).map_err(err)?;
         let before = observed_totals(bc,ba,row.get(6).map_err(err)?,row.get(8).map_err(err)?)?;
         let after = observed_totals(ac,aa,row.get(7).map_err(err)?,row.get(9).map_err(err)?)?;
-        let comparable: bool = row.get(10).map_err(err)?;
+        let complete: bool = row.get(10).map_err(err)?;
         let (old, new, strict_pair, minimum) = if q.metric == "count" {
             (before.count, after.count, Some((bc,ac)), q.min_count)
         } else {
             (before.amount, after.amount, ba.zip(aa), q.min_amount)
         };
-        let Some((b, a)) = strict_pair.filter(|_| comparable) else {
+        let Some((b, a)) = strict_pair.filter(|_| before.count.is_some() && after.count.is_some()) else {
             put.execute(params![name, org, old, new, None::<f64>, None::<f64>, ""])
                 .map_err(err)?;
             continue;
@@ -165,11 +165,11 @@ fn prepare_reference(c:&Connection,q:&ReferenceChangesRequest,s:&AnalysisScope)-
         let value = measure(b, a, minimum, q.percent)?;
         let kind = if value.delta == 0. {
             ""
-        } else if bc == 0. && ba == Some(0.) && (ac != 0. || aa.is_some_and(|n| n != 0.)) {
+        } else if complete && bc == 0. && ba == Some(0.) && (ac != 0. || aa.is_some_and(|n| n != 0.)) {
             "new"
-        } else if (bc != 0. || ba.is_some_and(|n| n != 0.)) && ac == 0. && aa == Some(0.) {
+        } else if complete && (bc != 0. || ba.is_some_and(|n| n != 0.)) && ac == 0. && aa == Some(0.) {
             "gone"
-        } else if b != 0. && value.significant {
+        } else if (b != 0. || !complete) && value.significant {
             if value.delta > 0. {
                 "up"
             } else {
@@ -244,7 +244,7 @@ fn comparison_csv_context(
         .collect::<Result<Vec<_>,_>>().map_err(err)?;
     let included:Vec<_>=members.iter().filter(|(_,before,after)|*before&&*after).map(|(org,_,_)|org.as_str()).collect();
     csv_record(writer,&[Text("Сопоставимые подразделения"),Number(Some(included.len() as f64)),Number(Some(members.len() as f64)),Text(&included.join(", "))])?;
-    csv_record(writer,&[Text("Выборка сравнения"),Text("Разница и проценты учитывают один состав с полными периодами. Абсолютные значения могут быть частичными. Пропуск не означает ноль.")])?;
+    csv_record(writer,&[Text("Выборка сравнения"),Text("Сводные итоги учитывают подразделения с полными периодами. Абсолютные значения могут быть частичными. Пропуск не означает ноль.")])?;
     for (org,before,after) in &members {
         let reason=match (*before,*after) {(true,true)=>"включено",(false,false)=>"неполные базовый и анализируемый интервалы",(false,true)=>"неполный базовый интервал",(true,false)=>"неполный анализируемый интервал"};
         csv_record(writer,&[Text("Состав сравнения"),Text(org),Text(reason)])?;
@@ -364,6 +364,7 @@ impl Storage {
             prepare_reference(&tx,q,scope)?;
             export(destination,|writer| {
                 comparison_csv_context(writer,&tx,q,scope,"Анализируемый период")?;
+                csv_record(writer,&[Cell::Text("Качество данных"),Cell::Text("В строках таблицы изменения рассчитаны по доступным отчётам за оба интервала. Пропуски не считаются нулём.")])?;
                 csv_record(writer,&[Cell::Text("Показатель строк"),Cell::Text(if q.metric=="amount"{"Сумма"}else{"Количество / объём"})])?;
                 csv_record(writer,&[Cell::Text("Фильтр позиций"),Cell::Text(&q.kind)])?;
                 csv_record(writer,&[Cell::Text("Поиск работ"),Cell::Text(&q.search)])?;

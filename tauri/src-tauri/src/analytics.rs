@@ -355,8 +355,8 @@ fn totals(count: f64, amount: Option<f64>, complete: bool) -> Result<AnalysisTot
         },
     })
 }
-// Keep strict totals for comparisons. Partial absolute amounts only sum the
-// known cells; an average needs a sum for every observed quantity.
+// Partial absolute amounts only sum the known cells. An average needs a sum
+// for every observed quantity.
 fn observed_totals(count: f64, amount: Option<f64>, known_amount: Option<f64>, observed: bool) -> Result<AnalysisTotals, String> {
     let mut result = totals(count, amount, observed)?;
     if observed && amount.is_none() {
@@ -2541,7 +2541,10 @@ impl Storage {
         let mut result=statement.query(params![limit,offset]).map_err(err)?;
         let mut rows=Vec::new();
         while let Some(row)=result.next().map_err(err)? {
-            let mut value = comparison_value(row,q,before,after)?;
+            let mut value = comparison_value(row,q,b_observed,a_observed)?;
+            if !(before && after) {
+                value.status = None;
+            }
             value.observed_before = Some(observed_totals(row.get(3).map_err(err)?, row.get(4).map_err(err)?,
                 row.get(7).map_err(err)?, b_observed)?);
             value.observed_after = Some(observed_totals(row.get(5).map_err(err)?, row.get(6).map_err(err)?,

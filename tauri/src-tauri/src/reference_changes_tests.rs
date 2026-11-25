@@ -42,6 +42,52 @@ fn report(id: &str, start: &str, rows: Value) -> Value {
 fn row(org: &str, work: &str, count: f64, amount: f64) -> Value {
     json!({"organization":org,"work":work,"count":count,"amount":amount})
 }
+
+#[test]
+fn partial_date_ranges_compare_loaded_reports_in_tables_and_csv() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let revision = prepare(&store, vec![
+        report("before", "2023-01-01", json!([row("A", "Work", 2., 20.)])),
+        report("after", "2024-01-01", json!([row("A", "Work", 3., 30.)])),
+    ]);
+    let mut q = request(revision);
+    q.organizations = vec!["A".into()];
+    q.base_from = "2023-01-01".into();
+    q.from = "2024-01-01".into();
+    for (label, before_end, after_end) in [
+        ("custom", "2023-01-05", "2024-01-05"),
+        ("week", "2023-01-07", "2024-01-07"),
+        ("month", "2023-01-31", "2024-01-31"),
+        ("year", "2023-12-31", "2024-12-31"),
+    ] {
+        q.base_to = before_end.into();
+        q.to = after_end.into();
+        let changes = store.reference_changes(&q).unwrap();
+        assert!(changes.comparable.is_empty(), "{label}: neither interval has full coverage");
+        let work = &changes.rows[0];
+        assert_eq!((work.before, work.after, work.delta, work.percent), (Some(20.), Some(30.), Some(10.), Some(50.)), "{label}");
+        let query = ComparisonQuery { before:q.baseline(), after:q.current(), percent:0., min_count:0., min_amount:0. };
+        store.reference_scope(&q, |scope| {
+            let window = store.analysis_comparison_window(revision, scope, &query, None, 0, 50)?;
+            assert_eq!(window.rows[0].amount.as_ref().map(|value| value.delta), Some(10.), "{label}");
+            let options = serde_json::from_value(json!({"section":"comparison","metric":"amount","before":{"from":q.base_from,"to":q.base_to}})).unwrap();
+            let request = ChangeQuery { method:"range".into(), from:q.from.clone(), to:q.to.clone(), percent:0., min_count:0., min_amount:0. };
+            let path = dir.path().join(format!("{label}.csv"));
+            store.reference_detail_csv(revision, scope, &request, None, &options, &path)?;
+            let csv = fs::read_to_string(path).unwrap();
+            assert!(csv.contains(r#""Combined (группа)";"20";"30";"10";"50""#), "{csv}");
+            assert!(csv.contains(r#""Итого по выбранным работам";"20";"30";"10";"50""#), "{csv}");
+            assert!(csv.contains("Качество данных"), "{csv}");
+            Ok(())
+        }).unwrap();
+    }
+    q.from = "2024-01-02".into();
+    q.to = q.from.clone();
+    q.base_to = q.base_from.clone();
+    let missing = store.reference_changes(&q).unwrap();
+    assert_eq!((missing.rows[0].before, missing.rows[0].after, missing.rows[0].delta), (Some(20.), None, None));
+}
 #[test]
 fn missing_amount_keeps_the_work_in_both_metric_views() {
     let dir = tempdir().unwrap();
@@ -68,7 +114,7 @@ fn missing_amount_keeps_the_work_in_both_metric_views() {
 }
 
 #[test]
-fn significant_filter_keeps_observed_partial_rows_beside_comparable_changes() {
+fn significant_filter_counts_partial_changes_and_keeps_confirmed_zero() {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();
     let revision = prepare(&store, vec![
@@ -80,14 +126,14 @@ fn significant_filter_keeps_observed_partial_rows_beside_comparable_changes() {
     q.kind = "significant".into();
     q.organizations = vec!["A".into(), "B".into()];
     let result = store.reference_changes(&q).unwrap();
-    assert_eq!((result.total, result.significant, result.counts.up), (2, 1, 1));
-    assert!(result.partial_fallback);
+    assert_eq!((result.total, result.significant, result.counts.up, result.counts.down), (2, 2, 1, 1));
+    assert!(!result.partial_fallback);
     let partial = result.rows.iter().find(|row| row.org == "B").unwrap();
-    assert_eq!((partial.before, partial.after, partial.delta, partial.percent), (Some(20.), Some(0.), None, None));
+    assert_eq!((partial.before, partial.after, partial.delta, partial.percent), (Some(20.), Some(0.), Some(-20.), Some(-100.)));
     let destination = dir.path().join("mixed.csv");
     store.reference_changes_csv(&q, &destination).unwrap();
     let data = fs::read_to_string(destination).unwrap();
-    assert!(data.contains(r#""Work";"B";"20";"0";"";"""#), "{data}");
+    assert!(data.contains(r#""Work";"B";"20";"0";"-20";"-100""#), "{data}");
 
     q.kind = "up".into();
     let result = store.reference_changes(&q).unwrap();
@@ -95,7 +141,7 @@ fn significant_filter_keeps_observed_partial_rows_beside_comparable_changes() {
 }
 
 #[test]
-fn independent_unequal_intervals_require_complete_org_coverage_and_keep_real_works() {
+fn independent_unequal_intervals_keep_partial_changes_and_real_works() {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();
     let revision = prepare(
@@ -140,11 +186,11 @@ fn independent_unequal_intervals_require_complete_org_coverage_and_keep_real_wor
     assert_eq!(result.comparable, ["A", "Empty"]);
     assert_eq!(
         (result.total, result.searched, result.significant),
-        (5, 5, 3)
+        (5, 5, 4)
     );
     let partial = result.rows.iter().find(|r| r.org == "B").unwrap();
     assert!(partial.after.is_some());
-    assert_eq!((partial.delta,partial.percent),(None,None));
+    assert_eq!((partial.delta,partial.percent),(Some(995.),Some(19900.)));
     assert!(result.rows.iter().all(|r| r.name != "Combined"));
     let work = result.rows.iter().find(|r| r.name == "Work").unwrap();
     assert_eq!(
@@ -160,9 +206,9 @@ fn independent_unequal_intervals_require_complete_org_coverage_and_keep_real_wor
             result.counts.new,
             result.counts.gone
         ),
-        (1, 0, 1, 1)
+        (2, 0, 1, 1)
     );
-    assert_eq!(result.leader.unwrap().name, "Work");
+    assert_eq!(result.leader.unwrap().name, "Partial");
     let mut filtered = q.clone();
     filtered.kind = "significant".into();
     filtered.search = "new".into();
@@ -176,8 +222,8 @@ fn independent_unequal_intervals_require_complete_org_coverage_and_keep_real_wor
         (0, 3, 2)
     );
     assert_eq!(found.rows[0].name, "New");
-    assert_eq!(found.counts.up, 1);
-    assert_eq!(found.leader.unwrap().name, "Work");
+    assert_eq!(found.counts.up, 2);
+    assert_eq!(found.leader.unwrap().name, "Partial");
     assert_eq!(
         store
             .connect()
@@ -261,8 +307,8 @@ fn missing_periods_are_not_zero_filled_and_negative_baselines_keep_percent() {
     assert!(missing.comparable.is_empty());
     assert_eq!(missing.total, 1);
     let observed = &missing.rows[0];
-    assert_eq!((observed.before,observed.after,observed.delta,observed.percent),(Some(-100.),Some(-50.),None,None));
-    assert!(missing.leader.is_none());
+    assert_eq!((observed.before,observed.after,observed.delta,observed.percent),(Some(-100.),Some(-50.),Some(50.),Some(50.)));
+    assert!(missing.leader.is_some());
     q.to = q.from.clone();
     let found = store.reference_changes(&q).unwrap();
     assert_eq!(found.rows[0].percent, Some(50.));
@@ -417,7 +463,9 @@ fn comparable_sample_and_totals_match_overview_changes_comparison_and_exports() 
         let revision=prepare(&store,reports);let mut q=request(revision);q.base_to="2024-01-02".into();q.organizations=organizations.iter().map(|org|org.to_string()).collect();
         let changes=store.reference_changes(&q).unwrap();assert_eq!(changes.comparable,["A","B","Empty"]);assert_eq!(changes.rows.len(),4);
         let incomplete=changes.rows.iter().find(|row|row.org=="D").unwrap();
-        assert_eq!((incomplete.before,incomplete.after,incomplete.delta),(Some(if missing_base{10000.}else{20000.}),Some(if missing_current{10000.}else{20000.}),None));
+        let before = if missing_base { 10000. } else { 20000. };
+        let after = if missing_current { 10000. } else { 20000. };
+        assert_eq!((incomplete.before,incomplete.after,incomplete.delta),(Some(before),Some(after),Some(after-before)));
         let query=ComparisonQuery{before:q.baseline(),after:q.current(),percent:0.,min_count:0.,min_amount:0.};
         store.reference_scope(&q,|scope| {
             let overview=store.analysis_comparison_dashboard(revision,scope,&query)?;

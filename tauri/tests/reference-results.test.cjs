@@ -237,7 +237,7 @@ test('failed changes reads distinguish unknown counts from zero and clear the ol
  results.init();await results.refresh(f.scope);await results.setScreen('s2');
  const chip=f.s2.querySelector('.excluded-orgs'),search=f.s2.querySelector('input');
  assert.equal(chip.hidden,true);
- assert.match(f.s2.querySelector('.quality-notice').textContent,/Исключены из сравнения: B/);
+ assert.match(f.s2.querySelector('.quality-notice').textContent,/изменения по доступным отчётам.*Полные отчёты у 1 из 2 подразделений/);
  assert.deepEqual(f.s2.querySelectorAll('[data-count]').map(n=>n.textContent),['▲ 1','▼ 0','0','0']);
  await f.s2.querySelectorAll('.kpi')[2].click();f.s2.querySelector('[data-sort]').value='percent';
  let calls=0;f.api.referenceChanges=async()=>{calls++;throw Error('read rejected');};

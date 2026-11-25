@@ -74,6 +74,15 @@ function notice(root,s,comparable,summary){
  const amountNotice=missingAmount?' В некоторых строках сумма не указана. Количество учтено, показана сумма заполненных ячеек.':'';
  const gap=current?.missing===1&&baseline?.missing===0?current.single_missing:baseline?.missing===1&&current?.missing===0?baseline.single_missing:null;
  const detail=excluded.length===1&&gap?.org===excluded[0]&&date(gap.start)!=='—'?' · '+date(gap.start)+': нет пригодного отчёта':'';
+ if(root==='#s2'&&(excluded.length||current?.complete===false||baseline?.complete===false)){
+  const missing=(current?.missing??0)+(baseline?.missing??0);
+  const coverage=current?.available_reports===0||baseline?.available_reports===0
+   ?comparisonStatus(0,s.organizations.length,summary)
+   :'В таблице показаны изменения по доступным отчётам. Полные отчёты у '+comparable.length+' из '+s.organizations.length+' подразделений.';
+  n.hidden=false;
+  span.textContent=coverage+(missing>0?' Пропусков: '+missing+' (подразделение × период).':'')+(warnings?' '+warnings:'')+amountNotice+' Пропуски не считаются нулём. Наличие отчётов не подтверждает полноту источника.';
+  return;
+ }
  n.hidden=!excluded.length&&current?.complete===true&&!warnings&&!missingAmount;
  span.textContent=(current?.available_reports>0&&current?.complete===false?'Итоги частичные. ':'')+comparisonStatus(comparable.length,s.organizations.length,summary)+(excluded.length?' Исключены из сравнения: '+excluded.join(', ')+detail+'. Доступные значения показаны.':'')+(warnings?' '+warnings:'')+amountNotice+' Пропуски не считаются нулём. Наличие отчётов не подтверждает полноту источника.';
 }
@@ -221,12 +230,12 @@ function changeLabels(s){
  if(heading)heading.textContent=changeTitle();if(metric)metric.textContent=titles[s?.metric]||'Выберите показатель в общих фильтрах';
 }
 function printTable(root,headers,rows,cls){const table=el('table',null,cls);writeTable(table,headers,rows);root.append(table);}
-function printContext(root,s,comparable,comparison,overview){
+function printContext(root,s,comparable,comparison,overview,changes=false){
  root.append(el('p','Анализируемый период: '+visibleRange(s)),el('p','Базовый период: '+baseRange(s)),el('p','Область работ: Все работы'),el('p','Выбраны подразделения: '+s.organizations.join(', ')),el('p','Сопоставимые подразделения: '+comparable.length+' из '+s.organizations.length+(comparable.length?' · '+comparable.join(', '):'')));
  if(!comparable.length)root.append(el('p',comparisonStatus(0,s.organizations.length,overview?.summary)));
  const excluded=s.organizations.filter(org=>!comparable.includes(org));
  if(excluded.length){
-  root.append(el('p','Исключены из сравнения: '+excluded.join(', ')+'.'));
+  root.append(el('p',(changes?'Исключены из сводных итогов: ':'Исключены из сравнения: ')+excluded.join(', ')+'.'));
   for(const org of excluded){const row=overview?.divisions?.find(value=>value.organization===org),before=Number.isFinite(row?.before?.count),after=Number.isFinite(row?.after?.count);root.append(el('p',org+': '+(row?!before&&!after?'неполные базовый и анализируемый интервалы':!before?'неполный базовый интервал':'неполный анализируемый интервал':'нет пригодных отчётов за весь базовый или анализируемый интервал')+'.'));}
  }
  for(const [label,period]of [['База',overview?.summary?.before],['Анализ',overview?.summary?.after]]){
@@ -259,8 +268,8 @@ async function printScreen(event){
    root.append(el('h1',changeTitle(captured.kind)),el('p','Показатель: '+titles[captured.metric]));
    const comparable=data.comparable;let overview=summaryData?.scope===s?summaryData.result:null;if(!overview){overview=await api.nativeAnalysisCompare(s.revision,s.type,s.baseFrom,s.baseTo,s.from,s.to,s.organizations);if(!current())return;}let comparison=summaryData?.scope===s&&JSON.stringify(summaryData.comparable)===JSON.stringify(comparable)?summaryData.comparison?.summary:null;
    if(comparable.length&&!comparison){comparison=(await api.nativeAnalysisCompare(s.revision,s.type,s.baseFrom,s.baseTo,s.from,s.to,comparable)).summary;if(!current())return;}
-   printContext(root,s,comparable,comparison,overview);
-   if(data.partial_fallback&&data.total)root.append(el('p','Показаны доступные значения. Изменения для неполных данных не рассчитываются.'));
+   printContext(root,s,comparable,comparison,overview,true);
+   if(comparable.length<s.organizations.length&&data.total)root.append(el('p','В строках таблицы изменения рассчитаны по доступным отчётам за оба интервала.'));
    root.append(el('p','Фильтр: '+changeTitle(captured.kind)+(captured.search?' · Поиск: '+captured.search:'')+' · Сортировка: '+({delta:'по величине изменения',percent:'по изменению, %',name:'по названию'}[captured.sort]||captured.sort)),el('p','Порог: '+captured.percent+'% · Количество / объём: '+captured.minCount+' · Сумма: '+captured.minAmount));
    const totalLine=el('p'),table=el('table',null,'print-changes');
    let rowCount=0;
