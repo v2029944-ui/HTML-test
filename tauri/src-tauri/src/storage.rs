@@ -43,7 +43,7 @@ mod scheduled_backup;
 pub use scheduled_backup::ScheduledBackupStatus;
 #[path = "report_transfer.rs"]
 mod report_transfer;
-pub use report_transfer::{TransferPreview, TransferReceipt, TransferRow};
+pub use report_transfer::{TransferDirection, TransferPeriod, TransferPreview, TransferReceipt, TransferRow};
 #[path = "recovery.rs"]
 mod recovery;
 pub use recovery::RestorePreview;

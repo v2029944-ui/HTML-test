@@ -407,6 +407,7 @@ def check_runtime(page):
       const {theme,palette,design,uiSize}=document.documentElement.dataset;
       return [theme,palette,design,uiSize].join('/')==='dark/paper/compact/large';
     }''')
+    check_palette_contrast(page)
     page.locator('#appearanceTheme').select_option('system')
     page.locator('#appearancePreset').select_option('minimal')
     page.locator('#appearanceSize').select_option('standard')
@@ -426,6 +427,33 @@ def check_runtime(page):
     assert page.locator('#categoryFilter').evaluate('el => el.open')
     dropdown.press('Enter')
     assert not page.locator('#categoryFilter').evaluate('el => el.open')
+
+
+def check_palette_contrast(page):
+    pairs = [('--text', '--surface', 4.5), ('--muted', '--subtle', 4.5),
+             ('--on-accent', '--accent-fill', 4.5), ('--on-accent', '--accent-hover', 4.5),
+             ('--axis', '--surface', 3), ('--selected-border', '--selected', 3)]
+    pairs.extend((f'--plot-{index}', '--surface', 3) for index in range(8))
+    names = sorted({name for foreground, background, _ in pairs for name in (foreground, background)})
+
+    def luminance(color):
+        assert re.fullmatch(r'#[0-9a-f]{6}', color, re.IGNORECASE), color
+        channels = [int(color[index:index+2], 16) / 255 for index in (1, 3, 5)]
+        linear = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in channels]
+        return sum(value * weight for value, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
+
+    for theme in ('light', 'dark'):
+        page.locator('#appearanceTheme').select_option(theme)
+        for palette in ('neon', 'glass', 'corporate', 'paper', 'industrial'):
+            page.locator('#appearancePalette').select_option(palette)
+            colors = page.evaluate('''names => {
+              const style = getComputedStyle(document.documentElement);
+              return Object.fromEntries(names.map(name => [name, style.getPropertyValue(name).trim()]));
+            }''', names)
+            for foreground, background, minimum in pairs:
+                low, high = sorted([luminance(colors[foreground]), luminance(colors[background])])
+                ratio = (high + 0.05) / (low + 0.05)
+                assert ratio >= minimum, (palette, theme, foreground, background, ratio, minimum)
 
 
 def set_folder(page, folder, filenames):
@@ -1469,15 +1497,15 @@ def check_delete_without_backup(page, temporary, confirmations):
     database=Path(api(page,'info')['dataFile'])
     files={p.name for p in database.parent.glob('*.sqlite3')}
     stored=backup_contents(database)
-    navigate(page,'upload')
-    page.locator('#unifiedUploadList').click()
+    navigate(page,'databases')
+    expect(page.locator('#databases #unifiedReportDatabase')).to_have_text('Личная база')
     loaded=page.locator('#uploadedReports')
     if not loaded.evaluate('node=>node.open'):
         loaded.locator(':scope > summary').click()
     card=page.locator('#reports .calendar-source').first
     expect(card.locator('strong')).to_contain_text('2030-01-06',timeout=90_000)
     confirmations.cancel_then_accept(card.get_by_role('button',name='Удалить отчёт',exact=True),
-        'Удалить отчёт 2030-01-06 — 2030-01-06?')
+        'Удалить отчёт 2030-01-06 — 2030-01-06 из личной базы?')
     wait_for_app_state(page,
         "typeof window.unifiedUI.snapshot?.reports==='number' && window.unifiedUI.snapshot.reports==="+
         str(before['reports']+5),'Confirmed single-report deletion',90_000)
