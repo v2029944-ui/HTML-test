@@ -7,59 +7,66 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
-    sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex, OnceLock, Weak},
+    sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Arc, Mutex, OnceLock, Weak},
     time::UNIX_EPOCH,
 };
 
-#[path = "management.rs"]
+#[path = "management/management.rs"]
 mod management;
 pub use management::*;
-#[path = "management_tree.rs"]
+#[path = "management/management_job.rs"]
+mod management_job;
+pub use management_job::ManagementJob;
+#[path = "management/management_tree.rs"]
 mod management_tree;
 
-#[path = "analytics.rs"]
+#[path = "analytics/analytics.rs"]
 mod analytics;
 pub use analytics::*;
-#[path = "report_calendar.rs"]
+#[path = "reports/report_calendar.rs"]
 mod report_calendar;
 pub use report_calendar::ReportCalendar;
-#[path = "report_quality.rs"]
+#[path = "reports/report_quality.rs"]
 mod report_quality;
 pub use report_quality::{QualityScope, ReportQualityPage};
-#[path = "unified_reports.rs"]
+#[path = "reports/unified_reports.rs"]
 mod unified_reports;
 pub use unified_reports::{UnifiedQualityFilter, UnifiedQualityPage, UnifiedCalendar};
 
-#[path = "shared_runtime.rs"]
+#[path = "shared/shared_runtime.rs"]
 pub mod shared_runtime;
 
-#[path = "shared_folder.rs"]
+#[path = "shared/shared_folder.rs"]
 pub mod shared_folder;
 
-#[path = "backup.rs"]
+#[path = "database/csv_export.rs"]
+mod csv_export;
+#[path = "database/backup.rs"]
 mod backup;
-#[path = "scheduled_backup.rs"]
+#[path = "database/scheduled_backup.rs"]
 mod scheduled_backup;
 pub use scheduled_backup::ScheduledBackupStatus;
-#[path = "report_transfer.rs"]
+#[path = "shared/report_transfer.rs"]
 mod report_transfer;
 pub use report_transfer::{TransferDirection, TransferPeriod, TransferPreview, TransferReceipt, TransferRow};
-#[path = "recovery.rs"]
+#[path = "database/recovery.rs"]
 mod recovery;
 pub use recovery::RestorePreview;
-#[path = "activation.rs"]
+#[path = "database/activation.rs"]
 mod activation;
 pub use activation::{AppRestoreLock, RestoreLaunchInfo, RestoreLaunchResult, ScheduledRestore, apply_pending_restore_or_open_original};
-#[path = "metric_reports.rs"]
+#[path = "reports/metric_reports.rs"]
 mod metric_reports;
 pub use metric_reports::{kinds as metric_kinds, MetricKind, MetricReceipt, MetricReview, MetricSummary};
-#[path = "metric_xlsx.rs"]
+#[path = "reports/metric_xlsx.rs"]
 mod metric_xlsx;
 pub use metric_xlsx::{profiles as metric_xlsx_profiles, MetricXlsxProfile};
 
-#[path = "read_model.rs"]
+#[path = "database/read_model.rs"]
 mod read_model;
-#[path = "import_apply.rs"]
+#[path = "import/import_source.rs"]
+mod import_source;
+#[path = "import/import_apply.rs"]
 mod import_apply;
 pub use import_apply::{ImportConfirmation, ImportCounts, ImportJob, ImportPreview, ImportProgress, ImportReceipt};
 pub use read_model::{Aggregate, IndexedRow, ReadFilter, ReportHeader, MAX_PAGE_ROWS};
@@ -185,14 +192,47 @@ struct FolderImportSession {
     active: Option<Arc<ImportJob>>,
 }
 
-pub struct FolderImportOperation<'a> {
-    store: &'a Storage,
-    pub job: Arc<ImportJob>,
+// The window can cancel the selected import without taking the database lock.
+pub(super) struct FolderImportCancellation(Arc<Mutex<Option<FolderImportSession>>>);
+
+impl FolderImportCancellation {
+    pub(super) fn close_window(&self, owner: &str) {
+        if let Ok(mut session) = self.0.lock() {
+            if session.as_ref().is_some_and(|current| current.owner == owner) {
+                cancel_folder_import(&mut session);
+            }
+        }
+    }
+}
+
+fn ensure_import_active(cancel: &AtomicBool) -> Result<(), String> {
+    if cancel.load(Ordering::Acquire) {
+        Err("Import cancelled before commit.".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn cancel_folder_import(session: &mut Option<FolderImportSession>) {
+    if let Some(active) = session.take().and_then(|previous| previous.active) {
+        active.cancel();
+    }
+}
+
+struct FolderImportOperation<'a> {
+    sessions: &'a Mutex<Option<FolderImportSession>>,
+    job: Arc<ImportJob>,
+}
+
+impl FolderImportOperation<'_> {
+    fn run<T>(self, action: impl FnOnce(&ImportJob) -> Result<T, String>) -> Result<T, String> {
+        action(&self.job)
+    }
 }
 
 impl Drop for FolderImportOperation<'_> {
     fn drop(&mut self) {
-        if let Ok(mut session) = self.store.folder_import.lock() {
+        if let Ok(mut session) = self.sessions.lock() {
             if let Some(session) = session.as_mut() {
                 if session.active.as_ref().is_some_and(|active| Arc::ptr_eq(active, &self.job)) {
                     session.active = None;
@@ -242,42 +282,44 @@ fn safe_excel_name(name: &str) -> bool {
         && Path::new(name).file_name().and_then(|x| x.to_str()) == Some(name)
 }
 
-fn validate_rule(rule: &Rule) -> Result<(), String> {
-    if !REPORT_TYPES.contains(&rule.kind.as_str()) {
-        return Err("Тип отчёта должен быть «Дни», «Недели» или «Месяцы».".into());
-    }
-    let wide = matches!(rule.format.as_deref(), Some("daily-wide" | "period-pairs"));
-    if (rule.format.is_some() && !matches!(rule.format.as_deref(), Some("auto" | "legacy" | "daily-wide" | "period-pairs"))) || (rule.format.as_deref() == Some("daily-wide") && rule.kind != "day") {
-        return Err("Некорректный формат импорта.".into());
-    }
-    if !(wide && rule.start.is_empty())
-        && (!valid_date(&rule.start) || (rule.kind == "month" && !rule.start.ends_with("-01"))) {
-        return Err("Некорректная дата первого периода.".into());
-    }
-    if rule.sheet.encode_utf16().count() > 120 {
-        return Err("Название листа Excel слишком длинное.".into());
-    }
-    if (!wide && (rule.year.is_some() || rule.sheets.is_some() || rule.mappings.is_some()))
-        || rule.year.is_some_and(|year| !(1900..=9999).contains(&year)) {
-        return Err("Некорректные параметры годового импорта.".into());
-    }
-    let valid_sheet = |name: &str| !name.trim().is_empty() && name.encode_utf16().count() <= 120;
-    if let Some(sheets) = &rule.sheets {
-        if sheets.len() > 12 || sheets.iter().any(|name| !valid_sheet(name)) {
-            return Err("Некорректный список листов Excel.".into());
+impl Rule {
+    fn validate(&self) -> Result<(), String> {
+        if !REPORT_TYPES.contains(&self.kind.as_str()) {
+            return Err("Тип отчёта должен быть «Дни», «Недели» или «Месяцы».".into());
         }
-    }
-    if let Some(mappings) = &rule.mappings {
-        for (name, mapping) in mappings {
-            if !valid_sheet(name) || mapping.work_col > 2047 || mapping.first_day_col > 2047
-                || mapping.header_row > 59999
-                || mapping.total_count_col.is_some_and(|col| col > 2047)
-                || mapping.total_amount_col.is_some_and(|col| col > 2047) {
-                return Err("Некорректное сопоставление столбцов Excel.".into());
+        let wide = matches!(self.format.as_deref(), Some("daily-wide" | "period-pairs"));
+        if (self.format.is_some() && !matches!(self.format.as_deref(), Some("auto" | "legacy" | "daily-wide" | "period-pairs"))) || (self.format.as_deref() == Some("daily-wide") && self.kind != "day") {
+            return Err("Некорректный формат импорта.".into());
+        }
+        if !(wide && self.start.is_empty())
+            && (!valid_date(&self.start) || (self.kind == "month" && !self.start.ends_with("-01"))) {
+            return Err("Некорректная дата первого периода.".into());
+        }
+        if self.sheet.encode_utf16().count() > 120 {
+            return Err("Название листа Excel слишком длинное.".into());
+        }
+        if (!wide && (self.year.is_some() || self.sheets.is_some() || self.mappings.is_some()))
+            || self.year.is_some_and(|year| !(1900..=9999).contains(&year)) {
+            return Err("Некорректные параметры годового импорта.".into());
+        }
+        let valid_sheet = |name: &str| !name.trim().is_empty() && name.encode_utf16().count() <= 120;
+        if let Some(sheets) = &self.sheets {
+            if sheets.len() > 12 || sheets.iter().any(|name| !valid_sheet(name)) {
+                return Err("Некорректный список листов Excel.".into());
             }
         }
+        if let Some(mappings) = &self.mappings {
+            for (name, mapping) in mappings {
+                if !valid_sheet(name) || mapping.work_col > 2047 || mapping.first_day_col > 2047
+                    || mapping.header_row > 59999
+                    || mapping.total_count_col.is_some_and(|col| col > 2047)
+                    || mapping.total_amount_col.is_some_and(|col| col > 2047) {
+                    return Err("Некорректное сопоставление столбцов Excel.".into());
+                }
+            }
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 fn validate_data(data: &Value) -> Result<(), String> {
@@ -569,7 +611,7 @@ impl Storage {
             }
             for (name, rule) in &parsed.rules {
                 if !safe_excel_name(name) { return Err("Небезопасное имя файла в прежней конфигурации.".into()); }
-                validate_rule(rule)?;
+                rule.validate()?;
             }
             Some(parsed)
         } else {
@@ -663,7 +705,7 @@ impl Storage {
 
     pub fn set_rule(&self, name: String, rule: Rule) -> Result<Rule, String> {
         if !safe_excel_name(&name) { return Err("Некорректное имя файла XLSX.".into()); }
-        validate_rule(&rule)?;
+        rule.validate()?;
         let _guard = self.gate.lock().map_err(err)?;
         let mut conn = self.connect()?;
         let mut config = self.config(&conn)?;
@@ -689,7 +731,7 @@ impl Storage {
         if !safe_excel_name(&name) {
             return Err("Некорректное имя файла XLSX.".into());
         }
-        validate_rule(&rule)?;
+        rule.validate()?;
         if expected_folder.is_empty() || expected_folder.len() > 32767
             || expected_signature.is_empty() || expected_signature.len() > 256
         {
@@ -718,21 +760,40 @@ impl Storage {
         read_model::revision(&conn)
     }
 
+    pub(super) fn folder_import_cancellation(&self) -> FolderImportCancellation {
+        FolderImportCancellation(Arc::clone(&self.folder_import))
+    }
+
+    pub(super) fn inherit_folder_import(&mut self, source: &Self) {
+        self.folder_import = Arc::clone(&source.folder_import);
+        self.folder_import_serial.store(
+            source.folder_import_serial.load(Ordering::SeqCst),
+            Ordering::SeqCst,
+        );
+    }
+
+    pub fn with_folder_import<T>(
+        &self,
+        owner: &str,
+        request: &FolderImportRequest,
+        action: impl FnOnce(&ImportJob) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.begin_folder_import(owner, request)?.run(action)
+    }
+
     pub fn set_folder_import_session(&self, owner: &str, enabled: bool) -> Result<Option<String>, String> {
         let mut session = self.folder_import.lock().map_err(err)?;
         if session.as_ref().is_some_and(|current| current.owner != owner) {
             return Err("Auto import is controlled by another window.".into());
         }
-        if let Some(previous) = session.take() {
-            if let Some(active) = previous.active { active.cancel(); }
-        }
+        cancel_folder_import(&mut session);
         if !enabled { return Ok(None); }
         let token = self.folder_import_serial.fetch_add(1, Ordering::Relaxed).to_string();
         *session = Some(FolderImportSession { token:token.clone(), owner:owner.into(), active:None });
         Ok(Some(token))
     }
 
-    pub fn begin_folder_import(&self, owner: &str, request: &FolderImportRequest) -> Result<FolderImportOperation<'_>, String> {
+    fn begin_folder_import(&self, owner: &str, request: &FolderImportRequest) -> Result<FolderImportOperation<'_>, String> {
         if !safe_excel_name(&request.name) || request.folder.is_empty() || request.folder.len() > 32767
             || request.revision < 0 || request.signature.is_empty() || request.signature.len() > 256
         {
@@ -748,7 +809,7 @@ impl Storage {
             open_checked_folder_excel(&path, &signature).map(|_| ())
         }));
         session.active = Some(job.clone());
-        Ok(FolderImportOperation { store:self, job })
+        Ok(FolderImportOperation { sessions: &self.folder_import, job })
     }
 
     pub fn checked_folder_import(&self, request: &FolderImportRequest) -> Result<(Rule, PathBuf, fs::File), String> {
@@ -761,7 +822,7 @@ impl Storage {
             return Err("Папка Excel изменилась. Обновите список файлов.".into());
         }
         let rule = config.rules.get(&request.name).ok_or("Для файла Excel нет сохранённого правила.")?;
-        validate_rule(rule)?;
+        rule.validate()?;
         let path = Path::new(&request.folder).join(&request.name);
         let handle = open_checked_folder_excel(&path, &request.signature)?;
         Ok((rule.clone(), path, handle))
@@ -1343,9 +1404,10 @@ mod tests {
         unknown["reports"][0]["type"]=json!("quarter");
         assert!(store.save(unknown).is_err());
         assert_eq!(store.load().unwrap()["reports"][0]["type"],"week");
-        assert!(validate_rule(&Rule {
+        let rule = Rule {
             kind:"quarter".into(),start:"2026-11-16".into(),sheet:String::new(),..Rule::default()
-        }).is_err());
+        };
+        assert!(rule.validate().is_err());
     }
 
     #[test]
@@ -1409,7 +1471,7 @@ mod tests {
             value.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
             let rejected = match serde_json::from_value::<Rule>(value.clone()) {
                 Err(_) => true,
-                Ok(rule) => validate_rule(&rule).is_err(),
+                Ok(rule) => rule.validate().is_err(),
             };
             assert!(rejected, "accepted malformed rule: {value}");
         }
@@ -1418,7 +1480,7 @@ mod tests {
             "mappings":{"Sheet":{"workCol":2047,"headerRow":59999,"firstDayCol":2047,
                 "totalCountCol":null,"totalAmountCol":2047}}
         })).unwrap();
-        assert!(validate_rule(&boundary).is_ok());
+        assert!(boundary.validate().is_ok());
     }
 
     #[test]
@@ -1439,20 +1501,20 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "read_model_tests.rs"]
+#[path = "database/read_model_tests.rs"]
 mod read_model_tests;
 
 #[cfg(test)]
-#[path = "import_apply_tests.rs"]
+#[path = "import/import_apply_tests.rs"]
 mod import_apply_tests;
 
 #[cfg(test)]
-#[path = "import_wide_apply_tests.rs"]
+#[path = "import/import_wide_apply_tests.rs"]
 mod import_wide_apply_tests;
 #[cfg(test)]
-#[path = "analytics_tests.rs"]
+#[path = "analytics/tests/analytics_tests.rs"]
 mod analytics_tests;
 
 #[cfg(test)]
-#[path = "management_tests.rs"]
+#[path = "management/management_tests.rs"]
 mod management_tests;

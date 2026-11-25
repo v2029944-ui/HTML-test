@@ -437,6 +437,19 @@ def verify_personal_transfer(writer, reader, folder, root, previous_generation):
     return totals
 
 
+def remove_test_snapshot(path):
+    # A polling client can briefly open the snapshot without delete sharing.
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            path.unlink()
+            return
+        except PermissionError as error:
+            if getattr(error, 'winerror', None) != 32 or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.2)
+
+
 def verify_explicit_reset(writer, peer, folder, root):
     def personal_reports(client):
         with closing(sqlite3.connect(client.personal_file.as_uri() + '?mode=ro', uri=True)) as source:
@@ -476,7 +489,7 @@ def verify_explicit_reset(writer, peer, folder, root):
         target = retained / source.name
         shutil.copyfile(source, target)
         assert file_hash(target) == after_reset[source.name]['sha256']
-        source.unlink()
+        remove_test_snapshot(source)
     for client in (writer, peer):
         wait_for_app_state(client.page, 'window.sharedWorkspace.state?.available === false',
                            'All snapshots absent blocks automatic sync', 60_000)

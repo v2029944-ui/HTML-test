@@ -3,5 +3,5 @@
 pub mod storage;
 
 #[cfg(test)]
-#[path = "../../src-tauri/src/native_name_selection.rs"]
+#[path = "../../src-tauri/src/commands/native_name_selection.rs"]
 mod native_name_selection;

@@ -1,33 +1,11 @@
 //! Sequential conversion of ordinary triples into disk-backed reports.
 //! Financial rows and diagnostics are never collected into a report-sized Vec.
-use crate::{check_cancel, fail, Result, Stage};
-#[path = "ordinary_date.rs"]
-mod ordinary_date;
-use chrono::{Datelike, Duration, Months, NaiveDate};
+use crate::legacy_layout::{check_workbook_dates, legacy_periods, LegacyOptions, TripleMapping};
+use crate::{cell, check_cancel, fail, Result, Stage};
+use chrono::{Datelike, NaiveDate};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::{collections::HashSet, sync::atomic::AtomicBool};
-#[derive(Clone, Debug, Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TripleMapping {
-    pub header_row: u32,
-    pub work_col: u32,
-    pub count_col: u32,
-    pub amount_col: u32,
-}
-#[derive(Clone, Debug, Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LegacyOptions {
-    pub sheet: String,
-    pub kind: String,
-    pub start: String,
-    pub organizations: [String; 4],
-    pub mappings: Option<Vec<TripleMapping>>,
-    /// Full set-ordered list of explicitly chosen dates. Omission retains the
-    /// sequential dates derived from start; partial lists are rejected.
-    #[serde(default)]
-    pub period_dates: Option<Vec<String>>,
-}
 #[derive(Clone, Copy, Default, Debug)]
 pub struct ConversionSummary {
     pub reports: u64,
@@ -282,17 +260,6 @@ fn round(n: f64, places: i32) -> f64 {
         rounded / p
     }
 }
-pub(crate) fn cell(col: u32, row: u32) -> String {
-    let mut c = col;
-    let mut bytes = Vec::with_capacity(3);
-    while c > 0 {
-        c -= 1;
-        bytes.push(b'A' + (c % 26) as u8);
-        c /= 26;
-    }
-    bytes.reverse();
-    format!("{}{row}", String::from_utf8(bytes).unwrap())
-}
 pub(crate) fn page_limit(n: usize) -> Result<()> {
     if (1..=100).contains(&n) {
         Ok(())
@@ -300,74 +267,6 @@ pub(crate) fn page_limit(n: usize) -> Result<()> {
         Err(fail("report page limit is 1..100"))
     }
 }
-fn legacy_periods(
-    cfg: &LegacyOptions,
-    start: NaiveDate,
-    count: usize,
-) -> Result<Vec<(NaiveDate, NaiveDate)>> {
-    if count > 684
-        || cfg
-            .period_dates
-            .as_ref()
-            .is_some_and(|dates| dates.len() != count)
-    {
-        return Err(fail(
-            "Число дат должно совпадать с числом наборов столбцов.",
-        ));
-    }
-    let mut periods: Vec<(NaiveDate, NaiveDate)> = Vec::with_capacity(count);
-    for i in 0..count {
-        let first = if let Some(dates) = &cfg.period_dates {
-            let raw = &dates[i];
-            let parsed = NaiveDate::parse_from_str(raw, "%Y-%m-%d").map_err(|_| {
-                fail(&format!(
-                    "Набор {}: укажите корректную дату периода.",
-                    i + 1
-                ))
-            })?;
-            if raw.len() != 10 || parsed.to_string() != *raw {
-                return Err(fail(&format!(
-                    "Набор {}: укажите дату в формате YYYY-MM-DD.",
-                    i + 1
-                )));
-            }
-            parsed
-        } else {
-            match cfg.kind.as_str() {
-                "month" => start.checked_add_months(Months::new(i as u32)),
-                "week" => start.checked_add_signed(Duration::days(i as i64 * 7)),
-                _ => start.checked_add_signed(Duration::days(i as i64)),
-            }
-            .ok_or_else(|| fail("Дата периода вне диапазона."))?
-        };
-        if cfg.kind == "month" && first.day() != 1 {
-            return Err(fail(&format!(
-                "Набор {}: месячный период должен начинаться первого числа.",
-                i + 1
-            )));
-        }
-        let end = match cfg.kind.as_str() {
-            "week" => first.checked_add_signed(Duration::days(6)),
-            "month" => first
-                .checked_add_months(Months::new(1))
-                .and_then(|date| date.checked_sub_signed(Duration::days(1))),
-            _ => Some(first),
-        }
-        .ok_or_else(|| fail("Дата периода вне диапазона."))?;
-        if first.year() > 9999 || end.year() > 9999 {
-            return Err(fail("Дата периода вне диапазона."));
-        }
-        if periods.iter().any(|(a, b)| *a <= end && *b >= first) {
-            return Err(fail(&format!(
-                "Даты наборов пересекаются. Проверьте период {}.",
-                i + 1
-            )));
-        }
-        periods.push((first, end));
-    }
-    Ok(periods)
-}
-
 impl Stage<'_> {
     pub fn convert_legacy(
         &mut self,
@@ -439,7 +338,7 @@ impl Stage<'_> {
             }
         }
         let periods = legacy_periods(cfg, start, mappings.len())?;
-        let date_notices = ordinary_date::check(self, cfg, &mappings, periods[0].0, cancel)?;
+        let date_notices = check_workbook_dates(&self.db, cfg, &mappings, periods[0].0, cancel)?;
         self.db.execute_batch(SCHEMA)?;
         self.db.execute_batch("BEGIN IMMEDIATE;DELETE FROM converted_reports;DELETE FROM converted_rows;DELETE FROM converted_issues;DELETE FROM converted_totals;DELETE FROM converted_organizations;DELETE FROM manifest WHERE name='conversion_complete';")?;
         let result = (|| {

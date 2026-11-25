@@ -65,7 +65,7 @@ test('all HTML-test reporting period types are supported by native Tauri SQLite'
   const values=m=>[...m[1].matchAll(/['"]([^'"]+)['"]/g)].map(x=>x[1]).sort();
   assert.deepEqual(values(rustList),values(htmlList),'SQLite is missing a type supported by HTML');
   assert.ok(values(htmlList).includes('day'));
-  assert.match(rust,/REPORT_TYPES\.contains\(&rule\.kind\.as_str\(\)\)/);
+  assert.match(rust,/impl Rule \{\s*fn validate\(&self\)[^{]*\{\s*if !REPORT_TYPES\.contains\(&self\.kind\.as_str\(\)\)/);
   assert.match(rust,/REPORT_TYPES\.contains\(&x\)/);
 });
 

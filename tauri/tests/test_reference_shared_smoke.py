@@ -10,10 +10,47 @@ from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import windows_shared_smoke as smb
 from windows_shared_smoke import (INSTALLER_AUTOSTART_CLEANUP, InstalledClient, generations,
                                   native_select, require_private_database, smb_workspace,
                                   stop_installer_autostart, wait_for_webview_shutdown, windows_path)
 from windows_smoke import ROOT, invoke
+
+
+class SnapshotRemovalTests(unittest.TestCase):
+    def test_retries_a_snapshot_held_open_by_another_client(self):
+        locked = PermissionError('snapshot still open')
+        locked.winerror = 32
+        snapshot = Mock()
+        snapshot.unlink.side_effect = [locked, None]
+        with patch.object(smb.time, 'monotonic', side_effect=[0, 1]), patch.object(smb.time, 'sleep') as pause:
+            smb.remove_test_snapshot(snapshot)
+        self.assertEqual(snapshot.unlink.call_count, 2)
+        pause.assert_called_once()
+
+    def test_preserves_a_persistent_sharing_violation(self):
+        locked = PermissionError('snapshot still open')
+        locked.winerror = 32
+        snapshot = Mock()
+        snapshot.unlink.side_effect = locked
+        with patch.object(smb.time, 'monotonic', side_effect=[0, 1, 10]), patch.object(smb.time, 'sleep') as pause:
+            with self.assertRaises(PermissionError) as error:
+                smb.remove_test_snapshot(snapshot)
+        self.assertIs(error.exception, locked)
+        self.assertEqual(snapshot.unlink.call_count, 2)
+        pause.assert_called_once()
+
+    def test_does_not_retry_access_denied(self):
+        denied = PermissionError('access denied')
+        denied.winerror = 5
+        snapshot = Mock()
+        snapshot.unlink.side_effect = denied
+        with patch.object(smb.time, 'sleep') as pause:
+            with self.assertRaises(PermissionError) as error:
+                smb.remove_test_snapshot(snapshot)
+        self.assertIs(error.exception, denied)
+        snapshot.unlink.assert_called_once()
+        pause.assert_not_called()
 
 
 class WebViewShutdownTests(unittest.TestCase):

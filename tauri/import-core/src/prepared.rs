@@ -1,9 +1,9 @@
 //! Owned, complete disk artifacts. No public constructor from caller file lists.
 use crate::{
-    check_cancel, fail, fingerprint, ReportInfo, ReportIssue, ReportOrganization, ReportProvenance,
+    check_cancel, fail, fingerprint, Limits, ReportInfo, ReportIssue, ReportOrganization, ReportProvenance,
     ReportRow, ReportTotal, Result, SourceIssue, Stage,
 };
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
@@ -197,42 +197,61 @@ fn utf8(path: &Path) -> Result<String> {
     }
     Ok(text.into())
 }
-impl<'a> Stage<'a> {
-    // Include actual documents/journal plus projected dirty DB pages. Reserve one
-    // 64 KiB block before each document for the small manifest update.
-    fn preparation_bytes(&self) -> Result<u64> {
-        let pages: u64 = self.db.query_row("PRAGMA page_count", [], |r| r.get(0))?;
-        let size: u64 = self.db.query_row("PRAGMA page_size", [], |r| r.get(0))?;
-        let physical = fs::metadata(self.dir.path().join("stage.sqlite3"))?.len();
-        let mut bytes = (pages * size).saturating_sub(physical);
-        for entry in fs::read_dir(self.dir.path())? {
-            bytes += entry?.metadata()?.len();
-        }
-        Ok(bytes)
+// Include actual documents/journal plus projected dirty DB pages. Reserve one
+// 64 KiB block before each document for the small manifest update.
+fn preparation_bytes(db: &Connection, directory: &Path) -> Result<u64> {
+    let pages: u64 = db.query_row("PRAGMA page_count", [], |r| r.get(0))?;
+    let size: u64 = db.query_row("PRAGMA page_size", [], |r| r.get(0))?;
+    let physical = fs::metadata(directory.join("stage.sqlite3"))?.len();
+    let mut bytes = (pages * size).saturating_sub(physical);
+    for entry in fs::read_dir(directory)? {
+        bytes += entry?.metadata()?.len();
     }
+    Ok(bytes)
+}
 
+impl<'a> Stage<'a> {
     /// Consumes a converted stage. Failures drop its private files; no resumable incomplete handle.
     pub fn prepare(
         self,
         cancel: &AtomicBool,
         progress: impl FnMut(PrepareProgress),
     ) -> Result<PreparedImport<'a>> {
-        self.prepare_with_mode(ImportMode::Manual, cancel, progress)
+        PreparedImport::from_manual_stage(self, cancel, progress)
     }
     pub fn prepare_with_mode(
         self,
         mode: ImportMode,
         cancel: &AtomicBool,
-        mut progress: impl FnMut(PrepareProgress),
+        progress: impl FnMut(PrepareProgress),
     ) -> Result<PreparedImport<'a>> {
+        PreparedImport::from_stage(self, mode, cancel, progress)
+    }
+}
+
+impl<'a> PreparedImport<'a> {
+    fn from_manual_stage(
+        stage: Stage<'a>,
+        cancel: &AtomicBool,
+        progress: impl FnMut(PrepareProgress),
+    ) -> Result<Self> {
+        Self::from_stage(stage, ImportMode::Manual, cancel, progress)
+    }
+
+    fn from_stage(
+        stage: Stage<'a>,
+        mode: ImportMode,
+        cancel: &AtomicBool,
+        mut progress: impl FnMut(PrepareProgress),
+    ) -> Result<Self> {
         check_cancel(cancel)?;
         let tx = rusqlite::Transaction::new_unchecked(
-            &self.db,
+            &stage.db,
             rusqlite::TransactionBehavior::Immediate,
         )?;
         // Only explicitly supported conversion markers may publish documents.
         // Wide provenance, quality and zero proof are validated below.
-        let converted: Option<String> = self.db.query_row(
+        let converted: Option<String> = stage.db.query_row(
             "SELECT value FROM manifest WHERE name='conversion_complete'",
             [],
             |r| r.get(0),
@@ -260,7 +279,7 @@ impl<'a> Stage<'a> {
                 .map(|c| format!("octet_length({c})>65536"))
                 .collect::<Vec<_>>()
                 .join(" OR ");
-            let oversized: bool = self.db.query_row(
+            let oversized: bool = stage.db.query_row(
                 &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE {checks})"),
                 [],
                 |r| r.get(0),
@@ -286,7 +305,7 @@ impl<'a> Stage<'a> {
                     .map(|c| format!("octet_length({c})>65536"))
                     .collect::<Vec<_>>()
                     .join(" OR ");
-                let oversized: bool = self.db.query_row(
+                let oversized: bool = stage.db.query_row(
                     &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE {checks})"),
                     [],
                     |r| r.get(0),
@@ -301,7 +320,7 @@ impl<'a> Stage<'a> {
         let mut cursor = 0;
         loop {
             check_cancel(cancel)?;
-            let page = self.source_issue_page(cursor, 100)?;
+            let page = stage.source_issue_page(cursor, 100)?;
             if page.is_empty() {
                 break;
             }
@@ -319,7 +338,7 @@ impl<'a> Stage<'a> {
         }
         source_diagnostics.sha256 = format!("{:x}", digest.0.finalize());
         if wide {
-            let (source_count, relevant_count): (u64, u64) = self.db.query_row(
+            let (source_count, relevant_count): (u64, u64) = stage.db.query_row(
                 "SELECT COUNT(*),COALESCE(SUM(relevant=1),0) FROM wide_source_issues",
                 [],
                 |r| Ok((r.get(0)?, r.get(1)?)),
@@ -329,38 +348,38 @@ impl<'a> Stage<'a> {
             {
                 return Err(fail("source diagnostic cursor is incomplete"));
             }
-            let (attached,unique):(u64,u64)=self.db.query_row("SELECT COUNT(*),COUNT(DISTINCT source_issue_seq) FROM converted_issues WHERE scope='source-period'",[],|r|Ok((r.get(0)?,r.get(1)?)))?;
-            let invalid:bool=self.db.query_row("SELECT EXISTS(SELECT 1 FROM converted_issues i LEFT JOIN wide_source_issues s ON s.seq=i.source_issue_seq WHERE i.scope='source-period' AND (s.seq IS NULL OR s.relevant<>1 OR s.report_id IS NOT i.report_id OR i.date IS NOT s.date OR i.kind IS NOT s.kind OR i.reason IS NOT s.reason OR i.source_row IS NOT s.source_row OR i.organization IS NOT s.organization OR i.work_cell IS NOT NULL OR i.skipped IS NOT NULL OR i.count_cell IS NOT s.count_cell OR i.amount_cell IS NOT s.amount_cell OR i.expected_count IS NOT s.expected_count OR i.expected_amount IS NOT s.expected_amount OR i.actual_count IS NOT s.actual_count OR i.actual_amount IS NOT s.actual_amount)) OR EXISTS(SELECT 1 FROM wide_source_issues WHERE relevant NOT IN (0,1))",[],|r|r.get(0))?;
+            let (attached,unique):(u64,u64)=stage.db.query_row("SELECT COUNT(*),COUNT(DISTINCT source_issue_seq) FROM converted_issues WHERE scope='source-period'",[],|r|Ok((r.get(0)?,r.get(1)?)))?;
+            let invalid:bool=stage.db.query_row("SELECT EXISTS(SELECT 1 FROM converted_issues i LEFT JOIN wide_source_issues s ON s.seq=i.source_issue_seq WHERE i.scope='source-period' AND (s.seq IS NULL OR s.relevant<>1 OR s.report_id IS NOT i.report_id OR i.date IS NOT s.date OR i.kind IS NOT s.kind OR i.reason IS NOT s.reason OR i.source_row IS NOT s.source_row OR i.organization IS NOT s.organization OR i.work_cell IS NOT NULL OR i.skipped IS NOT NULL OR i.count_cell IS NOT s.count_cell OR i.amount_cell IS NOT s.amount_cell OR i.expected_count IS NOT s.expected_count OR i.expected_amount IS NOT s.expected_amount OR i.actual_count IS NOT s.actual_count OR i.actual_amount IS NOT s.actual_amount)) OR EXISTS(SELECT 1 FROM wide_source_issues WHERE relevant NOT IN (0,1))",[],|r|r.get(0))?;
             if attached != source_diagnostics.relevant || unique != attached || invalid {
                 return Err(fail("source diagnostic attachment is incomplete"));
             }
         }
         let source_name = utf8(Path::new(
-            self.source_path
+            stage.source_path
                 .file_name()
                 .ok_or_else(|| fail("missing source filename"))?,
         ))?;
         let source_folder = utf8(
-            self.source_path
+            stage.source_path
                 .parent()
                 .ok_or_else(|| fail("missing source folder"))?,
         )?;
-        if self.current_source_hash(cancel)? != self.bound_hash {
+        if stage.current_source_hash(cancel)? != stage.bound_hash {
             return Err(fail("source changed since ingestion"));
         }
         // Random 24-character stage name supplies operation uniqueness; hash gives bounded IDs.
         let operation = format!(
             "{:x}",
-            Sha256::digest(self.dir.path().to_string_lossy().as_bytes())
+            Sha256::digest(stage.dir.path().to_string_lossy().as_bytes())
         );
-        self.db.execute_batch("CREATE TABLE prepared_reports(ordinal INTEGER PRIMARY KEY, local_id TEXT NOT NULL, id TEXT UNIQUE NOT NULL, kind TEXT NOT NULL, start TEXT NOT NULL, end TEXT NOT NULL, rows INTEGER NOT NULL, bytes INTEGER NOT NULL, hash TEXT NOT NULL, quality TEXT NOT NULL, provenance TEXT, validated_zero INTEGER NOT NULL);")?;
+        stage.db.execute_batch("CREATE TABLE prepared_reports(ordinal INTEGER PRIMARY KEY, local_id TEXT NOT NULL, id TEXT UNIQUE NOT NULL, kind TEXT NOT NULL, start TEXT NOT NULL, end TEXT NOT NULL, rows INTEGER NOT NULL, bytes INTEGER NOT NULL, hash TEXT NOT NULL, quality TEXT NOT NULL, provenance TEXT, validated_zero INTEGER NOT NULL);")?;
         let mut after = 0;
         let mut reports = 0;
         let mut rows = 0;
         let mut bytes = 0u64;
         let mut quality = QualityCounts::default();
         loop {
-            let page = self.report_page(after, 1)?;
+            let page = stage.report_page(after, 1)?;
             let Some(info) = page.into_iter().next() else {
                 break;
             };
@@ -376,28 +395,28 @@ impl<'a> Stage<'a> {
             }
             let provenance = if wide {
                 Some(
-                    self.report_provenance(&info.id)?
+                    stage.report_provenance(&info.id)?
                         .ok_or_else(|| fail("missing wide report provenance"))?,
                 )
             } else {
                 None
             };
-            let validated_zero = validate_provenance_and_zero(&self, &info, provenance.as_ref())?;
+            let validated_zero = validate_provenance_and_zero(&stage.db, stage.limits, &info, provenance.as_ref())?;
             if info.row_count == 0 && !validated_zero {
                 return Err(fail(
                     "empty reports require proven native wide zero controls",
                 ));
             }
             let id = format!("native-{operation}-{}", info.ordinal);
-            let used = self.preparation_bytes()?;
-            let max = self
+            let used = preparation_bytes(&stage.db, stage.path())?;
+            let max = stage
                 .limits
                 .stage_bytes
                 .checked_sub(used + 65536)
                 .ok_or_else(|| fail("prepared staging byte limit"))?
                 .min(i32::MAX as u64);
             let output = OpenOptions::new().write(true).create_new(true).open(
-                self.dir
+                stage.dir
                     .path()
                     .join(format!("report-{}.json", info.ordinal)),
             )?;
@@ -426,7 +445,7 @@ impl<'a> Stage<'a> {
             field(&mut w, "sourceImportMode", &mode)?;
             field(&mut w, "desktopSource", &source_name)?;
             field(&mut w, "desktopFolder", &source_folder)?;
-            field(&mut w, "sourceHash", &self.bound_hash)?;
+            field(&mut w, "sourceHash", &stage.bound_hash)?;
             field(&mut w, "sourceSheet", &info.sheet)?;
             field(&mut w, "sourceMapping", &info.mapping)?;
             field(&mut w, "rowCount", &info.row_count)?;
@@ -443,7 +462,7 @@ impl<'a> Stage<'a> {
                 field(&mut w, "sourceCountCol", &(info.mapping.count_col - 1))?;
                 field(&mut w, "sourceAmountCol", &(info.mapping.amount_col - 1))?;
                 let first: u64 =
-                    self.db
+                    stage.db
                         .query_row("SELECT MIN(ordinal) FROM converted_reports", [], |r| {
                             r.get(0)
                         })?;
@@ -457,7 +476,7 @@ impl<'a> Stage<'a> {
                     let actual = array(
                         &mut w,
                         "sourceIssues",
-                        |c| self.source_issue_page(c, 100),
+                        |c| stage.source_issue_page(c, 100),
                         |i| i.sequence,
                     )?;
                     if actual != source_diagnostics.issues {
@@ -466,7 +485,7 @@ impl<'a> Stage<'a> {
                 }
             }
 
-            let organizations = self.report_organizations(&info.id)?;
+            let organizations = stage.report_organizations(&info.id)?;
             field(
                 &mut w,
                 "organizations",
@@ -480,7 +499,7 @@ impl<'a> Stage<'a> {
                 &mut w,
                 "rows",
                 |c| {
-                    let page = self.report_rows(&info.id, c, 100)?;
+                    let page = stage.report_rows(&info.id, c, 100)?;
                     for (offset, row) in page.iter().enumerate() {
                         if row.row_index != c + offset as u64 + 1
                             || !row.count.is_finite()
@@ -521,7 +540,7 @@ impl<'a> Stage<'a> {
                 &mut w,
                 "issues",
                 |c| {
-                    let page = self.report_issues(&info.id, c, 100)?;
+                    let page = stage.report_issues(&info.id, c, 100)?;
                     for issue in &page {
                         match issue.kind.as_str() {
                             "invalid" => report_quality.invalid += 1,
@@ -537,7 +556,7 @@ impl<'a> Stage<'a> {
             let totals = array(
                 &mut w,
                 "totals",
-                |c| self.report_totals(&info.id, c, 100),
+                |c| stage.report_totals(&info.id, c, 100),
                 |r| r.sequence,
             )?;
             report_quality.issues = issues;
@@ -558,7 +577,7 @@ impl<'a> Stage<'a> {
             w.write_all(b"\"warnings\":[")?;
             let mut cursor = 0;
             loop {
-                let page = self.report_issues(&info.id, cursor, 100)?;
+                let page = stage.report_issues(&info.id, cursor, 100)?;
                 if page.is_empty() {
                     break;
                 }
@@ -581,12 +600,12 @@ impl<'a> Stage<'a> {
             rows += actual;
             reports += 1;
             let hash = format!("{:x}", w.hash.finalize());
-            self.db.pragma_update(
+            stage.db.pragma_update(
                 None,
                 "max_page_count",
-                ((self.limits.stage_bytes - bytes) / 4096).min(524288),
+                ((stage.limits.stage_bytes - bytes) / 4096).min(524288),
             )?;
-            self.db.execute(
+            stage.db.execute(
                 "INSERT INTO prepared_reports VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
                 params![
                     info.ordinal,
@@ -603,7 +622,7 @@ impl<'a> Stage<'a> {
                     validated_zero
                 ],
             )?;
-            if self.preparation_bytes()? > self.limits.stage_bytes {
+            if preparation_bytes(&stage.db, stage.path())? > stage.limits.stage_bytes {
                 return Err(fail("prepared staging byte limit"));
             }
             after = info.ordinal;
@@ -613,13 +632,13 @@ impl<'a> Stage<'a> {
                 reports,
             });
         }
-        let (expected_reports, expected_rows): (u64, u64) = self.db.query_row(
+        let (expected_reports, expected_rows): (u64, u64) = stage.db.query_row(
             "SELECT COUNT(*),COALESCE(SUM(row_count),0) FROM converted_reports",
             [],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
         let actual_rows: u64 =
-            self.db
+            stage.db
                 .query_row("SELECT COUNT(*) FROM converted_rows", [], |r| r.get(0))?;
         if expected_reports != reports || expected_rows != rows || actual_rows != rows {
             return Err(fail("incomplete converted report manifest"));
@@ -627,41 +646,41 @@ impl<'a> Stage<'a> {
         if reports == 0 {
             return Err(fail("no complete reports to prepare"));
         }
-        let overlaps: bool = self.db.query_row("SELECT EXISTS(SELECT 1 FROM prepared_reports a JOIN prepared_reports b ON a.ordinal<b.ordinal AND a.start<=b.end AND b.start<=a.end)", [], |r| r.get(0))?;
+        let overlaps: bool = stage.db.query_row("SELECT EXISTS(SELECT 1 FROM prepared_reports a JOIN prepared_reports b ON a.ordinal<b.ordinal AND a.start<=b.end AND b.start<=a.end)", [], |r| r.get(0))?;
         if overlaps {
             return Err(fail(
                 "overlapping prepared periods require a separate import",
             ));
         }
-        self.db.execute(
+        stage.db.execute(
             "INSERT INTO manifest VALUES('prepared_complete',?1)",
             [reports.to_string()],
         )?;
-        if self.preparation_bytes()? > self.limits.stage_bytes {
+        if preparation_bytes(&stage.db, stage.path())? > stage.limits.stage_bytes {
             return Err(fail("prepared staging byte limit"));
         }
-        self.db.execute(
+        stage.db.execute(
             "INSERT INTO manifest VALUES('prepared_source_diagnostics',?1)",
             [serde_json::to_string(&source_diagnostics)?],
         )?;
-        if self.preparation_bytes()? > self.limits.stage_bytes {
+        if preparation_bytes(&stage.db, stage.path())? > stage.limits.stage_bytes {
             return Err(fail("prepared staging byte limit"));
         }
         check_cancel(cancel)?;
         tx.commit()?;
         let database_hash = fingerprint(
-            &self.dir.path().join("stage.sqlite3"),
+            &stage.dir.path().join("stage.sqlite3"),
             cancel,
-            self.limits.stage_bytes,
+            stage.limits.stage_bytes,
         )?;
-        let metadata = fs::metadata(self.dir.path().join("stage.sqlite3"))?;
+        let metadata = fs::metadata(stage.dir.path().join("stage.sqlite3"))?;
         let database_stamp = (metadata.len(), metadata.modified()?);
-        let artifact = PreparedImport {
+        let artifact = Self {
             mode,
             quality,
             database_stamp,
             source_diagnostics,
-            stage: self,
+            stage,
             operation,
             database_hash,
             source_name,
@@ -872,7 +891,8 @@ fn valid_date(date: &str) -> bool {
     date.len() == 10 && chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok()
 }
 fn validate_provenance_and_zero(
-    stage: &Stage<'_>,
+    db: &Connection,
+    limits: Limits,
     info: &crate::ReportInfo,
     provenance: Option<&ReportProvenance>,
 ) -> Result<bool> {
@@ -906,16 +926,16 @@ fn validate_provenance_and_zero(
             info.mapping.amount_col,
         ]
         .iter()
-        .any(|c| *c == 0 || *c > stage.limits.columns)
+        .any(|c| *c == 0 || *c > limits.columns)
         || info.mapping.work_col == info.mapping.count_col
         || info.mapping.work_col == info.mapping.amount_col
         || info.mapping.count_col == info.mapping.amount_col
-        || info.mapping.header_row == 0 || info.mapping.header_row > stage.limits.rows
+        || info.mapping.header_row == 0 || info.mapping.header_row > limits.rows
     {
         return Err(fail("invalid wide report provenance"));
     }
     if let Some(control) = &p.source_control_date {
-        let first:String=stage.db.query_row("SELECT r.start FROM converted_reports r JOIN wide_provenance p ON p.report_id=r.id WHERE p.sheet_name=?1 ORDER BY r.ordinal LIMIT 1",[&p.sheet_name],|r|r.get(0))?;
+        let first:String=db.query_row("SELECT r.start FROM converted_reports r JOIN wide_provenance p ON p.report_id=r.id WHERE p.sheet_name=?1 ORDER BY r.ordinal LIMIT 1",[&p.sheet_name],|r|r.get(0))?;
         if control != &first {
             return Err(fail("invalid wide source control date"));
         }
@@ -929,7 +949,7 @@ fn validate_provenance_and_zero(
     if !p.explicit_zero || info.count != 0.0 || info.amount != Some(0.0) {
         return Err(fail("empty report lacks explicit zero proof"));
     }
-    let proof:bool=stage.db.query_row("SELECT EXISTS(SELECT 1 FROM converted_totals WHERE report_id=?1 AND kind='org') AND NOT EXISTS(SELECT 1 FROM converted_totals WHERE report_id=?1 AND (count IS NULL OR amount IS NULL OR count<>0 OR amount<>0 OR kind NOT IN ('org','all'))) AND (SELECT COUNT(*) FROM converted_organizations WHERE report_id=?1) BETWEEN 1 AND 4 AND NOT EXISTS(SELECT 1 FROM converted_organizations o WHERE o.report_id=?1 AND NOT EXISTS(SELECT 1 FROM converted_totals t WHERE t.report_id=?1 AND t.kind='org' AND t.organization=o.organization)) AND NOT EXISTS(SELECT 1 FROM converted_totals t WHERE t.report_id=?1 AND t.kind='org' AND NOT EXISTS(SELECT 1 FROM converted_organizations o WHERE o.report_id=?1 AND o.organization=t.organization)) AND NOT EXISTS(SELECT 1 FROM converted_organizations WHERE report_id=?1 AND (count<>0 OR amount<>0 OR count IS NULL OR amount IS NULL)) AND NOT EXISTS(SELECT 1 FROM converted_rows WHERE report_id=?1)",[&info.id],|r|r.get(0))?;
+    let proof:bool=db.query_row("SELECT EXISTS(SELECT 1 FROM converted_totals WHERE report_id=?1 AND kind='org') AND NOT EXISTS(SELECT 1 FROM converted_totals WHERE report_id=?1 AND (count IS NULL OR amount IS NULL OR count<>0 OR amount<>0 OR kind NOT IN ('org','all'))) AND (SELECT COUNT(*) FROM converted_organizations WHERE report_id=?1) BETWEEN 1 AND 4 AND NOT EXISTS(SELECT 1 FROM converted_organizations o WHERE o.report_id=?1 AND NOT EXISTS(SELECT 1 FROM converted_totals t WHERE t.report_id=?1 AND t.kind='org' AND t.organization=o.organization)) AND NOT EXISTS(SELECT 1 FROM converted_totals t WHERE t.report_id=?1 AND t.kind='org' AND NOT EXISTS(SELECT 1 FROM converted_organizations o WHERE o.report_id=?1 AND o.organization=t.organization)) AND NOT EXISTS(SELECT 1 FROM converted_organizations WHERE report_id=?1 AND (count<>0 OR amount<>0 OR count IS NULL OR amount IS NULL)) AND NOT EXISTS(SELECT 1 FROM converted_rows WHERE report_id=?1)",[&info.id],|r|r.get(0))?;
     if !proof {
         return Err(fail("empty report zero controls are not proven"));
     }

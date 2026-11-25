@@ -1,9 +1,10 @@
 //! Explicit dates in the first column block of an ordinary report.
-use super::{cell, LegacyOptions, TripleMapping};
-use crate::{check_cancel, wide::{excel_serial_date, typed_excel_date}, Result, Stage};
+use super::{LegacyOptions, TripleMapping};
+use crate::excel_date::{excel_serial_date, setup_date_styles, typed_excel_date, uses_1904_epoch};
+use crate::{cell, check_cancel, Result};
 use chrono::{Datelike, Duration, Months, NaiveDate};
 use regex::Regex;
-use rusqlite::{params, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::{atomic::AtomicBool, LazyLock};
 
 static LABEL: LazyLock<Regex> = LazyLock::new(|| Regex::new(
@@ -13,7 +14,7 @@ static RANGE: LazyLock<Regex> = LazyLock::new(|| Regex::new(
     r"(?i)^(?:отч[её]тный\s+)?период\s*[:=—-]?\s*с\s+(\S+)\s+по\s+(\S+)$"
 ).unwrap());
 
-pub(super) struct Notice {
+pub(crate) struct Notice {
     pub row: Option<u32>,
     pub address: Option<String>,
     pub reason: String,
@@ -51,10 +52,10 @@ fn range_start(text: &str, kind: &str) -> Option<NaiveDate> {
 }
 
 fn adjacent_date(
-    stage: &Stage<'_>, cfg: &LegacyOptions, row: u32, col: u32,
+    db: &Connection, cfg: &LegacyOptions, row: u32, col: u32,
     styles_ready: &mut bool, cancel: &AtomicBool,
 ) -> Result<Option<NaiveDate>> {
-    let adjacent: Option<(String, String, i64)> = stage.db.query_row(
+    let adjacent: Option<(String, String, i64)> = db.query_row(
         "SELECT CASE WHEN length(COALESCE(s.value,c.value))<=4096 THEN COALESCE(s.value,c.value) ELSE '' END,c.kind,CAST(COALESCE(c.style,'0') AS INTEGER)
          FROM cells c LEFT JOIN strings s ON c.kind='s' AND s.id=CAST(c.value AS INTEGER)
          WHERE c.sheet=?1 AND c.row_num=?2 AND c.col_num=?3",
@@ -71,25 +72,21 @@ fn adjacent_date(
     let Some(serial) = value.parse::<f64>().ok().filter(|n| (0.0..2958466.0).contains(n))
         else { return Ok(None) };
     if !*styles_ready {
-        stage.setup_date_styles(cancel)?;
+        setup_date_styles(db, cancel)?;
         *styles_ready = true;
     }
-    let styled: bool = stage.db.query_row(
+    let styled: bool = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM date_styles WHERE style=?1)", [style], |r| r.get(0),
     )?;
     if !styled { return Ok(None); }
-    let epoch: bool = stage.db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM nodes n JOIN attributes a ON n.component=a.component AND n.seq=a.seq
-         WHERE n.component='xl/workbook.xml' AND n.tag='workbookPr' AND a.key='date1904' AND a.value IN ('1','true'))",
-        [], |r| r.get(0),
-    )?;
+    let epoch = uses_1904_epoch(db)?;
     // Excel's fictitious 1900-02-29 and values outside its calendar provide no date evidence.
     Ok(excel_serial_date(serial, epoch).ok().filter(|date|
         (1900..=9999).contains(&date.year()) && (cfg.kind != "month" || date.day()==1)))
 }
 
-pub(super) fn check(
-    stage: &Stage<'_>, cfg: &LegacyOptions, mappings: &[TripleMapping],
+pub(crate) fn check(
+    db: &Connection, cfg: &LegacyOptions, mappings: &[TripleMapping],
     selected: NaiveDate, cancel: &AtomicBool,
 ) -> Result<Vec<Notice>> {
     let first = &mappings[0];
@@ -104,7 +101,7 @@ pub(super) fn check(
     let allowed: Vec<_> = (left..=right).map(|col| {
         own.contains(&col) || !other_ranges.iter().any(|range| range.contains(&col))
     }).collect();
-    let mut query = stage.db.prepare(
+    let mut query = db.prepare(
         "SELECT c.row_num,c.col_num,substr(COALESCE(s.value,c.value),1,4097)
          FROM cells c LEFT JOIN strings s ON c.kind='s' AND s.id=CAST(c.value AS INTEGER)
          WHERE c.sheet=?1 AND c.row_num<=?2 AND c.col_num BETWEEN ?3 AND ?4
@@ -129,7 +126,7 @@ pub(super) fn check(
             if let Some(inline) = label.get(2).filter(|m| !m.as_str().trim().is_empty()) {
                 (text_date(inline.as_str(), &cfg.kind), col)
             } else if col < right && allowed[(col+1-left) as usize] {
-                (adjacent_date(stage, cfg, row, col+1, &mut styles_ready, cancel)?, col+1)
+                (adjacent_date(db, cfg, row, col+1, &mut styles_ready, cancel)?, col+1)
             } else { continue; }
         } else {
             (range_start(text, &cfg.kind), col)

@@ -20,8 +20,8 @@ fn stage_is_bounded_paged_and_never_touches_live_database() {
     let stage = area
         .ingest(&source, Limits::default(), &AtomicBool::new(false), |_| {})
         .unwrap();
-    assert_eq!(stage.stats.cells, 3);
-    assert_eq!(stage.stats.empty_cells, 1);
+    assert_eq!(stage.stats().cells, 3);
+    assert_eq!(stage.stats().empty_cells, 1);
     assert_eq!(
         stage.page("xl/worksheets/sheet1.xml", 0, 2).unwrap().len(),
         2
@@ -335,7 +335,7 @@ fn descriptor_archives_are_supported_but_bad_descriptors_are_rejected() {
         if corrupt {
             assert!(result.is_err());
         } else {
-            assert_eq!(result.unwrap().stats.cells, 1);
+            assert_eq!(result.unwrap().stats().cells, 1);
         }
     }
 }
@@ -376,7 +376,7 @@ fn expanded_native_limits_keep_anti_bomb_guards_and_support_older_row_gap() {
     let area=StageArea::open(tmp.path().join("stage")).unwrap();
     book(&source,"<worksheet><sheetData><row r=\"60001\"><c r=\"A60001\"><v>42</v></c></row></sheetData></worksheet>");
     let result=area.ingest(&source,l,&AtomicBool::new(false),|_|{}).unwrap();
-    assert_eq!(result.stats.cells,1);
+    assert_eq!(result.stats().cells,1);
     drop(result);
     book(&source,"<worksheet><sheetData><row r=\"100001\"><c r=\"A100001\"><v>1</v></c></row></sheetData></worksheet>");
     assert!(area.ingest(&source,l,&AtomicBool::new(false),|_|{}).is_err());

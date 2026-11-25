@@ -3,26 +3,39 @@
 #[cfg(windows)]
 mod windows_taskbar;
 mod storage;
+#[path = "commands/native_shared_runtime.rs"]
 mod native_shared_runtime;
 use native_shared_runtime::{shared_workspace_status,shared_workspace_choose_folder,shared_workspace_connect,shared_workspace_sync,shared_workspace_disconnect,shared_workspace_discard_pending,shared_workspace_transfer_preview,shared_workspace_transfer_apply};
 use native_shared_runtime::{shared_workspace_reset_apply, shared_workspace_reset_preview};
+#[path = "commands/native_import.rs"]
 mod native_import;
+#[path = "commands/native_management.rs"]
 mod native_management;
+#[path = "commands/native_advanced_analysis.rs"]
 mod native_advanced_analysis;
 use native_advanced_analysis::{native_changes_page,native_changes_csv,native_pattern_page,native_composition_page};
+#[path = "commands/native_reference_trend_csv.rs"]
 mod native_reference_trend_csv;
 use native_reference_trend_csv::reference_trend_csv;
+#[path = "commands/native_reference_detail_csv.rs"]
 mod native_reference_detail_csv;
 use native_reference_detail_csv::reference_detail_csv;
+#[path = "commands/native_report_quality.rs"]
 mod native_report_quality;
+#[path = "commands/native_coverage.rs"]
 mod native_coverage;
+#[path = "commands/native_pagination.rs"]
 mod native_pagination;
 use native_pagination::{unified_report_window, unified_report_org_window, native_quality_matrix_reports_at_page};
+#[path = "commands/native_reference_changes.rs"]
 mod native_reference_changes;
 use native_reference_changes::{reference_changes,reference_changes_csv,reference_changes_print,reference_summary_csv};
 use native_coverage::{native_quality_matrix_page,native_quality_matrix_reports};
+#[path = "commands/native_name_selection.rs"]
 mod native_name_selection;
+#[path = "commands/unified_commands.rs"]
 mod unified_commands;
+#[path = "commands/unified_management.rs"]
 mod unified_management;
 use unified_commands::*;
 use unified_management::*;
@@ -359,7 +372,7 @@ async fn native_group_rename(
                 let job = Arc::new(ManagementJob::new());
                 let mut editor =
                     store.management_begin_settings(revision, 256 * 1024 * 1024, job)?;
-                editor.rename_group(handle, &name)?;
+                editor.apply(crate::storage::SettingsEdit::RenameGroup { handle, name })?;
                 // Settings-only transactional publication. No report write or full load.
                 Ok(store.management_commit_settings(editor)?.revision)
             },

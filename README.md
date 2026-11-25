@@ -59,6 +59,22 @@ python -m unittest discover -s tests -v
 cargo test --manifest-path tauri/src-tauri/Cargo.toml
 ```
 
+Для архитектурного ревью Rust можно запускать [deslop-please](https://github.com/deterministic-machines/deslop-please). Установите версию `0.1.4` и компоненты `rust-analyzer` и `rust-src` активного toolchain. Для проверенной конфигурации использован Rust `1.99.0`.
+
+```sh
+rustup component add rust-analyzer rust-src
+rustup target add x86_64-pc-windows-msvc
+cargo install deslop-please --version 0.1.4 --locked
+npm --prefix tauri run prepare:frontend
+(cd tauri/src-tauri && deslop-please --target x86_64-pc-windows-msvc)
+(cd tauri/import-core && deslop-please)
+(cd tauri/storage-core && deslop-please)
+```
+
+Команды с `cd` приведены для Bash. В PowerShell перейдите в каждый каталог отдельно и выполните соответствующую команду `deslop-please`. Линтер индексирует одну платформу и набор Cargo features за запуск. Для проверки Linux запустите его без `--target` в окружении с системными зависимостями Tauri.
+
+Циклы зависимостей и доступ к внутреннему состоянию стоит разбирать по показанным связям. Ширина интерфейса, длина файла и число файлов в каталоге помогают выбрать участки для дальнейшего ревью. Линтер используется как дополнительная локальная проверка. Сборка и тесты выполняются отдельно.
+
 Подписанная 1.12.6 проверена на синтетических книгах и изолированных базах. Проверки включали Windows/WebView2, импорт Excel, SQLite и обмен двух установленных клиентов через SMB. [Windows CI](https://github.com/v2029944-ui/HTML-test/actions/runs/45568807013) · [Подписанная сборка](https://github.com/v2029944-ui/HTML-test/actions/runs/45578264008).
 
 Корневой [index.html](index.html) используется при подготовке интерфейса Tauri. Поддержка автономного запуска в браузере завершена.

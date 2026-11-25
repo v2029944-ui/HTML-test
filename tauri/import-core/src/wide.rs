@@ -1,7 +1,8 @@
 //! Disk-backed shared-work daily import. Only <=1024 column pairs and bounded
 //! sheet metadata are resident; financial rows and diagnostics stay in SQLite.
-use crate::report_stage::{self, cell, normalize, number, page_limit};
-use crate::{check_cancel, fail, ConversionSummary, LegacyOptions, Result, Stage, TripleMapping};
+use crate::excel_date::{excel_serial_date, setup_date_styles, typed_excel_date, uses_1904_epoch};
+use crate::report_stage::{self, normalize, number, page_limit};
+use crate::{cell, check_cancel, fail, ConversionSummary, LegacyOptions, Result, Stage, TripleMapping};
 use chrono::{Datelike, Duration, Local, Months, NaiveDate};
 use regex::Regex;
 use rusqlite::{params, OptionalExtension};
@@ -265,56 +266,7 @@ impl Stage<'_> {
     fn wide_setup(&self, cancel: &AtomicBool) -> Result<()> {
         self.db.execute_batch(WIDE_SCHEMA)?;
         self.db.execute_batch("CREATE INDEX IF NOT EXISTS cells_by_column ON cells(sheet,col_num,row_num)")?;
-        self.setup_date_styles(cancel)
-    }
-    pub(crate) fn setup_date_styles(&self, cancel: &AtomicBool) -> Result<()> {
-        self.db.execute_batch("CREATE TABLE IF NOT EXISTS date_styles(style INTEGER PRIMARY KEY) WITHOUT ROWID; CREATE TABLE IF NOT EXISTS custom_formats(id INTEGER PRIMARY KEY,format TEXT); DELETE FROM date_styles; DELETE FROM custom_formats;")?;
-        let mut formats=self.db.prepare("SELECT i.value,coalesce(f.value,'') FROM nodes n JOIN attributes i ON i.component=n.component AND i.seq=n.seq AND i.key='numFmtId' LEFT JOIN attributes f ON f.component=n.component AND f.seq=n.seq AND f.key='formatCode' WHERE n.component='xl/styles.xml' AND n.tag='numFmt' ORDER BY n.seq")?;
-        let mut rows = formats.query([])?;
-        while let Some(row) = rows.next()? {
-            check_cancel(cancel)?;
-            let id: String = row.get(0)?;
-            let id = id
-                .parse::<u32>()
-                .map_err(|_| fail("invalid Excel number format id"))?;
-            let format: String = row.get(1)?;
-            self.db.execute("INSERT INTO custom_formats VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET format=excluded.format",params![id,format])?;
-        }
-        let mut styles=self.db.prepare("SELECT coalesce(a.value,'0') FROM nodes n LEFT JOIN attributes a ON a.component=n.component AND a.seq=n.seq AND a.key='numFmtId' WHERE n.component='xl/styles.xml' AND n.tag='xf' AND n.parent='cellXfs' ORDER BY n.seq")?;
-        let mut rows = styles.query([])?;
-        let mut index = 0u32;
-        while let Some(row) = rows.next()? {
-            check_cancel(cancel)?;
-            let id: String = row.get(0)?;
-            let id = id
-                .parse::<u32>()
-                .map_err(|_| fail("invalid Excel style format id"))?;
-            let format: Option<String> = self
-                .db
-                .query_row("SELECT format FROM custom_formats WHERE id=?1", [id], |r| {
-                    r.get(0)
-                })
-                .optional()?;
-            let custom = format.is_some_and(|value| {
-                let mut chars = value.chars();
-                while let Some(ch) = chars.next() {
-                    match ch {
-                        '"' => { chars.by_ref().take_while(|c| *c != '"').count(); }
-                        '[' => { chars.by_ref().take_while(|c| *c != ']').count(); }
-                        '\\' | '_' | '*' => { chars.next(); }
-                        'd' | 'D' | 'y' | 'Y' => return true,
-                        _ => {}
-                    }
-                }
-                false
-            });
-            if (14..=17).contains(&id) || id == 22 || custom {
-                self.db
-                    .execute("INSERT INTO date_styles VALUES(?1)", [index])?;
-            }
-            index += 1;
-        }
-        Ok(())
+        setup_date_styles(&self.db, cancel)
     }
     /// Validated display-name to worksheet component mapping from workbook relationships.
     pub fn sheet_names(&self) -> Result<Vec<(String, String)>> {
@@ -597,7 +549,7 @@ impl Stage<'_> {
         }
         if active.is_empty() { return Ok(false); }
         self.wide_setup(cancel)?;
-        let date1904 = self.uses_1904_epoch()?;
+        let date1904 = uses_1904_epoch(&self.db)?;
         for sheet in active {
             let Some(info) = self.info(sheet, None, 2, orgs, &p, cancel)? else { return Ok(false); };
             let mut previous: Option<NaiveDate> = None;
@@ -613,10 +565,6 @@ impl Stage<'_> {
             if !adjacent { return Ok(false); }
         }
         Ok(true)
-    }
-
-    fn uses_1904_epoch(&self) -> Result<bool> {
-        Ok(self.db.query_row("SELECT EXISTS(SELECT 1 FROM nodes n JOIN attributes a ON a.component=n.component AND a.seq=n.seq AND a.key='date1904' WHERE n.component='xl/workbook.xml' AND n.tag='workbookPr' AND a.value IN ('1','true'))",[],|r|r.get(0))?)
     }
 
     pub fn detect_wide(
@@ -828,7 +776,7 @@ impl Stage<'_> {
             {
                 return Err(fail("sequential period refers to an unused worksheet"));
             }
-            let date1904 = self.uses_1904_epoch()?;
+            let date1904 = uses_1904_epoch(&self.db)?;
             let mut summary = ConversionSummary::default();
             let mut occupied = BTreeMap::<NaiveDate, NaiveDate>::new();
             let confirmed_start = cfg.start.as_deref().map(parse_start).transpose()?;
@@ -1610,30 +1558,6 @@ fn relationship_target(target: &str) -> Result<String> {
         return Err(fail("empty worksheet relationship target"));
     }
     Ok(parts.join("/"))
-}
-pub(crate) fn excel_serial_date(n: f64, date1904: bool) -> Result<NaiveDate> {
-    let n = n.floor() as i64;
-    if !date1904 && n == 60 {
-        return Err(fail("nonexistent Excel date 1900-02-29"));
-    }
-    let base = if date1904 {
-        NaiveDate::from_ymd_opt(1904, 1, 1)
-    } else if n < 60 {
-        NaiveDate::from_ymd_opt(1899, 12, 31)
-    } else {
-        NaiveDate::from_ymd_opt(1899, 12, 30)
-    }
-    .unwrap();
-    base
-        .checked_add_signed(Duration::days(n))
-        .ok_or_else(|| fail("Excel date out of range"))
-}
-pub(crate) fn typed_excel_date(value: &str) -> Option<NaiveDate> {
-    static ISO: LazyLock<Regex> = LazyLock::new(|| Regex::new(
-        r"^([0-9]{4}-[0-9]{2}-[0-9]{2})(?:T(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9](?:\.[0-9]+)?)?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])?)?$"
-    ).unwrap());
-    // Preserve the calendar date written in the workbook without converting the offset to UTC.
-    NaiveDate::parse_from_str(&ISO.captures(value)?[1], "%Y-%m-%d").ok()
 }
 fn month_header_date(value: &str, cell_kind: &str, patterns: &Patterns) -> Result<Option<Parts>> {
     if !matches!(cell_kind, "s" | "str" | "inlineStr") {
