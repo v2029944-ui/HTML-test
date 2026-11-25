@@ -1,7 +1,14 @@
 /* Same canonical interface; only requested issue fixes and bounded-data notices. */
 body{min-width:0}
+:root[data-theme="light"]:is([data-palette="neon"],[data-palette="corporate"],[data-palette="paper"]){--axis:var(--plot-label)}
+:root[data-theme="light"][data-palette="paper"]{--selected-border:var(--accent)}
 .table-scroll{overflow-x:auto;overflow-y:visible;max-height:none}
 label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;max-width:100%;font:inherit}
+#reportPeriods .calendar-day-legend{display:flex;flex-wrap:wrap;gap:var(--field-gap);padding:0;list-style:none}
+#reportPeriods .calendar-day-legend li{padding:3px 7px;border-width:1px;border-style:solid;border-radius:var(--radius-control);color:var(--text)}
+#reportPeriods :is(.calendar-day,.calendar-day-legend li).calendar-missing{
+ background:var(--subtle);background:oklch(from var(--subtle) l 0 none);color:var(--muted);border-color:var(--field-border);border-style:dashed
+}
 .period-pair input{width:100%;min-width:0;background:var(--surface);color:var(--text);border:1px solid var(--field-border);padding:9px 12px;border-radius:var(--radius-control)}
 .unified-load-status{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0;font-size:13px;color:var(--muted)}
 :is(.unified-pager,.change-pagination){display:inline-flex;gap:0;align-items:stretch;border:1px solid var(--field-border);border-radius:var(--radius-control);overflow:hidden;max-width:100%;margin:8px 0}

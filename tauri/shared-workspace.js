@@ -196,6 +196,14 @@
     if(output)output.textContent=message;
   }
 
+  const transferFilterIds=['reportTransferDirection','reportTransferFrom','reportTransferTo'];
+  const transferDirection=()=>node('reportTransferDirection')?.value==='toPersonal'?'toPersonal':'toShared';
+
+  function clearTransferReview(){
+    transfer=null;
+    selectedTransferIds.clear();
+  }
+
   function renderTransfer() {
     const panel=node('personalTransferPanel');
     if(!panel)return;
@@ -206,7 +214,11 @@
       return;
     }
     const available=Boolean(state.available&&!state.pending&&!busy&&!window.tauriOperations?.updating);
-    node('personalTransferPreview').disabled=!available;
+    const toPersonal=transferDirection()==='toPersonal';
+    const previewButton=node('personalTransferPreview');
+    previewButton.disabled=!available;
+    previewButton.textContent=toPersonal?'Проверить общие отчёты':'Проверить личные отчёты';
+    for(const id of transferFilterIds)if(node(id))node(id).disabled=!available;
     const next=node('personalTransferNext'),previous=node('personalTransferPrev');
     const applyButton=node('personalTransferApply'),allButton=node('personalTransferSelectAll');
     const pager=node('personalTransferPager'),summary=node('personalTransferSummary');
@@ -225,7 +237,8 @@
     next.disabled=!available||!page.hasNext;
     node('personalTransferPage').textContent='Страница '+(page.pageIndex+1);
     const availableRows=page.rows.filter(row=>row.status==='ready');
-    summary.textContent='Личная база: '+page.totalReports+' отчётов · новых на этой странице: '+
+    allButton.textContent=transfer.period&&page.totalReports<=page.pageSize?'Выбрать новые за период':'Выбрать новые на странице';
+    summary.textContent=(toPersonal?'Общая база: ':'Личная база: ')+page.totalReports+' отчётов · новых на этой странице: '+
       availableRows.length+' · выбрано: '+selectedTransferIds.size+' из 25 за один перенос.'+
       (page.organizationWarning?' '+page.organizationWarning:'');
     applyButton.disabled=!available||!selectedTransferIds.size;
@@ -248,8 +261,8 @@
       text.textContent=[entry.reportType,entry.start===entry.end?entry.start:entry.start+' — '+entry.end,
         entry.sourceName||'Импортированный отчёт',
         entry.status==='conflict'?'Конфликт идентификатора или периода — перенос недоступен':
-        entry.status==='organization_conflict'?'Подразделение отсутствует в общей базе — перенос недоступен':
-        entry.status==='duplicate'?'Уже есть в общей базе — перенос не требуется':'Можно перенести'].join(' · ');
+        entry.status==='organization_conflict'?'Подразделение отсутствует в '+(toPersonal?'личной':'общей')+' базе — перенос недоступен':
+        entry.status==='duplicate'?'Уже есть в '+(toPersonal?'личной':'общей')+' базе — перенос не требуется':'Можно перенести'].join(' · ');
       label.title=entry.id;
       label.append(cb,text);
       list.append(label);
@@ -260,51 +273,60 @@
     if(busy||state?.mode!=='shared'||!state.available||state.pending||
        window.tauriOperations?.updating||window.tauriOperations?.saves)return;
     const token=state.workspace_token;
+    const direction=transferDirection();
+    const from=node('reportTransferFrom')?.value||'',to=node('reportTransferTo')?.value||'';
+    if((from||to)&&(!from||!to||from>to)){
+      clearTransferReview();render();transferMessage('Укажите обе даты по порядку.');return;
+    }
+    const period=from?{from,to}:null;
     busy=true;render();transferMessage('');
     try{
-      const preview=await raw('shared_workspace_transfer_preview',{workspaceToken:token,page:pageIndex});
+      const preview=await raw('shared_workspace_transfer_preview',{workspaceToken:token,page:pageIndex,direction,period});
       if(token!==state?.workspace_token)throw Error('Общая база изменилась. Повторите проверку.');
       if(!preview||!Array.isArray(preview.rows)||!Number.isSafeInteger(preview.sourceRevision)||
          !Number.isSafeInteger(preview.targetRevision))throw Error('Список отчётов недостоверен.');
       const prior=transfer?.preview;
-      if(resetSelection||!prior||prior.sourceRevision!==preview.sourceRevision||prior.targetRevision!==preview.targetRevision)selectedTransferIds.clear();
-      transfer={token,preview};
-    }catch(error){transfer=null;selectedTransferIds.clear();transferMessage(statusMessage(error));}
+      if(resetSelection||!prior||transfer.direction!==direction||transfer.period?.from!==period?.from||transfer.period?.to!==period?.to||
+         prior.sourceRevision!==preview.sourceRevision||prior.targetRevision!==preview.targetRevision)selectedTransferIds.clear();
+      transfer={token,preview,direction,period};
+    }catch(error){clearTransferReview();transferMessage(statusMessage(error));}
     finally{busy=false;render();schedule();}
   }
 
   async function applyTransfer(){
     if(busy||!transfer||!selectedTransferIds.size||
        state?.mode!=='shared'||!state.available||state.pending)return;
-    const {token,preview}=transfer;
+    const review=transfer;
+    const {token,preview,direction}=review;
+    const toPersonal=direction==='toPersonal';
+    const target=toPersonal?'личную':'общую',backupTarget=toPersonal?'личной':'общей',source=toPersonal?'Общая':'Личная';
     if(token!==state.workspace_token){transferMessage('Общая база изменилась. Повторите проверку.');return;}
     const ids=[...selectedTransferIds];
     if(ids.length>25){transferMessage('За один перенос можно выбрать не более 25 отчётов.');return;}
     // Entries selected on earlier pages were marked ready; Rust rechecks
     // every ID and both revisions before writing.
-    if(!await window.confirm('Добавить '+ids.length+' отчётов в общую базу? Личная база не изменится. Перед переносом будет сохранена проверенная копия общей базы.'))return;
-    if(token!==state?.workspace_token||state.pending||!state.available||
-       window.tauriOperations?.updating||window.tauriOperations?.saves)return;
     busy=true;render();transferMessage('');
-    let receipt=null;
     try{
-      receipt=await raw('shared_workspace_transfer_apply',{
+      if(!await window.confirm('Добавить '+ids.length+' отчётов в '+target+' базу? '+source+' база сохранится. Перед переносом будет сохранена проверенная копия '+backupTarget+' базы.'))return;
+      if(review!==transfer||token!==state?.workspace_token||state.pending||!state.available||
+         window.tauriOperations?.updating||window.tauriOperations?.saves)return;
+      const receipt=await raw('shared_workspace_transfer_apply',{
         workspaceToken:token,sourceRevision:preview.sourceRevision,
-        targetRevision:preview.targetRevision,selectedIds:ids
+        targetRevision:preview.targetRevision,selectedIds:ids,direction
       });
-      transfer=null;selectedTransferIds.clear();
+      clearTransferReview();
       // Publication is already confirmed by Rust at this point. A failed UI
       // refresh must never be presented as a failed transfer or invite retries.
       let refreshError='';
-      try{await apply(await raw('shared_workspace_status'),true);}
+      try{if(!toPersonal)await apply(await raw('shared_workspace_status'),true);}
       catch(error){refreshError=' Не удалось обновить экран: '+statusMessage(error)+'. Откройте «Базы данных» повторно.';}
       transferMessage('Перенесено отчётов: '+receipt.imported+
-        '. Резервная копия общей базы: '+receipt.backupPath+
-        '. Личная база сохранена без изменений.'+refreshError);
+        '. Резервная копия '+backupTarget+' базы: '+receipt.backupPath+
+        '. '+source+' база сохранена без изменений.'+refreshError);
     }catch(error){
-      transfer=null;selectedTransferIds.clear();
+      clearTransferReview();
       // A failed publication may already be staged in the private journal.
-      const publicationUncertain=/публикац|не подтвержден|синхрониз|сети/i.test(statusMessage(error));
+      const publicationUncertain=!toPersonal&&/публикац|не подтвержден|синхрониз|сети/i.test(statusMessage(error));
       transferMessage(statusMessage(error)+(publicationUncertain
         ?' Не повторяйте перенос до проверки состояния публикации общей базы.'
         :' Исправьте причину и заново проверьте отчёты перед переносом.'));
@@ -323,6 +345,9 @@
     node('sharedWorkspaceReset')?.addEventListener('click', resetShared);
     node('sharedWorkspaceRetry').addEventListener('click', () => check(true));
     node('personalTransferPreview')?.addEventListener('click',()=>previewTransfer(0,true));
+    for(const id of transferFilterIds)node(id)?.addEventListener('change',()=>{
+      clearTransferReview();transferMessage('');renderTransfer();
+    });
     node('personalTransferPrev')?.addEventListener('click',()=>previewTransfer(Math.max(0,(transfer?.preview.pageIndex||0)-1)));
     node('personalTransferNext')?.addEventListener('click',()=>previewTransfer((transfer?.preview.pageIndex||0)+1));
     node('personalTransferSelectAll')?.addEventListener('click',()=>{

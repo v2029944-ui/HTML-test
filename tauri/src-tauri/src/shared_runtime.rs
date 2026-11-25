@@ -1,6 +1,6 @@
 //! One checked-out data workspace per desktop process. Network files are transport only.
 use super::shared_folder::{self, Checkout, Publication};
-use super::{err, Config, Storage, TransferPreview, TransferReceipt};
+use super::{err, Config, Storage, TransferDirection, TransferPeriod, TransferPreview, TransferReceipt};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -591,27 +591,59 @@ impl Runtime {
         }
         Ok(value)
     }
-    /// Preview existing local reports against the currently connected team.
-    pub fn preview_personal_transfer(
+    fn with_transfer_stores<T>(
+        &self, workspace_token: Option<&str>,
+        action: impl FnOnce(&Storage, &Storage) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let mut state = self.state.lock().map_err(err)?;
+        if workspace_token != Some(state.token.as_str()) {
+            return Err("Выбранная база изменилась. Повторите предпросмотр.".into());
+        }
+        if state.selection.folder.is_none() {
+            return Err("Подключите общую базу для переноса отчётов.".into());
+        }
+        self.latest(&mut state)?;
+        let shared = state.checkout.as_ref().ok_or("Общая база недоступна.")?;
+        action(&state.personal, &shared.storage)
+    }
+
+    pub fn preview_report_transfer(
         &self, workspace_token: Option<&str>, page: usize,
+        direction: TransferDirection, period: Option<&TransferPeriod>,
     ) -> Result<TransferPreview, String> {
-        let personal_root = {
-            let state = self.state.lock().map_err(err)?;
-            if state.selection.folder.is_none() {
-                return Err("Подключите общую базу для переноса личных отчётов.".into());
-            }
-            state.personal.root.clone()
-        };
-        self.execute(workspace_token, Access::Read, move |shared| {
-            let personal = Storage::new(personal_root)?;
-            shared.personal_transfer_preview(&personal, page)
+        self.with_transfer_stores(workspace_token, |personal, shared| match direction {
+            TransferDirection::ToShared => shared.report_transfer_preview(personal, page, direction, period),
+            TransferDirection::ToPersonal => personal.report_transfer_preview(shared, page, direction, period),
         })
     }
 
+    #[cfg(test)]
+    pub fn preview_personal_transfer(
+        &self, workspace_token: Option<&str>, page: usize,
+    ) -> Result<TransferPreview, String> {
+        self.preview_report_transfer(workspace_token, page, TransferDirection::ToShared, None)
+    }
+
+    #[cfg(test)]
     pub fn apply_personal_transfer(
         &self, workspace_token: Option<&str>,
         source_revision: i64, target_revision: i64, selected_ids: Vec<String>,
     ) -> Result<TransferReceipt, String> {
+        self.apply_report_transfer(workspace_token, source_revision, target_revision, selected_ids, TransferDirection::ToShared)
+    }
+
+    pub fn apply_report_transfer(
+        &self, workspace_token: Option<&str>, source_revision: i64, target_revision: i64,
+        selected_ids: Vec<String>, direction: TransferDirection,
+    ) -> Result<TransferReceipt, String> {
+        let backup_dir = self.root.join("transfer-backups");
+        if direction == TransferDirection::ToPersonal {
+            // A copy into personal SQLite does not publish a new team generation.
+            return self.with_transfer_stores(workspace_token, |personal, shared| {
+                personal.import_selected_reports(shared, source_revision, target_revision,
+                    &selected_ids, &backup_dir, direction)
+            });
+        }
         let personal_root = {
             let state = self.state.lock().map_err(err)?;
             if state.selection.folder.is_none() {
@@ -619,11 +651,10 @@ impl Runtime {
             }
             state.personal.root.clone()
         };
-        let backup_dir = self.root.join("transfer-backups");
         self.execute(workspace_token, Access::Write, move |shared| {
             let personal = Storage::new(personal_root)?;
-            shared.import_selected_personal_reports(
-                &personal,source_revision,target_revision,&selected_ids,&backup_dir
+            shared.import_selected_reports(
+                &personal, source_revision, target_revision, &selected_ids, &backup_dir, direction
             )
         })
     }

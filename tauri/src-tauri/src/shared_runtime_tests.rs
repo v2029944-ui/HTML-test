@@ -687,6 +687,79 @@ fn personal_reports_transfer_only_after_review_and_leave_source_unchanged() {
     assert_eq!(originals["reports"].as_array().unwrap().len(),2);
     assert!(originals["reports"][0].get("desktopFolder").is_some());
 }
+
+#[test]
+fn shared_reports_transfer_selected_period_to_personal_without_publication() {
+    let (_root, runtime) = runtime_fixture();
+    let personal = runtime.status().unwrap();
+    runtime.execute(Some(&personal.workspace_token), Access::Write, |store| {
+        store.save(data("personal"))
+    }).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let team = connect(&runtime, folder.path());
+    runtime.execute(Some(&team.workspace_token), Access::Write, |store| {
+        store.save(json!({"reports":[
+            {"id":"out-of-range","type":"day","start":"2024-02-27","end":"2024-02-27","rows":[]},
+            {"id":"new","type":"day","start":"2024-02-28","end":"2024-02-28",
+             "desktopFolder":"C:\\share-origin\\excel","rows":[{"organization":"A","work":"Service","count":2,"amount":null}]},
+            {"id":"conflict","type":"day","start":"2024-02-29","end":"2024-02-29","rows":[]}
+        ],"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}}))
+    }).unwrap();
+    let before = read(&runtime,&team.workspace_token);
+    let invalid = TransferPeriod { from: "2024-02-30".into(), to: "2024-03-01".into() };
+    assert!(runtime.preview_report_transfer(Some(&team.workspace_token),0,TransferDirection::ToPersonal,Some(&invalid)).is_err());
+    let period = TransferPeriod { from: "2024-02-28".into(), to: "2024-02-29".into() };
+    let review = runtime.preview_report_transfer(Some(&team.workspace_token),0,TransferDirection::ToPersonal,Some(&period)).unwrap();
+    assert_eq!(review.total_reports,2);
+    assert_eq!(review.rows.iter().map(|r| (r.id.as_str(),r.status.as_str())).collect::<Vec<_>>(),
+               [("new","ready"),("conflict","conflict")]);
+    assert!(runtime.apply_report_transfer(Some(&team.workspace_token),review.source_revision,
+        review.target_revision,vec!["new".into(),"conflict".into()],TransferDirection::ToPersonal).is_err());
+    let receipt = runtime.apply_report_transfer(Some(&team.workspace_token),review.source_revision,
+        review.target_revision,vec!["new".into()],TransferDirection::ToPersonal).unwrap();
+    assert_eq!(receipt.imported,1);
+    let backup = rusqlite::Connection::open_with_flags(&receipt.backup_path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+    assert_eq!(backup.query_row("SELECT id FROM reports",[],|r| r.get::<_,String>(0)).unwrap(),"personal");
+    assert_eq!(runtime.status().unwrap().generation,Some(1));
+    assert_eq!(read(&runtime,&team.workspace_token),before);
+    let repeat = runtime.preview_report_transfer(Some(&team.workspace_token),0,TransferDirection::ToPersonal,Some(&period)).unwrap();
+    assert_eq!(repeat.rows[0].status,"duplicate");
+    for target_revision in [review.target_revision,repeat.target_revision] {
+        assert!(runtime.apply_report_transfer(Some(&team.workspace_token),repeat.source_revision,
+            target_revision,vec!["new".into()],TransferDirection::ToPersonal).is_err());
+    }
+    let private = runtime.disconnect(Some(&team.workspace_token)).unwrap();
+    let after = read(&runtime,&private.workspace_token);
+    let reports = after["reports"].as_array().unwrap();
+    assert_eq!(reports.len(),2);
+    let moved = reports.iter().find(|r| r["id"] == "new").unwrap();
+    assert!(moved.get("desktopFolder").is_none());
+    assert!(moved["rows"][0]["amount"].is_null());
+    assert_eq!(after["settings"]["orgNames"],json!(["A","B","C","D"]));
+}
+
+#[test]
+fn shared_report_transfer_rejects_a_review_after_another_client_publishes() {
+    let (root, reader) = runtime_fixture();
+    let (_peer_root, peer) = runtime_fixture();
+    let folder = tempfile::tempdir().unwrap();
+    let peer_team = connect(&peer, folder.path());
+    peer.execute(Some(&peer_team.workspace_token), Access::Write, |store| {
+        store.save(data("reviewed"))
+    }).unwrap();
+    let team = connect(&reader, folder.path());
+    let review = reader.preview_report_transfer(Some(&team.workspace_token),0,TransferDirection::ToPersonal,None).unwrap();
+    peer.execute(Some(&peer_team.workspace_token), Access::Write, |store| {
+        store.save(data("changed"))
+    }).unwrap();
+    let error = reader.apply_report_transfer(Some(&team.workspace_token),review.source_revision,
+        review.target_revision,vec!["reviewed".into()],TransferDirection::ToPersonal).unwrap_err();
+    assert!(error.contains("Общая база обновилась"),"{error}");
+    assert!(!root.path().join("private-workspace").join("transfer-backups").exists());
+    let current = reader.status().unwrap();
+    let personal = reader.disconnect(Some(&current.workspace_token)).unwrap();
+    assert_eq!(read(&reader,&personal.workspace_token)["reports"],json!([]));
+}
 #[test]
 fn personal_transfer_rejects_conflicts_and_stale_reviews_without_writing() {
     let (_root,runtime)=runtime_fixture();

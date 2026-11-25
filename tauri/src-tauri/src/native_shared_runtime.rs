@@ -1,6 +1,6 @@
 use crate::storage::{
     shared_runtime::{Access, Runtime, WorkspaceResetPreview, WorkspaceStatus},
-    Storage,
+    Storage, TransferDirection, TransferPeriod,
 };
 use tauri::{Manager, Runtime as TauriRuntime};
 use tauri_plugin_dialog::DialogExt;
@@ -106,9 +106,11 @@ pub async fn shared_workspace_transfer_preview(
     app: tauri::AppHandle,
     workspace_token: String,
     page: usize,
+    direction: Option<TransferDirection>,
+    period: Option<TransferPeriod>,
 ) -> Result<crate::storage::TransferPreview, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        app.state::<Runtime>().preview_personal_transfer(Some(&workspace_token), page)
+        app.state::<Runtime>().preview_report_transfer(Some(&workspace_token), page, direction.unwrap_or_default(), period.as_ref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -121,10 +123,11 @@ pub async fn shared_workspace_transfer_apply(
     source_revision: i64,
     target_revision: i64,
     selected_ids: Vec<String>,
+    direction: Option<TransferDirection>,
 ) -> Result<crate::storage::TransferReceipt, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        app.state::<Runtime>().apply_personal_transfer(
-            Some(&workspace_token), source_revision,target_revision,selected_ids
+        app.state::<Runtime>().apply_report_transfer(
+            Some(&workspace_token), source_revision, target_revision, selected_ids, direction.unwrap_or_default()
         )
     })
     .await

@@ -237,3 +237,46 @@ test('server-side organization incompatibility disables the affected report',asy
  await f.click('personalTransferSelectAll');
  assert.equal(f.node('personalTransferApply').disabled,true);
 });
+
+test('reviewing a date range from the team applies only reviewed IDs to personal SQLite',async()=>{
+ const f=fixture(team);await f.window.sharedWorkspace.init();
+ f.scenario.transferPreview={sourceRevision:9,targetRevision:6,totalReports:3,pageIndex:0,pageSize:25,
+  hasNext:false,rows:[
+   {id:'ready',reportType:'day',start:'2024-02-28',end:'2024-02-28',status:'ready'},
+   {id:'duplicate',reportType:'day',start:'2024-02-29',end:'2024-02-29',status:'duplicate'},
+   {id:'conflict',reportType:'day',start:'2024-02-29',end:'2024-02-29',status:'conflict'}
+  ]};
+ const prompts=[];f.window.confirm=async prompt=>{prompts.push(prompt);return f.scenario.accept;};
+ f.node('reportTransferDirection').value='toPersonal';
+ f.handlers.get('reportTransferDirection-change')();
+ f.node('reportTransferFrom').value='2024-02-01';f.node('reportTransferTo').value='2024-02-29';
+ await f.click('personalTransferPreview');
+ const args=f.calls.find(call=>call.name==='shared_workspace_transfer_preview').args;
+ assert.equal(args.direction,'toPersonal');
+ assert.deepEqual({...args.period},{from:'2024-02-01',to:'2024-02-29'});
+ assert.match(f.node('personalTransferSummary').textContent,/Общая база: 3 отчётов/);
+ assert.match(f.node('personalTransferList').children[1].children[1].textContent,/Уже есть в личной базе/);
+ await f.click('personalTransferSelectAll');
+ await f.click('personalTransferApply');
+ assert.match(prompts[0],/в личную базу/);
+ assert.equal(f.scenario.transferApplied,null);
+ f.scenario.accept=true;
+ await f.click('personalTransferApply');
+ assert.equal(f.scenario.transferApplied.direction,'toPersonal');
+ assert.deepEqual(Array.from(f.scenario.transferApplied.selectedIds),['ready']);
+ assert.equal(f.scenario.transferApplied.sourceRevision,9);
+ assert.equal(f.scenario.transferApplied.targetRevision,6);
+ assert.match(f.node('personalTransferResult').textContent,/Резервная копия личной базы/);
+ assert.equal(f.refreshes.length,0,'shared workspace should not refresh after a personal-only write');
+});
+
+test('changing a transfer filter discards a previous selection',async()=>{
+ const f=fixture(team);await f.window.sharedWorkspace.init();
+ await f.click('personalTransferPreview');await f.click('personalTransferSelectAll');
+ f.node('reportTransferFrom').value='2024-03-01';
+ f.handlers.get('reportTransferFrom-change')();
+ assert.equal(f.node('personalTransferApply').disabled,true);
+ await f.click('personalTransferPreview');
+ assert.equal(f.calls.filter(call=>call.name==='shared_workspace_transfer_preview').length,1);
+ assert.match(f.node('personalTransferResult').textContent,/обе даты/i);
+});
