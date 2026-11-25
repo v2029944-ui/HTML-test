@@ -151,13 +151,13 @@ fn prepare_reference(c:&Connection,q:&ReferenceChangesRequest,s:&AnalysisScope)-
         let aa: Option<f64> = row.get(5).map_err(err)?;
         let before = observed_totals(bc,ba,row.get(6).map_err(err)?,row.get(8).map_err(err)?)?;
         let after = observed_totals(ac,aa,row.get(7).map_err(err)?,row.get(9).map_err(err)?)?;
-        let comparable: bool = row.get(10).map_err(err)?;
+        let complete: bool = row.get(10).map_err(err)?;
         let (old, new, strict_pair, minimum) = if q.metric == "count" {
             (before.count, after.count, Some((bc,ac)), q.min_count)
         } else {
             (before.amount, after.amount, ba.zip(aa), q.min_amount)
         };
-        let Some((b, a)) = strict_pair.filter(|_| comparable) else {
+        let Some((b, a)) = strict_pair.filter(|_| before.count.is_some() && after.count.is_some()) else {
             put.execute(params![name, org, old, new, None::<f64>, None::<f64>, ""])
                 .map_err(err)?;
             continue;
@@ -165,11 +165,11 @@ fn prepare_reference(c:&Connection,q:&ReferenceChangesRequest,s:&AnalysisScope)-
         let value = measure(b, a, minimum, q.percent)?;
         let kind = if value.delta == 0. {
             ""
-        } else if bc == 0. && ba == Some(0.) && (ac != 0. || aa.is_some_and(|n| n != 0.)) {
+        } else if complete && bc == 0. && ba == Some(0.) && (ac != 0. || aa.is_some_and(|n| n != 0.)) {
             "new"
-        } else if (bc != 0. || ba.is_some_and(|n| n != 0.)) && ac == 0. && aa == Some(0.) {
+        } else if complete && (bc != 0. || ba.is_some_and(|n| n != 0.)) && ac == 0. && aa == Some(0.) {
             "gone"
-        } else if b != 0. && value.significant {
+        } else if (b != 0. || !complete) && value.significant {
             if value.delta > 0. {
                 "up"
             } else {
@@ -244,23 +244,26 @@ fn comparison_csv_context(
         .collect::<Result<Vec<_>,_>>().map_err(err)?;
     let included:Vec<_>=members.iter().filter(|(_,before,after)|*before&&*after).map(|(org,_,_)|org.as_str()).collect();
     csv_record(writer,&[Text("Сопоставимые подразделения"),Number(Some(included.len() as f64)),Number(Some(members.len() as f64)),Text(&included.join(", "))])?;
-    csv_record(writer,&[Text("Выборка сравнения"),Text("Разница и проценты учитывают один состав с полными периодами. Абсолютные значения могут быть частичными. Пропуск не означает ноль.")])?;
+    csv_record(writer,&[Text("Выборка сравнения"),Text("Сводные итоги учитывают доступные отчёты выбранных подразделений. Пропуск не означает ноль.")])?;
     for (org,before,after) in &members {
         let reason=match (*before,*after) {(true,true)=>"включено",(false,false)=>"неполные базовый и анализируемый интервалы",(false,true)=>"неполный базовый интервал",(true,false)=>"неполный анализируемый интервал"};
         csv_record(writer,&[Text("Состав сравнения"),Text(org),Text(reason)])?;
     }
-    let (bc,ba,ac,aa)=if included.is_empty(){(None,None,None,None)}else{
-        let values:(f64,Option<f64>,f64,Option<f64>)=c.query_row("SELECT
-            coalesce(sum(CASE WHEN slot=1 THEN count END),0.0),CASE WHEN COUNT(*) FILTER(WHERE slot=1)=0 THEN 0 WHEN COUNT(amount) FILTER(WHERE slot=1)=COUNT(*) FILTER(WHERE slot=1) THEN SUM(amount) FILTER(WHERE slot=1) END,
-            coalesce(sum(CASE WHEN slot=2 THEN count END),0.0),CASE WHEN COUNT(*) FILTER(WHERE slot=2)=0 THEN 0 WHEN COUNT(amount) FILTER(WHERE slot=2)=COUNT(*) FILTER(WHERE slot=2) THEN SUM(amount) FILTER(WHERE slot=2) END
-            FROM ref_values JOIN ref_orgs USING(org)",[],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).map_err(err)?;
-        (Some(finite(values.0)?),values.1.map(finite).transpose()?,Some(finite(values.2)?),values.3.map(finite).transpose()?)
+    let observed = |slot| -> Result<(AnalysisTotals, Option<f64>), String> {
+        let (count, amount, known_amount) = c.query_row("SELECT coalesce(sum(count),0.0),
+            CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,
+            SUM(known_amount) FROM ref_values WHERE slot=?1", [slot], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).map_err(err)?;
+        let available = observed_reports(c, slot, None)?;
+        Ok((observed_totals(count, amount, known_amount, available)?, amount.filter(|_| available)))
     };
-    csv_record(writer,&[Text("Итоги сопоставимой выборки · все работы")])?;
+    let (before, before_amount) = observed(1)?;
+    let (after, after_amount) = observed(2)?;
+    csv_record(writer,&[Text("Сравнение по доступным отчётам · все работы")])?;
     csv_record(writer,&[Text("Показатель"),Text("Было"),Text("Стало"),Text("Изменение"),Text("Изменение, %")])?;
-    let average=|count:Option<f64>,amount:Option<f64>|->Result<Option<f64>,String>{match (count,amount){(Some(count),Some(amount)) if count>0.=>Ok(Some(finite(amount/count)?)),_=>Ok(None)}};
-    for (label,before,after) in [("Сумма",ba,aa),("Количество / объём",bc,ac),("Сумма / количество (объём)",average(bc,ba)?,average(ac,aa)?)] {
-        let change=match (before,after){(Some(before),Some(after))=>Some(measure(before,after,0.,0.)?),_=>None};
+    for (label,before,after,pair) in [("Сумма",before.amount,after.amount,before_amount.zip(after_amount)),
+        ("Количество / объём",before.count,after.count,before.count.zip(after.count)),
+        ("Сумма / количество (объём)",before.average,after.average,before.average.zip(after.average))] {
+        let change=pair.map(|(before,after)|measure(before,after,0.,0.)).transpose()?;
         csv_record(writer,&[Text(label),Number(before),Number(after),Number(change.as_ref().map(|value|value.delta)),Number(change.and_then(|value|value.percent))])?;
     }
     csv_record(writer,&[])
@@ -359,6 +362,7 @@ impl Analytics<'_> {
             prepare_reference(&tx,q,scope)?;
             export(destination,|writer| {
                 comparison_csv_context(writer,&tx,q,scope,"Анализируемый период")?;
+                csv_record(writer,&[Cell::Text("Качество данных"),Cell::Text("Изменения в таблице рассчитываются по доступным отчётам, если данные есть за оба интервала. Пропуски не считаются нулём.")])?;
                 csv_record(writer,&[Cell::Text("Показатель строк"),Cell::Text(if q.metric=="amount"{"Сумма"}else{"Количество / объём"})])?;
                 csv_record(writer,&[Cell::Text("Фильтр позиций"),Cell::Text(&q.kind)])?;
                 csv_record(writer,&[Cell::Text("Поиск работ"),Cell::Text(&q.search)])?;
@@ -397,7 +401,7 @@ impl Analytics<'_> {
             prepare_reference_values(&tx,q,scope)?;
             export(destination,|writer| {
                 comparison_csv_context(writer,&tx,q,scope,"Сводка доступных данных")?;
-                csv_record(writer,&[Cell::Text("Наблюдаемые итоги анализируемого интервала"),Cell::Text("Все выбранные подразделения; частичные данные не являются итогами сопоставимой выборки.")])?;
+                csv_record(writer,&[Cell::Text("Наблюдаемые итоги анализируемого интервала"),Cell::Text("Все выбранные подразделения")])?;
                 csv_record(writer,&[Cell::Text("Подразделение"),Cell::Text("Сумма"),Cell::Text("Количество / объём"),Cell::Text("Доля суммы, %"),Cell::Text("Сумма / количество (объём)"),Cell::Text("Состояние")])?;
                 let mut statement=tx.prepare("WITH observed AS (
                     SELECT v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,CASE WHEN COUNT(x.row_index)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(x.row_index) THEN SUM(x.amount) END amount,SUM(x.amount) known_amount

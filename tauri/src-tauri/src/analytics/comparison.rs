@@ -10,7 +10,7 @@ pub struct ComparisonValue {
     pub count: Option<ChangeMeasure>,
     pub amount: Option<ChangeMeasure>,
     pub average: AverageChange,
-    /// Exact values of the sole complete side when a delta cannot be computed.
+    /// Exact values of the sole usable side when a delta cannot be computed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub available: Option<AnalysisTotals>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -168,13 +168,13 @@ impl Analytics<'_> {
         let (before_complete, after_complete) = comparison(&tx, s, q, None)?;
         let before = range_summary(&tx, s, 1)?;
         let after = range_summary(&tx, s, 2)?;
-        let count = if let (Some(b), Some(a)) = (before.total.count, after.total.count) {
+        let count = if let (Some(b), Some(a)) = (before.available_total.count, after.available_total.count) {
             Some(measure(b, a, q.min_count, q.percent)?)
         } else { None };
-        let amount = if let (Some(b), Some(a)) = (before.total.amount, after.total.amount) {
+        let amount = if let (Some(b), Some(a)) = (before.comparison_amount(), after.comparison_amount()) {
             Some(measure(b, a, q.min_amount, q.percent)?)
         } else { None };
-        let average = average_change(before.total.average, after.total.average, q.percent)?;
+        let average = average_change(before.available_total.average, after.available_total.average, q.percent)?;
         let summary = ComparisonSummary {
             before, after,
             values: count_sql(&tx, "SELECT COUNT(*) FROM temp.an_comparison")?,
@@ -215,7 +215,7 @@ impl Analytics<'_> {
         drop(stmt);
         let mut top_amount=Vec::new();
         let mut top_count=Vec::new();
-        if before_complete && after_complete {
+        if summary.before.available_reports > 0 && summary.after.available_reports > 0 {
             for metric in ["amount","count"] {
                 let sql = "SELECT key,name,kind,bc,ba,cc,ca FROM temp.an_comparison
                     WHERE ?1='count' OR (ba IS NOT NULL AND ca IS NOT NULL)
@@ -224,7 +224,10 @@ impl Analytics<'_> {
                 let mut ranking = tx.prepare(sql).map_err(err)?;
                 let mut values=ranking.query([metric]).map_err(err)?;
                 while let Some(row)=values.next().map_err(err)? {
-                    let item=comparison_value(row,q,true,true)?;
+                    let mut item=comparison_value(row,q,true,true)?;
+                    if !(before_complete && after_complete) {
+                        item.status = None;
+                    }
                     if metric=="amount" {top_amount.push(item);}
                     else {top_count.push(item);}
                 }
@@ -246,7 +249,10 @@ impl Analytics<'_> {
         let mut result=statement.query(params![limit,offset]).map_err(err)?;
         let mut rows=Vec::new();
         while let Some(row)=result.next().map_err(err)? {
-            let mut value = comparison_value(row,q,before,after)?;
+            let mut value = comparison_value(row,q,b_observed,a_observed)?;
+            if !(before && after) {
+                value.status = None;
+            }
             value.observed_before = Some(observed_totals(row.get(3).map_err(err)?, row.get(4).map_err(err)?,
                 row.get(7).map_err(err)?, b_observed)?);
             value.observed_after = Some(observed_totals(row.get(5).map_err(err)?, row.get(6).map_err(err)?,
@@ -293,9 +299,8 @@ impl Storage {
     }
 
     /// One bounded, revision-consistent comparison of two exact date ranges.
-    /// Returns no work rankings when either selected range is incomplete;
-    /// division comparisons are independently hidden when their own history
-    /// is incomplete. All aggregation occurs in SQLite.
+    /// Totals and work rankings compare observed reports in both ranges.
+    /// Division comparisons still require complete coverage for that division.
     pub fn analysis_comparison_dashboard(
         &self,
         expected: i64,

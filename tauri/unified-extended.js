@@ -215,10 +215,11 @@ async function sampleFor(s,ranges){
  const included=s.organizations.filter(org=>complete.every(list=>list.has(org)));
  return {included,excluded:s.organizations.filter(org=>!included.includes(org)),pages};
 }
-function sampleNote(root,sample,message){
+function sampleNote(root,sample,message,compareAvailable=false){
  if(!sample?.excluded.length){if(message)root.append(UI.el('p',message,'warn small'));return;}
  const banner=UI.el('div',null,'comparison-warning'),total=sample.included.length+sample.excluded.length;
- banner.append(UI.el('strong',sample.included.length?'Сопоставимые подразделения: '+sample.included.length+' из '+total:'Нет сопоставимых подразделений'),
+ const label=compareAvailable?'Полные отчёты у '+sample.included.length+' из '+total+' подразделений':sample.included.length?'Сопоставимые подразделения: '+sample.included.length+' из '+total:'Нет сопоставимых подразделений';
+ banner.append(UI.el('strong',label),
   UI.el('p',message||'Часть подразделений имеет неполные данные.'));
  const reasons=UI.el('details');reasons.append(UI.el('summary','Причины по подразделениям'));
  sample.pages.forEach((rows,index)=>{for(const org of sample.excluded){
@@ -226,7 +227,7 @@ function sampleNote(root,sample,message){
   if(!row?.complete)reasons.append(UI.el('p',org+' · '+(sample.pages.length===1?'анализируемый период':index===0?'базовый период':'анализируемый период')+' · '+(row?'пропусков: '+row.missing:'нет отчёта')));
  }});
  banner.append(reasons);
- if(sample.included.length){const button=UI.el('button','Сравнить только сопоставимые','button secondary');
+ if(sample.included.length){const button=UI.el('button',compareAvailable?'Сравнить только с полными отчётами':'Сравнить только сопоставимые','button secondary');
   button.type='button';button.addEventListener('click',()=>{
    window.referenceFilters.setOrganizations(sample.included);const heading=$('comparisonHeading');heading.tabIndex=-1;heading.focus();
   });banner.append(button);
@@ -267,20 +268,21 @@ async function comparison(index=0,paging=false){
   const [dashboard,windowPage]=await Promise.all([api.nativeAnalysisCompare(s.revision,s.type,before.from,before.to,after.from,after.to,s.organizations,null,s.selectedNames),api.unifiedComparisonWindow(req,{from:before.from,to:before.to},null,index,50)]);
   if(!task.valid())return;for(const id of ['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis'])clear(id,'',false);
   const page=windowPage.rows,summary=dashboard.summary;
-  $('comparisonHelp').textContent=workScopeText(s)+' Второй интервал сравнивается с первым по отмеченным работам. Прочерк — неполные данные; при нулевой базе процент не рассчитывается.';
+  $('comparisonHelp').textContent=workScopeText(s)+' Второй интервал сравнивается с первым по отмеченным работам. Прочерк означает, что значение нельзя рассчитать. При нулевой базе процент не рассчитывается.';
   const coverage=$('comparisonCoverage'),warnings=[];
   const beforeComplete=summary.before.complete,afterComplete=summary.after.complete;
   const beforeValues=observed(summary.before),afterValues=observed(summary.after);
   const beforeObserved=beforeComplete||Number.isFinite(beforeValues?.count),afterObserved=afterComplete||Number.isFinite(afterValues?.count);
+  const compareAvailable=beforeObserved&&afterObserved;
   if(!beforeComplete||!afterComplete)warnings.push('Неполные данные '+(!beforeComplete&&!afterComplete?'базового и анализируемого периодов':!beforeComplete?'базового периода':'анализируемого периода')+
-   '. Показаны доступные показатели; пропуск не означает ноль. Разница и проценты требуют сопоставимых данных.');
+   (compareAvailable?'. Разница и проценты рассчитаны по доступным отчётам.':'. Показаны доступные показатели.')+' Пропуски не считаются нулём.');
   const missing=summary.before.missing+summary.after.missing;
   if(missing>0)warnings.push('Пропусков: '+missing+' (подразделение × период).');
   if([summary.before,summary.after].some(period=>period.amount_missing_rows||
      (period.complete&&Number.isFinite(observed(period)?.count)&&period.total.amount==null))){
    warnings.push('В некоторых строках сумма не указана. Показана сумма заполненных ячеек.');
   }
-  sampleNote(coverage,sample,warnings.join(' '));
+  sampleNote(coverage,sample,warnings.join(' '),compareAvailable);
   for(const [label,total] of [['Первый интервал',summary.before],['Второй интервал',summary.after]]){
    if(total.complete)coverage.append(UI.el('p',label+': Полные данные · периодов '+total.periods,'muted small'));
   }
@@ -292,7 +294,7 @@ async function comparison(index=0,paging=false){
   const onlyOne=beforeObserved!==afterObserved;
   for(const metric of metrics()){
    const now=afterValues?.[metric],old=beforeValues?.[metric],card=UI.el('div',null,'kpi');
-   const totalDiff=rawDifference(summary.after.total[metric],summary.before.total[metric]);
+   const totalDiff=metric==='amount'&&(summary.before.amount_missing_rows||summary.after.amount_missing_rows)?[null,null]:rawDifference(now,old);
    card.append(UI.el('span',titles[metric]+' · анализируемый период'),UI.el('strong',fmt(now,metric)),
     UI.el('small',totalDiff[0]===null?'Сравнение недоступно':difference(now,old,metric).join(' · ')));
    $('kpis').append(card);

@@ -152,7 +152,7 @@ test('incomplete coverage remains visible and opens a missing-org/day matrix',as
  assert.ok(details);details.open=true;details.dispatch('toggle');await settle();
  assert.match(details.textContent,/Подразделение/);assert.match(details.textContent,/02\.01\.2024/);
  assert.match(details.textContent,/Нет/);assert.match(f.nodes.get('overviewAlerts').textContent,/Проверить данные/);
- assert.match(f.nodes.get('overviewKpis').textContent,/20Частичное значение/);
+ assert.match(f.nodes.get('overviewKpis').textContent,/20Без изменений/);
  f.nodes.get('printSummary').dispatch('click');assert.match(f.nodes.get('printReport').textContent,/Частичный итог/);
 });
 test('pending and empty sources immediately publish a null scope',async()=>{
