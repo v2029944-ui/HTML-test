@@ -701,6 +701,10 @@ def check_report_views(page):
     detail.locator('.calendar-source').wait_for()
     assert detail.locator('.calendar-source').count()==1
     assert '2024-02-29' in detail.locator('.calendar-source strong').inner_text()
+    expect(detail.get_by_role('heading',name='Подразделения',exact=True)).to_be_visible()
+    for organization in snapshot['org_names']:
+        expect(detail.get_by_text(organization,exact=True)).to_be_visible()
+    expect(detail.locator('summary').filter(has_text='Подразделения')).to_have_count(0)
     detail.get_by_role('button',name='Закрыть подробности дня',exact=True).click()
     assert leap.evaluate('el => document.activeElement===el')
     page.get_by_role('button',name='Закрыть подробности месяца',exact=True).click()

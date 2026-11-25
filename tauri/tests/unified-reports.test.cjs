@@ -112,6 +112,7 @@ test('daily calendar keeps absent reports, unusable reports and confirmed zero t
  assert.match(dayButtons[1].attrs['aria-label'],/Нет дневного отчёта/);
  assert.match(dayButtons[2].attrs['aria-label'],/Ошибка/);
  assert.match(dayButtons[3].attrs['aria-label'],/Нулевые итоги/);
+ assert.equal(dayButtons[3].children[1].textContent,'Ноль');
  const legend=root.querySelectorAll('*').find(el=>el.attrs['aria-label']==='Обозначения дней календаря');
  assert.ok(legend);
  assert.match(text(legend),/Нет дневного отчёта.*Ошибка.*нулевые итоги/i);
@@ -119,6 +120,42 @@ test('daily calendar keeps absent reports, unusable reports and confirmed zero t
  assert.match(text(root),/Дневной отчёт сохранён\. Пригодных данных нет/);
  await dayButtons[3].click();
  assert.match(text(root),/Количество: 0 · Сумма: 0/);
+});
+test('calendar shows source discrepancies as warnings and opens the day with its organizations',async()=>{
+ const orgReads=[];
+ const ui=mount({
+  unifiedCalendar:async(revision,year)=>({revision,year,days:[
+   {date:`${year}-01-05`,day_reports:1,week_reports:0,month_reports:0,warnings:0,warned:true,day_warned:true,invalid_reports:0,day_invalid_reports:0,organizations:2,complete:null},
+   {date:`${year}-02-05`,day_reports:2,week_reports:0,month_reports:0,warnings:1,warned:true,day_warned:true,invalid_reports:1,day_invalid_reports:1,organizations:2,complete:null}
+  ]}),
+  nativeDailyRollup:async(_rev,from,_to,grain)=>({granularity:grain,next_cursor:null,points:grain==='year'?[]:
+   ['01','02','03'].map((month,index)=>({start:`${from.slice(0,4)}-${month}-${grain==='day'?'05':'01'}`,
+    days:grain==='day'?1:31,available_reports:index===2?0:2,complete:false,missing:grain==='day'?2:122,
+    total:{count:null,amount:null,average:null},available_total:{count:index===2?null:8,amount:index===2?null:16,average:index===2?null:2}
+   }))}),
+  managementReportWindow:async(_rev,filter)=>({total_rows:1,rows:[{id:'jan',report_type:'day',start:filter.from,end:filter.to,source_name:'source.xlsx',rows:2,amount:16,saved_amount:20,warnings:0,organizations:2,shared_source_artifact:false}]}),
+  managementReportOrgWindow:async(...args)=>{orgReads.push(args);return {rows:[[0,'ЦЕНТР'],[1,'АВТО']],total_rows:2};}
+ });
+ await ui.window.unifiedReports.openView('calendar');
+ const [jan,feb,mar]=ui.nodes.reportCalendar.children;
+ assert.match(jan.className,/calendar-warn/);
+ assert.match(feb.className,/calendar-error/);
+ assert.match(mar.className,/calendar-missing/);
+ await jan.click();
+ const calendar=ui.nodes.calendarDetails;
+ assert.equal(orgReads.length,0);
+ const day=calendar.querySelectorAll('button').find(item=>item.attrs['aria-label']?.includes('-01-05:'));
+ assert.match(day.className,/calendar-warn/);
+ await day.click();await flush();
+ const detail=calendar.querySelectorAll('*').find(item=>item.className==='calendar-day-details');
+ assert.match(text(detail),/Количество: 8 · Сумма: 16.*Источники.*Подразделения.*ЦЕНТР.*АВТО/);
+ assert.ok(detail.querySelectorAll('*').some(item=>item.tag==='h6'&&item.textContent==='Подразделения'));
+ assert.ok(detail.querySelectorAll('*').every(item=>item.tag!=='summary'));
+ assert.ok(detail.querySelectorAll('*').every(item=>!item.scrollWindow));
+ assert.deepEqual(orgReads,[[1,'jan',0,50]]);
+ await feb.click();
+ const invalid=calendar.querySelectorAll('button').find(item=>item.attrs['aria-label']?.includes('-02-05:'));
+ assert.match(invalid.className,/calendar-error/);
 });
 test('old deferred calendar replies cannot replace a newer snapshot',async()=>{
  let resolve;const ui=mount({unifiedCalendar:(rev,year)=>rev===1?new Promise(r=>resolve=r):Promise.resolve({year,days:[]})});const pending=ui.refresh();await flush();ui.UI.revision=2;await ui.refresh();resolve({year:2024,days:[{date:'2024-02-29',day_reports:1,warnings:999}]});await pending;assert.equal(ui.nodes.reportCalendar.children.length,12);assert.doesNotMatch(text(ui.nodes.reportCalendar),/999/);

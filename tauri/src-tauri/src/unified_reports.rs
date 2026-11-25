@@ -80,8 +80,29 @@ impl Storage {
         read_model::check_revision(&tx,revision)?;read_model::check_metadata_bounds(&tx)?;
         let invalid:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM reports WHERE octet_length(period_start)<>10 OR report_type NOT IN ('day','week','month') OR period_start NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' OR substr(period_start,1,4)='0000' OR date(period_start,'+0 days') IS NOT period_start)",[],|r|r.get(0)).map_err(err)?;
         if invalid{return Err("Invalid calendar report headers".into());}
-        let mut s=tx.prepare("SELECT r.period_start, SUM(r.report_type='day'),SUM(r.report_type='week'),SUM(r.report_type='month'),COALESCE(SUM(m.warnings),0),(SELECT COUNT(DISTINCT o.org) FROM management_report_orgs o JOIN reports r2 ON r2.id=o.report_id WHERE r2.period_start=r.period_start) FROM reports r LEFT JOIN management_report_meta m ON m.report_id=r.id WHERE r.period_start BETWEEN ?1 AND ?2 GROUP BY r.period_start ORDER BY r.period_start LIMIT 366").map_err(err)?;
-        let days=s.query_map(params![format!("{year:04}-01-01"),format!("{year:04}-12-31")],|r|Ok(json!({"date":r.get::<_,String>(0)?,"day_reports":r.get::<_,i64>(1)?,"week_reports":r.get::<_,i64>(2)?,"month_reports":r.get::<_,i64>(3)?,"warnings":r.get::<_,i64>(4)?,"organizations":r.get::<_,i64>(5)?,"complete":null}))).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+        // The analytics index already recognizes legacy hasMismatch values and
+        // distinguishes those warnings from invalid report data.
+        let mut statement = tx.prepare("SELECT r.period_start,
+                SUM(r.report_type='day'), SUM(r.report_type='week'), SUM(r.report_type='month'),
+                COALESCE(SUM(m.warnings),0),
+                (SELECT COUNT(DISTINCT o.org) FROM management_report_orgs o
+                 JOIN reports r2 ON r2.id=o.report_id WHERE r2.period_start=r.period_start),
+                MAX(COALESCE(a.warned,0)<>0 OR COALESCE(m.warnings,0)>0),
+                MAX(r.report_type='day' AND (COALESCE(a.warned,0)<>0 OR COALESCE(m.warnings,0)>0)),
+                COUNT(*) FILTER (WHERE a.valid=0),
+                COUNT(*) FILTER (WHERE r.report_type='day' AND a.valid=0)
+            FROM reports r
+            LEFT JOIN management_report_meta m ON m.report_id=r.id
+            LEFT JOIN analysis_reports a ON a.report_id=r.id
+            WHERE r.period_start BETWEEN ?1 AND ?2
+            GROUP BY r.period_start ORDER BY r.period_start LIMIT 366").map_err(err)?;
+        let days = statement.query_map(params![format!("{year:04}-01-01"),format!("{year:04}-12-31")], |row| Ok(json!({
+            "date":row.get::<_,String>(0)?, "day_reports":row.get::<_,i64>(1)?,
+            "week_reports":row.get::<_,i64>(2)?, "month_reports":row.get::<_,i64>(3)?,
+            "warnings":row.get::<_,i64>(4)?, "organizations":row.get::<_,i64>(5)?,
+            "warned":row.get::<_,bool>(6)?, "day_warned":row.get::<_,bool>(7)?,
+            "invalid_reports":row.get::<_,i64>(8)?, "day_invalid_reports":row.get::<_,i64>(9)?, "complete":null
+        }))).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
         Ok(UnifiedCalendar{revision,year,days})
     }
     /// Filtering and pagination are applied after streaming every selected saved
@@ -161,6 +182,34 @@ mod tests {
  use super::*;
  #[test] fn quality_filters_are_global_and_bounded(){let d=tempfile::tempdir().unwrap();let s=Storage::new(d.path().into()).unwrap();let c=s.connect().unwrap();for n in 0..65 {let id=format!("r{n:03}");let doc=json!({"issues":[{"type":"invalid","reason":format!("needle {n}"),"organization":"A"}]});c.execute("INSERT INTO reports VALUES(?1,'day','2024-01-01','2024-01-01','file.xlsx',?2)",params![id,serde_json::to_vec(&doc).unwrap()]).unwrap();}let rev=s.revision().unwrap();let f=UnifiedQualityFilter{search:Some("needle 64".into()),..Default::default()};let p=s.unified_quality_page(rev,&f,0,50).unwrap();assert_eq!(p.total,1);assert_eq!(p.issues[0]["report_id"],"r064");assert!(s.unified_quality_page(rev-1,&f,0,50).is_err());assert!(s.unified_quality_page(rev,&f,0,51).is_err());}
  #[test] fn calendar_presence_does_not_claim_completeness(){let d=tempfile::tempdir().unwrap();let s=Storage::new(d.path().into()).unwrap();let c=s.connect().unwrap();c.execute("INSERT INTO reports VALUES('a','day','2024-02-29','2024-02-29',NULL,x'FF')",[]).unwrap();let v=s.unified_calendar(s.revision().unwrap(),2024).unwrap();assert_eq!(v.days.len(),1);assert!(v.days[0]["complete"].is_null());}
+ #[test]
+ fn calendar_keeps_legacy_mismatch_and_invalid_source_separate() {
+     let directory = tempfile::tempdir().unwrap();
+     let store = Storage::new(directory.path().into()).unwrap();
+     let connection = store.connect().unwrap();
+     for (id, kind, start, end, mismatch) in [
+         ("legacy", "day", "2024-01-05", "2024-01-05", true),
+         ("invalid", "day", "2024-02-05", "2024-02-06", false),
+         ("weekly", "week", "2024-03-04", "2024-03-10", true),
+     ] {
+         let document = json!({"id":id,"type":kind,"start":start,"end":end,
+             "organizations":["A"],"rows":[{"organization":"A","work":"Работа","count":2,"amount":5}],
+             "warnings":[],"hasMismatch":mismatch});
+         connection.execute("INSERT INTO reports VALUES(?1,?2,?3,?4,'source.xlsx',?5)",
+             params![id,kind,start,end,serde_json::to_vec(&document).unwrap()]).unwrap();
+         store.analysis_index_report(id, store.revision().unwrap()).unwrap();
+     }
+     let calendar = store.unified_calendar(store.revision().unwrap(), 2024).unwrap();
+     let [legacy, invalid, weekly] = calendar.days.as_slice() else { panic!("Expected three saved dates"); };
+     assert_eq!(legacy["warnings"], 0);
+     assert_eq!(legacy["warned"], true);
+     assert_eq!(legacy["day_warned"], true);
+     assert_eq!(legacy["day_invalid_reports"], 0);
+     assert_eq!(invalid["invalid_reports"], 1);
+     assert_eq!(invalid["day_invalid_reports"], 1);
+     assert_eq!(weekly["warned"], true);
+     assert_eq!(weekly["day_warned"], false);
+ }
  #[test]
  fn saved_quality_csv_streams_all_matching_rows_and_refuses_stale_or_existing_files() {
     let root=tempfile::tempdir().unwrap();
