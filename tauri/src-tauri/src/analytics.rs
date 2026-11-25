@@ -8,6 +8,8 @@ use std::io::{BufReader, Read, Write};
 #[path = "advanced_analysis.rs"]
 mod advanced_analysis;
 pub use advanced_analysis::*;
+#[path = "analysis_presentation.rs"]
+mod analysis_presentation;
 #[path = "reference_trend_csv.rs"]
 mod reference_trend_csv;
 pub use reference_trend_csv::*;

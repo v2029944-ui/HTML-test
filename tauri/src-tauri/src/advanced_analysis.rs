@@ -1,6 +1,33 @@
 //! Calendar-period facts for bounded advanced analyses. The source scope
 //! determines the only report type admitted by the validated workspace.
+use super::analysis_presentation;
 use super::*;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnifiedPatternOptions {
+    /// Mean of 4/8 whole intervals of the same length as the selected interval.
+    #[serde(default)]
+    pub range_window: bool,
+    /// Exact comparison interval for frequency, including non-adjacent periods.
+    pub baseline: Option<RangeQuery>,
+    pub search: String,
+    pub status: String,
+}
+
+/// Filtered and ordered pattern rows are still in the active read transaction.
+pub(super) struct PatternExport<'a> {
+    pub term: &'a str,
+    pub order: &'a str,
+    pub used: i64,
+    pub previous: i64,
+    pub current_complete: bool,
+    pub current_amount_incomplete: bool,
+    pub base_kind: &'a str,
+    pub base_from: &'a str,
+    pub base_to: &'a str,
+}
+type PatternWriter<'a> = dyn Fn(&Connection, PatternExport<'_>) -> Result<(), String> + 'a;
 
 #[derive(Serialize)]
 pub struct AdvancedChangesPage {
@@ -454,16 +481,17 @@ impl Storage {
         &self, revision:i64, s:&AnalysisScope, q:&ChangeQuery, grouping:Option<&str>,
         mode:&str, window:i32, options:&UnifiedPatternOptions, after:Option<&str>,
     )->Result<PatternPage,String> {
-        self.unified_patterns_output(revision,s,q,grouping,mode,window,options,after,None)
+        validate_pattern_options(mode, options)?;
+        self.patterns_filtered(revision, s, q, grouping, mode, window, after, Some(options), None, None)
     }
 
-    pub(super) fn unified_patterns_output(
-        &self, revision:i64, s:&AnalysisScope, q:&ChangeQuery, grouping:Option<&str>,
-        mode:&str, window:i32, options:&UnifiedPatternOptions, after:Option<&str>,
-        csv:Option<(&Path,&DetailCsvOptions)>,
-    )->Result<PatternPage,String> {
-        validate_pattern_options(mode,options)?;
-        self.patterns_filtered(revision,s,q,grouping,mode,window,after,Some(options),csv,None)
+    pub(super) fn export_pattern_rows(
+        &self, revision: i64, s: &AnalysisScope, q: &ChangeQuery, grouping: Option<&str>,
+        mode: &str, window: i32, options: &UnifiedPatternOptions, write: &PatternWriter<'_>,
+    ) -> Result<(), String> {
+        validate_pattern_options(mode, options)?;
+        self.patterns_filtered(revision, s, q, grouping, mode, window, None, Some(options), Some(write), None)?;
+        Ok(())
     }
 
     pub fn unified_pattern_page_at_page(&self,revision:i64,s:&AnalysisScope,q:&ChangeQuery,grouping:Option<&str>,mode:&str,window:i32,options:&UnifiedPatternOptions,page_index:usize)->Result<PatternPage,String> {
@@ -472,7 +500,7 @@ impl Storage {
     }
     fn patterns_filtered(
         &self, revision:i64, s:&AnalysisScope, q:&ChangeQuery, grouping:Option<&str>,
-        mode:&str, window:i32, after:Option<&str>, options:Option<&UnifiedPatternOptions>, csv:Option<(&Path,&DetailCsvOptions)>, page_index:Option<usize>,
+        mode:&str, window:i32, after:Option<&str>, options:Option<&UnifiedPatternOptions>, write:Option<&PatternWriter<'_>>, page_index:Option<usize>,
     )->Result<PatternPage,String> {
         if !matches!(mode, "usual" | "regularity") || !matches!(window, 4 | 8) {
             return Err("Invalid pattern mode or window".into());
@@ -485,11 +513,11 @@ impl Storage {
         let tx = conn.transaction().map_err(err)?;
         workspace(&tx, revision, s)?;
         let fingerprint=if let Some(options)=options {
-            super::unified_analytics::presentation_functions(&tx)?;
-            Some(super::unified_analytics::fingerprint(&tx,revision,s,json!([q,grouping,mode,window,options]))?)
+            analysis_presentation::presentation_functions(&tx)?;
+            Some(analysis_presentation::fingerprint(&tx,revision,s,json!([q,grouping,mode,window,options]))?)
         }else{None};
         let cursor_offset=if let Some(fingerprint)=fingerprint.as_deref() {
-            super::unified_analytics::page_offset(after,fingerprint)?
+            analysis_presentation::page_offset(after,fingerprint)?
         }else{0};
         calendar.facts(&tx, s, None)?;
         tx.execute_batch("CREATE TEMP TABLE adv_complete(label TEXT PRIMARY KEY) WITHOUT ROWID;
@@ -648,18 +676,28 @@ impl Storage {
         let mut total_rows=count_sql(&tx,"SELECT count(*) FROM adv_keys")?;
         let mut next=next;
         if let Some(options)=options {
-            let term=super::unified_analytics::normalized(&options.search);
+            let term=analysis_presentation::normalized(&options.search);
             tx.execute("DELETE FROM unified_patterns WHERE instr(classic_normalized(name),?1)=0 OR (?2<>'all' AND NOT EXISTS(SELECT 1 FROM json_each(json_extract(data,'$.statuses')) WHERE value=?2))",params![term,options.status]).map_err(err)?;
             total_rows=count_sql(&tx,"SELECT count(*) FROM unified_patterns")?;
             let offset=match page_index {Some(index)=>crate::storage::direct_page_offset(index,50,total_rows)?,None=>cursor_offset};
             let order=if term.is_empty(){"key"}else{"(instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key"};
-            if let Some((path,table))=csv {
-                super::reference_detail_csv::export_patterns(&tx,path,table,s,q,&term,order,used,previous,current_complete,current_amount_incomplete,&calendar.kind,&baseline_from.to_string(),&baseline_to.to_string())?;
+            if let Some(write) = write {
+                write(&tx, PatternExport {
+                    term: &term,
+                    order,
+                    used,
+                    previous,
+                    current_complete,
+                    current_amount_incomplete,
+                    base_kind: &calendar.kind,
+                    base_from: &baseline_from.to_string(),
+                    base_to: &baseline_to.to_string(),
+                })?;
             } else {
             let mut query=tx.prepare(&format!("SELECT data FROM unified_patterns WHERE ?1 IS NOT NULL ORDER BY {order} LIMIT 51 OFFSET ?2")).map_err(err)?;
             let mut result=query.query(params![term,offset]).map_err(err)?;
             while let Some(r)=result.next().map_err(err)? {rows.push(serde_json::from_str(&r.get::<_,String>(0).map_err(err)?).map_err(err)?);}
-            next=if rows.len()>50 {rows.pop();Some(super::unified_analytics::next_cursor(fingerprint.as_deref().unwrap(),offset+50)?)}else{None};
+            next=if rows.len()>50 {rows.pop();Some(analysis_presentation::next_cursor(fingerprint.as_deref().unwrap(),offset+50)?)}else{None};
             }
         }
         Ok(PatternPage {

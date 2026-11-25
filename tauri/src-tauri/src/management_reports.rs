@@ -1,3 +1,4 @@
+use super::super::management_job::JobRead;
 use super::*;
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 struct List<'a> {

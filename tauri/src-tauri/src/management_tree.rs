@@ -1,7 +1,18 @@
 //! Full-fidelity disk JSON tree. No whole-object/array Value is constructed.
+use super::management_job::JobRead;
 use super::*;
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use std::io::{BufReader, Read, Write};
+
+const TOKEN: usize = 65536;
+
+pub(super) fn label(s: &str) -> Result<(), String> {
+    if s.len() > TOKEN || serde_json::to_string(s).map_err(err)?.len() > TOKEN + 2 {
+        Err("Management string/raw token exceeds64KiB".into())
+    } else {
+        Ok(())
+    }
+}
 pub(super) fn schema(c: &Connection) -> Result<(), String> {
     c.execute_batch("CREATE TABLE IF NOT EXISTS management_nodes(handle INTEGER PRIMARY KEY,parent INTEGER,ordinal INTEGER NOT NULL,field TEXT,kind TEXT NOT NULL,value TEXT);
 CREATE INDEX IF NOT EXISTS management_children ON management_nodes(parent,ordinal,handle);

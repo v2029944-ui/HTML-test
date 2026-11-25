@@ -68,10 +68,10 @@ impl Storage {
         if !indexed {
             return Err("Management settings are not indexed".into());
         }
-        unified_analytics::presentation_functions(&tx)?;
+        analysis_presentation::presentation_functions(&tx)?;
         fill_range(&tx, &scope, query, 1)?;
         let coverage = range_summary(&tx, &scope, 1)?;
-        let term = unified_analytics::normalized(search);
+        let term = analysis_presentation::normalized(search);
         let extras = term.chars().count() >= 3;
         if mode == "unused" {
             tx.execute_batch("CREATE TEMP TABLE audit_rows AS

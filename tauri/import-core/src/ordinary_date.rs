@@ -1,6 +1,6 @@
 //! Explicit dates in the first column block of an ordinary report.
 use super::{cell, LegacyOptions, TripleMapping};
-use crate::{check_cancel, wide::{excel_serial_date, typed_excel_date}, Result, Stage};
+use crate::{check_cancel, excel_date::{excel_serial_date, typed_excel_date}, Result, Stage};
 use chrono::{Datelike, Duration, Months, NaiveDate};
 use regex::Regex;
 use rusqlite::{params, OptionalExtension};

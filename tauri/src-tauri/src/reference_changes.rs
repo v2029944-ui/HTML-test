@@ -113,7 +113,7 @@ fn prepare_reference_values(
     s: &AnalysisScope,
 ) -> Result<(), String> {
     workspace(c, q.revision, s)?;
-    unified_analytics::presentation_functions(c)?;
+    analysis_presentation::presentation_functions(c)?;
     periods(c, s, &q.baseline(), 1)?;
     periods(c, s, &q.current(), 2)?;
     c.execute_batch("CREATE TEMP TABLE ref_orgs(org TEXT PRIMARY KEY) WITHOUT ROWID;
@@ -298,7 +298,7 @@ impl Storage {
             let counts=tx.query_row("SELECT coalesce(sum(kind='up'),0),coalesce(sum(kind='down'),0),coalesce(sum(kind='new'),0),coalesce(sum(kind='gone'),0) FROM ref_changes",[],|r|Ok(ReferenceChangeCounts {up:r.get(0)?,down:r.get(1)?,new:r.get(2)?,gone:r.get(3)?})).map_err(err)?;
             let leader=tx.query_row("SELECT name,org,before,after,delta,percent FROM ref_changes WHERE delta IS NOT NULL ORDER BY abs(delta) DESC,name COLLATE classic_ru,org COLLATE classic_ru,name,org LIMIT 1",[],change_row).optional().map_err(err)?;
             let comparable=comparable_organizations(&tx,scope)?;
-            let search=unified_analytics::normalized(&q.search);
+            let search=analysis_presentation::normalized(&q.search);
             let (total,searched,significant)=tx.query_row(
                 &format!("SELECT count(*) FILTER (WHERE {CHANGE_KIND_FILTER}),
                         count(*), count(*) FILTER (WHERE kind<>'')
@@ -327,7 +327,7 @@ impl Storage {
             let tx = conn.transaction().map_err(err)?;
             prepare_reference(&tx, q, scope)?;
             let mut stmt = tx.prepare(&filtered_rows_sql(q)).map_err(err)?;
-            let mut rows = stmt.query(params![q.kind, unified_analytics::normalized(&q.search)]).map_err(err)?;
+            let mut rows = stmt.query(params![q.kind, analysis_presentation::normalized(&q.search)]).map_err(err)?;
             let mut batch = Vec::with_capacity(BATCH_SIZE);
             while let Some(row) = rows.next().map_err(err)? {
                 if cancelled.load(Ordering::Acquire) {
@@ -374,7 +374,7 @@ impl Storage {
                 csv_record(writer,&[])?;
                 csv_record(writer,&[Cell::Text("Работа"),Cell::Text("Подразделение"),Cell::Text("Было"),Cell::Text("Стало"),Cell::Text("Изменение"),Cell::Text("%")])?;
                 let mut stmt=tx.prepare(&filtered_rows_sql(q)).map_err(err)?;
-                let mut rows=stmt.query(params![q.kind,unified_analytics::normalized(&q.search)]).map_err(err)?;
+                let mut rows=stmt.query(params![q.kind,analysis_presentation::normalized(&q.search)]).map_err(err)?;
                 while let Some(row)=rows.next().map_err(err)? {
                     let value=change_row(row).map_err(err)?;
                     csv_record(writer,&[Cell::Text(&value.name),Cell::Text(&value.org),Cell::Number(value.before),Cell::Number(value.after),Cell::Number(value.delta),Cell::Number(value.percent)])?;

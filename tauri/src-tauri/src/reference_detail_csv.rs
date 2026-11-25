@@ -95,22 +95,25 @@ fn status(code: &str) -> &str {
 }
 // The pattern calculator has already validated the query, generated and sorted the records.
 // Read directly from its temporary table, including rows beyond the first screen.
-pub(super) fn export_patterns(
+fn export_patterns(
     tx: &Connection,
     path: &Path,
     table: &DetailCsvOptions,
     s: &AnalysisScope,
     q: &ChangeQuery,
-    term: &str,
-    order: &str,
-    used: i64,
-    previous: i64,
-    current_complete: bool,
-    current_amount_incomplete: bool,
-    base_kind: &str,
-    base_from: &str,
-    base_to: &str,
+    rows: PatternExport<'_>,
 ) -> Result<(), String> {
+    let PatternExport {
+        term,
+        order,
+        used,
+        previous,
+        current_complete,
+        current_amount_incomplete,
+        base_kind,
+        base_from,
+        base_to,
+    } = rows;
     export(path, |w| {
         context(w, tx, s, q, table)?;
         let opts = table.options.as_ref().ok_or("Missing pattern options")?;
@@ -243,7 +246,7 @@ impl Storage {
         measure_label(&table.metric)?;
         if matches!(table.section.as_str(), "usual" | "regularity") {
             let opts = table.options.as_ref().ok_or("Missing pattern options")?;
-            self.unified_patterns_output(
+            self.export_pattern_rows(
                 rev,
                 s,
                 q,
@@ -251,8 +254,7 @@ impl Storage {
                 &table.section,
                 table.window.ok_or("Missing pattern window")?,
                 opts,
-                None,
-                Some((path, table)),
+                &|tx, rows| export_patterns(tx, path, table, s, q, rows),
             )?;
             return Ok(());
         }
@@ -538,7 +540,7 @@ fn visit_all_organization_works(
     page: Option<(usize, usize)>,
     mut visit: impl FnMut(OrganizationWorkValues) -> Result<(), String>,
 ) -> Result<i64, String> {
-    unified_analytics::presentation_functions(tx)?;
+    analysis_presentation::presentation_functions(tx)?;
     unified_analytics::create_name_catalog(tx, true)?;
     let total = count_sql(tx, "SELECT count(*) FROM unified_names")?;
     let (limit, offset) = match page {

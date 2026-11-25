@@ -270,7 +270,7 @@ impl super::Rule {
     /// Persisted browser coordinates are zero based. Native XLSX conversion
     /// accepts one based coordinates; names remain workbook display names.
     pub fn native_wide_options(&self, organizations:[String;4])->Result<analiz_import_core::WideOptions,String> {
-        super::validate_rule(self)?;
+        self.validate()?;
         let mut mappings=BTreeMap::new();
         for (name,m) in self.mappings.as_ref().into_iter().flatten() {
             if mappings.len()>=12 {return Err("Не более 12 ручных листов за импорт.".into());}

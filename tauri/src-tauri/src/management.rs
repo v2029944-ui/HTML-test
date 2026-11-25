@@ -1,25 +1,14 @@
 //! Bounded settings domain; deliberately not registered as Tauri commands.
-use super::management_tree as tree;
+use super::management_tree::{self as tree, label};
 use super::read_model::{check_metadata_bounds, check_revision};
 use super::*;
 use fs2::FileExt;
 use rusqlite::OptionalExtension;
 use std::{
     io::{BufReader, BufWriter, Read, Write},
-    sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc,
-    },
+    sync::{atomic::AtomicBool, Arc},
 };
-const TOKEN: usize = 65536;
 const SESSION_MAGIC: &str = "analiz-management-v1\n";
-pub(super) fn label(s: &str) -> Result<(), String> {
-    if s.len() > TOKEN || serde_json::to_string(s).map_err(err)?.len() > TOKEN + 2 {
-        Err("Management string/raw token exceeds64KiB".into())
-    } else {
-        Ok(())
-    }
-}
 fn batch(n: usize) -> Result<(), String> {
     if (1..=500).contains(&n) {
         Ok(())
@@ -70,74 +59,6 @@ CREATE TRIGGER IF NOT EXISTS management_settings_delete AFTER DELETE ON kv WHEN 
 CREATE TRIGGER IF NOT EXISTS management_report_insert AFTER INSERT ON reports BEGIN DELETE FROM management_report_meta WHERE report_id=NEW.id;DELETE FROM management_report_orgs WHERE report_id=NEW.id;END;
 CREATE TRIGGER IF NOT EXISTS management_report_update AFTER UPDATE ON reports BEGIN DELETE FROM management_report_meta WHERE report_id IN(OLD.id,NEW.id);DELETE FROM management_report_orgs WHERE report_id IN(OLD.id,NEW.id);END;
 CREATE TRIGGER IF NOT EXISTS management_report_delete AFTER DELETE ON reports BEGIN DELETE FROM management_report_meta WHERE report_id=OLD.id;DELETE FROM management_report_orgs WHERE report_id=OLD.id;END;").map_err(err)
-}
-#[derive(Default)]
-pub struct ManagementJob {
-    state: Mutex<u8>,
-    cancelled: Arc<AtomicBool>,
-    records: AtomicU64,
-    interrupt: Mutex<Option<rusqlite::InterruptHandle>>,
-}
-impl ManagementJob {
-    pub fn new() -> Self {
-        Self::default()
-    }
-    pub(super) fn with_cancellation(cancelled:Arc<AtomicBool>)->Self {
-        Self {cancelled,..Self::default()}
-    }
-    pub fn records_processed(&self) -> u64 {
-        self.records.load(Ordering::Relaxed)
-    }
-    pub(super) fn record(&self) {
-        self.records.fetch_add(1, Ordering::Relaxed);
-    }
-    pub fn cancel(&self) -> bool {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if *state == 2 {
-            return false;
-        }
-        *state = 1;
-        self.cancelled.store(true, Ordering::Release);
-        if let Some(h) = self
-            .interrupt
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-        {
-            h.interrupt();
-        }
-        true
-    }
-    pub(super) fn check(&self) -> Result<(), String> {
-        if self.cancelled.load(Ordering::Acquire) {
-            Err("Management cancelled before commit".into())
-        } else {
-            Ok(())
-        }
-    }
-    fn run<T>(&self, c: &Connection, f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-        self.check()?;
-        *self.interrupt.lock().map_err(err)? = Some(c.get_interrupt_handle());
-        struct Guard<'a>(&'a ManagementJob);
-        impl Drop for Guard<'_> {
-            fn drop(&mut self) {
-                *self.0.interrupt.lock().unwrap_or_else(|e| e.into_inner()) = None;
-            }
-        }
-        let _guard = Guard(self);
-        self.check()?;
-        f()
-    }
-    fn finish(&self, tx: Transaction<'_>) -> Result<(), String> {
-        self.check()?;
-        let mut state = self.state.lock().map_err(err)?;
-        if *state != 0 {
-            return Err("Management cancelled or already committed".into());
-        }
-        tx.commit().map_err(err)?;
-        *state = 2;
-        Ok(())
-    }
 }
 #[derive(Debug, Serialize)]
 pub struct ManagementReceipt {
@@ -1314,16 +1235,5 @@ impl Storage {
         let tx = c.transaction().map_err(err)?;
         checked(&tx, rev)?;
         tx.query_row("SELECT COUNT(*) FROM management_catalog WHERE instr(work,?1)>0 AND (?2 IS NULL OR organization=?2)",params![query,org],|r|r.get(0)).map_err(err)
-    }
-}
-
-pub(super) struct JobRead<'a, R> {
-    pub inner: R,
-    pub job: &'a ManagementJob,
-}
-impl<R: Read> Read for JobRead<'_, R> {
-    fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
-        self.job.check().map_err(std::io::Error::other)?;
-        self.inner.read(b)
     }
 }

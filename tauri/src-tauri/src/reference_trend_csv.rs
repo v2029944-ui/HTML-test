@@ -129,7 +129,7 @@ impl Storage {
             params![mode, &scope.organizations, &scope.names]).map_err(err)?;
         if count_sql(&tx,"SELECT count(*) FROM trend_buckets")?>124 {return Err("Analysis timeline exceeds 124 points".into());}
         if works {
-            super::unified_analytics::presentation_functions(&tx)?;
+            super::analysis_presentation::presentation_functions(&tx)?;
             super::unified_analytics::create_name_catalog(&tx,scope.names.is_none())?;
         }
         let hide = options.hide_empty;

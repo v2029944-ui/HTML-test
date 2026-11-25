@@ -4,6 +4,7 @@ mod report_stage;
 pub use prepared::{
     ImportMode, PrepareProgress, PreparedImport, PreparedReport, QualityCounts, SourceDiagnostics,
 };
+mod excel_date;
 mod wide;
 mod catalog;
 pub use wide::{Coverage, ReportProvenance, SourceIssue, WideMapping, WideOptions, WideSheet, WideSequentialPeriod};

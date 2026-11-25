@@ -14,6 +14,9 @@ use std::{
 #[path = "management.rs"]
 mod management;
 pub use management::*;
+#[path = "management_job.rs"]
+mod management_job;
+pub use management_job::ManagementJob;
 #[path = "management_tree.rs"]
 mod management_tree;
 
@@ -242,42 +245,44 @@ fn safe_excel_name(name: &str) -> bool {
         && Path::new(name).file_name().and_then(|x| x.to_str()) == Some(name)
 }
 
-fn validate_rule(rule: &Rule) -> Result<(), String> {
-    if !REPORT_TYPES.contains(&rule.kind.as_str()) {
-        return Err("Тип отчёта должен быть «Дни», «Недели» или «Месяцы».".into());
-    }
-    let wide = matches!(rule.format.as_deref(), Some("daily-wide" | "period-pairs"));
-    if (rule.format.is_some() && !matches!(rule.format.as_deref(), Some("auto" | "legacy" | "daily-wide" | "period-pairs"))) || (rule.format.as_deref() == Some("daily-wide") && rule.kind != "day") {
-        return Err("Некорректный формат импорта.".into());
-    }
-    if !(wide && rule.start.is_empty())
-        && (!valid_date(&rule.start) || (rule.kind == "month" && !rule.start.ends_with("-01"))) {
-        return Err("Некорректная дата первого периода.".into());
-    }
-    if rule.sheet.encode_utf16().count() > 120 {
-        return Err("Название листа Excel слишком длинное.".into());
-    }
-    if (!wide && (rule.year.is_some() || rule.sheets.is_some() || rule.mappings.is_some()))
-        || rule.year.is_some_and(|year| !(1900..=9999).contains(&year)) {
-        return Err("Некорректные параметры годового импорта.".into());
-    }
-    let valid_sheet = |name: &str| !name.trim().is_empty() && name.encode_utf16().count() <= 120;
-    if let Some(sheets) = &rule.sheets {
-        if sheets.len() > 12 || sheets.iter().any(|name| !valid_sheet(name)) {
-            return Err("Некорректный список листов Excel.".into());
+impl Rule {
+    fn validate(&self) -> Result<(), String> {
+        if !REPORT_TYPES.contains(&self.kind.as_str()) {
+            return Err("Тип отчёта должен быть «Дни», «Недели» или «Месяцы».".into());
         }
-    }
-    if let Some(mappings) = &rule.mappings {
-        for (name, mapping) in mappings {
-            if !valid_sheet(name) || mapping.work_col > 2047 || mapping.first_day_col > 2047
-                || mapping.header_row > 59999
-                || mapping.total_count_col.is_some_and(|col| col > 2047)
-                || mapping.total_amount_col.is_some_and(|col| col > 2047) {
-                return Err("Некорректное сопоставление столбцов Excel.".into());
+        let wide = matches!(self.format.as_deref(), Some("daily-wide" | "period-pairs"));
+        if (self.format.is_some() && !matches!(self.format.as_deref(), Some("auto" | "legacy" | "daily-wide" | "period-pairs"))) || (self.format.as_deref() == Some("daily-wide") && self.kind != "day") {
+            return Err("Некорректный формат импорта.".into());
+        }
+        if !(wide && self.start.is_empty())
+            && (!valid_date(&self.start) || (self.kind == "month" && !self.start.ends_with("-01"))) {
+            return Err("Некорректная дата первого периода.".into());
+        }
+        if self.sheet.encode_utf16().count() > 120 {
+            return Err("Название листа Excel слишком длинное.".into());
+        }
+        if (!wide && (self.year.is_some() || self.sheets.is_some() || self.mappings.is_some()))
+            || self.year.is_some_and(|year| !(1900..=9999).contains(&year)) {
+            return Err("Некорректные параметры годового импорта.".into());
+        }
+        let valid_sheet = |name: &str| !name.trim().is_empty() && name.encode_utf16().count() <= 120;
+        if let Some(sheets) = &self.sheets {
+            if sheets.len() > 12 || sheets.iter().any(|name| !valid_sheet(name)) {
+                return Err("Некорректный список листов Excel.".into());
             }
         }
+        if let Some(mappings) = &self.mappings {
+            for (name, mapping) in mappings {
+                if !valid_sheet(name) || mapping.work_col > 2047 || mapping.first_day_col > 2047
+                    || mapping.header_row > 59999
+                    || mapping.total_count_col.is_some_and(|col| col > 2047)
+                    || mapping.total_amount_col.is_some_and(|col| col > 2047) {
+                    return Err("Некорректное сопоставление столбцов Excel.".into());
+                }
+            }
+        }
+        Ok(())
     }
-    Ok(())
 }
 
 fn validate_data(data: &Value) -> Result<(), String> {
@@ -569,7 +574,7 @@ impl Storage {
             }
             for (name, rule) in &parsed.rules {
                 if !safe_excel_name(name) { return Err("Небезопасное имя файла в прежней конфигурации.".into()); }
-                validate_rule(rule)?;
+                rule.validate()?;
             }
             Some(parsed)
         } else {
@@ -663,7 +668,7 @@ impl Storage {
 
     pub fn set_rule(&self, name: String, rule: Rule) -> Result<Rule, String> {
         if !safe_excel_name(&name) { return Err("Некорректное имя файла XLSX.".into()); }
-        validate_rule(&rule)?;
+        rule.validate()?;
         let _guard = self.gate.lock().map_err(err)?;
         let mut conn = self.connect()?;
         let mut config = self.config(&conn)?;
@@ -689,7 +694,7 @@ impl Storage {
         if !safe_excel_name(&name) {
             return Err("Некорректное имя файла XLSX.".into());
         }
-        validate_rule(&rule)?;
+        rule.validate()?;
         if expected_folder.is_empty() || expected_folder.len() > 32767
             || expected_signature.is_empty() || expected_signature.len() > 256
         {
@@ -761,7 +766,7 @@ impl Storage {
             return Err("Папка Excel изменилась. Обновите список файлов.".into());
         }
         let rule = config.rules.get(&request.name).ok_or("Для файла Excel нет сохранённого правила.")?;
-        validate_rule(rule)?;
+        rule.validate()?;
         let path = Path::new(&request.folder).join(&request.name);
         let handle = open_checked_folder_excel(&path, &request.signature)?;
         Ok((rule.clone(), path, handle))
@@ -1343,9 +1348,10 @@ mod tests {
         unknown["reports"][0]["type"]=json!("quarter");
         assert!(store.save(unknown).is_err());
         assert_eq!(store.load().unwrap()["reports"][0]["type"],"week");
-        assert!(validate_rule(&Rule {
+        let rule = Rule {
             kind:"quarter".into(),start:"2026-11-16".into(),sheet:String::new(),..Rule::default()
-        }).is_err());
+        };
+        assert!(rule.validate().is_err());
     }
 
     #[test]
@@ -1409,7 +1415,7 @@ mod tests {
             value.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
             let rejected = match serde_json::from_value::<Rule>(value.clone()) {
                 Err(_) => true,
-                Ok(rule) => validate_rule(&rule).is_err(),
+                Ok(rule) => rule.validate().is_err(),
             };
             assert!(rejected, "accepted malformed rule: {value}");
         }
@@ -1418,7 +1424,7 @@ mod tests {
             "mappings":{"Sheet":{"workCol":2047,"headerRow":59999,"firstDayCol":2047,
                 "totalCountCol":null,"totalAmountCol":2047}}
         })).unwrap();
-        assert!(validate_rule(&boundary).is_ok());
+        assert!(boundary.validate().is_ok());
     }
 
     #[test]
