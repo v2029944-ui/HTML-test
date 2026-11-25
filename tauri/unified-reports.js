@@ -817,14 +817,15 @@ function init(){
   function text(tag,id,value){const node=el(tag,value);node.id=id;panel.append(node);return node;}
   const label=el('label',undefined,'checkline'),toggle=el('input');toggle.id='sourceAutoImport';toggle.type='checkbox';label.append(toggle,el('span','Автоматически добавлять новые проверенные отчёты в этом сеансе'));panel.append(label);
   const autoStatus=text('p','sourceAutoStatus','Автоимпорт включается на текущий сеанс. Для файла нужно сохранённое правило. Замены, пересечения периодов и замечания требуют ручной проверки.');
+  const lastSync=text('p','sourceFolderLastSync','');lastSync.hidden=true;
   const actions=el('div',undefined,'actions');for(const [id,title] of [['sourceFolderChoose','Выбрать папку Excel'],['sourceFolderRefresh','Обновить список']]){const b=button(title,()=>{});b.id=id;actions.append(b);}panel.append(actions);
   for(const [id,value] of [['sourceFolderLocation','Папка не выбрана.'],['sourceFolderCount',''],['sourceFolderStatus','']])text('p',id,value);
   const editor=el('details');editor.id='sourceRuleEditor';editor.append(el('summary','Правило выбранного файла'));const selectedFile=el('p','Выберите файл для настройки правила.');selectedFile.id='sourceRuleFile';editor.append(selectedFile);const fields=el('div',undefined,'import-grid');
   for(const [id,title,options] of [['sourceRuleType','Период отчёта',[['day','День'],['week','Неделя'],['month','Месяц']]],['sourceRuleFormat','Показатели в Excel',[['legacy','Свои для каждого периода'],['auto','Определить по заголовкам'],['period-pairs','Единый список показателей']]]]){const label=el('label',title),s=el('select');s.id=id;for(const [v,t]of options){const o=el('option',t);o.value=v;s.append(o);}label.append(s);fields.append(label);}
   for(const [id,title,type] of [['sourceRuleStart','Первая дата','date'],['sourceRuleSheet','Лист Excel','text'],['sourceRuleYear','Год в заголовках','number']]){const label=el('label',title),input=el('input');input.id=id;input.type=type;label.append(input);fields.append(label);}editor.append(fields);
   const save=button('Сохранить правило',()=>{});save.id='sourceRuleSave';const ruleStatus=el('p');ruleStatus.id='sourceRuleStatus';editor.append(save,ruleStatus);
-  const wrap=el('div',undefined,'table-scroll'),table=el('table'),head=el('thead'),tr=el('tr');for(const title of ['Файл','Размер','Правило импорта','Действие'])tr.append(el('th',title));head.append(tr);table.append(head);const rows=el('tbody');rows.id='sourceFolderRows';table.append(rows);wrap.append(table);panel.append(wrap);
-  panel.append(label,autoStatus,editor);
+  const wrap=el('div',undefined,'table-scroll'),table=el('table'),head=el('thead'),tr=el('tr');for(const title of ['Файл','Размер','Состояние импорта','Действие'])tr.append(el('th',title));head.append(tr);table.append(head);const rows=el('tbody');rows.id='sourceFolderRows';table.append(rows);wrap.append(table);panel.append(wrap);
+  panel.append(label,autoStatus,lastSync,editor);
   const importFields=$('excelFile').closest?.('.import-grid');
   if(importFields)importFields.after(panel);else (uploadPanels.import||$('upload')).append(panel);
   // Reuse the audited session/lease and checked-rule controllers after their
