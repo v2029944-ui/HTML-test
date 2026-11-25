@@ -194,6 +194,14 @@ test('editing and audit share one visible search and result list',async()=>{
  assert.equal(m.nodes.createGroup.focused,true);
  assert.equal(m.writes.length,0);
 });
+test('closing an existing group editor returns focus to its edit button',async()=>{
+ const m=mount();m.snapshot(7);m.views.groups();await tick();
+ const edit=actionByText(m.nodes.groupList,'Изменить группу');
+ await edit.fire();
+ assert.equal(m.nodes.groupEditor.hidden,false);
+ m.nodes.groupEditor.open=false;await m.nodes.groupEditor.fire('toggle');
+ assert.equal(edit.focused,true);
+});
 test('failure to open a group editor leaves the active audit results intact',async()=>{
  const m=mount();
  m.api.unifiedGroupAuditPage=async()=>({rows:[{key:'work:a',name:'Проверенная работа',group:'g1',active:true}],total:101});

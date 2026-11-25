@@ -56,7 +56,9 @@ function init(){
  const workSearchHome=workLabel.parentNode,workListHome=works.root.parentNode,workListNext=works.root.nextSibling;
  const workSearchCaption=el('span','Поиск работ');workLabel.replaceChildren(workSearchCaption,workSearch);
  const editor=$('groupEditor'),auditPanel=$('groupAuditPanel');
+ let editorOpener=null;
  editor.hidden=true;
+ function openEditor(opener){editorOpener=opener;editor.hidden=false;editor.open=true;}
  const auditSearchLabel=$('groupAuditSearch').parentNode,auditSearchHome=auditSearchLabel.parentNode;
  const auditListHome=$('groupAuditResults');
  auditSearchLabel.remove();
@@ -68,10 +70,10 @@ function init(){
  function showWorkTotals(result){if(Number.isSafeInteger(result?.grouped)&&Number.isSafeInteger(result.total))coverage.textContent='Работ в группах: '+result.grouped+' из '+result.total;}
  works.render=result=>{works.root.append(count());for(const row of result.rows){const label=el('label',null,'work-row'),check=el('input');check.type='checkbox';check.checked=selected.has(row.name);check.disabled=busy;controls.add(check);check.addEventListener('change',()=>{if(busy)return;if(check.checked)selected.add(row.name);else selected.delete(row.name);works.root.children[0].textContent='Выбрано работ: '+selected.size;});label.append(check,el('span',row.name));works.root.append(label);}if(!workSearch.value.trim())showWorkTotals(result);};
  function resetEditor(reload=true){editTicket++;editing=null;selected=new Set();$('groupName').value='';if(workMode==='edit')workSearch.value='';works.offset=0;if(reload&&active&&workMode==='edit')void load(works);}
- async function editGroup(group,expected){if(busy||!valid(expected))return;const ticket=++editTicket;busy=true;lock();try{
+ async function editGroup(group,expected,opener){if(busy||!valid(expected))return;const ticket=++editTicket;busy=true;lock();try{
   const chosen=new Set();let offset=0,total=1;
   while(offset<total){const page=await api.unifiedManagementPage(expected,'members','',group.handle,offset,LIMIT);if(ticket!==editTicket||!valid(expected))return;if(!Array.isArray(page?.rows)||page.rows.length>LIMIT||!Number.isSafeInteger(page.total)||page.total>5000||page.total<0||(!page.rows.length&&offset<page.total))throw Error('Не удалось загрузить состав группы (лимит 5000 работ).');total=page.total;for(const row of page.rows)chosen.add(row.name);offset+=page.rows.length;}
-  if(ticket!==editTicket||!valid(expected))return;editing=group;selected=chosen;showWorkMode('edit');editor.hidden=false;editor.open=true;$('groupName').value=group.name;workSearch.value='';await load(works);$('groupName').focus();
+  if(ticket!==editTicket||!valid(expected))return;editing=group;selected=chosen;showWorkMode('edit');openEditor(opener);$('groupName').value=group.name;workSearch.value='';await load(works);$('groupName').focus();
  }catch(e){if(ticket===editTicket)fail(e);}finally{busy=false;lock();}}
  function requestGroupSelection(anchor,row,expected,current){
   const dialog=el('dialog',null,'group-picker'),heading=el('h2','Группа'),work=el('p',row.name,'muted small');
@@ -188,10 +190,11 @@ function init(){
    if(current){current.closest('details').open=true;current.focus({preventScroll:true});}else $('groupSearch').focus({preventScroll:true});
   });
   rename.dataset.groupRename=group.id;
-  actions.append(button('Изменить группу',()=>editGroup(group,expected)),rename,button('Удалить группу',guard(async()=>{if(!valid(expected)||!await confirmAction(expected,'Удалить группу «'+group.name+'»? Исходные работы останутся.'))return;await mutate(expected,()=>api.nativeSettingsEdit(expected,{kind:'delete_group',handle:group.handle}),'Группа удалена.');})));
+  const edit=button('Изменить группу',()=>editGroup(group,expected,edit));
+  actions.append(edit,rename,button('Удалить группу',guard(async()=>{if(!valid(expected)||!await confirmAction(expected,'Удалить группу «'+group.name+'»? Исходные работы останутся.'))return;await mutate(expected,()=>api.nativeSettingsEdit(expected,{kind:'delete_group',handle:group.handle}),'Группа удалена.');})));
   expandMembers(details,memberRoot,group,expected);groups.root.append(details);
  }};
- bind('createGroup',()=>{if(busy)return;showWorkMode('edit');resetEditor();editor.hidden=false;editor.open=true;$('groupName').focus();});bind('resetGroup',()=>{if(!busy)resetEditor();});bind('saveGroup',guard(async expected=>{const name=$('groupName').value.trim();if(!name||!selected.size||selected.size>5000)throw Error('Введите название и выберите от 1 до 5000 работ.');const id=editing?.id||window.crypto.randomUUID();await mutate(expected,()=>api.unifiedGroupSave(expected,editing?.handle||null,id,name,[...selected]),'Группа сохранена.');}));
+ bind('createGroup',()=>{if(busy)return;showWorkMode('edit');resetEditor();openEditor($('createGroup'));$('groupName').focus();});bind('resetGroup',()=>{if(!busy)resetEditor();});bind('saveGroup',guard(async expected=>{const name=$('groupName').value.trim();if(!name||!selected.size||selected.size>5000)throw Error('Введите название и выберите от 1 до 5000 работ.');const id=editing?.id||window.crypto.randomUUID();await mutate(expected,()=>api.unifiedGroupSave(expected,editing?.handle||null,id,name,[...selected]),'Группа сохранена.');}));
  bind('groupSearch',()=>load(groups),'input');bind('workSearch',()=>load(workMode==='audit'?audit:works),'input');
  const catalogRoot=el('div',null,'catalog-list'),catalogPanel=$('groupCatalog'),catalogControls=el('div',null,'catalog-controls');catalogRoot.id='catalogList';catalogControls.id='catalogControls';
  const catalogSearch=el('input'),searchLabel=el('label','Поиск в справочнике','catalog-field');catalogSearch.id='catalogSearch';catalogSearch.type='search';catalogSearch.placeholder='Поиск в справочнике';searchLabel.append(catalogSearch);catalogControls.append(searchLabel);
@@ -284,7 +287,7 @@ function init(){
   if(mode===workMode)return false;
   clear(works);clear(audit);workMode=mode;
   if(mode==='audit'){
-   editor.hidden=true;editor.open=false;workSearchCaption.textContent='Поиск по всем названиям';auditSearchHome.append(workLabel);auditListHome.append(works.root);
+   editor.hidden=true;editor.open=false;editorOpener=null;workSearchCaption.textContent='Поиск по всем названиям';auditSearchHome.append(workLabel);auditListHome.append(works.root);
   }else{
    auditPanel.open=false;workSearchCaption.textContent='Поиск работ';workSearchHome.append(workLabel);workListHome.insertBefore(works.root,workListNext??null);
   }
@@ -292,7 +295,11 @@ function init(){
  }
  for(const id of ['groupAuditMode','groupAuditFrom','groupAuditTo'])bind(id,()=>{if(workMode==='audit')return load(audit);},'change');
  editor.addEventListener('toggle',()=>{
-  if(!editor.open&&!editor.hidden){editor.hidden=true;$('createGroup').focus({preventScroll:true});}
+  if(!editor.open&&!editor.hidden){
+   editor.hidden=true;
+   const opener=editorOpener && editorOpener.isConnected!==false && !editorOpener.disabled ? editorOpener : $('createGroup');
+   editorOpener=null;opener.focus({preventScroll:true});
+  }
  });
  auditPanel.addEventListener('toggle',()=>{if(auditPanel.open){showWorkMode('audit');return load(audit);}});
  function readGroupTotals(expected){

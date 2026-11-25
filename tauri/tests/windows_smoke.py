@@ -1406,6 +1406,7 @@ def check_groups(page, confirmations):
     group=create()
     expect(page.locator('#groupSearchCount')).to_contain_text('Найдено групп: 1')
     expect(page.locator('#groupCoverage')).to_contain_text('1')
+    expect(group.locator('.group-members .group-assign').first).to_be_visible()
     expect(group.locator('.group-members [data-sql-pager]')).to_have_count(0)
     rename=group.locator('button[data-group-rename]')
     initial_revision=confirmations.revision()
