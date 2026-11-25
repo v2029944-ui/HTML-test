@@ -149,6 +149,14 @@ test('the all-works label does not undercount groups with names also used by wor
   assert.equal(one('[data-pick=works]').textContent,'Все работы и группы');
 });
 
+test('mixed work results mark only groups with a folder icon', async () => {
+  const {one,findInDialog}=await fixture();
+  one('[data-pick=works]').onclick();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(findInDialog('Ремонт (группа)').className,'work-group-option');
+  assert.notEqual(findInDialog('Покраска').className,'work-group-option');
+});
+
 test('an open work or organization picker cannot apply its draft to a replacement snapshot', async () => {
   const {controls,ui,one,findInDialog}=await fixture();
   for (const type of ['works','orgs']) {

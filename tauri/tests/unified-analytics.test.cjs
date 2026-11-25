@@ -118,6 +118,14 @@ test('late SQL charts are discarded after scope invalidation and errors clear th
  const bad=fixture({nativeAnalysisCompare:async()=>{throw Error('database failed');}});await bad.bootstrap();assert.equal(bad.nodes.get('overviewKpis').textContent,'');assert.match(bad.nodes.get('overviewAlerts').textContent,/database failed/);assert.equal(bad.nodes.get('printSummary').disabled,true);
 });
 function descendants(node){return [node,...node.children.flatMap(child=>typeof child==='object'?descendants(child):[])];}
+test('detailed work results mark only groups with a folder icon',async()=>{
+ const entries=[{key:'group:repair',name:'Ремонт',kind:'group'},{key:'work:paint',name:'Покраска',kind:'work'}];
+ const f=fixture({unifiedNameOptionsAtPage:async()=>({rows:entries,total_rows:entries.length})});
+ await f.bootstrap();
+ const labels=descendants(f.nodes.get('categories')).filter(node=>node.tagName==='SPAN');
+ assert.equal(labels.find(node=>node.textContent==='Ремонт (группа)').className,'work-group-option');
+ assert.notEqual(labels.find(node=>node.textContent==='Покраска').className,'work-group-option');
+});
 test('SQL name pagination seeks directly and resets on search/error',async()=>{
  let fail=false;const f=fixture({unifiedNameOptionsAtPage:async(_r,term,index,limit)=>{if(fail)throw Error('name read failed');return {rows:Array.from({length:50},(_,i)=>({key:'work:'+i,name:term||'Work '+i,kind:'work'})),total_rows:120,next:null};}});
  const attached=[],reset=[];f.window.sqlRowScroll={attach:(root,options)=>{attached.push({root,options});return root;},reset:root=>reset.push(root)};
