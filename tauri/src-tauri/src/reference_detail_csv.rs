@@ -105,6 +105,8 @@ pub(super) fn export_patterns(
     order: &str,
     used: i64,
     previous: i64,
+    current_complete: bool,
+    current_amount_incomplete: bool,
     base_kind: &str,
     base_from: &str,
     base_to: &str,
@@ -121,6 +123,16 @@ pub(super) fn export_patterns(
         headers(w, &["Фильтр признака", &opts.status])?;
         let usual = table.section == "usual";
         if usual {
+            let mut notices = Vec::new();
+            if !current_complete {
+                notices.push("Текущий интервал неполон. Показаны доступные значения. Отклонение не рассчитывается.");
+            }
+            if current_amount_incomplete && table.metric != "count" {
+                notices.push("В некоторых строках сумма не указана. Показана сумма заполненных ячеек.");
+            }
+            if !notices.is_empty() {
+                headers(w, &["Качество данных", &notices.join(" ")])?;
+            }
             headers(
                 w,
                 &[
@@ -295,10 +307,7 @@ impl Storage {
         export(path, |w| {
             context(w, &tx, s, q, table)?;
             if table.section == "contributions" {
-                if !b || !a {
-                    return Err("Contribution export requires both complete intervals".into());
-                }
-                write_contributions(w, &tx, &table.metric)
+                write_contributions(w, &tx, &table.metric, b && a)
             } else {
                 write_comparison(w, &tx, s, &table.metric, b, a)
             }
@@ -359,12 +368,20 @@ fn write_structure(w: &mut impl Write, page: &Value) -> Result<(), String> {
     }
     Ok(())
 }
-fn write_contributions(w: &mut impl Write, tx: &Connection, metric: &str) -> Result<(), String> {
+fn write_contributions(w: &mut impl Write, tx: &Connection, metric: &str, complete: bool) -> Result<(), String> {
     let (before, after) = match metric {
         "count" => ("bc", "cc"),
         "amount" => ("ba", "ca"),
         _ => return Err("Select count or amount for contributions".into()),
     };
+    let incomplete_amount = metric == "amount" && tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM an_comparison WHERE ba IS NULL OR ca IS NULL)",
+        [], |r| r.get::<_,bool>(0),
+    ).map_err(err)?;
+    let partial = !complete || incomplete_amount;
+    if partial {
+        headers(w, &["Качество данных", "Показаны доступные значения. Изменение и вклад требуют полных данных за оба интервала."])?;
+    }
     headers(
         w,
         &[
@@ -376,6 +393,20 @@ fn write_contributions(w: &mut impl Write, tx: &Connection, metric: &str) -> Res
             "Вклад в общее изменение, %",
         ],
     )?;
+    if partial {
+        let source = super::advanced_analysis::observed_contribution_rows(tx, metric)?;
+        let mut stmt = tx.prepare(&format!("{source} ORDER BY key")).map_err(err)?;
+        let mut rows = stmt.query([]).map_err(err)?;
+        let mut row = rows.next().map_err(err)?.ok_or("No available contribution values")?;
+        loop {
+            let name = work_label(&row.get::<_, String>(1).map_err(err)?, &row.get::<_, String>(2).map_err(err)?);
+            csv_record(w, &[Text(&name), Number(row.get(3).map_err(err)?), Number(row.get(4).map_err(err)?),
+                Number(None), Number(None), Number(None)])?;
+            let Some(next) = rows.next().map_err(err)? else { break };
+            row = next;
+        }
+        return Ok(());
+    }
     let totals = tx
         .query_row(
             &format!(

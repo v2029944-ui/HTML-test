@@ -215,20 +215,18 @@ async function sampleFor(s,ranges){
  const included=s.organizations.filter(org=>complete.every(list=>list.has(org)));
  return {included,excluded:s.organizations.filter(org=>!included.includes(org)),pages};
 }
-function sampleNote(root,sample,apply=false,showPartial=false){
- if(!sample?.excluded.length)return;
+function sampleNote(root,sample,message){
+ if(!sample?.excluded.length){if(message)root.append(UI.el('p',message,'warn small'));return;}
  const banner=UI.el('div',null,'comparison-warning'),total=sample.included.length+sample.excluded.length;
  banner.append(UI.el('strong',sample.included.length?'Сопоставимые подразделения: '+sample.included.length+' из '+total:'Нет сопоставимых подразделений'),
-  UI.el('p',showPartial?
-   'Неполные интервалы: '+sample.excluded.join(', ')+'. Показаны доступные значения. Разница и проценты требуют сопоставимых данных.':
-   'Исключены из расчёта: '+sample.excluded.join(', ')+'.'));
+  UI.el('p',message||'Часть подразделений имеет неполные данные.'));
  const reasons=UI.el('details');reasons.append(UI.el('summary','Причины по подразделениям'));
  sample.pages.forEach((rows,index)=>{for(const org of sample.excluded){
   const row=rows.find(item=>item.org===org);
   if(!row?.complete)reasons.append(UI.el('p',org+' · '+(sample.pages.length===1?'анализируемый период':index===0?'базовый период':'анализируемый период')+' · '+(row?'пропусков: '+row.missing:'нет отчёта')));
  }});
  banner.append(reasons);
- if(apply&&sample.included.length){const button=UI.el('button','Сравнить без '+sample.excluded.join(', '),'button secondary');
+ if(sample.included.length){const button=UI.el('button','Сравнить только сопоставимые','button secondary');
   button.type='button';button.addEventListener('click',()=>{
    window.referenceFilters.setOrganizations(sample.included);const heading=$('comparisonHeading');heading.tabIndex=-1;heading.focus();
   });banner.append(button);
@@ -268,21 +266,23 @@ async function comparison(index=0,paging=false){
   const req=request(s,{percent:0,min_count:0,min_amount:0});
   const [dashboard,windowPage]=await Promise.all([api.nativeAnalysisCompare(s.revision,s.type,before.from,before.to,after.from,after.to,s.organizations,null,s.selectedNames),api.unifiedComparisonWindow(req,{from:before.from,to:before.to},null,index,50)]);
   if(!task.valid())return;for(const id of ['comparisonTable','comparisonCoverage','comparisonCharts','comparisonDynamicsPlots','kpis'])clear(id,'',false);
-  const page=windowPage.rows,summary=dashboard.summary;sampleNote($('comparisonCoverage'),sample,true,true);
+  const page=windowPage.rows,summary=dashboard.summary;
   $('comparisonHelp').textContent=workScopeText(s)+' Второй интервал сравнивается с первым по отмеченным работам. Прочерк — неполные данные; при нулевой базе процент не рассчитывается.';
-  for(const [label,total] of [['Первый интервал',summary.before],['Второй интервал',summary.after]])$('comparisonCoverage').append(UI.el('p',label+': '+(total.complete?'Полные данные':'Неполные данные')+' · периодов '+total.periods+', пропусков: '+total.missing+' (подразделение × период)',total.complete?'muted small':'warn small'));
+  const coverage=$('comparisonCoverage'),warnings=[];
   const beforeComplete=summary.before.complete,afterComplete=summary.after.complete;
   const beforeValues=observed(summary.before),afterValues=observed(summary.after);
   const beforeObserved=beforeComplete||Number.isFinite(beforeValues?.count),afterObserved=afterComplete||Number.isFinite(afterValues?.count);
-  if(!beforeComplete||!afterComplete){
-   $('comparisonCoverage').append(UI.el('p','Неполные данные '+(!beforeComplete&&!afterComplete?'базового и анализируемого периодов':!beforeComplete?'базового периода':'анализируемого периода')+
-    '. Показаны доступные показатели; пропуск не означает ноль.','warn small'));
-  }
+  if(!beforeComplete||!afterComplete)warnings.push('Неполные данные '+(!beforeComplete&&!afterComplete?'базового и анализируемого периодов':!beforeComplete?'базового периода':'анализируемого периода')+
+   '. Показаны доступные показатели; пропуск не означает ноль. Разница и проценты требуют сопоставимых данных.');
+  const missing=summary.before.missing+summary.after.missing;
+  if(missing>0)warnings.push('Пропусков: '+missing+' (подразделение × период).');
   if([summary.before,summary.after].some(period=>period.amount_missing_rows||
      (period.complete&&Number.isFinite(observed(period)?.count)&&period.total.amount==null))){
-   $('comparisonCoverage').append(UI.el('p','В некоторых строках сумма не указана. Показана сумма заполненных ячеек.','warn small'));
+   warnings.push('В некоторых строках сумма не указана. Показана сумма заполненных ячеек.');
   }
-  contributionInput={before,after,sample};
+  sampleNote(coverage,sample,warnings.join(' '));
+  if(beforeComplete&&afterComplete)for(const [label,total] of [['Первый интервал',summary.before],['Второй интервал',summary.after]])coverage.append(UI.el('p',label+': Полные данные · периодов '+total.periods,'muted small'));
+  contributionInput={before,after};
   if(!beforeObserved&&!afterObserved){
    clear('comparisonTable','Нет доступных значений для сравнения: оба интервала неполны. Проверьте наличие отчётов или выберите другие периоды. Пропуск не означает ноль.');
    return;
@@ -346,9 +346,13 @@ async function departmentComparison(task,index){
   }
  }
  reset();
- if(reference){sampleNote($('comparisonCoverage'),sample,true,true);$('comparisonBaseOrg').replaceChildren(...s.organizations.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));$('comparisonBaseOrg').value=baseOrg;}
+ const coverage=$('comparisonCoverage'),warnings=[];
+ if(organizations.some(org=>!org.complete))warnings.push('Показаны доступные значения. Разница и проценты требуют сопоставимых данных.');
+ if(organizations.some(org=>org.complete&&incomplete(org)))warnings.push('В некоторых строках сумма не указана. Показана сумма заполненных ячеек.');
+ sampleNote(coverage,reference?sample:null,warnings.join(' '));
+ if(reference){$('comparisonBaseOrg').replaceChildren(...s.organizations.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));$('comparisonBaseOrg').value=baseOrg;}
  $('comparisonHelp').textContent='Общий интервал для подразделений. Разница относительно '+baseOrg+'. При нулевой базе процент не рассчитывается. Чтобы сравнить одну работу, выберите её в фильтре «Работы» и оставьте одну отметку в «Показатели сравнения».';
- for(const org of organizations)$('comparisonCoverage').append(UI.el('p',org.org+': '+(incomplete(org)?'Неполные данные':'Полные данные')+' · пропусков '+org.missing+(org.complete&&incomplete(org)?' · есть строки без суммы':''),incomplete(org)?'warn small':'muted small'));
+ for(const org of organizations)coverage.append(UI.el('p',org.org+': '+(incomplete(org)?'Неполные данные':'Полные данные')+' · пропусков '+org.missing+(org.complete&&incomplete(org)?' · есть строки без суммы':''),'muted small'));
  const unknown={count:null,amount:null,average:null};
  const byOrganization=new Map(organizations.map(row=>[row.org,row]));
  const totals=new Map(s.organizations.map(org=>[org,observed(byOrganization.get(org))??unknown]));
@@ -403,17 +407,17 @@ async function contributions(index=0,paging=false){
  const input=slot('comparison').captured;
  if(!scope||!input||value('comparisonMode')!=='periods')return;
  const task=loading('contribution',contributionFields,paging);
- try{const {before,after,sample}=input,s=scopeFor(after),chosen=metrics().filter(m=>m!=='average');
-  if(sample){
-   if(!sample.included.length){clear('contributionCheck','Нет сопоставимых подразделений.');clear('contributionResults');return;}
-   s.organizations=sample.included;
-  }
+ try{const {before,after}=input,s=scopeFor(after),chosen=metrics().filter(m=>m!=='average');
   if(index===0)task.s.metricTotals={};const metricTotals=task.s.metricTotals||{};
   const result=await Promise.all(chosen.map(metric=>index>0&&Number.isSafeInteger(metricTotals[metric])&&index*50>=metricTotals[metric]?null:api.nativeCompositionPageAtPage(compositionRequest(s,{percent:0,min_count:0,min_amount:0}),{from:before.from,to:before.to},'contributions',metric,index)));
   if(!task.valid())return;clear('contributionResults','',false);clear('contributionCheck','',false);
   $('contributionCheck').append(UI.el('p',s.allNames?'Область расчёта: все работы.':'Область расчёта: отмеченные работы и группы.','muted small'));
-  result.forEach((page,i)=>{const metric=chosen[i];if(!page)return;metricTotals[metric]=page.total_rows;if(!page.baseComplete||!page.currentComplete){$('contributionCheck').append(UI.el('p','Нет полного набора отчётов для обоих интервалов. Вклад не рассчитывается.','warn small'));return;}
-   const check=page.check;$('contributionCheck').append(UI.el('p',titles[metric]+': сумма вкладов '+fmt(check.sum,metric)+'; общее изменение '+fmt(check.delta,metric)+' — '+(check.reconciled?'совпадает':'расхождение '+fmt(check.residual,metric)),check.reconciled?'positive small':'negative small'));
+  const partial=result.filter(page=>page&&(!page.baseComplete||!page.currentComplete));
+  if(partial.length)$('contributionCheck').append(UI.el('p',(partial.some(page=>page.total_rows)?'Показаны доступные значения. ':'Нет доступных значений для неполных показателей. ')+'Изменение и вклад требуют полных данных за оба интервала.','warn small'));
+  result.forEach((page,i)=>{const metric=chosen[i];if(!page)return;metricTotals[metric]=page.total_rows;
+   if(page.baseComplete&&page.currentComplete){
+    const check=page.check;$('contributionCheck').append(UI.el('p',titles[metric]+': сумма вкладов '+fmt(check.sum,metric)+'; общее изменение '+fmt(check.delta,metric)+' — '+(check.reconciled?'совпадает':'расхождение '+fmt(check.residual,metric)),check.reconciled?'positive small':'negative small'));
+   }else if(!page.rows.length)return;
    const rows=page.rows.map(row=>[itemButton(row,{...s,from:before.from<after.from?before.from:after.from,to:before.to>after.to?before.to:after.to}),fmt(row.base,metric),fmt(row.current,metric),delta(row.delta,metric),percent(row.percent),percent(row.contribution)]);
    UI.table($('contributionResults'),metric,caption(before)+' / '+caption(after),['Услуга / группа','Значение раньше','Значение сейчас','Изменение значения','Изменение, %','Вклад в общее изменение, %'],rows,{totalRow:false,
     headerHelp:[
@@ -441,9 +445,11 @@ async function structure(){
   if(!task.valid())return;clear('structureResults');const root=$('structureResults');
   if(!page.currentComplete&&!page.currentAvailable){clear('structureResults','Нет доступных значений за анализируемый период.');return;}
   root.append(UI.el('p',(page.currentComplete?'Итог: ':'Частичный итог: ')+fmt(page.total,metric),'small'));
-  if(!page.currentComplete)root.append(UI.el('p','Доли и накопленная доля требуют полного итога по выбранному показателю. Показаны доступные значения. Если отсутствуют только суммы, проверьте состав по количеству.','warn small'));
-  else if(!page.sharesValid)root.append(UI.el('p','Есть отрицательные значения или неположительный итог: доли не рассчитываются.','warn small'));
-  if(!page.baseComplete)root.append(UI.el('p','Базовый период неполон: изменение долей недоступно.','warn small'));
+  const warnings=[];
+  if(!page.currentComplete)warnings.push('Показаны доступные значения. Доли и накопленная доля требуют полного итога по выбранному показателю. Если отсутствуют только суммы, проверьте состав по количеству.');
+  else if(!page.sharesValid)warnings.push('Есть отрицательные значения или неположительный итог: доли не рассчитываются.');
+  if(!page.baseComplete)warnings.push('Базовый период неполон: изменение долей недоступно.');
+  if(warnings.length)root.append(UI.el('p',warnings.join(' '),'warn small'));
   const visible=page.rows.filter(row=>Number.isFinite(row.current)&&row.current!==0);
   const selectedLimit=Number(value('structureLimit'));
   if(visible.length<selectedLimit)root.append(UI.el('p','Показано '+visible.length+' из '+selectedLimit+': у остальных нет ненулевых значений за этот период.','muted small'));
@@ -482,17 +488,19 @@ async function patterns(mode,index=0,paging=false){
   const opts={search:mode==='usual'?'':value('regularitySearch'),status:mode==='usual'?'all':value('regularityStatus')};
   // SQL already excludes incomplete calendar buckets. Keep organizations
   // with some complete periods; do not discard an entire series for one gap.
-  const sample=null;
   if(normal){
    if(mode==='regularity')opts.baseline={from:scope.baseFrom,to:scope.baseTo};
    else opts.range_window=true;
   }
   const req=request(s,{method:'range',percent:mode==='usual'?number('usualPercent'):0,min_count:0,min_amount:0});
-  const page=await api.unifiedPatternPageAtPage(req,mode,windowSize,opts,index);if(!task.valid())return;clear(name+'Results','',false);clear(name+'Coverage','',false);sampleNote($(name+'Coverage'),sample);
+  const page=await api.unifiedPatternPageAtPage(req,mode,windowSize,opts,index);if(!task.valid())return;clear(name+'Results','',false);clear(name+'Coverage','',false);
   $(name+'Coverage').append(UI.el('p',mode==='usual'?'Полных исторических окон: '+page.used+' из '+page.expected+'. '+(page.current_complete?'Анализируемый интервал полный.':'Анализируемый интервал неполон.'):'Полных периодов анализа: '+page.used+' из '+page.expected+'. В базовом интервале: '+page.previous_used+'.'+(page.current_complete?'':' Анализируемый интервал неполон.'),'muted small'));
   if(mode==='usual'){
-   if(!page.current_complete)$(name+'Coverage').append(UI.el('p','Прочерк в отклонении при неполном интервале означает, что сравнить его с историей нельзя. Выберите диапазон с отчётами по всем выбранным подразделениям.','warn small'));
-   if(page.used<2)$(name+'Coverage').append(UI.el('p','Для оценки отклонения нужны минимум два полных исторических окна.','warn small'));
+   const warnings=[];
+   if(!page.current_complete)warnings.push('Показаны доступные значения. Прочерк в отклонении при неполном интервале означает, что сравнить его с историей нельзя.');
+   if(page.current_amount_incomplete&&(usualMetrics.has('amount')||usualMetrics.has('average')))warnings.push('В некоторых строках сумма не указана. Показана сумма заполненных ячеек.');
+   if(page.used<2)warnings.push('Для оценки отклонения нужны минимум два полных исторических окна.');
+   if(warnings.length)$(name+'Coverage').append(UI.el('p',warnings.join(' '),'warn small'));
    if(usualMetrics.has('amount')||usualMetrics.has('average'))$(name+'Coverage').append(UI.el('p','Пустые суммы могут сделать отклонение по сумме или средней недоступным. При нулевой базе процент недоступен.','muted small'));
   }else if(normal){
    $(name+'Coverage').append(UI.el('p','В частоте учитываются только целые календарные периоды внутри каждого диапазона с отчётами по всем выбранным подразделениям.','muted small'));

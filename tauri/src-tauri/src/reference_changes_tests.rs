@@ -68,6 +68,33 @@ fn missing_amount_keeps_the_work_in_both_metric_views() {
 }
 
 #[test]
+fn significant_filter_keeps_observed_partial_rows_beside_comparable_changes() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let revision = prepare(&store, vec![
+        json!({"id":"base","type":"day","start":"2024-01-01","end":"2024-01-01","organizations":["A","B"],"rows":[row("A","Work",1.,10.),row("B","Work",2.,20.)]}),
+        json!({"id":"a1","type":"day","start":"2024-01-10","end":"2024-01-10","organizations":["A","B"],"rows":[row("A","Work",3.,30.),row("B","Work",0.,0.)]}),
+        report("a2", "2024-01-11", json!([row("A", "Work", 1., 10.)])),
+    ]);
+    let mut q = request(revision);
+    q.kind = "significant".into();
+    q.organizations = vec!["A".into(), "B".into()];
+    let result = store.reference_changes(&q).unwrap();
+    assert_eq!((result.total, result.significant, result.counts.up), (2, 1, 1));
+    assert!(result.partial_fallback);
+    let partial = result.rows.iter().find(|row| row.org == "B").unwrap();
+    assert_eq!((partial.before, partial.after, partial.delta, partial.percent), (Some(20.), Some(0.), None, None));
+    let destination = dir.path().join("mixed.csv");
+    store.reference_changes_csv(&q, &destination).unwrap();
+    let data = fs::read_to_string(destination).unwrap();
+    assert!(data.contains(r#""Work";"B";"20";"0";"";"""#), "{data}");
+
+    q.kind = "up".into();
+    let result = store.reference_changes(&q).unwrap();
+    assert_eq!(result.rows.iter().map(|row| row.org.as_str()).collect::<Vec<_>>(), ["A"]);
+}
+
+#[test]
 fn independent_unequal_intervals_require_complete_org_coverage_and_keep_real_works() {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();

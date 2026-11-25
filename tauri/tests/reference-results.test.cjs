@@ -104,6 +104,25 @@ test('changes table and leader display subprecision values without a signed zero
  assert.match(cells[6].textContent,/0,00 · ≈ 0,0%/);
 });
 
+test('changes show observed partial values alongside significant rows and preserve zero',async()=>{
+ const rows=[
+  {name:'Полная строка',org:'A',before:30,after:60,delta:30,percent:100},
+  {name:'Частичная строка',org:'B',before:20,after:0,delta:null,percent:null}
+ ];
+ const f=fixture({referenceChanges:async()=>({rows,total:2,searched:3,significant:1,partial_fallback:true,counts:{up:1,down:0,new:0,gone:0},leader:rows[0],comparable:['A']})});
+ f.scope.organizations=['A','B'];
+ f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);await f.window.referenceResults.setScreen('s2');
+ const displayed=f.s2.querySelectorAll('.changes-table tbody tr');
+ assert.deepEqual(displayed.map(row=>row.children.slice(0,6).map(cell=>cell.textContent)),[
+  ['Полная строка','A','30,00','60,00','+30,00','+100,0%'],
+  ['Частичная строка','B','20,00','0,00','—','—']
+ ]);
+ const caption=f.s2.querySelector('.match-note');
+ assert.match(caption.textContent,/Значимые позиции · 1 · Доступные значения · 1/);
+ assert.match(caption.textContent,/Показать все 3/);
+ assert.equal(f.s2.querySelector('.excluded-orgs').hidden,true);
+});
+
 test('print includes every filtered SQL row in order from page zero while leaving the visible page unchanged',async()=>{
  const queries=[],prints=[],rows=Array.from({length:13},(_,i)=>({name:'Position '+String(i+1).padStart(2,'0'),org:'A',before:i===12?0:1,after:i+2,delta:i+1,percent:i===12?null:100}));
  const f=fixture({referenceChanges:async q=>{queries.push({...q});return {rows:rows.slice(q.page*12,(q.page+1)*12),total:13,searched:13,significant:13,comparable:['A'],counts:{up:13,down:0,new:0,gone:0}};},referenceChangesPrint:async(q,emit)=>{prints.push(q);emit(rows.slice(0,12));emit(rows.slice(12));return ['A'];}});
@@ -217,7 +236,8 @@ test('failed changes reads distinguish unknown counts from zero and clear the ol
  const f=fixture(),results=f.window.referenceResults;f.scope.organizations=['A','B'];
  results.init();await results.refresh(f.scope);await results.setScreen('s2');
  const chip=f.s2.querySelector('.excluded-orgs'),search=f.s2.querySelector('input');
- assert.equal(chip.hidden,false);assert.match(chip.textContent,/B/);
+ assert.equal(chip.hidden,true);
+ assert.match(f.s2.querySelector('.quality-notice').textContent,/Исключены из сравнения: B/);
  assert.deepEqual(f.s2.querySelectorAll('[data-count]').map(n=>n.textContent),['▲ 1','▼ 0','0','0']);
  await f.s2.querySelectorAll('.kpi')[2].click();f.s2.querySelector('[data-sort]').value='percent';
  let calls=0;f.api.referenceChanges=async()=>{calls++;throw Error('read rejected');};
