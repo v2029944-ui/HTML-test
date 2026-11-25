@@ -554,47 +554,48 @@ fn with_folder_prepared<T>(
     request: &crate::storage::FolderImportRequest,
     action: impl FnOnce(&PreparedImport<'_>, &ImportPreview, &ImportJob, &crate::storage::Rule) -> Result<T,String>,
 ) -> Result<T,String> {
-    let operation = store.begin_folder_import(window, request)?;
-    let cancel = operation.job.cancellation();
-    let (rule, source, file) = store.checked_folder_import(request)?;
-    if !matches!(rule.format.as_deref(), None | Some("legacy" | "daily-wide" | "period-pairs" | "auto")) {
-        return Err("Выберите формат импорта файла.".into());
-    }
-    let organizations = store.folder_import_organizations(request.revision)?;
-    let area = StageArea::open(store.root().join("native-import-stages")).map_err(|e|e.to_string())?;
-    let mut stage = area.ingest_opened(source, file, Limits::default(), cancel, |_|{})
-        .map_err(|e|e.to_string())?;
-    let mut wide_options=rule.native_wide_options(organizations.clone())?;
-    let book=stage.sheet_names().map_err(|e|e.to_string())?;
-    let wide = if rule.format.as_deref() == Some("auto") {
-        if stage.classic_daily_workbook(&book, &organizations, cancel).map_err(|e| e.to_string())? {
-            wide_options.kind = "day".into();
-            wide_options.start = None;
-            true
-        } else {
-            let sheet = rule.native_legacy_sheet(&book)?;
-            let layout = stage.worksheet_layout(&sheet).map_err(|e| e.to_string())?
-                .ok_or("Не удалось однозначно определить структуру Excel. Укажите её в правиле файла.")?;
-            if layout == "daily-wide" {
-                wide_options.sheets = book.iter().filter(|(_, component)| *component == sheet).map(|(name, _)| name.clone()).collect();
-            }
-            layout == "daily-wide"
+    store.with_folder_import(window, request, |job| {
+        let cancel = job.cancellation();
+        let (rule, source, file) = store.checked_folder_import(request)?;
+        if !matches!(rule.format.as_deref(), None | Some("legacy" | "daily-wide" | "period-pairs" | "auto")) {
+            return Err("Выберите формат импорта файла.".into());
         }
-    } else { matches!(rule.format.as_deref(), Some("daily-wide" | "period-pairs")) };
-    if wide {
-        stage.convert_wide(&wide_options,operation.job.cancellation_handle(),|_|{}).map_err(|e|e.to_string())?;
-    } else {
-        let sheet=rule.native_legacy_sheet(&book)?;
-        let options=LegacyOptions{period_dates:None,sheet,kind:rule.kind.clone(),start:rule.start.clone(),organizations,mappings:None};
-        stage.convert_legacy(&options,cancel,|_|{}).map_err(|e|e.to_string())?;
-    }
-    let prepared = stage.prepare_with_mode(analiz_import_core::ImportMode::Folder, cancel, |_|{})
-        .map_err(|e|e.to_string())?;
-    let preview = store.preview_import_with_cancel(&prepared, cancel)?;
-    if preview.revision() != request.revision {
-        return Err("Stale storage revision; refresh the selection.".into());
-    }
-    action(&prepared, &preview, &operation.job, &rule)
+        let organizations = store.folder_import_organizations(request.revision)?;
+        let area = StageArea::open(store.root().join("native-import-stages")).map_err(|e|e.to_string())?;
+        let mut stage = area.ingest_opened(source, file, Limits::default(), cancel, |_|{})
+            .map_err(|e|e.to_string())?;
+        let mut wide_options=rule.native_wide_options(organizations.clone())?;
+        let book=stage.sheet_names().map_err(|e|e.to_string())?;
+        let wide = if rule.format.as_deref() == Some("auto") {
+            if stage.classic_daily_workbook(&book, &organizations, cancel).map_err(|e| e.to_string())? {
+                wide_options.kind = "day".into();
+                wide_options.start = None;
+                true
+            } else {
+                let sheet = rule.native_legacy_sheet(&book)?;
+                let layout = stage.worksheet_layout(&sheet).map_err(|e| e.to_string())?
+                    .ok_or("Не удалось однозначно определить структуру Excel. Укажите её в правиле файла.")?;
+                if layout == "daily-wide" {
+                    wide_options.sheets = book.iter().filter(|(_, component)| *component == sheet).map(|(name, _)| name.clone()).collect();
+                }
+                layout == "daily-wide"
+            }
+        } else { matches!(rule.format.as_deref(), Some("daily-wide" | "period-pairs")) };
+        if wide {
+            stage.convert_wide(&wide_options,job.cancellation_handle(),|_|{}).map_err(|e|e.to_string())?;
+        } else {
+            let sheet=rule.native_legacy_sheet(&book)?;
+            let options=LegacyOptions{period_dates:None,sheet,kind:rule.kind.clone(),start:rule.start.clone(),organizations,mappings:None};
+            stage.convert_legacy(&options,cancel,|_|{}).map_err(|e|e.to_string())?;
+        }
+        let prepared = stage.prepare_with_mode(analiz_import_core::ImportMode::Folder, cancel, |_|{})
+            .map_err(|e|e.to_string())?;
+        let preview = store.preview_import_with_cancel(&prepared, cancel)?;
+        if preview.revision() != request.revision {
+            return Err("Stale storage revision; refresh the selection.".into());
+        }
+        action(&prepared, &preview, job, &rule)
+    })
 }
 
 fn is_clean_new_folder_review(review: &NativeWideReview) -> bool {

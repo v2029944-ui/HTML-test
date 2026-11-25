@@ -390,10 +390,11 @@ fn closing_window_cancels_its_auto_import_lease_while_runtime_is_busy() {
     let (_root, runtime) = runtime_fixture();
     let runtime = Arc::new(runtime);
     let token = runtime.status().unwrap().workspace_token;
-    runtime
+    let session = runtime
         .execute(Some(&token), Access::Local, |store| {
             store.set_folder_import_session("main", true)
         })
+        .unwrap()
         .unwrap();
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
@@ -423,7 +424,55 @@ fn closing_window_cancels_its_auto_import_lease_while_runtime_is_busy() {
     );
     runtime
         .execute(Some(&token), Access::Read, |store| {
-            assert!(store.folder_import.lock().unwrap().is_none());
+            let request = folder_import_request(session, store.revision()?);
+            let result = store.with_folder_import("main", &request, |_| {
+                panic!("a closed window cannot start another import")
+            });
+            assert_eq!(result, Err::<(), _>("Автоматический импорт выключен.".into()));
+            Ok(())
+        })
+        .unwrap();
+}
+
+fn folder_import_request(session: String, revision: i64) -> crate::storage::FolderImportRequest {
+    // This exercises session ownership before any workbook is opened.
+    crate::storage::FolderImportRequest {
+        session,
+        folder: "test-excel".into(),
+        revision,
+        name: "report.xlsx".into(),
+        signature: "test-signature".into(),
+    }
+}
+
+#[test]
+fn shared_write_preserves_auto_import_session_and_does_not_reuse_its_token() {
+    let (_root, runtime) = runtime_fixture();
+    let folder = tempfile::tempdir().unwrap();
+    let team = connect(&runtime, folder.path());
+    let token = &team.workspace_token;
+    let session = runtime
+        .execute(Some(token), Access::Local, |store| {
+            store.set_folder_import_session("main", true)
+        })
+        .unwrap()
+        .unwrap();
+
+    runtime
+        .execute(Some(token), Access::Write, |store| {
+            let request = folder_import_request(session.clone(), store.revision()?);
+            store.with_folder_import("main", &request, |_| store.save(data("team")))
+        })
+        .unwrap();
+
+    let current = runtime.status().unwrap();
+    runtime
+        .execute(Some(&current.workspace_token), Access::Local, |store| {
+            let request = folder_import_request(session.clone(), store.revision()?);
+            store.with_folder_import("main", &request, |_| Ok(()))?;
+            let renewed = store.set_folder_import_session("main", true)?.unwrap();
+            assert_ne!(renewed, session);
+            assert!(store.with_folder_import("main", &request, |_| Ok(())).is_err());
             Ok(())
         })
         .unwrap();
