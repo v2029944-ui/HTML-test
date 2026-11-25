@@ -10,6 +10,7 @@ import json
 import ntpath
 import os
 from pathlib import Path
+import shutil
 import socket
 import sqlite3
 import subprocess
@@ -436,6 +437,57 @@ def verify_personal_transfer(writer, reader, folder, root, previous_generation):
     return totals
 
 
+def verify_explicit_reset(writer, peer, folder, root):
+    def personal_reports(client):
+        with closing(sqlite3.connect(client.personal_file.as_uri() + '?mode=ro', uri=True)) as source:
+            return source.execute('SELECT id,json FROM reports ORDER BY id').fetchall()
+
+    def answer_reset(button_id):
+        trigger.click()
+        dialog, owner = writer.confirmations.find_dialog(prompt)
+        writer.confirmations.answer(dialog, owner, prompt, button_id)
+
+    def wait_generation(generation):
+        for client in (writer, peer):
+            client.page.wait_for_function('''generation => window.sharedWorkspace.state?.available
+                && window.sharedWorkspace.state?.generation === generation
+                && window.unifiedUI.snapshot?.reports === 0''', arg=generation, timeout=120_000)
+
+    original = generations(folder)
+    initial = writer.state()['generation']
+    assert peer.state()['generation'] == initial
+    personal_before = [personal_reports(client) for client in (writer, peer)]
+    navigate(writer.page, 'databases')
+    trigger = writer.page.locator('#sharedWorkspaceReset')
+    prompt = 'Создать пустую общую базу в папке:'
+    answer_reset(2)
+    expect(trigger).to_be_enabled(timeout=30_000)
+    assert generations(folder) == original
+
+    answer_reset(1)
+    wait_generation(initial + 1)
+    after_reset = generations(folder)
+    assert len(after_reset) == len(original) + 1
+    assert all(after_reset.get(name) == facts for name, facts in original.items())
+
+    retained = root / 'shared-snapshots-before-recovery'
+    retained.mkdir()
+    for source in Path(folder).glob('analiz-generation-*.snapshot'):
+        target = retained / source.name
+        shutil.copyfile(source, target)
+        assert file_hash(target) == after_reset[source.name]['sha256']
+        source.unlink()
+    for client in (writer, peer):
+        wait_for_app_state(client.page, 'window.sharedWorkspace.state?.available === false',
+                           'All snapshots absent blocks automatic sync', 60_000)
+    assert generations(folder) == {}
+    answer_reset(1)
+    wait_generation(initial + 2)
+    assert len(generations(folder)) == 1
+    assert generations(retained) == after_reset
+    assert [personal_reports(client) for client in (writer, peer)] == personal_before
+
+
 def run():
     if sys.platform != 'win32' or os.environ.get('GITHUB_ACTIONS') != 'true':
         raise RuntimeError('Run only on an isolated Windows GitHub Actions runner')
@@ -562,6 +614,8 @@ def run():
                 note('reader-returned-to-original-empty-personal-base')
                 totals = verify_personal_transfer(b, a, folder, root, generation + 1)
                 note('selected-personal-reports-transferred-with-verified-backup', totals=totals)
+                verify_explicit_reset(b, a, folder, root)
+                note('explicit-reset-retains-snapshots-and-recovers-same-path-for-two-clients', writer=b.state(), reader=a.state())
         # windows_test_workspace has now released its profile-specific workers.
         for port in (9231, 9232, 9234, 9235):
             wait_for_webview_shutdown(port)
