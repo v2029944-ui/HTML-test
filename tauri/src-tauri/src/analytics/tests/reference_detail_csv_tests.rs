@@ -308,6 +308,21 @@ fn department_work_pages_and_detail_csvs_keep_group_and_work_namesakes_separate(
         r#""Я (работа)";"60";"40";"-20";"-33,333333333333"#] {
         assert!(csv.contains(expected),"{csv}");
     }
+    let partial = ChangeQuery { to: "2025-03-05".into(), ..q.clone() };
+    let path = dir.path().join("partial-organization.csv");
+    store.reference_detail_csv(revision,&scope,&partial,None,&spec,&path).unwrap();
+    let csv = std::fs::read_to_string(path).unwrap();
+    assert!(csv.contains(r#""Итого по выбранным работам";"260";"140";"-120";"-46,153846153846"#), "{csv}");
+    assert!(csv.contains(r#""Я (группа)";"200";"100";"-100";"-50";"";"";"""#), "{csv}");
+    let structure = serde_json::from_value(json!({
+        "section":"structure","metric":"amount","before":{"from":first,"to":first},"limit":10
+    })).unwrap();
+    let path = dir.path().join("partial-structure.csv");
+    store.reference_detail_csv(revision,&scope,&partial,None,&structure,&path).unwrap();
+    let csv = std::fs::read_to_string(path).unwrap();
+    assert!(csv.contains(r#""Я (группа)";"300";"75";"75""#), "{csv}");
+    assert!(csv.contains(r#""Я";"100";"25";"100""#), "{csv}");
+    assert!(csv.contains("Доли рассчитаны от доступного итога."), "{csv}");
     let covered = make_scope(&["A","B"]);
     for section in ["comparison","contributions","structure","usual","regularity"] {
         let mut options = json!({"section":section,"metric":"amount"});

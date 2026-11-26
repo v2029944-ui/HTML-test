@@ -355,3 +355,19 @@ test('missing baseline explains an unavailable comparison while preserving an ob
  assert.match(printed,/За базовый интервал нет пригодных данных/);
  assert.deepEqual(totals,['Сумма','—','0,00','—','—']);
 });
+
+test('summary displays shares of known amounts and average for covered values',async()=>{
+ const f=fixture(),known={amount:60,count:4,average:15},partial={amount:40,count:5,average:null};
+ const current={...f.full,amount_missing_rows:true,available_total:{amount:100,count:9,average:null}};
+ f.api.nativeAnalysisCompare=async()=>({summary:{before:f.full,after:current},divisions:[],top_amount:[],top_count:[]});
+ f.api.nativeAnalysisOrganizations=async()=>[
+  {org:'A',complete:false,missing:1,available_total:known},
+  {org:'B',complete:false,missing:1,available_total:partial}
+ ];
+ f.scope.organizations=['A','B'];
+ f.window.referenceResults.init();
+ await f.window.referenceResults.refresh(f.scope);
+ const rows=f.s1.querySelectorAll('tbody tr');
+ assert.deepEqual(rows.map(row=>row.children.slice(3).map(cell=>cell.textContent)),[['60,0%','15,00'],['40,0%','—']]);
+ assert.match(f.s1.querySelector('.quality-notice').textContent,/Доли рассчитаны по заполненным суммам/);
+});

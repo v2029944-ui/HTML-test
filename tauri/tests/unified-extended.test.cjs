@@ -786,3 +786,30 @@ test('department comparison opens work history with the locally selected average
  table.rows[1][0].dispatch('click');await settle();
  assert.deepEqual(history,[['average',-5]]);
 });
+
+test('department comparison uses observed totals and shows one coverage notice',async()=>{
+ const empty={count:null,amount:null,average:null};
+ const f=fixture({nativeAnalysisOrganizations:async()=>[
+  {org:'A',complete:false,missing:2,total:empty,available_total:{count:5,amount:20,average:4}},
+  {org:'B',complete:false,missing:1,total:empty,available_total:{count:8,amount:30,average:3.75}},
+  {org:'C',complete:false,missing:1,total:empty,available_total:{count:10,amount:35,average:null},amount_missing_rows:true},
+  {org:'D',complete:false,missing:3,total:empty,available_total:empty}
+ ]});
+ f.window.referenceDetail={active:'comparison'};
+ f.UI.state.selectedMetrics=new Set(['amount','count','average']);
+ f.publish({organizations:['A','B','C','D']});
+ f.nodes.get('comparisonMode').value='organizations';
+ f.nodes.get('comparisonBaseOrg').value='A';
+ await f.window.unifiedExtended.openComparison();
+ const raw=(metric)=>Array.from(f.tables.find(t=>t.root==='comparisonTable'&&t.metric===metric).options.csvRows[0]).slice(1);
+ assert.deepEqual(raw('amount'),[20,30,10,50,35,null,null,null,null,null]);
+ assert.deepEqual(raw('count'),[5,8,3,60,10,5,100,null,null,null]);
+ assert.deepEqual(raw('average'),[4,3.75,-0.25,-6.25,null,null,null,null,null,null]);
+ const coverage=f.nodes.get('comparisonCoverage');
+ assert.equal(coverage.children.length,1);
+ assert.match(coverage.textContent,/Полные отчёты у 0 из 4/);
+ assert.doesNotMatch(coverage.textContent,/Нет сопоставимых подразделений/);
+ const summary=f.nodes.get('kpis').textContent;
+ assert.match(summary,/Доля суммыСумма \/ количество \(объём\)/);
+ assert.match(summary,/A20523,5%4B30835,3%3\.75C351041,2%—D————/);
+});

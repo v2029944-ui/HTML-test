@@ -380,7 +380,12 @@ fn write_structure(w: &mut impl Write, page: &Value) -> Result<(), String> {
         csv_record(w, &record)?;
     }
     if page["currentComplete"] != true {
-        csv_record(w,&[Text("Качество данных"),Text("Частичные значения; доли не рассчитываются")])?;
+        let note = if page["sharesValid"] == true {
+            "Частичные значения. Доли рассчитаны от доступного итога."
+        } else {
+            "Частичные значения. Доли недоступны."
+        };
+        csv_record(w, &[Text("Качество данных"), Text(note)])?;
     }
     Ok(())
 }
@@ -537,12 +542,14 @@ fn ordered_organization_totals(
     while let Some(row) = rows.next().map_err(err)? {
         let missing = row.get(1).map_err(err)?;
         let complete = missing == 0;
+        let amount: Option<f64> = row.get(3).map_err(err)?;
         result.push(OrganizationSummary {
             org: row.get(0).map_err(err)?,
             complete,
             missing,
-            total: totals(row.get(2).map_err(err)?, row.get(3).map_err(err)?, complete)?,
-            available_total: observed_totals(row.get(2).map_err(err)?, row.get(3).map_err(err)?,
+            amount_missing_rows: amount.is_none(),
+            total: totals(row.get(2).map_err(err)?, amount, complete)?,
+            available_total: observed_totals(row.get(2).map_err(err)?, amount,
                 row.get(4).map_err(err)?, missing < periods)?,
         });
     }
@@ -584,12 +591,14 @@ fn visit_all_organization_works(
         let mut rows = Vec::with_capacity(organizations.len());
         for org in organizations {
             let row = values.next().map_err(err)?.ok_or("Missing selected organization")?;
+            let amount: Option<f64> = row.get(1).map_err(err)?;
             rows.push(OrganizationSummary {
                 org: org.org.clone(),
                 complete: org.complete,
                 missing: org.missing,
-                total: totals(row.get(0).map_err(err)?, row.get(1).map_err(err)?, org.complete)?,
-                available_total: observed_totals(row.get(0).map_err(err)?, row.get(1).map_err(err)?,
+                amount_missing_rows: amount.is_none(),
+                total: totals(row.get(0).map_err(err)?, amount, org.complete)?,
+                available_total: observed_totals(row.get(0).map_err(err)?, amount,
                     row.get(2).map_err(err)?, org.available_total.count.is_some())?,
             });
         }
@@ -662,13 +671,19 @@ fn write_organizations(
         }
     }
     headers(w, &head.iter().map(String::as_str).collect::<Vec<_>>())?;
+    let comparable = |row: &OrganizationSummary| {
+        if table.metric == "amount" && row.amount_missing_rows {
+            return None;
+        }
+        value(&row.available_total, &table.metric)
+    };
     let mut emit = |name: &str, values: &[OrganizationSummary]| -> Result<(), String> {
-        let base = value(&values[base_index].total, &table.metric);
+        let base = comparable(&values[base_index]);
         let mut line = vec![Text(name)];
         for (i, row) in values.iter().enumerate() {
             line.push(Number(value(&row.available_total, &table.metric)));
             if i != base_index {
-                let m = average_change(base, value(&row.total, &table.metric), 0.)?;
+                let m = average_change(base, comparable(row), 0.)?;
                 line.push(Number(m.delta));
                 line.push(Number(m.percent));
             }
@@ -698,9 +713,10 @@ fn write_organizations(
             while let Some(r) = values.next().map_err(err)? {
                 let org = organizations.get(cells.len()).ok_or("Unexpected organization")?;
                 let count = r.get(1).map_err(err)?;
-                let amount = r.get(2).map_err(err)?;
+                let amount: Option<f64> = r.get(2).map_err(err)?;
                 cells.push(OrganizationSummary {
                     org: org.org.clone(), complete: org.complete, missing: org.missing,
+                    amount_missing_rows: amount.is_none(),
                     total: totals(count, amount, org.complete)?,
                     available_total: observed_totals(count, amount, r.get(3).map_err(err)?, org.available_total.count.is_some())?,
                 });
@@ -713,9 +729,15 @@ fn write_organizations(
         }
     }
     for org in &organizations {
-        if org.missing > 0 || org.total.amount.is_none() {
-            let status = if org.missing > 0 {format!("Пропусков: {}",org.missing)} else {"Есть строки без суммы".into()};
-            csv_record(w, &[Text("Качество данных"),Text(&org.org),Text(&status)])?;
+        let mut status = Vec::new();
+        if org.missing > 0 {
+            status.push(format!("Пропусков: {}", org.missing));
+        }
+        if org.amount_missing_rows {
+            status.push("Есть строки без суммы".into());
+        }
+        if !status.is_empty() {
+            csv_record(w, &[Text("Качество данных"), Text(&org.org), Text(&status.join(". "))])?;
         }
     }
     Ok(())

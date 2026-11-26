@@ -53,6 +53,7 @@ pub struct OrganizationSummary {
     pub org: String,
     pub complete: bool,
     pub missing: i64,
+    pub amount_missing_rows: bool,
     pub total: AnalysisTotals,
     pub available_total: AnalysisTotals,
 }
@@ -348,12 +349,14 @@ impl Analytics<'_> {
         let mut out = Vec::new();
         while let Some(r) = rows.next().map_err(err)? {
             let missing: i64 = r.get(1).map_err(err)?;
+            let amount: Option<f64> = r.get(3).map_err(err)?;
             out.push(OrganizationSummary {
                 org: r.get(0).map_err(err)?,
                 complete: missing == 0,
                 missing,
-                total: totals(r.get(2).map_err(err)?, r.get(3).map_err(err)?, missing == 0)?,
-                available_total: observed_totals(r.get(2).map_err(err)?, r.get(3).map_err(err)?,
+                amount_missing_rows: amount.is_none(),
+                total: totals(r.get(2).map_err(err)?, amount, missing == 0)?,
+                available_total: observed_totals(r.get(2).map_err(err)?, amount,
                     r.get(4).map_err(err)?, missing < periods)?,
             })
         }

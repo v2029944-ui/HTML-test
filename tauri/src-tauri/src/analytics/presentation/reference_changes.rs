@@ -401,7 +401,7 @@ impl Analytics<'_> {
             prepare_reference_values(&tx,q,scope)?;
             export(destination,|writer| {
                 comparison_csv_context(writer,&tx,q,scope,"Сводка доступных данных")?;
-                csv_record(writer,&[Cell::Text("Наблюдаемые итоги анализируемого интервала"),Cell::Text("Все выбранные подразделения")])?;
+                csv_record(writer,&[Cell::Text("Наблюдаемые итоги анализируемого интервала"),Cell::Text("Все выбранные подразделения"),Cell::Text("Доли от суммы заполненных ячеек")])?;
                 csv_record(writer,&[Cell::Text("Подразделение"),Cell::Text("Сумма"),Cell::Text("Количество / объём"),Cell::Text("Доля суммы, %"),Cell::Text("Сумма / количество (объём)"),Cell::Text("Состояние")])?;
                 let mut statement=tx.prepare("WITH observed AS (
                     SELECT v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,CASE WHEN COUNT(x.row_index)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(x.row_index) THEN SUM(x.amount) END amount,SUM(x.amount) known_amount
@@ -409,7 +409,7 @@ impl Analytics<'_> {
                     LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY v.org)
                     SELECT f.item,coalesce(o.reports,0),o.count,o.amount,
                     NOT EXISTS(SELECT 1 FROM an_missing m WHERE m.slot=2 AND m.org=f.item),
-                    (SELECT CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END FROM observed),o.known_amount
+                    (SELECT SUM(coalesce(amount,known_amount)) FROM observed),o.known_amount
                     FROM analysis_filter_items f LEFT JOIN observed o ON o.org=f.item WHERE f.id=?1
                     ORDER BY (coalesce(o.amount,o.known_amount) IS NULL),coalesce(o.amount,o.known_amount) DESC,f.item COLLATE classic_ru,f.item").map_err(err)?;
                 let mut rows=statement.query([&scope.organizations]).map_err(err)?;

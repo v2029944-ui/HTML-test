@@ -917,8 +917,7 @@ impl Analytics<'_> {
             }
             return Ok(result);
         }
-        // The structure can list observed values even where the full
-        // denominator is unknown. Such rows never receive shares.
+        // Use the same observed values for the displayed amounts and their shares.
         let a = if mode == "structure" && metric == "amount" { "coalesce(ca,a_known)" } else { a };
         let current_total = if mode == "structure" && at.is_none() {
             range_summary(&tx,s,2)?.available_total.amount
@@ -932,7 +931,7 @@ impl Analytics<'_> {
         let mut rows = Vec::new();
         if mode == "structure" {
             let (bv,av):(bool,bool)=tx.query_row(&format!("SELECT NOT EXISTS(SELECT 1 FROM an_comparison WHERE {b}<0),NOT EXISTS(SELECT 1 FROM an_comparison WHERE {a}<0)"),[],|r|Ok((r.get(0)?,r.get(1)?))).map_err(err)?;
-            let valid = current_complete && av && at > 0.;
+            let valid = av && at > 0.;
             let base_valid = bv && bt.is_some_and(|n| n > 0.) && base_complete;
             let locale: icu_provider::DataLocale = "ru".parse().map_err(err)?;
             let collator =
@@ -967,7 +966,9 @@ impl Analytics<'_> {
                 if let Some(value) = current { cumulative = finite(cumulative + value)?; }
                 let share = current.map(|value| percent_of(value,at,valid)).transpose()?.flatten();
                 let base_share = base.zip(bt).map(|(base,bt)| percent_of(base,bt,base_valid)).transpose()?.flatten();
-                let mut row = json!({"key":key,"name":name,"base":base.filter(|_|base_complete),"current":current,"share":share,"baseShare":base_share,"cumulative":percent_of(cumulative,at,valid)?,"shareChange":share.zip(base_share).map(|(a,b)|a-b)});
+                let cumulative_share = current.map(|_| percent_of(cumulative, at, valid)).transpose()?.flatten();
+                let share_change = share.zip(base_share).filter(|_| current_complete).map(|(a,b)| a-b);
+                let mut row = json!({"key":key,"name":name,"base":base.filter(|_|base_complete),"current":current,"share":share,"baseShare":base_share,"cumulative":cumulative_share,"shareChange":share_change});
                 if kind.is_some() {
                     row["kind"] = json!(kind);
                 } else {

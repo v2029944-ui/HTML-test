@@ -236,7 +236,7 @@ function sampleNote(root,sample,message,compareAvailable=false){
 }
 function organizationRange(){return referencePanel('comparison')?scope?.overviewMode==='range':value('comparisonScope')==='range';}
 function comparisonLayout(){const organizations=value('comparisonMode')==='organizations',ranges=value('periodComparisonScope')==='range',orgRange=value('comparisonScope')==='range';
- $('periodComparisonFilters').hidden=organizations;$('orgComparisonFilters').hidden=!organizations;$('kpis').hidden=organizations;$('comparisonCharts').hidden=!organizations;$('comparisonDynamics').hidden=!organizations||!organizationRange();$('contributions').hidden=organizations;
+ $('periodComparisonFilters').hidden=organizations;$('orgComparisonFilters').hidden=!organizations;$('kpis').classList.toggle('kpis',!organizations);$('comparisonCharts').hidden=!organizations;$('comparisonDynamics').hidden=!organizations||!organizationRange();$('contributions').hidden=organizations;
  $('periodComparisonSingle').hidden=ranges;$('periodComparisonRanges').hidden=!ranges;$('comparisonPeriodLabel').hidden=orgRange;$('comparisonRangeGroup').hidden=!orgRange;
 }
 function addBoundedPager(root,state,rows,run,total){
@@ -328,6 +328,25 @@ async function comparison(index=0,paging=false){
   }
  }
 }
+function organizationTotals(s,totals){
+ const total=[...totals.values()].reduce((sum,row)=>sum+(Number.isFinite(row.amount)?row.amount:0),0);
+ const title='Итоги по подразделениям',section=UI.el('section',null,'metric-table');
+ const scroll=UI.el('div',null,'table-scroll'),table=UI.el('table',null,'table');
+ scroll.tabIndex=0;scroll.setAttribute('role','region');scroll.setAttribute('aria-label',title);
+ const head=UI.el('thead'),header=UI.el('tr'),body=UI.el('tbody');
+ for(const text of ['Подразделение',titles.amount,titles.count,'Доля суммы',titles.average]){
+  const cell=UI.el('th',text);cell.setAttribute('scope','col');header.append(cell);
+ }
+ head.append(header);
+ for(const org of s.organizations){
+  const {amount,count,average}=totals.get(org),row=UI.el('tr'),label=UI.el('th',org);
+  label.setAttribute('scope','row');row.append(label);
+  const share=Number.isFinite(amount)&&Number.isFinite(total)&&total>0?amount/total*100:null;
+  for(const text of [fmt(amount,'amount'),fmt(count,'count'),percent(share),fmt(average,'average')])row.append(UI.el('td',text));
+  body.append(row);
+ }
+ table.append(head,body);scroll.append(table);section.append(UI.el('h3',title),scroll);$('kpis').append(section);
+}
 async function departmentComparison(task,index){
  const range=referencePanel('comparison')?scope:value('comparisonScope')==='range'?fieldsRange('comparisonRangeStart','comparisonRangeEnd'):fieldsRange('comparisonPeriod'),s=scopeFor(range),chosen=[...comparisonMetrics];let baseOrg=value('comparisonBaseOrg');
  const organizations=await api.nativeAnalysisOrganizations(s.revision,s.type,s.from,s.to,s.organizations,null,s.selectedNames);
@@ -351,21 +370,22 @@ async function departmentComparison(task,index){
  }
  reset();
  const coverage=$('comparisonCoverage'),warnings=[];
- if(organizations.some(org=>!org.complete))warnings.push('Показаны доступные значения. Разница и проценты требуют сопоставимых данных.');
- if(organizations.some(org=>org.complete&&incomplete(org)))warnings.push('В некоторых строках сумма не указана. Показана сумма заполненных ячеек.');
- sampleNote(coverage,reference?sample:null,warnings.join(' '));
+ if(organizations.some(org=>!org.complete))warnings.push('Сравнение по доступным отчётам. Разница и проценты требуют данных у обоих подразделений.');
+ if(organizations.some(org=>org.amount_missing_rows))warnings.push('В некоторых строках сумма не указана. Итоги и доли рассчитаны по заполненным суммам. Разница по сумме доступна при заполненных суммах у обоих подразделений.');
+ sampleNote(coverage,reference?sample:null,warnings.join(' '),true);
  if(reference){$('comparisonBaseOrg').replaceChildren(...s.organizations.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));$('comparisonBaseOrg').value=baseOrg;}
  $('comparisonHelp').textContent='Общий интервал для подразделений. Разница относительно '+baseOrg+'. При нулевой базе процент не рассчитывается. Чтобы сравнить одну работу, выберите её в фильтре «Работы» и оставьте одну отметку в «Показатели сравнения».';
- for(const org of organizations)coverage.append(UI.el('p',org.org+': '+(incomplete(org)?'Неполные данные':'Полные данные')+' · пропусков '+org.missing+(org.complete&&incomplete(org)?' · есть строки без суммы':''),'muted small'));
  const unknown={count:null,amount:null,average:null};
  const byOrganization=new Map(organizations.map(row=>[row.org,row]));
  const totals=new Map(s.organizations.map(org=>[org,observed(byOrganization.get(org))??unknown]));
+ organizationTotals(s,totals);
  const historyScope={...s,historyMetrics:chosen};
  for(const metric of chosen){const raw=[],rows=[];
+  const comparable=row=>metric==='amount'&&row?.amount_missing_rows?null:observed(row)?.[metric];
   const cells=(org,values)=>{
    const row=values.find(o=>o.org===org),base=values.find(o=>o.org===baseOrg);
    const n=observed(row)?.[metric]??null;
-   return org===baseOrg?[n]:[n,...rawDifference(row?.total?.[metric],base?.total?.[metric])];
+   return org===baseOrg?[n]:[n,...rawDifference(comparable(row),comparable(base))];
   };
   const make=(label,values)=>[label,...s.organizations.flatMap(org=>cells(org,values).map((n,i)=>i===0?fmt(n,metric):i===1?delta(n,metric):percent(n)))];
   const makeRaw=(label,values)=>[label,...s.organizations.flatMap(org=>cells(org,values))];
@@ -450,8 +470,9 @@ async function structure(){
   if(!page.currentComplete&&!page.currentAvailable){clear('structureResults','Нет доступных значений за анализируемый период.');return;}
   root.append(UI.el('p',(page.currentComplete?'Итог: ':'Частичный итог: ')+fmt(page.total,metric),'small'));
   const warnings=[];
-  if(!page.currentComplete)warnings.push('Показаны доступные значения. Доли и накопленная доля требуют полного итога по выбранному показателю. Если отсутствуют только суммы, проверьте состав по количеству.');
-  else if(!page.sharesValid)warnings.push('Есть отрицательные значения или неположительный итог: доли не рассчитываются.');
+  if(!page.currentComplete)warnings.push(page.sharesValid?'Доли рассчитаны от доступного итога.':'Показаны доступные значения.');
+  if(!page.sharesValid)warnings.push('Доли рассчитываются при положительном итоге и отсутствии отрицательных значений.');
+  if(!page.currentComplete&&page.baseComplete)warnings.push('Изменение долей недоступно за неполный период.');
   if(!page.baseComplete)warnings.push('Базовый период неполон: изменение долей недоступно.');
   if(warnings.length)root.append(UI.el('p',warnings.join(' '),'warn small'));
   const visible=page.rows.filter(row=>Number.isFinite(row.current)&&row.current!==0);
