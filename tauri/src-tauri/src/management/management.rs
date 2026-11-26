@@ -169,6 +169,65 @@ impl Storage {
         self.management_commit_settings(editor)
     }
 
+    pub fn unified_delete_groups(
+        &self,
+        revision: i64,
+        handles: Option<&[i64]>,
+        confirmed_count: usize,
+        backup: Option<&Path>,
+        confirmed: bool,
+    ) -> Result<ManagementReceipt, String> {
+        if !confirmed || confirmed_count == 0 {
+            return Err("Подтвердите удаление групп.".into());
+        }
+        if let Some(handles) = handles {
+            if handles.len() != confirmed_count || handles.len() > 10_000
+                || handles.iter().collect::<std::collections::HashSet<_>>().len() != handles.len()
+            {
+                return Err("Некорректный список удаляемых групп.".into());
+            }
+        }
+        let mut editor = self.management_begin_settings(
+            revision, 256 * 1024 * 1024, Arc::new(ManagementJob::new()),
+        )?;
+        let clear = editor.mutate(|c| {
+            let parent = settings(c)?.1;
+            let total: usize = c.query_row(
+                "SELECT COUNT(*) FROM management_nodes WHERE parent=?1 AND kind='object'",
+                [parent], |row| row.get(0),
+            ).map_err(err)?;
+            let clear = confirmed_count == total;
+            if confirmed_count > total || (handles.is_none() && !clear) {
+                return Err("Список групп изменился. Повторите действие.".into());
+            }
+            if clear && backup.is_none() {
+                return Err("Для очистки списка нужна проверенная резервная копия SQLite.".into());
+            }
+            if let Some(handles) = handles {
+                for &handle in handles {
+                    belongs(c, handle, parent, "object")?;
+                    remove_node(c, handle)?;
+                }
+            } else {
+                c.execute(
+                    "WITH RECURSIVE descendants(handle) AS (
+                        SELECT handle FROM management_nodes WHERE parent=?1 AND kind='object'
+                        UNION ALL SELECT n.handle FROM management_nodes n JOIN descendants d ON n.parent=d.handle
+                     ) DELETE FROM management_nodes WHERE handle IN descendants",
+                    [parent],
+                ).map_err(err)?;
+            }
+            Ok(clear)
+        })?;
+        if clear {
+            let destination = backup.ok_or("Укажите путь для резервной копии.")?;
+            if self.backup_sqlite_verified(destination)? != revision {
+                return Err("База изменилась при создании копии. Повторите действие.".into());
+            }
+        }
+        self.management_commit_settings(editor)
+    }
+
     pub fn unified_assign_work(&self, revision:i64, work:&str, group:Option<i64>) -> Result<ManagementReceipt,String> {
         if work.trim().is_empty() || work.len()>4096 { return Err("Некорректное название работы.".into()); }
         let mut editor = self.management_begin_settings(revision,256*1024*1024,Arc::new(ManagementJob::new()))?;

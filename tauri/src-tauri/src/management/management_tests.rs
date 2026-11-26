@@ -1065,3 +1065,51 @@ fn management_settings_index_stages_before_entering_filter_writer_queue() {
     assert!(storage.management_bootstrap(revision).unwrap_err().contains("unindexed"));
     assert_eq!(storage.revision().unwrap(), revision);
 }
+
+#[test]
+fn bulk_group_removal_is_revision_checked_and_preserves_source_data() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().join("live")).unwrap();
+    let original = management_data();
+    let rev = management_setup(&store, &original);
+    let groups = store.management_group_page(rev, "", None, 50).unwrap();
+    let selected = [groups[0].handle, groups[1].handle];
+
+    assert!(store.unified_delete_groups(rev, Some(&selected), 2, None, false).is_err());
+    assert!(store.unified_delete_groups(rev, Some(&[selected[0], i64::MAX]), 2, None, true).is_err());
+    assert_eq!(store.revision().unwrap(), rev);
+    assert_eq!(store.load().unwrap(), original);
+
+    store.connect().unwrap().execute_batch(
+        "CREATE TRIGGER reject_group_publication BEFORE INSERT ON kv
+         WHEN NEW.name='settings' BEGIN SELECT RAISE(ABORT, 'group write failed'); END;",
+    ).unwrap();
+    assert!(store.unified_delete_groups(rev, Some(&selected), 2, None, true)
+        .unwrap_err().contains("group write failed"));
+    assert_eq!(store.revision().unwrap(), rev);
+    assert_eq!(store.load().unwrap(), original);
+    store.connect().unwrap().execute_batch("DROP TRIGGER reject_group_publication").unwrap();
+
+    let receipt = store.unified_delete_groups(rev, Some(&selected), 2, None, true).unwrap();
+    assert!(store.unified_delete_groups(rev, Some(&selected), 2, None, true).is_err());
+    let mut expected = original.clone();
+    expected["settings"]["groups"] = json!([original["settings"]["groups"][2]]);
+    assert_eq!(store.load().unwrap(), expected);
+
+    let rev = receipt.revision;
+    let backup = dir.path().join("before-clear.sqlite3");
+    assert!(store.unified_delete_groups(rev, None, 1, None, true).is_err());
+    assert!(store.unified_delete_groups(rev, None, 2, Some(&backup), true).is_err());
+    assert!(!backup.exists());
+    let exported = dir.path().join("groups.json");
+    store.unified_groups_export(rev, &exported).unwrap();
+    store.unified_delete_groups(rev, None, 1, Some(&backup), true).unwrap();
+    assert!(backup.is_file());
+    expected["settings"]["groups"] = json!([]);
+    assert_eq!(store.load().unwrap(), expected);
+    let rev = store.revision().unwrap();
+    let preview = store.unified_groups_preview(rev, &exported).unwrap();
+    store.unified_groups_import(rev, &exported, &preview.hash, true).unwrap();
+    expected["settings"]["groups"] = json!([original["settings"]["groups"][2]]);
+    assert_eq!(store.load().unwrap(), expected);
+}

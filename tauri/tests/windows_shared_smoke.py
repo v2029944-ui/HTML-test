@@ -450,6 +450,38 @@ def remove_test_snapshot(path):
             time.sleep(0.2)
 
 
+def verify_group_cleanup(writer, reader, root):
+    before = api(writer.page, 'nativeSettingsBootstrap')
+    assert before['groups'] == 0
+    totals = api(writer.page, 'managementReportSummary', before['revision'], {'report_type': 'day'})
+    works = api(writer.page, 'unifiedManagementPage', before['revision'], 'works', '', None, 0, 2)['rows']
+    for number, work in enumerate(works, 1):
+        snapshot = api(writer.page, 'nativeSettingsBootstrap')
+        api(writer.page, 'unifiedGroupSave', snapshot['revision'], None,
+            f'cleanup-{number}', f'Группа очистки {number}', [work['name']])
+    writer.page.wait_for_function('window.unifiedUI.snapshot?.groups === 2', timeout=120_000)
+    snapshot = api(writer.page, 'nativeSettingsBootstrap')
+    assert snapshot['groups'] == 2
+    previous_generation = writer.state()['generation']
+    backup = root / 'before-group-cleanup.sqlite3'
+    api(writer.page, 'unifiedGroupsDelete', snapshot['revision'], None, 2, str(backup))
+    reader.page.wait_for_function(
+        '''generation => window.sharedWorkspace.state?.generation > generation
+            && window.unifiedUI.snapshot?.groups === 0''',
+        arg=previous_generation, timeout=120_000)
+    assert reader.state()['generation'] == previous_generation + 1
+    for client in (writer, reader):
+        snapshot = api(client.page, 'nativeSettingsBootstrap')
+        assert snapshot['groups'] == 0
+        after = api(client.page, 'managementReportSummary', snapshot['revision'], {'report_type': 'day'})
+        assert after == totals
+    with closing(sqlite3.connect(backup.as_uri() + '?mode=ro', uri=True)) as source:
+        assert source.execute('PRAGMA quick_check').fetchone() == ('ok',)
+        settings = source.execute("SELECT json FROM kv WHERE name='settings'").fetchone()[0]
+        assert len(json.loads(settings)['groups']) == 2
+        assert source.execute('SELECT COUNT(*) FROM reports').fetchone() == (totals['reports'],)
+
+
 def verify_explicit_reset(writer, peer, folder, root):
     def personal_reports(client):
         with closing(sqlite3.connect(client.personal_file.as_uri() + '?mode=ro', uri=True)) as source:
@@ -627,6 +659,8 @@ def run():
                 note('reader-returned-to-original-empty-personal-base')
                 totals = verify_personal_transfer(b, a, folder, root, generation + 1)
                 note('selected-personal-reports-transferred-with-verified-backup', totals=totals)
+                verify_group_cleanup(b, a, root)
+                note('group-cleanup-synced-once-with-verified-backup-and-unchanged-totals')
                 verify_explicit_reset(b, a, folder, root)
                 note('explicit-reset-retains-snapshots-and-recovers-same-path-for-two-clients', writer=b.state(), reader=a.state())
         # windows_test_workspace has now released its profile-specific workers.

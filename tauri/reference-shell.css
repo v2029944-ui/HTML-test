@@ -1090,6 +1090,8 @@ body:has(#refRoot)>footer {display:none}
 
 /* Group members and work pages use the vertical scroll of the workspace. */
 #groupWorkspace :is(.group-members,.works-list) {max-height:none;overflow:visible}
+#groupWorkspace .group-removal {align-items:center}
+#groupWorkspace .group-selection {margin-inline-start:.5rem; cursor:pointer}
 #groupWorkspace .group-result-counts {display:flex;flex-wrap:wrap;gap:0 1rem}
 #groupWorkspace .group-assign {justify-self:end;width:auto;min-height:34px;padding:6px 10px}
 #groupPickerDialog {

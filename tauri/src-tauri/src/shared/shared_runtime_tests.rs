@@ -1039,3 +1039,42 @@ fn personal_wide_source_anchor_can_be_moved_before_linked_followup_batch() {
     ).unwrap();
     assert_eq!(refs,1);
 }
+
+#[test]
+fn bulk_group_removal_publishes_once_for_both_clients_without_changing_reports() {
+    use super::super::ManagementJob;
+
+    let (writer_root, writer) = runtime_fixture();
+    let (_reader_root, reader) = runtime_fixture();
+    let share = tempfile::tempdir().unwrap();
+    let team = connect(&writer, share.path());
+    let initial = writer.execute(Some(&team.workspace_token), Access::Write, |store| {
+        let mut payload = data("retained");
+        payload["settings"]["groups"] = json!([
+            {"id":"first","name":"First","works":["one"]},
+            {"id":"second","name":"Second","works":["two"]}
+        ]);
+        store.save(payload.clone())?;
+        Ok(payload)
+    }).unwrap();
+    let second = connect(&reader, share.path());
+    let generation = second.generation.unwrap();
+    let backup = writer_root.path().join("before-groups.sqlite3");
+    let revision = writer.execute(Some(&team.workspace_token), Access::Write, |store| {
+        let revision = store.revision()?;
+        store.management_index_settings(revision, &ManagementJob::new())?;
+        let receipt = store.unified_delete_groups(revision, None, 2, Some(&backup), true)?;
+        Ok(receipt.revision)
+    }).unwrap();
+    let second = reader.sync().unwrap();
+    assert_eq!(second.generation, Some(generation + 1));
+    let mut expected = initial;
+    expected["settings"]["groups"] = json!([]);
+    assert_eq!(read(&reader, &second.workspace_token), expected);
+    assert_eq!(read(&writer, &team.workspace_token), expected);
+    assert!(backup.is_file());
+    assert!(writer.execute(Some(&team.workspace_token), Access::Write, |store| {
+        store.unified_delete_groups(revision - 1, None, 2, Some(&backup), true)
+    }).is_err());
+    assert_eq!(reader.sync().unwrap().generation, second.generation);
+}
