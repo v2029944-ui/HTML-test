@@ -117,9 +117,9 @@ fn prepare_reference_values(
     periods(c, s, &q.baseline(), 1)?;
     periods(c, s, &q.current(), 2)?;
     c.execute_batch("CREATE TEMP TABLE ref_orgs(org TEXT PRIMARY KEY) WITHOUT ROWID;
-        CREATE TEMP TABLE ref_values(slot INTEGER,org TEXT,name TEXT,count REAL,amount REAL,known_amount REAL,PRIMARY KEY(slot,org,name)) WITHOUT ROWID;").map_err(err)?;
+        CREATE TEMP TABLE ref_values(slot INTEGER,org TEXT,name TEXT,count REAL,amount REAL,known_amount REAL,paired_count REAL,PRIMARY KEY(slot,org,name)) WITHOUT ROWID;").map_err(err)?;
     c.execute("INSERT INTO ref_orgs SELECT f.item FROM analysis_filter_items f WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM an_missing m WHERE m.org=f.item)",[&s.organizations]).map_err(err)?;
-    c.execute_batch("INSERT INTO ref_values SELECT p.slot,v.org,x.work,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount)
+    c.execute_batch("INSERT INTO ref_values SELECT p.slot,v.org,x.work,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount),SUM(x.count) FILTER (WHERE x.amount IS NOT NULL)
         FROM an_valid v JOIN an_periods p ON p.start=v.start
         JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY p.slot,v.org,x.work;").map_err(err)?;
     validate_numbers(c, "SELECT count,amount FROM ref_values")?;
@@ -250,20 +250,24 @@ fn comparison_csv_context(
         let reason=match (*before,*after) {(true,true)=>"полные отчёты за оба интервала",(false,false)=>"неполные базовый и анализируемый интервалы",(false,true)=>"неполный базовый интервал",(true,false)=>"неполный анализируемый интервал"};
         csv_record(writer,&[Text("Состав сравнения"),Text(org),Text(reason)])?;
     }
-    let observed = |slot| -> Result<(AnalysisTotals, Option<f64>), String> {
-        let (count, amount, known_amount) = c.query_row("SELECT coalesce(sum(count),0.0),
+    let observed = |slot| -> Result<(AnalysisTotals, Option<f64>, Option<String>), String> {
+        let (count, amount, known_amount, paired_count, source_work) = c.query_row("SELECT coalesce(sum(count),0.0),
             CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,
-            SUM(known_amount) FROM ref_values WHERE slot=?1", [slot], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).map_err(err)?;
+            SUM(known_amount), CASE WHEN MIN(name)=MAX(name) THEN SUM(paired_count) END,
+            CASE WHEN MIN(name)=MAX(name) THEN MIN(name) END FROM ref_values WHERE slot=?1", [slot],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).map_err(err)?;
         let available = observed_reports(c, slot, None)?;
-        Ok((observed_totals(count, amount, known_amount, available)?, amount.filter(|_| available)))
+        Ok((paired_observed_totals(count, amount, known_amount, paired_count, available)?, amount.filter(|_| available), source_work))
     };
-    let (before, before_amount) = observed(1)?;
-    let (after, after_amount) = observed(2)?;
+    let (before, before_amount, before_work) = observed(1)?;
+    let (after, after_amount, after_work) = observed(2)?;
+    let same_work = before_work.as_ref().zip(after_work.as_ref()).is_some_and(|(b, a)| b == a);
+    let average_pair = comparable_averages(&before, &after, same_work);
     csv_record(writer,&[Text("Сравнение по доступным отчётам · все работы")])?;
     csv_record(writer,&[Text("Показатель"),Text("Было"),Text("Стало"),Text("Изменение"),Text("Изменение, %")])?;
     for (label,before,after,pair) in [("Сумма",before.amount,after.amount,before_amount.zip(after_amount)),
         ("Количество / объём",before.count,after.count,before.count.zip(after.count)),
-        ("Сумма / количество (объём)",before.average,after.average,before.average.zip(after.average))] {
+        ("Сумма / количество (объём)",before.average,after.average,average_pair)] {
         let change=pair.map(|(before,after)|measure(before,after,0.,0.)).transpose()?;
         csv_record(writer,&[Text(label),Number(before),Number(after),Number(change.as_ref().map(|value|value.delta)),Number(change.and_then(|value|value.percent))])?;
     }
@@ -405,20 +409,21 @@ impl Analytics<'_> {
                 csv_record(writer,&[Cell::Text("Наблюдаемые итоги анализируемого интервала"),Cell::Text("Все выбранные подразделения"),Cell::Text("Доли от суммы заполненных ячеек")])?;
                 csv_record(writer,&[Cell::Text("Подразделение"),Cell::Text("Сумма"),Cell::Text("Количество / объём"),Cell::Text("Доля суммы, %"),Cell::Text("Сумма / количество (объём)"),Cell::Text("Состояние")])?;
                 let mut statement=tx.prepare("WITH observed AS (
-                    SELECT v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,CASE WHEN COUNT(x.row_index)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(x.row_index) THEN SUM(x.amount) END amount,SUM(x.amount) known_amount
+                    SELECT v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,CASE WHEN COUNT(x.row_index)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(x.row_index) THEN SUM(x.amount) END amount,SUM(x.amount) known_amount,
+                           CASE WHEN MIN(x.work)=MAX(x.work) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END paired_count
                     FROM an_valid v JOIN an_periods p ON p.slot=2 AND p.start=v.start
                     LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY v.org)
                     SELECT f.item,coalesce(o.reports,0),o.count,o.amount,
                     NOT EXISTS(SELECT 1 FROM an_missing m WHERE m.slot=2 AND m.org=f.item),
-                    (SELECT SUM(coalesce(amount,known_amount)) FROM observed),o.known_amount
+                    (SELECT SUM(coalesce(amount,known_amount)) FROM observed),o.known_amount,o.paired_count
                     FROM analysis_filter_items f LEFT JOIN observed o ON o.org=f.item WHERE f.id=?1
                     ORDER BY (coalesce(o.amount,o.known_amount) IS NULL),coalesce(o.amount,o.known_amount) DESC,f.item COLLATE classic_ru,f.item").map_err(err)?;
                 let mut rows=statement.query([&scope.organizations]).map_err(err)?;
                 while let Some(row)=rows.next().map_err(err)? {
                     let org:String=row.get(0).map_err(err)?;let available:i64=row.get(1).map_err(err)?;
                     let strict_amount:Option<f64>=row.get(3).map_err(err)?;
-                    let totals=observed_totals(row.get::<_,Option<f64>>(2).map_err(err)?.unwrap_or(0.),
-                        strict_amount,row.get(6).map_err(err)?,available>0)?;
+                    let totals=paired_observed_totals(row.get::<_,Option<f64>>(2).map_err(err)?.unwrap_or(0.),
+                        strict_amount,row.get(6).map_err(err)?,row.get(7).map_err(err)?,available>0)?;
                     let total=row.get::<_,Option<f64>>(5).map_err(err)?.map(finite).transpose()?;
                     let share=match (totals.amount,total) {(Some(a),Some(t)) if t>0.=>Some(finite(a/t*100.)?),_=>None};
                     let complete:bool=row.get(4).map_err(err)?;

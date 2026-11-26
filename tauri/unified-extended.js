@@ -2,7 +2,7 @@
 (function(){
 'use strict';
 const UI=window.unifiedUI,$=UI.$,api=UI.api;
-const {titles,observed,incomplete}=window.analysisSummary;
+const {titles,observed,incomplete,averageNote}=window.analysisSummary;
 const usualLabels={normal:'Обычный уровень',high:'Необычно выше',low:'Необычно ниже',insufficient:'Недостаточно данных'};
 const regularLabels={frequent:'Часто',rare:'Редко',rarer:'Заметно реже',disappeared:'Перестала встречаться',new:'Впервые в загруженной истории',dormant:'Долго без выполнений',occasional:'Встречается',absent:'Нет выполнений',uncertain:'Есть пропуски',unknown:'Нет сопоставимых отчётов'};
 const channels=new Map();
@@ -23,7 +23,6 @@ function percent(n){
 }
 function delta(n,m){return window.analysisSummary.displayedChange(n,m,fmt).value;}
 function rawDifference(now,base){return [Number.isFinite(now)&&Number.isFinite(base)?now-base:null,Number.isFinite(now)&&Number.isFinite(base)&&base!==0?(now-base)/Math.abs(base)*100:null];}
-function difference(now,base,m){return [Number.isFinite(now)&&Number.isFinite(base)?delta(now-base,m):'—',Number.isFinite(now)&&Number.isFinite(base)&&base!==0?percent((now-base)/Math.abs(base)*100):'—'];}
 function number(id){const raw=value(id).trim(),n=Number(raw);if(!raw||!Number.isFinite(n)||n<0)throw Error('Укажите неотрицательные числовые пороги.');return n;}
 function textError(e){return window.analizUserError?window.analizUserError(e):(e?.message||String(e));}
 function current(s,t,revision){return s.ticket===t&&UI.revision===revision;}
@@ -282,6 +281,10 @@ async function comparison(index=0,paging=false){
   if([summary.before,summary.after].some(period=>period.amount_missing_rows||
      (period.complete&&Number.isFinite(observed(period)?.count)&&period.total.amount==null))){
    warnings.push('В некоторых строках сумма не указана. Показана сумма заполненных ячеек.');
+   for(const [label,period] of [['База',summary.before],['Анализ',summary.after]]){
+    const note=averageNote(period);
+    if(note)warnings.push(label+' · '+note);
+   }
   }
   sampleNote(coverage,sample,warnings.join(' '),compareAvailable);
   for(const [label,total] of [['Первый интервал',summary.before],['Второй интервал',summary.after]]){
@@ -295,9 +298,11 @@ async function comparison(index=0,paging=false){
   const onlyOne=beforeObserved!==afterObserved;
   for(const metric of metrics()){
    const now=afterValues?.[metric],old=beforeValues?.[metric],card=UI.el('div',null,'kpi');
-   const totalDiff=metric==='amount'&&(summary.before.amount_missing_rows||summary.after.amount_missing_rows)?[null,null]:rawDifference(now,old);
+   const totalDiff=metric==='average'&&summary.average
+    ?[summary.average.delta,summary.average.percent]
+    :metric==='amount'&&(summary.before.amount_missing_rows||summary.after.amount_missing_rows)?[null,null]:rawDifference(now,old);
    card.append(UI.el('span',titles[metric]+' · анализируемый период'),UI.el('strong',fmt(now,metric)),
-    UI.el('small',totalDiff[0]===null?'Сравнение недоступно':difference(now,old,metric).join(' · ')));
+    UI.el('small',totalDiff[0]==null?'Сравнение недоступно':[delta(totalDiff[0],metric),percent(totalDiff[1])].join(' · ')));
    $('kpis').append(card);
    const availableRange=afterObserved?after:before;
    const combinedRange={...s,from:before.from<after.from?before.from:after.from,to:before.to>after.to?before.to:after.to};

@@ -519,9 +519,16 @@ fn write_comparison(
         let comparable = |period: &RangeSummary| {
             if metric == "amount" { period.comparison_amount() } else { value(&period.available_total,metric) }
         };
-        emit("Итого по выбранным работам", &before.available_total, &after.available_total, comparable(&before), comparable(&after))?;
+        let comparable_pair = if metric == "average" {
+            let same_work = before.source_work.as_ref().zip(after.source_work.as_ref()).is_some_and(|(b, a)| b == a);
+            comparable_averages(&before.available_total, &after.available_total, same_work)
+        } else {
+            comparable(&before).zip(comparable(&after))
+        };
+        emit("Итого по выбранным работам", &before.available_total, &after.available_total,
+            comparable_pair.map(|(base, _)| base), comparable_pair.map(|(_, current)| current))?;
     }
-    let mut stmt = tx.prepare("SELECT name,bc,ba,cc,ca,kind,b_known,a_known FROM an_comparison ORDER BY key").map_err(err)?;
+    let mut stmt = tx.prepare("SELECT name,bc,ba,cc,ca,kind,b_known,a_known,b_paired,a_paired,same_source_work FROM an_comparison ORDER BY key").map_err(err)?;
     let mut rows = stmt.query([]).map_err(err)?;
     while let Some(r) = rows.next().map_err(err)? {
         let name = work_label(&r.get::<_, String>(0).map_err(err)?, &r.get::<_, String>(5).map_err(err)?);
@@ -529,11 +536,17 @@ fn write_comparison(
         let ba = r.get(2).map_err(err)?;
         let ac = r.get(3).map_err(err)?;
         let aa = r.get(4).map_err(err)?;
-        let base = observed_totals(bc,ba,r.get(6).map_err(err)?,before_observed)?;
-        let current = observed_totals(ac,aa,r.get(7).map_err(err)?,after_observed)?;
+        let base = paired_observed_totals(bc,ba,r.get(6).map_err(err)?,r.get(8).map_err(err)?,before_observed)?;
+        let current = paired_observed_totals(ac,aa,r.get(7).map_err(err)?,r.get(9).map_err(err)?,after_observed)?;
         if value(&base, metric).is_some() || value(&current, metric).is_some() {
-            emit(&name, &base, &current, value(&totals(bc,ba,before_observed)?,metric),
-                value(&totals(ac,aa,after_observed)?,metric))?;
+            let same_work = r.get::<_, Option<bool>>(10).map_err(err)?.unwrap_or(false);
+            let (old, new) = if metric == "average" && same_work {
+                (base.average, current.average)
+            } else {
+                (value(&totals(bc,ba,before_observed)?,metric),
+                 value(&totals(ac,aa,after_observed)?,metric))
+            };
+            emit(&name, &base, &current, old, new)?;
         }
     }
     if (before_observed && (!b || before.amount_missing_rows)) || (after_observed && (!a || after.amount_missing_rows)) {
@@ -553,7 +566,7 @@ fn ordered_organization_totals(
 ) -> Result<Vec<OrganizationSummary>, String> {
     let mut stmt = tx.prepare(
         "SELECT f.item,(SELECT count(*) FROM an_missing m WHERE m.slot=1 AND m.org=f.item),
-                coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount)
+                coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END
          FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item
          WHERE f.id=?1 GROUP BY f.ordinal,f.item ORDER BY f.ordinal"
     ).map_err(err)?;
@@ -570,8 +583,8 @@ fn ordered_organization_totals(
             missing,
             amount_missing_rows: amount.is_none(),
             total: totals(row.get(2).map_err(err)?, amount, complete)?,
-            available_total: observed_totals(row.get(2).map_err(err)?, amount,
-                row.get(4).map_err(err)?, missing < periods)?,
+            available_total: paired_observed_totals(row.get(2).map_err(err)?, amount,
+                row.get(4).map_err(err)?, row.get(5).map_err(err)?, missing < periods)?,
         });
     }
     Ok(result)
@@ -598,7 +611,7 @@ fn visit_all_organization_works(
     ).map_err(err)?;
     let mut names = names.query(params![limit, offset]).map_err(err)?;
     let mut amounts = tx.prepare(
-        "SELECT coalesce(v.count,0),CASE WHEN v.key IS NULL THEN 0 ELSE v.amount END,v.known_amount
+        "SELECT coalesce(v.count,0),CASE WHEN v.key IS NULL THEN 0 ELSE v.amount END,v.known_amount,CASE WHEN v.source_work IS NOT NULL THEN v.paired_count END
          FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.key=?2
          WHERE f.id=?1 ORDER BY f.ordinal"
     ).map_err(err)?;
@@ -619,8 +632,8 @@ fn visit_all_organization_works(
                 missing: org.missing,
                 amount_missing_rows: amount.is_none(),
                 total: totals(row.get(0).map_err(err)?, amount, org.complete)?,
-                available_total: observed_totals(row.get(0).map_err(err)?, amount,
-                    row.get(2).map_err(err)?, org.available_total.count.is_some())?,
+                available_total: paired_observed_totals(row.get(0).map_err(err)?, amount,
+                    row.get(2).map_err(err)?, row.get(3).map_err(err)?, org.available_total.count.is_some())?,
             });
         }
         visit(OrganizationWorkValues { entry, rows })?;
@@ -726,7 +739,7 @@ fn write_organizations(
             [],
         )
         .map_err(err)?;
-        let mut amounts=tx.prepare("SELECT f.ordinal,coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount) FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.name=?2 WHERE f.id=?1 GROUP BY f.ordinal ORDER BY f.ordinal").map_err(err)?;
+        let mut amounts=tx.prepare("SELECT f.ordinal,coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.name=?2 WHERE f.id=?1 GROUP BY f.ordinal ORDER BY f.ordinal").map_err(err)?;
         while let Some(row) = names.next().map_err(err)? {
             let name: String = row.get(0).map_err(err)?;
             let mut cells = Vec::with_capacity(orgs.len());
@@ -739,7 +752,7 @@ fn write_organizations(
                     org: org.org.clone(), complete: org.complete, missing: org.missing,
                     amount_missing_rows: amount.is_none(),
                     total: totals(count, amount, org.complete)?,
-                    available_total: observed_totals(count, amount, r.get(3).map_err(err)?, org.available_total.count.is_some())?,
+                    available_total: paired_observed_totals(count, amount, r.get(3).map_err(err)?, r.get(4).map_err(err)?, org.available_total.count.is_some())?,
                 });
             }
             if cells.len() != orgs.len() {

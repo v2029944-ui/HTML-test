@@ -128,7 +128,7 @@ pub(super) const TIMELINE_BUCKET_TOTALS: &str = r#"
                 FROM temp.an_missing WHERE slot=1 GROUP BY label
             ), values_by_bucket AS (
                 SELECT CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count, CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active, SUM(x.amount) AS known_amount
+                       SUM(x.count) AS count, CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active, SUM(x.amount) AS known_amount, CASE WHEN MIN(x.work)=MAX(x.work) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END AS paired_count
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN analysis_filter_items f ON f.id=?2 AND f.item=v.org
@@ -140,7 +140,7 @@ pub(super) const TIMELINE_BUCKET_TOTALS: &str = r#"
                 GROUP BY label
             )
             SELECT b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(v.count,0),CASE WHEN v.count IS NULL THEN 0 ELSE v.amount END, COALESCE(v.active,0), b.first_start, b.last_start, v.known_amount
+                   COALESCE(v.count,0),CASE WHEN v.count IS NULL THEN 0 ELSE v.amount END, COALESCE(v.active,0), b.first_start, b.last_start, v.known_amount, v.paired_count
             FROM buckets b
             LEFT JOIN missing m ON m.label=b.label
             LEFT JOIN values_by_bucket v ON v.label=b.label
@@ -235,8 +235,8 @@ impl Analytics<'_> {
                 periods: row.get(1).map_err(err)?,
                 missing,
                 total: totals(row.get(3).map_err(err)?, row.get(4).map_err(err)?, missing == 0)?,
-                available_total: observed_totals(row.get(3).map_err(err)?, row.get(4).map_err(err)?,
-                    row.get(8).map_err(err)?, missing < periods * organizations)?,
+                available_total: paired_observed_totals(row.get(3).map_err(err)?, row.get(4).map_err(err)?,
+                    row.get(8).map_err(err)?, row.get(9).map_err(err)?, missing < periods * organizations)?,
             });
         }
         let zero_buckets_with_nonzero_works = zero_buckets_with_nonzero_works(&tx, mode, s, &points)?;
@@ -295,7 +295,7 @@ impl Analytics<'_> {
             ), values_by_bucket AS (
                 SELECT v.org,
                        CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count,CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active, SUM(x.amount) AS known_amount
+                       SUM(x.count) AS count,CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active, SUM(x.amount) AS known_amount, CASE WHEN MIN(x.work)=MAX(x.work) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END AS paired_count
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN selected s ON s.org=v.org
@@ -307,7 +307,7 @@ impl Analytics<'_> {
                 GROUP BY v.org,label
             )
             SELECT s.org,b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(v.count,0),CASE WHEN v.count IS NULL THEN 0 ELSE v.amount END, COALESCE(v.active,0), b.first_start, b.last_start, v.known_amount
+                   COALESCE(v.count,0),CASE WHEN v.count IS NULL THEN 0 ELSE v.amount END, COALESCE(v.active,0), b.first_start, b.last_start, v.known_amount, v.paired_count
             FROM selected s CROSS JOIN buckets b
             LEFT JOIN missing m ON m.org=s.org AND m.label=b.label
             LEFT JOIN values_by_bucket v ON v.org=s.org AND v.label=b.label
@@ -339,8 +339,8 @@ impl Analytics<'_> {
                 periods:row.get(2).map_err(err)?,
                 missing,
                 total:totals(row.get(4).map_err(err)?,row.get(5).map_err(err)?,missing==0)?,
-                available_total: observed_totals(row.get(4).map_err(err)?,row.get(5).map_err(err)?,
-                    row.get(9).map_err(err)?,missing < periods)?,
+                available_total: paired_observed_totals(row.get(4).map_err(err)?,row.get(5).map_err(err)?,
+                    row.get(9).map_err(err)?,row.get(10).map_err(err)?,missing < periods)?,
             });
         }
         Ok(OrganizationTrends{
@@ -517,7 +517,7 @@ impl Analytics<'_> {
                 WHERE slot=1 AND (?2 IS NULL OR org=?2) GROUP BY label
             ), aggregates AS (
                 SELECT CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count,CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active, SUM(x.amount) AS known_amount
+                       SUM(x.count) AS count,CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active, SUM(x.amount) AS known_amount, CASE WHEN MIN(x.work)=MAX(x.work) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END AS paired_count
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
@@ -527,7 +527,7 @@ impl Analytics<'_> {
                 GROUP BY label
             )
             SELECT b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END, COALESCE(a.active,0), b.first_start, b.last_start, a.known_amount
+                   COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END, COALESCE(a.active,0), b.first_start, b.last_start, a.known_amount, a.paired_count
             FROM buckets b
             LEFT JOIN missing m ON m.label=b.label
             LEFT JOIN aggregates a ON a.label=b.label
@@ -549,8 +549,8 @@ impl Analytics<'_> {
                 periods:row.get(1).map_err(err)?,
                 missing,
                 total:totals(row.get(3).map_err(err)?,row.get(4).map_err(err)?,missing==0)?,
-                available_total:observed_totals(row.get(3).map_err(err)?,row.get(4).map_err(err)?,
-                    row.get(8).map_err(err)?,missing < periods * organizations)?,
+                available_total:paired_observed_totals(row.get(3).map_err(err)?,row.get(4).map_err(err)?,
+                    row.get(8).map_err(err)?,row.get(9).map_err(err)?,missing < periods * organizations)?,
             });
         }
         Ok(WorkTrendSummary {

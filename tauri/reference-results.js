@@ -78,7 +78,8 @@ function notice(root,s,comparable,summary){
  const n=$(root+' .quality-notice');if(!n)return;const span=n.querySelector('span');const excluded=s.organizations.filter(org=>!comparable.includes(org));
  const warnings=historicalQuality(current);
  const missingAmount=[current,baseline].some(period=>period?.available_reports>0&&(period.amount_missing_rows===true || (period.amount_missing_rows==null&&period?.available_total?.amount==null)));
- const amountNotice=missingAmount?' В некоторых строках сумма не указана. Количество учтено, показана сумма заполненных ячеек.':'';
+ const averageNotice=window.analysisSummary.averageNote(current);
+ const amountNotice=missingAmount?' В некоторых строках сумма не указана. Количество учтено, показана сумма заполненных ячеек.'+(averageNotice?' '+averageNotice:''):'';
  const shareNotice=root==='#s1'&&current?.amount_missing_rows&&observed(current)?.amount>0?' Доли рассчитаны по заполненным суммам.':'';
  const gap=current?.missing===1&&baseline?.missing===0?current.single_missing:baseline?.missing===1&&current?.missing===0?baseline.single_missing:null;
  const detail=excluded.length===1&&gap?.org===excluded[0]&&date(gap.start)!=='—'?' · '+date(gap.start)+': нет пригодного отчёта':'';
@@ -249,6 +250,8 @@ function printContext(root,s,comparable,overview){
  }
  const history=historicalQuality(overview?.summary?.after);
  if(history)root.append(el('p',history));
+ const averageNotice=window.analysisSummary.averageNote(summary?.after);
+ if(averageNotice)root.append(el('p',averageNotice));
  if(hasReports(summary?.before)||hasReports(summary?.after)){
   root.append(el('h2',canCompare(summary)?'Сравнение по доступным отчётам':'Доступные итоги по периодам'));
   printTable(root,['Показатель','Было','Стало','Изменение','Изменение, %'],['amount','count','average'].map(metric=>[titles[metric],fmt(observed(summary.before)?.[metric],metric),fmt(observed(summary.after)?.[metric],metric),displayedChange(summary[metric]?.delta,metric).value,pct(summary[metric]?.percent)]),'print-comparison');

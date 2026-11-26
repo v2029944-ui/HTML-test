@@ -78,6 +78,8 @@ pub struct AnalysisTotals {
     pub count: Option<f64>,
     pub amount: Option<f64>,
     pub average: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partial_average_quantity: Option<f64>,
 }
 
 /// Runs analytical reads against the storage's revision and filter handles.
@@ -176,6 +178,7 @@ fn totals(count: f64, amount: Option<f64>, complete: bool) -> Result<AnalysisTot
     amount.map(finite).transpose()?;
     Ok(AnalysisTotals {
         count: complete.then_some(count),
+        partial_average_quantity: None,
         amount: if complete { amount } else { None },
         average: if complete && count > 0. {
             amount.map(|amount| finite(amount / count)).transpose()?
@@ -184,14 +187,51 @@ fn totals(count: f64, amount: Option<f64>, complete: bool) -> Result<AnalysisTot
         },
     })
 }
-// Partial absolute amounts only sum the known cells. An average needs a sum
-// for every observed quantity.
+// Partial absolute amounts only sum the known cells.
 fn observed_totals(count: f64, amount: Option<f64>, known_amount: Option<f64>, observed: bool) -> Result<AnalysisTotals, String> {
     let mut result = totals(count, amount, observed)?;
     if observed && amount.is_none() {
         result.amount = known_amount.map(finite).transpose()?;
     }
     Ok(result)
+}
+// Quantities are comparable for the same original work and report format.
+// The SQL passes a denominator only when that identity is uniform and uses
+// exactly the rows with a known amount.
+fn paired_observed_totals(
+    count: f64,
+    amount: Option<f64>,
+    known_amount: Option<f64>,
+    paired_count: Option<f64>,
+    observed: bool,
+) -> Result<AnalysisTotals, String> {
+    let mut result = observed_totals(count, amount, known_amount, observed)?;
+    if observed && amount.is_none() {
+        let denominator = paired_count.map(finite).transpose()?.filter(|count| *count > 0.);
+        if let Some((sum, quantity)) = result.amount.zip(denominator) {
+            result.average = Some(finite(sum / quantity)?);
+            result.partial_average_quantity = Some(quantity);
+        }
+    }
+    Ok(result)
+}
+fn comparable_averages(
+    base: &AnalysisTotals,
+    current: &AnalysisTotals,
+    same_work: bool,
+) -> Option<(f64, f64)> {
+    let partial = base.partial_average_quantity.is_some() || current.partial_average_quantity.is_some();
+    base.average.zip(current.average).filter(|_| !partial || same_work)
+}
+
+fn observed_average_change(before: &RangeSummary, after: &RangeSummary, threshold: f64) -> Result<AverageChange, String> {
+    let base = &before.available_total;
+    let current = &after.available_total;
+    let same_work = before.source_work.as_ref().zip(after.source_work.as_ref()).is_some_and(|(b, a)| b == a);
+    if let Some((b, a)) = comparable_averages(base, current, same_work) {
+        return average_change(Some(b), Some(a), threshold);
+    }
+    Ok(AverageChange { base: base.average, current: current.average, delta: None, percent: None, flags: None })
 }
 fn date(s: &str) -> Result<NaiveDate, String> {
     if !valid_date(s) {

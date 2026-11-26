@@ -556,20 +556,23 @@ fn partial_analytics_keeps_observed_amounts_and_report_gaps_separate() {
     assert_eq!(summary.total.amount, None);
     assert_eq!(summary.available_total.amount, Some(50.));
     assert_eq!(summary.available_total.count, Some(9.));
-    assert_eq!(summary.available_total.average, None);
+    assert_eq!(summary.available_total.average, Some(50. / 6.));
     let timeline = serde_json::to_value(store.analysis_timeline(revision, &selected, &range).unwrap()).unwrap();
     assert_eq!(timeline["points"][0]["available_total"]["amount"], 20.);
+    assert_eq!(timeline["points"][0]["available_total"]["average"], 10.);
     assert_eq!(timeline["points"][1]["available_total"]["amount"], 30.);
     assert!(timeline["points"][2]["available_total"]["count"].is_null());
     let departments = serde_json::to_value(store.analysis_organization_page(revision, &selected, &range, None, 50).unwrap()).unwrap();
     assert_eq!(departments[0]["available_total"]["amount"], 20.);
     assert_eq!(departments[1]["available_total"]["amount"], 30.);
+    assert_eq!(departments[1]["available_total"]["average"], 7.5);
     assert_eq!(departments[0]["amount_missing_rows"], false);
     assert_eq!(departments[1]["amount_missing_rows"], true);
     let by_org = serde_json::to_value(store.analysis_organization_trends(revision, &selected, &range).unwrap()).unwrap();
     assert!(by_org["series"][1]["points"][0]["available_total"]["amount"].is_null());
     assert_eq!(by_org["series"][1]["points"][0]["available_total"]["count"], 3.);
     let detail = serde_json::to_value(store.analysis_work_timeline(revision, &selected, &range, None, "work:Wash").unwrap()).unwrap();
+    assert_eq!(detail["points"][0]["available_total"]["average"], 10.);
     assert_eq!(detail["points"][1]["available_total"]["amount"], 30.);
     let q = ComparisonQuery {
         before: RangeQuery { from:"2023-12-31".into(), to:"2024-01-01".into() },
@@ -578,6 +581,8 @@ fn partial_analytics_keeps_observed_amounts_and_report_gaps_separate() {
     };
     let page = serde_json::to_value(store.analysis_comparison_window(revision, &selected, &q, None, 0, 50).unwrap()).unwrap();
     assert_eq!(page["rows"][0]["observed_before"]["amount"], 20.);
+    assert_eq!(page["rows"][0]["observed_before"]["average"], 10.);
+    assert_eq!(page["rows"][0]["average"]["delta"], -2.5);
     assert_eq!(page["rows"][0]["observed_after"]["amount"], 30.);
     assert!(page["rows"][0]["amount"].is_null());
     assert_eq!(page["rows"][0]["count"]["delta"], -1.);
@@ -606,4 +611,57 @@ fn partial_analytics_keeps_observed_amounts_and_report_gaps_separate() {
     assert_eq!(same["rows"][0]["count"]["delta"], 0.);
     assert_eq!(same["rows"][0]["count"]["percent"], 0.);
     assert!(same["rows"][0]["amount"].is_null());
+}
+
+#[test]
+fn partial_average_uses_priced_rows_of_one_original_work() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    data["settings"]["groups"] = json!([
+        {"id":"mixed","name":"Mixed","works":["Wash","Repair"]}
+    ]);
+    data["reports"] = json!([
+        {"id":"first","type":"day","start":"2024-01-01","end":"2024-01-01","organizations":["A"],"rows":[
+            {"organization":"A","work":"Wash","count":10,"amount":20000},
+            {"organization":"A","work":"Wash","count":5,"amount":15000},
+            {"organization":"A","work":"Wash","count":4,"amount":null}
+        ]},
+        {"id":"second","type":"day","start":"2024-01-02","end":"2024-01-02","organizations":["A"],"rows":[
+            {"organization":"A","work":"Repair","count":2,"amount":5000},
+            {"organization":"A","work":"Repair","count":3,"amount":null}
+        ]},
+        {"id":"third","type":"day","start":"2024-01-03","end":"2024-01-03","organizations":["A"],"rows":[
+            {"organization":"A","work":"Wash","count":2,"amount":0},
+            {"organization":"A","work":"Wash","count":8,"amount":null}
+        ]},
+        {"id":"fourth","type":"day","start":"2024-01-04","end":"2024-01-04","organizations":["A"],"rows":[
+            {"organization":"A","work":"Wash","count":-1,"amount":100},
+            {"organization":"A","work":"Wash","count":3,"amount":null}
+        ]}
+    ]);
+    let revision = prepare(&store, &data);
+    let selected = scope(&store, revision, "day", &["A"], Some(&["Mixed"]));
+    let first = query("2024-01-01", "2024-01-01");
+    let second = query("2024-01-02", "2024-01-02");
+    let summary = store.analysis_range_summary(revision, &selected, &first).unwrap();
+    assert_eq!(summary.available_total.count, Some(19.));
+    assert_eq!(summary.available_total.amount, Some(35000.));
+    assert_eq!(summary.available_total.partial_average_quantity, Some(15.));
+    assert_eq!(summary.available_total.average, Some(35000. / 15.));
+    let mixed = store.analysis_range_summary(revision, &selected, &query("2024-01-01", "2024-01-02")).unwrap();
+    assert_eq!(mixed.available_total.amount, Some(40000.));
+    assert_eq!(mixed.available_total.count, Some(24.));
+    assert_eq!(mixed.available_total.average, None);
+    let comparison = ComparisonQuery { before: first, after: second, percent: 0., min_count: 0., min_amount: 0. };
+    let dashboard = store.analysis_comparison_dashboard(revision, &selected, &comparison).unwrap();
+    assert_eq!(dashboard.summary.average.base, Some(35000. / 15.));
+    assert_eq!(dashboard.summary.average.current, Some(2500.));
+    assert_eq!(dashboard.summary.average.delta, None);
+    let rows = store.analysis_comparison_window(revision, &selected, &comparison, None, 0, 50).unwrap().rows;
+    assert_eq!(rows[0].average.delta, None);
+    for (day, expected) in [("2024-01-03", Some(0.)), ("2024-01-04", None)] {
+        let summary = store.analysis_range_summary(revision, &selected, &query(day, day)).unwrap();
+        assert_eq!(summary.available_total.average, expected);
+    }
 }
