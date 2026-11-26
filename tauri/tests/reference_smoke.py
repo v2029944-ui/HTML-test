@@ -776,6 +776,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                         page.screenshot(animations='disabled')
                         check_shell_layout(page, headings=True)
                         check_sticky_table_header(page)
+                        record(f'17-shell-{theme}-{width}',page.locator('#reportShell'))
                         if theme == 'light':
                             row = page.locator('#s1 .table-viewport tbody tr').first
                             cell = row.locator('td').first
@@ -789,7 +790,6 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                               return color;
                             }""")
                             expect(row).to_have_css('background-color', expected)
-                        record(f'17-shell-{theme}-{width}',page.locator('#reportShell'))
                         fold.locator('summary').click()
                         page.screenshot(animations='disabled')
                         check_shell_layout(page, folded=True)
