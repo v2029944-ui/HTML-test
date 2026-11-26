@@ -467,15 +467,20 @@ def verify_group_cleanup(writer, reader, root):
 
     def wait_groups(client, groups, generation, revision=None):
         expected = {'generation': generation, 'revision': revision, 'groups': groups}
+        expression = (
+            f'window.sharedWorkspace.state?.available === true'
+            f' && window.sharedWorkspace.state?.generation === {generation}'
+            f' && window.unifiedUI.snapshot?.groups === {groups}'
+        )
+        if revision is not None:
+            expression += f' && window.unifiedUI.snapshot?.revision === {revision}'
+        # CDP polling also observes the background WebView when its animation
+        # frames are throttled. Do not force the reader window to refresh.
         try:
-            client.page.wait_for_function(
-                '''expected => window.sharedWorkspace.state?.available
-                    && window.sharedWorkspace.state?.generation === expected.generation
-                    && window.unifiedUI.snapshot?.groups === expected.groups
-                    && (expected.revision === null || window.unifiedUI.snapshot?.revision === expected.revision)''',
-                arg=expected, timeout=120_000)
+            wait_for_app_state(client.page, expression, f'{client.name} observes shared groups', 120_000)
         except Exception as error:
             observed = client.page.evaluate('''() => ({
+                available: window.sharedWorkspace.state?.available,
                 generation: window.sharedWorkspace.state?.generation,
                 revision: window.unifiedUI.snapshot?.revision,
                 groups: window.unifiedUI.snapshot?.groups
