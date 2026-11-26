@@ -405,10 +405,20 @@ fn usual_metric(
     used: i64,
     percent: f64,
 ) -> Result<Value, String> {
-    let change = average_change(base, current, percent)?;
-    let status = match change.delta {
-        Some(d) if used >= 2 => {
-            if d != 0. && change.percent.is_none_or(|p| p.abs() >= percent) {
+    let mut change = average_change(base, current, percent)?;
+    // Decimal sums can differ by a few floating-point steps after aggregation.
+    // Compare the threshold in the original units to avoid rounding the percent twice.
+    let rounding_margin = base.zip(current).map_or(0., |(b, a)| {
+        4. * f64::EPSILON * b.abs().max(a.abs())
+    });
+    if change.delta.is_some_and(|d| d.abs() <= rounding_margin) {
+        change.delta = Some(0.);
+        change.percent = change.percent.map(|_| 0.);
+    }
+    let status = match (base, change.delta) {
+        (Some(b), Some(d)) if used >= 2 => {
+            let threshold_delta = b.abs() * (percent / 100.);
+            if d != 0. && threshold_delta - d.abs() <= rounding_margin {
                 if d > 0. {
                     "high"
                 } else {
