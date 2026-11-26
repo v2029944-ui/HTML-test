@@ -259,6 +259,7 @@ def check_partial_comparison_details(page, organizations):
     page.locator('#refAnalytics').click()
     try:
         tab('comparison')
+        page.locator('#refComparisonModes [data-value="periods"]').click()
         charts = page.locator('#comparisonCharts')
         period_plot = charts.locator('svg[aria-label="Сравнение периодов"]').first
         expect(period_plot).to_be_visible(timeout=TIMEOUT)
