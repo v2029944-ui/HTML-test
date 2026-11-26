@@ -2,3 +2,44 @@ node_modules/
 dist/
 *.log
 *.tmp
+
+# Local databases, rollback files, and shared workspace snapshots
+*.[sS][qQ][lL][iI][tT][eE]
+*.[sS][qQ][lL][iI][tT][eE]3
+*.[dD][bB]
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+*.db-wal
+*.db-shm
+*.db-journal
+analiz-generation-*.snapshot
+pending.snapshot
+
+# Local configuration and signing or SSH credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.ppk
+*.jks
+*.keystore
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+
+# User workbooks. Only synthetic test fixtures belong in Git.
+*.[xX][lL][sS]
+*.[xX][lL][sS][xX]
+*.[xX][lL][sS][mM]
+!/tests/fixtures/**/*.[xX][lL][sS]
+!/tests/fixtures/**/*.[xX][lL][sS][xXmM]
+!/tauri/tests/fixtures/**/*.[xX][lL][sS]
+!/tauri/tests/fixtures/**/*.[xX][lL][sS][xXmM]
