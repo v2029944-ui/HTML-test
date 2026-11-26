@@ -557,6 +557,10 @@ fn partial_analytics_keeps_observed_amounts_and_report_gaps_separate() {
     assert_eq!(summary.available_total.amount, Some(50.));
     assert_eq!(summary.available_total.count, Some(9.));
     assert_eq!(summary.available_total.average, Some(50. / 6.));
+    let ranking = store.analysis_ranking(revision, &selected, &range, None, "amount", "selectable").unwrap();
+    assert_eq!(ranking.rows.len(), 1);
+    assert_eq!(ranking.rows[0].amount, Some(50.));
+    assert_eq!(ranking.rows[0].average, Some(50. / 6.));
     let timeline = serde_json::to_value(store.analysis_timeline(revision, &selected, &range).unwrap()).unwrap();
     assert_eq!(timeline["points"][0]["available_total"]["amount"], 20.);
     assert_eq!(timeline["points"][0]["available_total"]["average"], 10.);
