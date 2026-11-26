@@ -237,10 +237,9 @@
     advanced.open = analytic;
     $('analyticsDetails').hidden = true;
     $('changeDetails').hidden = true;
-    for (const id of ['structurePanel', 'usualPanel', 'regularityPanel']) {
+    for (const id of ['usualPanel', 'regularityPanel']) {
       $(id).open = id === key;
     }
-    if (key !== 'comparison') $('contributions').open = false;
     if (analytic) {
       const mode = $('workViewMode');
       mode.value = key === 'structurePanel' ? 'composition' : 'trend';
@@ -257,7 +256,7 @@
       previousChart = null;
     }
     delete $('refNative').dataset.panel;
-    for (const id of ['advancedAnalytics','structurePanel','usualPanel','regularityPanel','contributions']) $(id).open = false;
+    for (const id of ['advancedAnalytics','usualPanel','regularityPanel']) $(id).open = false;
     $('analyticsDetails').hidden = true;
     $('changeDetails').hidden = true;
     const mode = $('workViewMode');

@@ -207,6 +207,18 @@ function buildUnified(source){
    .replace(longSeparate,'<option value="separate">Отдельно (значения)</option>')
    .replace(longTogether,'<option value="combined">Вместе (% макс.)</option>');
 
+ // Both analysis sections are permanent content, not disclosure widgets.
+ const contributionStart=html.indexOf('<details id="contributions" class="extended-section">');
+ const contributionEnd=html.indexOf('</section>',contributionStart);
+ if(contributionStart<0||contributionEnd<=contributionStart)throw Error('Canonical contribution layout changed');
+ const contributionMarkup=html.slice(contributionStart,contributionEnd);
+ if(!/<\/details>\s*$/.test(contributionMarkup))throw Error('Canonical contribution closing tag changed');
+ const contributionSection=contributionMarkup
+   .replace('<details id="contributions" class="extended-section">','<section id="contributions" class="extended-section" aria-labelledby="contributionsHeading">')
+   .replace('<summary>Вклад работ в изменение итогов</summary>','<h3 id="contributionsHeading">Вклад работ в изменение итогов</h3>')
+   .replace(/<\/details>(\s*)$/,'</section>$1');
+ html=html.slice(0,contributionStart)+contributionSection+html.slice(contributionEnd);
+
  // Keep the original SQLite chart and composition renderers, but give them one
  // visible presentation switch. Relocate markup, not the report calculations.
  const structureStart=html.indexOf('<details class="panel" id="structurePanel">');
@@ -214,7 +226,12 @@ function buildUnified(source){
  const comparisonStart=html.indexOf('<section class="panel" id="comparison"');
  if(structureStart<0||structureEnd<=structureStart||comparisonStart<0||comparisonStart>=structureStart)
   throw Error('Canonical work views layout changed');
- const structure=html.slice(structureStart,structureEnd).trimEnd().replace('id="structurePanel"','id="structurePanel" hidden');
+ const originalStructure=html.slice(structureStart,structureEnd).trimEnd();
+ if(!originalStructure.endsWith('</details>'))throw Error('Canonical composition closing tag changed');
+ const structure=originalStructure
+   .replace('<details class="panel" id="structurePanel">','<section class="panel" id="structurePanel" hidden aria-labelledby="structureHeading">')
+   .replace('<summary>Состав работ и доли</summary>','<h2 id="structureHeading">Состав работ и доли</h2>')
+   .replace(/<\/details>$/,'</section>');
  html=html.slice(0,structureStart)+html.slice(structureEnd);
  const switcher='<div class="work-view-switcher" role="group" aria-labelledby="workViewLabel">'+
  '<label id="workViewLabel" for="workViewMode">Показать</label>'+
