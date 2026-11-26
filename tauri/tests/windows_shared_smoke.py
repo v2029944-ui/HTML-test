@@ -463,11 +463,12 @@ def verify_group_cleanup(writer, reader, root):
     before = api(writer.page, 'nativeSettingsBootstrap')
     assert before['groups'] == 0
     totals = api(writer.page, 'managementReportSummary', before['revision'], {'report_type': 'day'})
-    works = api(writer.page, 'unifiedManagementPage', before['revision'], 'works', '', None, 0, 2)['rows']
-    for number, work in enumerate(works, 1):
-        snapshot = api(writer.page, 'nativeSettingsBootstrap')
-        api(writer.page, 'unifiedGroupSave', snapshot['revision'], None,
-            f'cleanup-{number}', f'Группа очистки {number}', [work['name']])
+    works = api(writer.page, 'unifiedManagementPage', before['revision'], 'works', '', None, 0, 1)['rows']
+    assert len(works) == 1 and works[0]['name'] == 'Альфа', works
+    saved = api(writer.page, 'unifiedGroupSave', before['revision'], None,
+        'cleanup-work', 'Группа работ', [works[0]['name']])
+    api(writer.page, 'nativeSettingsEdit', saved['revision'],
+        {'kind': 'create_group', 'id': 'cleanup-empty', 'name': 'Пустая группа'})
     snapshot = api(writer.page, 'nativeSettingsBootstrap')
     assert snapshot['groups'] == 2
     prior = writer.page.evaluate("window.__TAURI__.core.invoke('shared_workspace_status')")
