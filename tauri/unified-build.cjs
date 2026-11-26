@@ -167,6 +167,8 @@ function buildUnified(source){
  // Normalize only the labels of inclusive ranges in the desktop template.
  html=html.replace(/>С периода(?=<input|<\/label>)/g,'>С')
   .replace(/>(?:До периода|По период включительно)(?=<input|<\/label>)/g,'>По');
+ // The rendered trend table supplies its own scroll viewport.
+ html=html.replace('<div id="dataTable" class="table-scroll" hidden>','<div id="dataTable" hidden>');
  // Issue64: daily source supports every calendar granularity, without duplicate calendar selectors.
  html=html.replace('<option value="day">Дни</option></select>','<option value="day">Дни</option><option value="year">Годы</option></select>');
  html=html.replace('<div class="filters">','<div class="filters"><label>Источник<select id="unifiedSource"><option value="daily">Дневные отчёты</option><option value="imported">Отчёты выбранного типа</option></select></label>',1);

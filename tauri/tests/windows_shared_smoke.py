@@ -402,6 +402,15 @@ def verify_personal_transfer(writer, reader, folder, root, previous_generation):
     page = writer.page
     page.locator('#personalTransferPreview').click()
     expect(page.locator('#personalTransferSummary')).to_contain_text('Личная база: 365 отчётов')
+    rows = page.locator('#personalTransferList .personal-transfer-row')
+    pager = page.locator('#personalTransferPager .sql-pager')
+    expect(rows).to_have_count(50)
+    for number, count, label in [('8', 15, '351–365 из 365'), ('1', 50, '1–50 из 365')]:
+        pager.locator('[data-page-action="choose"]').click()
+        pager.locator('[data-page-input]').fill(number)
+        pager.locator('[data-page-action="apply"]').click()
+        expect(pager.locator('[data-page-range]')).to_contain_text(label)
+        expect(rows).to_have_count(count)
     page.locator('#personalTransferSelectAll').click()
     expect(page.locator('#personalTransferSummary')).to_contain_text('выбрано: 25 из 25')
     apply = page.locator('#personalTransferApply')

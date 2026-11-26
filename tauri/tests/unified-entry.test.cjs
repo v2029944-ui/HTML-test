@@ -154,6 +154,12 @@ test('trend and composition occupy one presentation switch, retaining native SQL
  assert.equal([...html.matchAll(/id="chartPanel"/g)].length,1);
 });
 
+test('the installed trend table lets its inner viewport own the scroll',()=>{
+ const html=prepareHtml(original);
+ assert.match(html,/<div id="dataTable" hidden><\/div>/);
+ assert.match(original,/<div id="dataTable" class="table-scroll" hidden><\/div>/);
+});
+
 test('partial monthly chart and table headings show the actual dates but keep calendar keys for gap checks',()=>{
  const context={window:{}};vm.runInNewContext(require('../unified-build.cjs').buildUnified(original).script,context);
  vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../analysis-summary.js'),'utf8'),context);

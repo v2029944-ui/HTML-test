@@ -15,7 +15,7 @@ const fields={
 };
 if(!choose||!refresh||!location||!status||!rows||!count||
    Object.values(fields).some(item=>!item))return;
-const maxVisible=100;
+const maxVisible=50;
 let pageIndex=0,listedFiles=[],listedRules={},pagerView=null;
 const visibleStatusCells=new Map();
 const pager=document.createElement('div');pager.id='sourceFolderPager';rows.parentElement?.after(pager);
