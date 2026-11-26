@@ -1378,7 +1378,7 @@ def check_extended(page):
     # The pager can remain mounted while a date change reloads the KPIs.
     expect(page.locator('#changesSummary .kpi-action')).to_have_count(4,timeout=90_000)
     expect(page.locator('#changesSummary')).to_have_attribute('aria-busy','false')
-    assert page.locator('#changesResults tbody tr').count()<=100
+    assert page.locator('#changesResults tbody tr').count()<=50
     slider=page.locator('#changesPercent')
     slider.focus();slider.press('End')
     expect(page.locator('#changesSensitivityValue')).to_have_text('200%')
@@ -1391,6 +1391,24 @@ def check_extended(page):
     page.locator('#changesSummary .kpi-action').filter(has_text='Значительно снизилось').click()
     expect(page.locator('#changesActiveFilter')).to_contain_text('значительное снижение')
     expect(page.locator('#changesDirection')).to_have_value('significant-down')
+
+    # The synthetic daily workbook has one work per department, giving 60 adjacent records.
+    common_period(page,'День','2024-01-01','2024-01-16')
+    page.locator('#changesDirection').select_option('all')
+    rows=page.locator('#changesResults tbody tr')
+    pager=page.locator('[data-sql-pager="changesResults"]')
+    position=pager.locator('[data-page-range]')
+    expect(position).to_have_text('Позиции 1–50 из 120',timeout=90_000)
+    expect(rows).to_have_count(50)
+    expect(rows.nth(0).locator('td').nth(4)).to_have_text('Количество / объём')
+    expect(rows.nth(1).locator('td').nth(4)).to_have_text('Сумма')
+    pager.locator('[data-page-action="next"]').click()
+    expect(position).to_have_text('Позиции 51–100 из 120',timeout=90_000)
+    expect(rows).to_have_count(50)
+    pager.locator('[data-page-action="choose"]').click()
+    pager.locator('[data-page-number="3"]').click()
+    expect(position).to_have_text('Позиции 101–120 из 120',timeout=90_000)
+    expect(rows).to_have_count(20)
 
 
 def check_groups(page, confirmations):
