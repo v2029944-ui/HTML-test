@@ -5,6 +5,7 @@ const api=window.desktopAPI,$=selector=>document.querySelector(selector),all=sel
 const {titles,observed,incomplete}=window.analysisSummary,categories={up:'Рост',down:'Снижение',new:'Новые работы',gone:'Без выполнений'};
 let initialized=false,scope=null,screen='s1',generation=0,changesTicket=0,modalTicket=0,searchTimer=null,summaryData=null,changeData=null,changeRequest=null;
 let modalHeading=null,shownSummaryRevision=null,shownChangesRevision=null,scopeBlocked=false;
+const CHANGES_PAGE_SIZE=50;
 let kind='significant',page=0,percent=30,minCount=5,minAmount=1000;
 const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined&&text!==null)n.textContent=String(text);if(cls)n.className=cls;return n;};
 const button=(text,run,cls='btn')=>{const n=el('button',text,cls);n.type='button';n.addEventListener('click',run);return n;};
@@ -153,7 +154,7 @@ function renderChangeLeader(leader,metric,empty='Нет сопоставимых
 function pageControls(total,captured,count){
  const root=$('#s2 .table-viewport'),footer=$('#s2 .pager-footer');
  root.dataset.sqlScrollHost='reference-changes';
- window.sqlRowScroll.attach(root,{index:captured.page,size:12,total,count,footer,label:'Страницы анализа изменений',go:i=>{if(changeRequest!==captured)return false;page=i;return refreshChanges();}});
+ window.sqlRowScroll.attach(root,{index:captured.page,size:CHANGES_PAGE_SIZE,total,count,footer,label:'Страницы анализа изменений',go:i=>{if(changeRequest!==captured)return false;page=i;return refreshChanges();}});
 }
 async function refreshChanges(debounceSearch=false){
  if(scopeBlocked)return;
@@ -177,7 +178,7 @@ async function loadChanges(s,captured,current,focusAnchor){
  try{
   if(new TextEncoder().encode(captured.search).length>512)throw Error('Сократите поисковый запрос до 512 байт UTF-8.');
   const result=await api.referenceChanges(captured);if(!current())return;
-  if(!Array.isArray(result?.rows)||result.rows.length>12||!Number.isSafeInteger(result.total)||result.total<0||!Number.isSafeInteger(result.searched)||!Number.isSafeInteger(result.significant)||result.significant<0||result.searched<result.significant||result.searched<result.total||!Array.isArray(result.comparable)||!Object.keys(categories).every(key=>Number.isSafeInteger(result.counts?.[key])&&result.counts[key]>=0))throw Error('Некорректная страница SQL-изменений.');
+  if(!Array.isArray(result?.rows)||result.rows.length>CHANGES_PAGE_SIZE||!Number.isSafeInteger(result.total)||result.total<0||!Number.isSafeInteger(result.searched)||!Number.isSafeInteger(result.significant)||result.significant<0||result.searched<result.significant||result.searched<result.total||!Array.isArray(result.comparable)||!Object.keys(categories).every(key=>Number.isSafeInteger(result.counts?.[key])&&result.counts[key]>=0))throw Error('Некорректная страница SQL-изменений.');
   captions(s,['#s2']);shownChangesRevision=s.revision;changeData=result;changeRequest=captured;renderCounts(result.counts);renderChangeLeader(result.leader,s.metric);notice('#s2',s,result.comparable,summaryData?.result.summary);
   changeLabels(s);
   const changes=result.rows.map(row=>displayedChange(row.delta,s.metric));

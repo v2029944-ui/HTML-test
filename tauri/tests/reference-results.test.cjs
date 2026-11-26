@@ -136,17 +136,20 @@ test('changes show observed partial values alongside significant rows and preser
 });
 
 test('print includes every filtered SQL row in order from page zero while leaving the visible page unchanged',async()=>{
- const queries=[],prints=[],rows=Array.from({length:13},(_,i)=>({name:'Position '+String(i+1).padStart(2,'0'),org:'A',before:i===12?0:1,after:i+2,delta:i+1,percent:i===12?null:100}));
- const f=fixture({referenceChanges:async q=>{queries.push({...q});return {rows:rows.slice(q.page*12,(q.page+1)*12),total:13,searched:13,significant:13,comparable:['A'],counts:{up:13,down:0,new:0,gone:0}};},referenceChangesPrint:async(q,emit)=>{prints.push(q);emit(rows.slice(0,12));emit(rows.slice(12));return ['A'];}});
+ const queries=[],prints=[],rows=Array.from({length:51},(_,i)=>({name:'Position '+String(i+1).padStart(2,'0'),org:'A',before:i===50?0:1,after:i+2,delta:i+1,percent:i===50?null:100}));
+ const f=fixture({referenceChanges:async q=>{queries.push({...q});return {rows:rows.slice(q.page*50,(q.page+1)*50),total:51,searched:51,significant:51,comparable:['A'],counts:{up:51,down:0,new:0,gone:0}};},referenceChangesPrint:async(q,emit)=>{prints.push(q);emit(rows.slice(0,50));emit(rows.slice(50));return ['A'];}});
  f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);await f.window.referenceResults.setScreen('s2');
- await f.s2.querySelector('.table-viewport').scrollWindow.go(1);
+ const viewport=f.s2.querySelector('.table-viewport');
+ assert.equal(viewport.scrollWindow.size,50);
+ assert.equal(f.s2.querySelectorAll('.changes-table tbody tr').length,50);
+ await viewport.scrollWindow.go(1);
  let printed;f.window.print=()=>{const root=f.document.getElementById('referencePrintDocument');printed={text:root?.textContent,rows:root?.querySelectorAll('.print-changes tbody tr').map(n=>n.children.map(c=>c.textContent)),mode:f.document.body.dataset.referencePrint};};
  const button=f.s2.querySelectorAll('button').find(n=>n.textContent==='Печать / PDF');await button.click();
  assert.deepEqual(printed.rows.map(row=>row[0]),rows.map(row=>row.name));assert.equal(printed.mode,'document');
- assert.equal(printed.rows[12][2],'0,00');assert.equal(printed.rows[12][5],'—');
+ assert.equal(printed.rows[50][2],'0,00');assert.equal(printed.rows[50][5],'—');
  assert.match(printed.text,/Значимые изменения/);assert.match(printed.text,/Подразделения с полными отчётами: 1 из 1/);
  assert.deepEqual(queries.map(q=>q.page),[0,1]);assert.deepEqual(prints.map(q=>q.page),[1]);assert.ok(queries.every(q=>q.metric==='amount'&&q.kind==='significant'&&q.revision===1));
- assert.equal(f.s2.querySelectorAll('.changes-table tbody tr').length,1);assert.equal(f.s2.querySelector('.changes-table tbody tr').children[0].textContent,'Position 13');
+ assert.equal(f.s2.querySelectorAll('.changes-table tbody tr').length,1);assert.equal(f.s2.querySelector('.changes-table tbody tr').children[0].textContent,'Position 51');
  assert.equal(f.document.getElementById('referencePrintDocument'),null);assert.equal(f.document.body.dataset.referencePrint,undefined);assert.equal(button.disabled,false);assert.equal(button.focused,true);
 });
 test('changed scope or incomplete SQL print page never prints a partial document',async()=>{

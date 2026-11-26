@@ -282,8 +282,8 @@ fn row_pages_sorting_complete_csv_and_formula_protection_are_consistent() {
     let store = Storage::new(dir.path().into()).unwrap();
     let mut base = Vec::new();
     let mut current = Vec::new();
-    for i in 0..27 {
-        let name = if i == 26 {
+    for i in 0..103 {
+        let name = if i == 102 {
             "=SUM(A1)".into()
         } else {
             format!("Work{i:02}")
@@ -302,12 +302,12 @@ fn row_pages_sorting_complete_csv_and_formula_protection_are_consistent() {
     let mut q = request(revision);
     q.sort = "delta".into();
     let first = store.reference_changes(&q).unwrap();
-    assert_eq!(first.rows.len(), 12);
-    assert_eq!(first.total, 27);
+    assert_eq!(first.rows.len(), 50);
+    assert_eq!(first.total, 103);
     assert_eq!(first.rows[0].name, "=SUM(A1)");
     q.page = 1;
     let second = store.reference_changes(&q).unwrap();
-    assert_eq!(second.rows.len(), 12);
+    assert_eq!(second.rows.len(), 50);
     assert!(first
         .rows
         .iter()
@@ -318,12 +318,12 @@ fn row_pages_sorting_complete_csv_and_formula_protection_are_consistent() {
     store.reference_changes_csv(&q, &path).unwrap();
     let csv = fs::read_to_string(&path).unwrap();
     assert!(csv.starts_with('\u{feff}'));
-    assert_eq!(csv.lines().skip_while(|line|!line.starts_with("\"Работа\";")).skip(1).count(), 27);
+    assert_eq!(csv.lines().skip_while(|line|!line.starts_with("\"Работа\";")).skip(1).count(), 103);
     assert!(csv.contains("'=SUM(A1)"));
     assert!(store.reference_changes_csv(&q, &path).is_err());
     q.metric = "count".into();
     q.sort = "percent".into();
-    assert_eq!(store.reference_changes(&q).unwrap().total, 27);
+    assert_eq!(store.reference_changes(&q).unwrap().total, 103);
 }
 #[test]
 fn missing_periods_are_not_zero_filled_and_negative_baselines_keep_percent() {
