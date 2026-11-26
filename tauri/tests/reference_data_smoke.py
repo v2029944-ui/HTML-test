@@ -407,7 +407,7 @@ def check_reference_data(page, output):
         periods = page.locator(screen + ' .report-range span').all_text_contents()
         source = '#s1 .data-card table tbody tr' if screen == '#s1' else '#s2 .changes-table tbody tr'
         expected_rows = page.locator(source).evaluate_all(
-            '(rows) => rows.map(row => [...row.cells].slice(0, row.closest("#s1") ? 4 : 6).map(cell => cell.textContent))')
+            '(rows) => rows.map(row => [...row.cells].slice(0, row.closest("#s1") ? row.cells.length : 6).map(cell => cell.textContent))')
         expected_values = page.locator('#s1 .metric-value').all_text_contents() if screen == '#s1' else None
         positions = re.search(r'Позиции\s+(\d+)[–—-](\d+)\s+из\s+(\d+)', page.locator('#s2 .pager-footer').inner_text()) if screen == '#s2' else None
         first_row, total_rows = (int(positions[1]) - 1, int(positions[3])) if positions else (0, len(expected_rows))
