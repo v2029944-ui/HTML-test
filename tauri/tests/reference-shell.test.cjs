@@ -54,7 +54,7 @@ test('desktop compact scales match the picker and keep existing preference value
 
 test('reference table row hover uses readable light-palette colors without changing dark styling', () => {
   const css = fs.readFileSync(path.join(__dirname, '../reference-shell.css'), 'utf8');
-  assert.ok(css.includes('#refRoot[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) .table-viewport tbody tr:hover {background:var(--hover)}'));
+  assert.ok(css.includes(':scope[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) .table-viewport tbody tr:hover {background:var(--hover)}'));
   const luminance = hex => {
     const channels = hex.slice(1).match(/../g).map(channel => {
       const value = parseInt(channel, 16) / 255;
