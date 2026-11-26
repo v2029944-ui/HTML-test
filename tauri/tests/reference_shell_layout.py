@@ -188,3 +188,55 @@ def check_filter_placement(page, record):
         page.evaluate('window.scrollTo(0,0)')
         if fold.evaluate('el => el.open') != previous_open:
             trigger.click()
+
+
+def check_sticky_table_header(page):
+    """Verify that a whole two-row heading follows the scroll of its table."""
+    result = page.evaluate("""() => {
+      const host = document.createElement('div');
+      host.className = 'sql-page-content';
+      host.dataset.pageAxis = 'y';
+      host.style.width = '340px';
+      const section = document.createElement('section');
+      section.className = 'metric-table';
+      const viewport = document.createElement('div');
+      viewport.className = 'table-scroll';
+      const table = document.createElement('table');
+      table.className = 'table';
+      table.style.minWidth = '700px';
+      const head = table.createTHead();
+      const top = head.insertRow(), lower = head.insertRow();
+      for (const [row, text, span] of [[top,'Работа',2],[top,'Показатель',1],[lower,'Объём',1]]) {
+        const cell = document.createElement('th');
+        cell.rowSpan = span;
+        cell.textContent = text;
+        row.append(cell);
+      }
+      const body = table.createTBody();
+      for (let i = 0; i < 50; i++) {
+        const row = body.insertRow();
+        row.insertCell().textContent = 'Работа ' + (i + 1);
+        row.insertCell().textContent = String(i);
+      }
+      viewport.append(table);
+      section.append(viewport);
+      host.append(section);
+      document.body.append(host);
+      try {
+        const initialLeft = top.cells[1].getBoundingClientRect().left;
+        const initialBodyTop = body.rows[0].getBoundingClientRect().top;
+        viewport.scrollTop = 100;
+        viewport.scrollLeft = 70;
+        const rect = head.getBoundingClientRect(), lowerRect = lower.getBoundingClientRect();
+        return {
+          vertical: Math.abs(rect.top - viewport.getBoundingClientRect().top) < 2 &&
+            initialBodyTop - body.rows[0].getBoundingClientRect().top > 90,
+          horizontal: initialLeft - top.cells[1].getBoundingClientRect().left > 60 &&
+            Math.abs(top.cells[1].getBoundingClientRect().left - body.rows[0].cells[1].getBoundingClientRect().left) < 2,
+          twoRows: lowerRect.top > rect.top && Math.abs(lowerRect.bottom - rect.bottom) < 2,
+        };
+      } finally {
+        host.remove();
+      }
+    }""")
+    assert result == {'vertical': True, 'horizontal': True, 'twoRows': True}, result

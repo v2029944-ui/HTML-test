@@ -10,7 +10,7 @@ from pathlib import Path
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect
 
 from reference_control_layout import check_control_layout
-from reference_shell_layout import check_filter_placement, check_shell_layout
+from reference_shell_layout import check_filter_placement, check_shell_layout, check_sticky_table_header
 from reference_table_help import check_table_help
 from reference_data_smoke import choose_calendar_date, select_filter_period
 from shared_period_controls import common_period
@@ -774,6 +774,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                         page.set_viewport_size({'width':width,'height':749})
                         page.screenshot(animations='disabled')
                         check_shell_layout(page, headings=True)
+                        check_sticky_table_header(page)
                         record(f'17-shell-{theme}-{width}',page.locator('#reportShell'))
                         fold.locator('summary').click()
                         page.screenshot(animations='disabled')
