@@ -11,7 +11,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const TRANSFER_PAGE: usize = 25;
+const TRANSFER_PAGE: usize = 50;
+const TRANSFER_BATCH_LIMIT: usize = 25;
 const MAX_REPORT_BYTES: usize = 16 * 1024 * 1024;
 // Batch JSON is decoded and indexed in one transaction; cap cumulative input.
 const MAX_BATCH_BYTES: usize = 64 * 1024 * 1024;
@@ -247,7 +248,7 @@ impl Storage {
         if self.db_path() == source_store.db_path() {
             return Err("Базы источника и назначения должны различаться.".into());
         }
-        if selected_ids.is_empty() || selected_ids.len() > TRANSFER_PAGE {
+        if selected_ids.is_empty() || selected_ids.len() > TRANSFER_BATCH_LIMIT {
             return Err("Выберите от 1 до 25 отчётов за один перенос.".into());
         }
         let ids: HashSet<&str> = selected_ids.iter().map(String::as_str).collect();

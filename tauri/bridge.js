@@ -184,6 +184,7 @@
     unifiedWorkAssign:(revision,work,group)=>tracked('unified_work_assign',{revision,work,group},'saves'),
     unifiedGroupsPreview:(revision,source)=>tracked('unified_groups_preview',{revision,source},'reads'),
     unifiedGroupsImport:(revision,source,hash,confirmed)=>tracked('unified_groups_import',{revision,source,hash,confirmed},'saves'),
+    unifiedGroupsDelete:(revision,handles,confirmedCount,backup)=>tracked('unified_groups_delete',{revision,handles,confirmedCount,backup,confirmed:true},'saves'),
     unifiedGroupsExport:(revision,destination)=>tracked('unified_groups_export',{revision,destination},'saves'),
     unifiedCatalogPreview:(revision,source)=>tracked('unified_catalog_preview',{revision,source},'reads'),
     unifiedCatalogApply:(revision,source,hash,confirmed)=>tracked('unified_catalog_apply',{revision,source,hash,confirmed},'saves'),

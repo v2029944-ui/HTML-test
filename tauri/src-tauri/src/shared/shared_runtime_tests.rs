@@ -1001,6 +1001,36 @@ fn personal_transfer_blocks_an_unknown_organization_without_changing_team_data()
 }
 
 #[test]
+fn personal_transfer_reads_fifty_reports_per_page_and_keeps_the_write_cap() {
+    let (_root, runtime) = runtime_fixture();
+    let personal = runtime.status().unwrap();
+    let start = chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+    let reports: Vec<_> = (0..103).map(|index| {
+        let day = (start + chrono::Duration::days(index)).to_string();
+        json!({"id":format!("report-{index}"),"type":"day","start":day,"end":day,"rows":[]})
+    }).collect();
+    runtime.execute(Some(&personal.workspace_token), Access::Write, |store| store.save(json!({
+        "reports": reports,"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}
+    }))).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let team = connect(&runtime, folder.path());
+
+    let first = runtime.preview_personal_transfer(Some(&team.workspace_token), 0).unwrap();
+    assert_eq!((first.page_size, first.total_reports, first.rows.len(), first.has_next), (50, 103, 50, true));
+    let last = runtime.preview_personal_transfer(Some(&team.workspace_token), 2).unwrap();
+    assert_eq!(last.rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["report-100", "report-101", "report-102"]);
+    assert!(!last.has_next);
+    let empty = runtime.preview_personal_transfer(Some(&team.workspace_token), 3).unwrap();
+    assert!(empty.rows.is_empty());
+    assert!(!empty.has_next);
+
+    let too_many = first.rows.iter().take(26).map(|row| row.id.clone()).collect();
+    let result = runtime.apply_personal_transfer(Some(&team.workspace_token), first.source_revision, first.target_revision, too_many);
+    assert!(result.unwrap_err().contains("от 1 до 25"));
+    assert!(read(&runtime, &team.workspace_token)["reports"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn personal_wide_source_anchor_can_be_moved_before_linked_followup_batch() {
     let (_root,runtime)=runtime_fixture();
     let personal=runtime.status().unwrap();
@@ -1038,4 +1068,43 @@ fn personal_wide_source_anchor_can_be_moved_before_linked_followup_batch() {
         [],|r|r.get(0)
     ).unwrap();
     assert_eq!(refs,1);
+}
+
+#[test]
+fn bulk_group_removal_publishes_once_for_both_clients_without_changing_reports() {
+    use super::super::ManagementJob;
+
+    let (writer_root, writer) = runtime_fixture();
+    let (_reader_root, reader) = runtime_fixture();
+    let share = tempfile::tempdir().unwrap();
+    let team = connect(&writer, share.path());
+    let initial = writer.execute(Some(&team.workspace_token), Access::Write, |store| {
+        let mut payload = data("retained");
+        payload["settings"]["groups"] = json!([
+            {"id":"first","name":"First","works":["one"]},
+            {"id":"second","name":"Second","works":["two"]}
+        ]);
+        store.save(payload.clone())?;
+        Ok(payload)
+    }).unwrap();
+    let second = connect(&reader, share.path());
+    let generation = second.generation.unwrap();
+    let backup = writer_root.path().join("before-groups.sqlite3");
+    let revision = writer.execute(Some(&team.workspace_token), Access::Write, |store| {
+        let revision = store.revision()?;
+        store.management_index_settings(revision, &ManagementJob::new())?;
+        let receipt = store.unified_delete_groups(revision, None, 2, Some(&backup), true)?;
+        Ok(receipt.revision)
+    }).unwrap();
+    let second = reader.sync().unwrap();
+    assert_eq!(second.generation, Some(generation + 1));
+    let mut expected = initial;
+    expected["settings"]["groups"] = json!([]);
+    assert_eq!(read(&reader, &second.workspace_token), expected);
+    assert_eq!(read(&writer, &team.workspace_token), expected);
+    assert!(backup.is_file());
+    assert!(writer.execute(Some(&team.workspace_token), Access::Write, |store| {
+        store.unified_delete_groups(revision - 1, None, 2, Some(&backup), true)
+    }).is_err());
+    assert_eq!(reader.sync().unwrap().generation, second.generation);
 }

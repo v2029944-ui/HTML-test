@@ -751,8 +751,8 @@ test('two daily rule saves update their row and use consecutive checked receipts
  ui.UI.revision=revision;
  await ui.startFolder();
  const rows=ui.nodes.sourceFolderRows;
- await rows.scrollWindow.go(1);
- assert.match(text(rows),/Правило не задано/);
+ await rows.scrollWindow.go(2);
+ assert.match(text(rows),/book\.xlsx.*Правило не задано/);
  await ui.nodes.excelFile.click();await changeImportField(ui,'importFormat','daily-wide');
  for(const year of [2024,2025]){
   await changeImportField(ui,'dailyYear',String(year));

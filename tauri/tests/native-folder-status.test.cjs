@@ -51,7 +51,7 @@ function mount(options={}){
 
 // Distribution coverage moved to unified-entry.test.cjs (sole canonical entry).
 
-test('metadata-only list bounds each page to 100 names and escapes untrusted data',async()=>{
+test('metadata-only list bounds each page to 50 names and escapes untrusted data',async()=>{
   const files=Array.from({length:140},(_,i)=>({
     name:i===0?'<img src=x onerror=alert(1)>.xlsx':'report-'+i+'.xlsx',
     nativeSignature:'test-sig-'+i,
@@ -62,7 +62,7 @@ test('metadata-only list bounds each page to 100 names and escapes untrusted dat
   await panel.window.nativeFolderReady;
   const {nodes,calls}=panel;
   assert.deepEqual(calls,['list']);
-  assert.equal(nodes.sourceFolderRows.children.length,100);
+  assert.equal(nodes.sourceFolderRows.children.length,50);
   assert.equal(nodes.sourceFolderRows.children[0].children[0].textContent,files[0].name);
   assert.equal(nodes.sourceFolderRows.children[0].children[0].children.length,0);
   assert.equal(nodes.sourceFolderRows.children[1].children[2].textContent,'Есть правило');
@@ -270,7 +270,7 @@ test('rule save waits for asynchronous consent, writes once after acceptance, an
 test('one folder table pages beyond 100 and checks the actual 101st path without writing',async()=>{
  for(const folder of ['C:/Excel',String.raw`\\?\C:\Excel`]){
  const files=Array.from({length:101},(_,i)=>({name:'report-'+i+'.xlsx',nativeSignature:'sig-'+i,size:1,tooLarge:false}));const x=mount({listing:{folder,revision:12,files,rules:{}}});await x.window.nativeFolderReady;
- await x.nodes.sourceFolderRows.scrollWindow.go(1);assert.equal(x.nodes.sourceFolderRows.children.length,1);const row=x.nodes.sourceFolderRows.children[0];assert.equal(row.children[0].textContent,'report-100.xlsx');await row.children[3].children[0].events.click();assert.equal(x.calls.at(-1).source,folder+(folder.includes('\\')?'\\':'/')+'report-100.xlsx');assert.equal(x.calls.some(c=>c.kind==='rule'),false);
+ await x.nodes.sourceFolderRows.scrollWindow.go(2);assert.equal(x.nodes.sourceFolderRows.children.length,1);const row=x.nodes.sourceFolderRows.children[0];assert.equal(row.children[0].textContent,'report-100.xlsx');await row.children[3].children[0].events.click();assert.equal(x.calls.at(-1).source,folder+(folder.includes('\\')?'\\':'/')+'report-100.xlsx');assert.equal(x.calls.some(c=>c.kind==='rule'),false);
  }
 });
 
@@ -284,9 +284,9 @@ test('rescanning a file preserves its page chooser while refreshing row metadata
  await x.window.unifiedReports.refreshFolder();
  assert.equal(rows.scrollWindow,picker);
  assert.equal(rows.children[0].children[1].textContent,'2 КБ');
- await picker.go(1);
+ await picker.go(2);
  assert.equal(rows.children[0].children[0].textContent,'100.xlsx');
  files.pop();await x.window.unifiedReports.refreshFolder();
- assert.equal(rows.scrollWindow.index,0);
+ assert.equal(rows.scrollWindow.index,1);
  assert.equal(rows.scrollWindow.total,100);
 });

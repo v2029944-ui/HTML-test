@@ -3,7 +3,8 @@
   'use strict';
   const raw = (name, args = {}) => window.__TAURI__.core.invoke(name, args);
   let state = null, bootstrap = null, ready = false, timer = null, busy = false;
-  let transfer = null;
+  let transfer = null, renderedTransferPage = null;
+  const transferBatchLimit = 25;
   const selectedTransferIds = new Set();
   const statusMessage = error => window.analizUserError ? window.analizUserError(error) : error?.message || String(error);
 
@@ -249,41 +250,49 @@
     previewButton.disabled=!available;
     previewButton.textContent=toPersonal?'Проверить общие отчёты':'Проверить личные отчёты';
     for(const id of transferFilterIds)if(node(id))node(id).disabled=!available;
-    const next=node('personalTransferNext'),previous=node('personalTransferPrev');
     const applyButton=node('personalTransferApply'),allButton=node('personalTransferSelectAll');
     const pager=node('personalTransferPager'),summary=node('personalTransferSummary');
+    const list=node('personalTransferList');
     const page=transfer?.preview;
     const hasPage=Boolean(page);
     allButton.hidden=!hasPage;
     applyButton.hidden=!hasPage;
     pager.hidden=!hasPage||page.totalReports<=page.pageSize;
+    pager.inert=!available;
+    if (renderedTransferPage!==page) {
+      renderedTransferPage=page;
+      if (pager.hidden) window.sqlRowScroll.reset(list);
+      else window.sqlRowScroll.attach(list,{
+        index:page.pageIndex,size:page.pageSize,count:page.rows.length,total:page.totalReports,
+        controlsOnly:true,footer:pager,label:'Страницы отчётов для переноса',go:previewTransfer
+      });
+    }
     if(!hasPage){
       applyButton.disabled=true;
       summary.textContent='';
-      node('personalTransferList').replaceChildren?.();
+      list.replaceChildren?.();
       return;
     }
-    previous.disabled=!available||page.pageIndex===0;
-    next.disabled=!available||!page.hasNext;
-    node('personalTransferPage').textContent='Страница '+(page.pageIndex+1);
     const availableRows=page.rows.filter(row=>row.status==='ready');
-    allButton.textContent=transfer.period&&page.totalReports<=page.pageSize?'Выбрать новые за период':'Выбрать новые на странице';
+    const remaining=transferBatchLimit-selectedTransferIds.size;
+    const newRows=availableRows.filter(row=>!selectedTransferIds.has(row.id)).length;
+    allButton.textContent=remaining>0&&newRows>remaining?'Выбрать новых на странице: '+remaining:
+      transfer.period&&page.totalReports<=page.pageSize?'Выбрать новые за период':'Выбрать новые на странице';
     summary.textContent=(toPersonal?'Общая база: ':'Личная база: ')+page.totalReports+' отчётов · новых на этой странице: '+
-      availableRows.length+' · выбрано: '+selectedTransferIds.size+' из 25 за один перенос.'+
+      availableRows.length+' · выбрано: '+selectedTransferIds.size+' из '+transferBatchLimit+' за один перенос.'+
       (page.organizationWarning?' '+page.organizationWarning:'');
     applyButton.disabled=!available||!selectedTransferIds.size;
-    allButton.disabled=!available||!availableRows.length||selectedTransferIds.size>=25;
-    const list=node('personalTransferList');
+    allButton.disabled=!available||!newRows||remaining===0;
     if(!list?.replaceChildren||typeof document.createElement!=='function')return;
     list.replaceChildren();
     for(const entry of page.rows){
       const label=document.createElement('label');
       label.className='personal-transfer-row'+(entry.status!=='ready'?' personal-transfer-conflict':'');
       const cb=document.createElement('input');
-      cb.type='checkbox';cb.disabled=!available||entry.status!=='ready'||(!selectedTransferIds.has(entry.id)&&selectedTransferIds.size>=25);
+      cb.type='checkbox';cb.disabled=!available||entry.status!=='ready'||(!selectedTransferIds.has(entry.id)&&remaining===0);
       cb.checked=selectedTransferIds.has(entry.id);
       cb.addEventListener('change',()=>{
-        if(cb.checked){if(selectedTransferIds.size>=25){cb.checked=false;return;}selectedTransferIds.add(entry.id);}
+        if(cb.checked){if(selectedTransferIds.size>=transferBatchLimit){cb.checked=false;return;}selectedTransferIds.add(entry.id);}
         else selectedTransferIds.delete(entry.id);
         renderTransfer();
       });
@@ -310,11 +319,18 @@
     }
     const period=from?{from,to}:null;
     busy=true;render();transferMessage('');
-    try{
-      const preview=await raw('shared_workspace_transfer_preview',{workspaceToken:token,page:pageIndex,direction,period});
+    const readPage=async page=>{
+      const preview=await raw('shared_workspace_transfer_preview',{workspaceToken:token,page,direction,period});
       if(token!==state?.workspace_token)throw Error('Общая база изменилась. Повторите проверку.');
-      if(!preview||!Array.isArray(preview.rows)||!Number.isSafeInteger(preview.sourceRevision)||
+      if(!preview||preview.pageIndex!==page||preview.pageSize!==50||
+         !Number.isSafeInteger(preview.totalReports)||preview.totalReports<0||
+         !Array.isArray(preview.rows)||preview.rows.length>preview.pageSize||!Number.isSafeInteger(preview.sourceRevision)||
          !Number.isSafeInteger(preview.targetRevision))throw Error('Список отчётов недостоверен.');
+      return preview;
+    };
+    try{
+      let preview=await readPage(pageIndex);
+      if(pageIndex>0&&pageIndex*preview.pageSize>=preview.totalReports)preview=await readPage(0);
       const prior=transfer?.preview;
       if(resetSelection||!prior||transfer.direction!==direction||transfer.period?.from!==period?.from||transfer.period?.to!==period?.to||
          prior.sourceRevision!==preview.sourceRevision||prior.targetRevision!==preview.targetRevision)selectedTransferIds.clear();
@@ -332,7 +348,7 @@
     const target=toPersonal?'личную':'общую',backupTarget=toPersonal?'личной':'общей',source=toPersonal?'Общая':'Личная';
     if(token!==state.workspace_token){transferMessage('Общая база изменилась. Повторите проверку.');return;}
     const ids=[...selectedTransferIds];
-    if(ids.length>25){transferMessage('За один перенос можно выбрать не более 25 отчётов.');return;}
+    if(ids.length>transferBatchLimit){transferMessage('За один перенос можно выбрать не более '+transferBatchLimit+' отчётов.');return;}
     // Entries selected on earlier pages were marked ready; Rust rechecks
     // every ID and both revisions before writing.
     busy=true;render();transferMessage('');
@@ -379,10 +395,8 @@
     for(const id of transferFilterIds)node(id)?.addEventListener('change',()=>{
       clearTransferReview();transferMessage('');renderTransfer();
     });
-    node('personalTransferPrev')?.addEventListener('click',()=>previewTransfer(Math.max(0,(transfer?.preview.pageIndex||0)-1)));
-    node('personalTransferNext')?.addEventListener('click',()=>previewTransfer((transfer?.preview.pageIndex||0)+1));
     node('personalTransferSelectAll')?.addEventListener('click',()=>{
-      for(const row of transfer?.preview.rows||[])if(row.status==='ready'&&selectedTransferIds.size<25)selectedTransferIds.add(row.id);
+      for(const row of transfer?.preview.rows||[])if(row.status==='ready'&&selectedTransferIds.size<transferBatchLimit)selectedTransferIds.add(row.id);
       renderTransfer();
     });
     node('personalTransferApply')?.addEventListener('click',applyTransfer);

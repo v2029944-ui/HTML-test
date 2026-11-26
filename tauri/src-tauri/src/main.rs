@@ -1869,6 +1869,7 @@ fn main() {
             unified_groups_preview,
             unified_groups_import,
             unified_groups_export,
+            unified_groups_delete,
             unified_catalog_preview,
             unified_catalog_apply,
             updater_configured,
