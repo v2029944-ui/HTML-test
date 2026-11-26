@@ -534,7 +534,7 @@ fn comparable_sample_and_totals_match_overview_changes_comparison_and_exports() 
         let summary=dir.path().join("summary.csv");let change_csv=dir.path().join("changes.csv");store.reference_summary_csv(&q,&summary).unwrap();store.reference_changes_csv(&q,&change_csv).unwrap();
         for path in [summary,change_csv] {
             let csv=fs::read_to_string(path).unwrap();
-            assert!(csv.contains("\"Сопоставимые подразделения\";\"3\";\"4\";\"A, B, Empty\""),"CSV must declare the exact common sample: {csv}");
+            assert!(csv.contains("\"Подразделения с полными отчётами\";\"3\";\"4\";\"A, B, Empty\""),"CSV must declare which divisions have full coverage: {csv}");
             let reason=if missing_base&&missing_current{"неполные базовый и анализируемый интервалы"}else if missing_base{"неполный базовый интервал"}else{"неполный анализируемый интервал"};
             assert!(csv.contains(&format!("\"Состав сравнения\";\"D\";\"{reason}\"")));
             let total_before = before + if zero_base { 0. } else { 90. };
@@ -554,7 +554,7 @@ fn disjoint_organizations_keep_aggregate_comparison_without_per_organization_del
     assert!(result.rows.iter().all(|row| row.delta.is_none() && row.before.is_some()!=row.after.is_some()));
     for (summary,file) in [(true,"summary.csv"),(false,"changes.csv")] {
         let path=dir.path().join(file);if summary{store.reference_summary_csv(&q,&path).unwrap();}else{store.reference_changes_csv(&q,&path).unwrap();}
-        let csv=fs::read_to_string(path).unwrap();assert!(csv.contains("\"Сопоставимые подразделения\";\"0\";\"4\";\"\""));assert!(csv.contains("\"Сумма\";\"30\";\"70\";\"40\";"));
+        let csv=fs::read_to_string(path).unwrap();assert!(csv.contains("\"Подразделения с полными отчётами\";\"0\";\"4\";\"\""));assert!(csv.contains("\"Сумма\";\"30\";\"70\";\"40\";"));
     }
 }
 

@@ -527,7 +527,7 @@ async function patterns(mode,index=0,paging=false){
    if(warnings.length)$(name+'Coverage').append(UI.el('p',warnings.join(' '),'warn small'));
    if(usualMetrics.has('amount')||usualMetrics.has('average'))$(name+'Coverage').append(UI.el('p','Пустые суммы могут сделать отклонение по сумме или средней недоступным. При нулевой базе процент недоступен.','muted small'));
   }else if(normal){
-   $(name+'Coverage').append(UI.el('p','Для частоты берутся целые календарные периоды внутри каждого диапазона, в которых есть хотя бы один отчёт по выбранным подразделениям.','muted small'));
+   $(name+'Coverage').append(UI.el('p','Для частоты учитываются календарные периоды, в которых есть отчёты выбранных подразделений в пределах соответствующего диапазона.','muted small'));
   }
   const root=$(name+'Results');if(!page.rows.length)root.append(UI.el('p','Нет услуг по выбранным фильтрам.','muted small'));
   if(mode==='usual')for(const metric of usualMetrics){const rows=page.rows.map(row=>{const m=row[metric];return [row.key?itemButton(row,{...s,from:page.baseline_from,to:s.to}):row.name,fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent),UI.el('span',usualLabels[m.status]||m.status,m.status==='high'?'numeric-rise':m.status==='low'?'numeric-fall':'')];});UI.table(root,metric,'Среднее: '+sampleCaption(page.baseline_from,page.baseline_to,s.displayType)+'. Анализ: '+sampleCaption(page.current_from,page.current_to,s.displayType),['Услуга / группа','Среднее раньше','Сейчас','Отклонение','Отклонение, %','Оценка'],rows,{
@@ -549,7 +549,7 @@ async function patterns(mode,index=0,paging=false){
     'Частота сейчас минус частота раньше, в процентных пунктах.',
     'Первый период с активностью в загруженной истории выбранных подразделений по конец анализируемого диапазона.',
     'Последний период с активностью в загруженной истории выбранных подразделений по конец анализируемого диапазона.',
-    'Число полных периодов без активности подряд к концу диапазона. Пропуск отчёта прерывает подсчёт.',
+    'Число периодов подряд без активности в доступных отчётах к концу диапазона. Период совсем без отчётов прерывает подсчёт.',
     'Признаки описывают частоту в загруженных отчётах. У одной работы может быть несколько признаков.'
    ],
    csvContext:fullExport(task,req,'regularity','count',{options:opts,window:windowSize})});}

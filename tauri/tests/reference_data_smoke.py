@@ -444,7 +444,7 @@ def check_reference_data(page, output):
             if screen == '#s2':
                 assert 'Строк: ' + str(total_rows) + ' ·' in frame['context'], frame
             assert len(frame['comparison']) == (3 if comparable or scenario == 'partial' else 0), frame
-            assert f'Сопоставимые подразделения: {comparable} из 4' in frame['context'], frame
+            assert f'Подразделения с полными отчётами: {comparable} из 4' in frame['context'], frame
             assert 'Область работ: Все работы' in frame['context'], frame
             if expected_values is not None:
                 assert [row[1] for row in frame['observed']] == expected_values, frame
@@ -497,7 +497,7 @@ def check_reference_data(page, output):
             elif coverage == 'partial':
                 assert all(row[0] == 'Альфа' and [_number(n) for n in row[2:6]] == [5, 5, 0, 0]
                            for row in data), rows
-        sample = next(row for row in rows if row and row[0] == 'Сопоставимые подразделения')
+        sample = next(row for row in rows if row and row[0] == 'Подразделения с полными отчётами')
         assert sample[1:3] == [('4' if has_comparison else '0'), '4'], rows
         assert sample[3] == (', '.join(organizations) if has_comparison else ''), rows
         if coverage == 'partial':

@@ -244,10 +244,10 @@ fn comparison_csv_context(
         .query_map([&s.organizations],|row|Ok((row.get::<_,String>(0)?,row.get::<_,bool>(1)?,row.get::<_,bool>(2)?))).map_err(err)?
         .collect::<Result<Vec<_>,_>>().map_err(err)?;
     let included:Vec<_>=members.iter().filter(|(_,before,after)|*before&&*after).map(|(org,_,_)|org.as_str()).collect();
-    csv_record(writer,&[Text("Сопоставимые подразделения"),Number(Some(included.len() as f64)),Number(Some(members.len() as f64)),Text(&included.join(", "))])?;
+    csv_record(writer,&[Text("Подразделения с полными отчётами"),Number(Some(included.len() as f64)),Number(Some(members.len() as f64)),Text(&included.join(", "))])?;
     csv_record(writer,&[Text("Выборка сравнения"),Text("Сводные итоги учитывают доступные отчёты выбранных подразделений. Пропуск не означает ноль.")])?;
     for (org,before,after) in &members {
-        let reason=match (*before,*after) {(true,true)=>"включено",(false,false)=>"неполные базовый и анализируемый интервалы",(false,true)=>"неполный базовый интервал",(true,false)=>"неполный анализируемый интервал"};
+        let reason=match (*before,*after) {(true,true)=>"полные отчёты за оба интервала",(false,false)=>"неполные базовый и анализируемый интервалы",(false,true)=>"неполный базовый интервал",(true,false)=>"неполный анализируемый интервал"};
         csv_record(writer,&[Text("Состав сравнения"),Text(org),Text(reason)])?;
     }
     let observed = |slot| -> Result<(AnalysisTotals, Option<f64>), String> {

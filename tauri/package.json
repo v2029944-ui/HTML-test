@@ -1,6 +1,6 @@
 {
   "name": "analiz-rabot-tauri",
-  "version": "1.12.7",
+  "version": "1.12.8",
   "private": true,
   "scripts": {
     "prepare:frontend": "node prepare.cjs",

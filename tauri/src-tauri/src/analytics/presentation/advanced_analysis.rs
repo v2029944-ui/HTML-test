@@ -142,35 +142,6 @@ impl Calendar {
         Ok(())
     }
 
-    /// Keep full calendar buckets inside an exact baseline. Edge dates
-    /// outside those buckets must not contribute even when reports exist.
-    fn whole_buckets(&self, from: NaiveDate, to: NaiveDate) -> Result<Option<(NaiveDate, NaiveDate)>, String> {
-        let start = |d: NaiveDate| match self.kind.as_str() {
-            "week" => d - Duration::days(i64::from(d.weekday().num_days_from_monday())),
-            "month" => d.with_day(1).expect("Every month has a first day"),
-            "year" => d.with_ordinal(1).expect("Every year has a first day"),
-            _ => d,
-        };
-        let ends_at_boundary = match self.kind.as_str() {
-            "week" => to.weekday() == chrono::Weekday::Sun,
-            "month" => to.succ_opt().is_some_and(|d| d.day() == 1),
-            "year" => to.month() == 12 && to.day() == 31,
-            _ => true,
-        };
-        let mut first = start(from);
-        let mut last = start(to);
-        if first == last && (from != first || !ends_at_boundary) {
-            return Ok(None);
-        }
-        if from != first {
-            first = step(&self.kind, first, 1)?;
-        }
-        if !ends_at_boundary {
-            last = step(&self.kind, last, -1)?;
-        }
-        Ok((first <= last).then_some((first, last)))
-    }
-
     fn facts(
         &self,
         c: &Connection,
@@ -510,23 +481,18 @@ fn regularity_row(
     from: &str,
     to: &str,
     used: i64,
-    current_complete: bool,
+    can_classify_absence: bool,
     previous: i64,
     gap: i64,
+    trailing_periods: Option<i64>,
 ) -> Result<Value, String> {
     let (first,last,hits,old_hits,last_index):(Option<String>,Option<String>,i64,i64,Option<i64>)=tx.query_row(
-        "SELECT min(f.label) FILTER(WHERE f.label<=?2),max(f.label) FILTER(WHERE f.label<=?2),count(CASE WHEN d.slot=1 AND d.observed THEN 1 END),
-            count(CASE WHEN d.slot=0 AND d.observed THEN 1 END),min(t.distance)
-         FROM adv_combined f LEFT JOIN adv_dates d ON d.label=f.label LEFT JOIN adv_tail t ON t.label=f.label
-         WHERE f.key=?1 AND f.active AND (f.label<=?2 OR d.slot=0)",params![key,to],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(err)?;
-    let trailing = if last.is_some() {
-        Some(match last_index {
-            Some(n) => n,
-            None => count_sql(tx, "SELECT count(*) FROM adv_tail")?,
-        })
-    } else {
-        None
-    };
+        "SELECT min(f.label),max(f.label),count(CASE WHEN d.observed THEN 1 END),
+            (SELECT count(*) FROM adv_baseline_active WHERE key=?1),min(t.distance)
+         FROM adv_combined f LEFT JOIN adv_dates d ON d.label=f.label AND d.slot=1
+         LEFT JOIN adv_tail t ON t.label=f.label WHERE f.key=?1 AND f.active AND f.label<=?2",
+        params![key,to],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(err)?;
+    let trailing = last.as_ref().and(trailing_periods).map(|n| last_index.unwrap_or(n));
     let frequency = (used > 0).then(|| hits as f64 / used as f64 * 100.);
     let old_frequency = (previous > 0).then(|| old_hits as f64 / previous as f64 * 100.);
     let mut statuses = Vec::new();
@@ -544,7 +510,7 @@ fn regularity_row(
     {
         statuses.push("rarer");
     }
-    if hits == 0 && current_complete && old_hits > 0 {
+    if hits == 0 && can_classify_absence && old_hits > 0 {
         statuses.push("disappeared");
     }
     if hits > 0 && first.as_deref().is_some_and(|d| d >= from) {
@@ -558,7 +524,7 @@ fn regularity_row(
             "unknown"
         } else if hits > 0 {
             "occasional"
-        } else if !current_complete {
+        } else if !can_classify_absence {
             "uncertain"
         } else {
             "absent"
@@ -638,8 +604,7 @@ impl Analytics<'_> {
             LEFT JOIN analysis_group_names g ON g.name=f.item WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM adv_keys k WHERE k.name=f.item)",[&s.names]).map_err(err)?;
         let usual = mode == "usual";
         let available = options.is_some();
-        // Unified calculations accept any valid report in a period. Full
-        // coverage still determines warnings and confirmed inactive streaks.
+        // Unified calculations accept any valid report in a period.
         let coverage_table = if available { "adv_reports" } else { "adv_complete" };
         let mut insert_date = tx.prepare(&format!("INSERT INTO adv_dates VALUES(?1,?2,?3,
             EXISTS(SELECT 1 FROM {coverage_table} WHERE label=?1))")).map_err(err)?;
@@ -652,26 +617,26 @@ impl Analytics<'_> {
             Ok(())
         })?;
         let sample_length = if range_window { count } else { 1 };
-        let (baseline_from, baseline_to, baseline_buckets) = if let Some(base) = options.and_then(|o| o.baseline.as_ref()) {
+        let exact_baseline = options.and_then(|o| o.baseline.as_ref());
+        let clipped_baseline = exact_baseline.is_some() && matches!(grouping, Some("week" | "month" | "year"));
+        let (baseline_from, baseline_to) = if let Some(base) = exact_baseline {
             let selected = ChangeQuery { from: base.from.clone(), to: base.to.clone(), ..q.clone() };
             let baseline = Calendar::new(s, &selected, None)?;
-            let bounds = baseline.current_bounds(false);
-            let buckets = if grouping.is_some() {
-                calendar.whole_buckets(bounds.0, bounds.1)?
-            } else {
-                Some(bounds)
-            };
-            (bounds.0, bounds.1, buckets)
+            baseline.current_bounds(false)
         } else {
             let base_count = if usual { window * sample_length } else { count };
-            let bounds = (step(&calendar.kind, first, -base_count)?, step(&calendar.kind, first, -1)?);
-            (bounds.0, bounds.1, Some(bounds))
+            (step(&calendar.kind, first, -base_count)?, step(&calendar.kind, first, -1)?)
         };
-        if let Some((mut day, last)) = baseline_buckets {
+        if clipped_baseline {
+            tx.execute("INSERT INTO adv_dates SELECT label,0,row_number() OVER (ORDER BY label),1
+                FROM (SELECT DISTINCT label FROM adv_reports WHERE start BETWEEN ?1 AND ?2)",
+                params![baseline_from.to_string(), baseline_to.to_string()]).map_err(err)?;
+        } else {
+            let mut day = baseline_from;
             let mut index = 0;
             loop {
                 insert_date.execute(params![day.to_string(), 0, index / sample_length]).map_err(err)?;
-                if day == last { break; }
+                if day == baseline_to { break; }
                 day = step(&calendar.kind, day, 1)?;
                 index += 1;
             }
@@ -689,26 +654,39 @@ impl Analytics<'_> {
             "SELECT EXISTS(SELECT 1 FROM adv_dates JOIN adv_facts USING(label) WHERE slot=1 AND amount IS NULL)",
             [], |r| r.get::<_, bool>(0),
         ).map_err(err)?;
+        let mut trailing_periods = None;
         if usual {
             tx.execute_batch("INSERT INTO adv_keys VALUES('','Итого по выбранным работам','total');
                 INSERT INTO adv_combined SELECT '',label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),max(active) FROM adv_combined GROUP BY label;").map_err(err)?;
         } else {
+            tx.execute_batch("CREATE TEMP TABLE adv_baseline_active(key TEXT,label TEXT,PRIMARY KEY(key,label)) WITHOUT ROWID").map_err(err)?;
+            if clipped_baseline {
+                // Group activity only after clipping the reports to the exact
+                // baseline dates, so a boundary bucket never adds outside rows.
+                tx.execute("INSERT INTO adv_baseline_active
+                    SELECT DISTINCT k.key,v.label FROM adv_reports v
+                    JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
+                    LEFT JOIN analysis_groups g ON g.work=x.work
+                    JOIN adv_keys k ON k.key=coalesce(g.key,'work:'||x.work)
+                    WHERE v.start BETWEEN ?1 AND ?2 AND (x.count<>0 OR x.amount IS NULL OR x.amount<>0)",
+                    params![baseline_from.to_string(), baseline_to.to_string()]).map_err(err)?;
+            } else {
+                tx.execute_batch("INSERT INTO adv_baseline_active SELECT key,label FROM adv_combined
+                    JOIN adv_dates USING(label) WHERE slot=0 AND observed AND active").map_err(err)?;
+            }
             let mut d = last;
             let mut distance = 0;
-            while tx
-                .execute(
-                    "INSERT INTO adv_tail SELECT label,?2 FROM adv_complete WHERE label=?1",
-                    params![d.to_string(), distance],
-                )
-                .map_err(err)?
-                != 0
-            {
+            let mut add_period = tx.prepare(&format!(
+                "INSERT INTO adv_tail SELECT ?1,?2 WHERE EXISTS(SELECT 1 FROM {coverage_table} WHERE label=?1)"
+            )).map_err(err)?;
+            while add_period.execute(params![d.to_string(), distance]).map_err(err)? != 0 {
                 distance += 1;
                 let Ok(prev) = step(&calendar.kind, d, -1) else {
                     break;
                 };
                 d = prev;
             }
+            trailing_periods = (!available || distance > 0).then_some(distance);
         }
         // The filtered path streams one computed row into a temporary SQL
         // table at a time. Filtering/sorting/summary/LIMIT then share one view;
@@ -743,9 +721,10 @@ impl Analytics<'_> {
                     &first.to_string(),
                     &last.to_string(),
                     used,
-                    current_complete,
+                    current_complete || (available && used > 0),
                     previous,
                     i64::from(window),
+                    trailing_periods,
                 )?
             };
             row["key"] = if key.is_empty() {
