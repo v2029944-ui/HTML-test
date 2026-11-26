@@ -459,17 +459,28 @@ def verify_group_cleanup(writer, reader, root):
         snapshot = api(writer.page, 'nativeSettingsBootstrap')
         api(writer.page, 'unifiedGroupSave', snapshot['revision'], None,
             f'cleanup-{number}', f'Группа очистки {number}', [work['name']])
-    writer.page.wait_for_function('window.unifiedUI.snapshot?.groups === 2', timeout=120_000)
     snapshot = api(writer.page, 'nativeSettingsBootstrap')
     assert snapshot['groups'] == 2
-    previous_generation = writer.state()['generation']
+    prior = writer.page.evaluate("window.__TAURI__.core.invoke('shared_workspace_status')")
+    previous_generation = prior['generation']
+
+    def wait_groups(client, groups, generation, revision):
+        client.page.wait_for_function(
+            '''expected => window.sharedWorkspace.state?.generation === expected.generation
+                && window.unifiedUI.snapshot?.revision === expected.revision
+                && window.unifiedUI.snapshot?.groups === expected.groups''',
+            arg={'generation': generation, 'revision': revision, 'groups': groups}, timeout=120_000)
+
+    # Direct fixture IPC writes do not refresh the local renderer as UI actions do.
+    # The independent reader must observe both changes through automatic polling.
+    writer.page.evaluate('window.unifiedUI.refresh()')
+    wait_groups(writer, 2, previous_generation, snapshot['revision'])
+    wait_groups(reader, 2, previous_generation, snapshot['revision'])
     backup = root / 'before-group-cleanup.sqlite3'
-    api(writer.page, 'unifiedGroupsDelete', snapshot['revision'], None, 2, str(backup))
-    reader.page.wait_for_function(
-        '''generation => window.sharedWorkspace.state?.generation > generation
-            && window.unifiedUI.snapshot?.groups === 0''',
-        arg=previous_generation, timeout=120_000)
-    assert reader.state()['generation'] == previous_generation + 1
+    receipt = api(writer.page, 'unifiedGroupsDelete', snapshot['revision'], None, 2, str(backup))
+    writer.page.evaluate('window.unifiedUI.refresh()')
+    wait_groups(writer, 0, previous_generation + 1, receipt['revision'])
+    wait_groups(reader, 0, previous_generation + 1, receipt['revision'])
     for client in (writer, reader):
         snapshot = api(client.page, 'nativeSettingsBootstrap')
         assert snapshot['groups'] == 0
