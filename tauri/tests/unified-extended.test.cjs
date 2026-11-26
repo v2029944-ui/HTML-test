@@ -806,7 +806,7 @@ test('department comparison uses observed totals and shows one coverage notice',
  f.nodes.get('comparisonBaseOrg').value='A';
  await f.window.unifiedExtended.openComparison();
  const raw=(metric)=>Array.from(f.tables.find(t=>t.root==='comparisonTable'&&t.metric===metric).options.csvRows[0]).slice(1);
- assert.deepEqual(raw('amount'),[20,30,10,50,35,null,null,null,null,null]);
+ assert.deepEqual(raw('amount'),[20,30,10,50,35,15,75,null,null,null]);
  assert.deepEqual(raw('count'),[5,8,3,60,10,5,100,null,null,null]);
  assert.deepEqual(raw('average'),[4,3.75,-0.25,-6.25,null,null,null,null,null,null]);
  const coverage=f.nodes.get('comparisonCoverage');

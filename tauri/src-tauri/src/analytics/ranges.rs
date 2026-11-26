@@ -16,18 +16,14 @@ pub struct RangeSummary {
     /// Observed-only totals, never an estimate for missing reports; null if no reports.
     pub available_total: AnalysisTotals,
     pub amount_missing_rows: bool,
+    pub report_rows: i64,
+    pub priced_rows: i64,
     #[serde(skip)]
     pub(super) source_work: Option<String>,
     pub invalid_reports: i64,
     pub duplicate_issues: i64,
     pub overlap_issues: i64,
     pub import_warning_reports: i64,
-}
-
-impl RangeSummary {
-    pub(super) fn comparison_amount(&self) -> Option<f64> {
-        self.available_total.amount.filter(|_| !self.amount_missing_rows)
-    }
 }
 
 #[derive(Debug, Serialize)]
@@ -53,6 +49,8 @@ pub struct MissingPeriod {
 #[derive(Debug, Serialize)]
 pub struct OrganizationSummary {
     pub org: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub average_source_work: Option<String>,
     pub complete: bool,
     pub missing: i64,
     pub amount_missing_rows: bool,
@@ -107,7 +105,7 @@ pub(super) fn range_summary(c: &Connection, s: &AnalysisScope, slot: i64) -> Res
             |r| r.get(0),
         )
         .map_err(err)?;
-    let (values,count,amount,known_amount,paired_count,source_work):(i64,f64,Option<f64>,Option<f64>,Option<f64>,Option<String>)=c.query_row("SELECT COUNT(*),COALESCE(SUM(count),0),CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN SUM(paired_count) END,CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END FROM temp.an_combined WHERE slot=?1",[slot],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(err)?;
+    let (values,count,amount,known_amount,paired_count,source_work,report_rows,priced_rows):(i64,f64,Option<f64>,Option<f64>,Option<f64>,Option<String>,i64,i64)=c.query_row("SELECT COUNT(*),COALESCE(SUM(count),0),CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN SUM(paired_count) END,CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END,COALESCE(SUM(report_rows),0),COALESCE(SUM(priced_rows),0) FROM temp.an_combined WHERE slot=?1",[slot],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?))).map_err(err)?;
     let complete = periods > 0 && organizations > 0 && missing == 0;
     let available_reports: i64 = c.query_row(
         "SELECT COUNT(*) FROM temp.an_valid v
@@ -144,6 +142,8 @@ pub(super) fn range_summary(c: &Connection, s: &AnalysisScope, slot: i64) -> Res
         available_total: paired_observed_totals(count, amount, known_amount, paired_count, available_reports > 0)?,
         amount_missing_rows: amount.is_none(),
         source_work,
+        report_rows,
+        priced_rows,
         invalid_reports: count_sql(
             c,
             "SELECT COUNT(*) FROM temp.an_issues WHERE kind='invalid'",
@@ -342,7 +342,7 @@ impl Analytics<'_> {
         let tx = c.transaction().map_err(err)?;
         workspace(&tx, expected, s)?;
         fill_range(&tx, s, q, 1)?;
-        let mut stmt=tx.prepare("SELECT f.item,(SELECT COUNT(*) FROM temp.an_missing m WHERE slot=1 AND m.org=f.item),COALESCE(SUM(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END FROM analysis_filter_items f LEFT JOIN temp.an_values v ON v.slot=1 AND v.org=f.item WHERE f.id=?1 AND (?2 IS NULL OR f.item>?2) GROUP BY f.item ORDER BY f.item LIMIT ?3").map_err(err)?;
+        let mut stmt=tx.prepare("SELECT f.item,(SELECT COUNT(*) FROM temp.an_missing m WHERE slot=1 AND m.org=f.item),COALESCE(SUM(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END,CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN MIN(v.source_work) END FROM analysis_filter_items f LEFT JOIN temp.an_values v ON v.slot=1 AND v.org=f.item WHERE f.id=?1 AND (?2 IS NULL OR f.item>?2) GROUP BY f.item ORDER BY f.item LIMIT ?3").map_err(err)?;
         let mut rows = stmt
             .query(params![s.organizations, after, n])
             .map_err(err)?;
@@ -353,6 +353,7 @@ impl Analytics<'_> {
             let amount: Option<f64> = r.get(3).map_err(err)?;
             out.push(OrganizationSummary {
                 org: r.get(0).map_err(err)?,
+                average_source_work: r.get(6).map_err(err)?,
                 complete: missing == 0,
                 missing,
                 amount_missing_rows: amount.is_none(),

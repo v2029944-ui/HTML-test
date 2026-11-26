@@ -516,14 +516,11 @@ fn write_comparison(
         }
     };
     if value(&before.available_total,metric).is_some() || value(&after.available_total,metric).is_some() {
-        let comparable = |period: &RangeSummary| {
-            if metric == "amount" { period.comparison_amount() } else { value(&period.available_total,metric) }
-        };
         let comparable_pair = if metric == "average" {
             let same_work = before.source_work.as_ref().zip(after.source_work.as_ref()).is_some_and(|(b, a)| b == a);
             comparable_averages(&before.available_total, &after.available_total, same_work)
         } else {
-            comparable(&before).zip(comparable(&after))
+            value(&before.available_total, metric).zip(value(&after.available_total, metric))
         };
         emit("Итого по выбранным работам", &before.available_total, &after.available_total,
             comparable_pair.map(|(base, _)| base), comparable_pair.map(|(_, current)| current))?;
@@ -542,9 +539,11 @@ fn write_comparison(
             let same_work = r.get::<_, Option<bool>>(10).map_err(err)?.unwrap_or(false);
             let (old, new) = if metric == "average" && same_work {
                 (base.average, current.average)
-            } else {
+            } else if metric == "average" {
                 (value(&totals(bc,ba,before_observed)?,metric),
                  value(&totals(ac,aa,after_observed)?,metric))
+            } else {
+                (value(&base, metric), value(&current, metric))
             };
             emit(&name, &base, &current, old, new)?;
         }
@@ -566,7 +565,7 @@ fn ordered_organization_totals(
 ) -> Result<Vec<OrganizationSummary>, String> {
     let mut stmt = tx.prepare(
         "SELECT f.item,(SELECT count(*) FROM an_missing m WHERE m.slot=1 AND m.org=f.item),
-                coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END
+                coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END,CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN MIN(v.source_work) END
          FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item
          WHERE f.id=?1 GROUP BY f.ordinal,f.item ORDER BY f.ordinal"
     ).map_err(err)?;
@@ -579,6 +578,7 @@ fn ordered_organization_totals(
         let amount: Option<f64> = row.get(3).map_err(err)?;
         result.push(OrganizationSummary {
             org: row.get(0).map_err(err)?,
+            average_source_work: row.get(6).map_err(err)?,
             complete,
             missing,
             amount_missing_rows: amount.is_none(),
@@ -611,7 +611,7 @@ fn visit_all_organization_works(
     ).map_err(err)?;
     let mut names = names.query(params![limit, offset]).map_err(err)?;
     let mut amounts = tx.prepare(
-        "SELECT coalesce(v.count,0),CASE WHEN v.key IS NULL THEN 0 ELSE v.amount END,v.known_amount,CASE WHEN v.source_work IS NOT NULL THEN v.paired_count END
+        "SELECT coalesce(v.count,0),CASE WHEN v.key IS NULL THEN 0 ELSE v.amount END,v.known_amount,CASE WHEN v.source_work IS NOT NULL THEN v.paired_count END,v.source_work
          FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.key=?2
          WHERE f.id=?1 ORDER BY f.ordinal"
     ).map_err(err)?;
@@ -628,6 +628,7 @@ fn visit_all_organization_works(
             let amount: Option<f64> = row.get(1).map_err(err)?;
             rows.push(OrganizationSummary {
                 org: org.org.clone(),
+                average_source_work: row.get(4).map_err(err)?,
                 complete: org.complete,
                 missing: org.missing,
                 amount_missing_rows: amount.is_none(),
@@ -705,19 +706,23 @@ fn write_organizations(
         }
     }
     headers(w, &head.iter().map(String::as_str).collect::<Vec<_>>())?;
-    let comparable = |row: &OrganizationSummary| {
-        if table.metric == "amount" && row.amount_missing_rows {
-            return None;
-        }
-        value(&row.available_total, &table.metric)
-    };
     let mut emit = |name: &str, values: &[OrganizationSummary]| -> Result<(), String> {
-        let base = comparable(&values[base_index]);
+        let baseline = &values[base_index];
+        let base = &baseline.available_total;
         let mut line = vec![Text(name)];
         for (i, row) in values.iter().enumerate() {
             line.push(Number(value(&row.available_total, &table.metric)));
             if i != base_index {
-                let m = average_change(base, comparable(row), 0.)?;
+                let current = &row.available_total;
+                let pair = if table.metric == "average" {
+                    let same_work = baseline.average_source_work.as_ref()
+                        .zip(row.average_source_work.as_ref()).is_some_and(|(b, a)| b == a);
+                    comparable_averages(base, current, same_work)
+                } else {
+                    value(base, &table.metric).zip(value(current, &table.metric))
+                };
+                let (b, a) = pair.map_or((None, None), |(b, a)| (Some(b), Some(a)));
+                let m = average_change(b, a, 0.)?;
                 line.push(Number(m.delta));
                 line.push(Number(m.percent));
             }
@@ -739,7 +744,7 @@ fn write_organizations(
             [],
         )
         .map_err(err)?;
-        let mut amounts=tx.prepare("SELECT f.ordinal,coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.name=?2 WHERE f.id=?1 GROUP BY f.ordinal ORDER BY f.ordinal").map_err(err)?;
+        let mut amounts=tx.prepare("SELECT f.ordinal,coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END,CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN MIN(v.source_work) END FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.name=?2 WHERE f.id=?1 GROUP BY f.ordinal ORDER BY f.ordinal").map_err(err)?;
         while let Some(row) = names.next().map_err(err)? {
             let name: String = row.get(0).map_err(err)?;
             let mut cells = Vec::with_capacity(orgs.len());
@@ -750,6 +755,7 @@ fn write_organizations(
                 let amount: Option<f64> = r.get(2).map_err(err)?;
                 cells.push(OrganizationSummary {
                     org: org.org.clone(), complete: org.complete, missing: org.missing,
+                    average_source_work: r.get(5).map_err(err)?,
                     amount_missing_rows: amount.is_none(),
                     total: totals(count, amount, org.complete)?,
                     available_total: paired_observed_totals(count, amount, r.get(3).map_err(err)?, r.get(4).map_err(err)?, org.available_total.count.is_some())?,

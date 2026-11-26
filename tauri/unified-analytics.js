@@ -119,7 +119,7 @@ function overviewDifference(now,before,metric){
  if(change.direction==='neutral')return change.label;
  return change.value+' ('+(before===0?'процент не рассчитан':(delta/Math.abs(before)*100).toLocaleString('ru-RU',{maximumFractionDigits:1})+'%')+')';
 }
-const overviewValue=(period,metric)=>metric==='amount'&&period.amount_missing_rows?null:observed(period)?.[metric];
+const overviewValue=(period,metric)=>observed(period)?.[metric];
 function overviewBase(summary,metric){
  if(metric==='average'&&summary.average&&summary.average.delta==null)return null;
  return overviewValue(summary.before,metric);

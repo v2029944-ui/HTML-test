@@ -126,7 +126,8 @@ fn usual_csv_labels_partial_sums_even_with_complete_calendar_coverage() {
     let page = store.unified_pattern_page(revision, &scope, &q, None, "usual", 4, &serde_json::from_value(options.clone()).unwrap(), None).unwrap();
     assert!(page.current_complete);
     assert_eq!(page.rows[0]["amount"]["current"], 84.0);
-    assert!(page.rows[0]["average"]["current"].is_null());
+    assert_eq!(page.rows[0]["average"]["current"], 84.0);
+    assert!(page.rows[0]["average"]["delta"].is_null());
     let table: DetailCsvOptions = serde_json::from_value(json!({
         "section":"usual","metric":"amount","window":4,"options":options
     })).unwrap();

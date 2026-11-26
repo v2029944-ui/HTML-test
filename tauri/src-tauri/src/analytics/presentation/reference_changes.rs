@@ -152,24 +152,23 @@ fn prepare_reference(c:&Connection,q:&ReferenceChangesRequest,s:&AnalysisScope)-
         let before = observed_totals(bc,ba,row.get(6).map_err(err)?,row.get(8).map_err(err)?)?;
         let after = observed_totals(ac,aa,row.get(7).map_err(err)?,row.get(9).map_err(err)?)?;
         let complete: bool = row.get(10).map_err(err)?;
-        let (old, new, strict_pair, minimum) = if q.metric == "count" {
+        let (old, new, available_pair, minimum) = if q.metric == "count" {
             (before.count, after.count, Some((bc,ac)), q.min_count)
         } else {
-            (before.amount, after.amount, ba.zip(aa), q.min_amount)
+            (before.amount, after.amount, before.amount.zip(after.amount), q.min_amount)
         };
-        let Some((b, a)) = strict_pair.filter(|_| before.count.is_some() && after.count.is_some()) else {
-            put.execute(params![name, org, old, new, None::<f64>, None::<f64>, ""])
+        // A zero can only demonstrate absence on a side with observed reports.
+        let both_observed = before.count.is_some() && after.count.is_some();
+        let status = status_with_observed_amounts(bc, ba, ac, aa, before.amount, after.amount);
+        let lifecycle = if both_observed && matches!(status, "new" | "gone") { status } else { "" };
+        let Some((b, a)) = available_pair.filter(|_| both_observed) else {
+            put.execute(params![name, org, old, new, None::<f64>, None::<f64>, lifecycle])
                 .map_err(err)?;
             continue;
         };
         let value = measure(b, a, minimum, q.percent)?;
-        // Both intervals have reports here. Zero describes the work in those observed reports.
-        let kind = if value.delta == 0. {
-            ""
-        } else if bc == 0. && ba == Some(0.) && (ac != 0. || aa.is_some_and(|n| n != 0.)) {
-            "new"
-        } else if (bc != 0. || ba.is_some_and(|n| n != 0.)) && ac == 0. && aa == Some(0.) {
-            "gone"
+        let kind = if !lifecycle.is_empty() {
+            lifecycle
         } else if (b != 0. || !complete) && value.significant {
             if value.delta > 0. {
                 "up"
@@ -250,22 +249,22 @@ fn comparison_csv_context(
         let reason=match (*before,*after) {(true,true)=>"полные отчёты за оба интервала",(false,false)=>"неполные базовый и анализируемый интервалы",(false,true)=>"неполный базовый интервал",(true,false)=>"неполный анализируемый интервал"};
         csv_record(writer,&[Text("Состав сравнения"),Text(org),Text(reason)])?;
     }
-    let observed = |slot| -> Result<(AnalysisTotals, Option<f64>, Option<String>), String> {
+    let observed = |slot| -> Result<(AnalysisTotals, Option<String>), String> {
         let (count, amount, known_amount, paired_count, source_work) = c.query_row("SELECT coalesce(sum(count),0.0),
             CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,
             SUM(known_amount), CASE WHEN MIN(name)=MAX(name) THEN SUM(paired_count) END,
             CASE WHEN MIN(name)=MAX(name) THEN MIN(name) END FROM ref_values WHERE slot=?1", [slot],
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).map_err(err)?;
         let available = observed_reports(c, slot, None)?;
-        Ok((paired_observed_totals(count, amount, known_amount, paired_count, available)?, amount.filter(|_| available), source_work))
+        Ok((paired_observed_totals(count, amount, known_amount, paired_count, available)?, source_work))
     };
-    let (before, before_amount, before_work) = observed(1)?;
-    let (after, after_amount, after_work) = observed(2)?;
+    let (before, before_work) = observed(1)?;
+    let (after, after_work) = observed(2)?;
     let same_work = before_work.as_ref().zip(after_work.as_ref()).is_some_and(|(b, a)| b == a);
     let average_pair = comparable_averages(&before, &after, same_work);
     csv_record(writer,&[Text("Сравнение по доступным отчётам · все работы")])?;
     csv_record(writer,&[Text("Показатель"),Text("Было"),Text("Стало"),Text("Изменение"),Text("Изменение, %")])?;
-    for (label,before,after,pair) in [("Сумма",before.amount,after.amount,before_amount.zip(after_amount)),
+    for (label,before,after,pair) in [("Сумма",before.amount,after.amount,before.amount.zip(after.amount)),
         ("Количество / объём",before.count,after.count,before.count.zip(after.count)),
         ("Сумма / количество (объём)",before.average,after.average,average_pair)] {
         let change=pair.map(|(before,after)|measure(before,after,0.,0.)).transpose()?;

@@ -50,7 +50,7 @@ pub use index::{AnalysisNameOption, AnalysisNameOptions};
 pub use ranges::{AnalysisIssue, IssueCursor, MissingPeriod, OrganizationSummary, RangeSummary, RangeValue, RankingSummary};
 pub use trends::{DailyRollupPage, DailyRollupPoint, OrganizationTrendPoint, OrganizationTrendSeries, OrganizationTrends, TimelinePoint, TimelineSummary, WorkTrendSummary};
 
-use changes::{average_change, change_value, changes_summary, fill_changes, finish_changes, measure, status, thresholds};
+use changes::{average_change, change_value, changes_summary, fill_changes, finish_changes, measure, status, status_with_observed_amounts, thresholds};
 use comparison::{comparison, comparison_value};
 use csv::{change_csv, changes_csv_header, write_changes_rows};
 pub(super) use index::initialize;

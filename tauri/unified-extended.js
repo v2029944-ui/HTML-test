@@ -152,7 +152,10 @@ function changeContext(){
  const s=scopeFor(range,{organizations:[...changeOrganizations],selectedNames:[],selectedKeys:[],allNames:true});
  return {scope:s,request:request(s,{method,percent:number('changesPercent'),min_count:number('changesCountMin'),min_amount:number('changesAmountMin')}),options:{metrics:[...changeMetrics],mode:value('changesMode'),search:value('changesSearch'),direction:value('changesDirection'),sort:value('changesSort')}};
 }
-function changeMeasure(row,metric){const m=row[metric]||{};return {...m,smallBase:m.smallBase??m.small_base??false};}
+function changeMeasure(row,metric){
+ const m=row[metric]??(metric==='amount'?{base:row.observedAmountBefore,current:row.observedAmountAfter}:{});
+ return {...m,smallBase:m.smallBase??m.small_base??false};
+}
 function changeLabel(row,m,shown){if(m.negative)return 'Изменение с отрицательными значениями';if(row.status==='new')return 'Новая';if(row.status==='gone')return 'Нет выполнений';return shown.direction==='up'?'Рост':shown.direction==='down'?'Снижение':shown.label;}
 function changeColor(direction){return direction==='up'?'numeric-rise':direction==='down'?'numeric-fall':'';}
 function renderChangeSummary(summary,chosen){clear('changesSummary');const root=$('changesSummary');
@@ -174,8 +177,10 @@ async function changes(index=0,paging=false){
  try{const captured=changeContext(),result=await api.unifiedChangesPageAtPage(captured.request,captured.options,index);if(!task.valid())return;
   clear('changesResults','',false);clear('changesWarnings','',false);renderChangeSummary(result.summary,captured.options.metrics);
   const diagnostic=result.summary.totals;
-  if(diagnostic?.missing_pairs||diagnostic?.partial_pairs||diagnostic?.invalid_reports||diagnostic?.duplicate_issues||diagnostic?.overlap_issues||diagnostic?.import_warning_pairs){
+  const missingAmount=result.summary.rows_with_missing_amount??0;
+  if(missingAmount||diagnostic?.missing_pairs||diagnostic?.partial_pairs||diagnostic?.invalid_reports||diagnostic?.duplicate_issues||diagnostic?.overlap_issues||diagnostic?.import_warning_pairs){
    const problems=[];
+   if(missingAmount>0)problems.push('Есть строки без суммы. Сравнение суммы учитывает заполненные ячейки, а среднее — сопоставимые количества из тех же строк.');
    if(diagnostic.missing_pairs>0)problems.push('Пар без отчётов за один или оба периода: '+diagnostic.missing_pairs+' (не включены в сопоставление).');
    if(diagnostic.partial_pairs>0)problems.push('Пар по доступным отчётам: '+diagnostic.partial_pairs+' (есть пропуски).');
    if(diagnostic.import_warning_pairs>0)problems.push('Пар с замечаниями импорта: '+diagnostic.import_warning_pairs+' (проверьте источник; замечание не означает автоматического исключения).');
@@ -280,7 +285,7 @@ async function comparison(index=0,paging=false){
   if(missing>0)warnings.push('Пропусков: '+missing+' (подразделение × период).');
   if([summary.before,summary.after].some(period=>period.amount_missing_rows||
      (period.complete&&Number.isFinite(observed(period)?.count)&&period.total.amount==null))){
-   warnings.push('В некоторых строках сумма не указана. Показана сумма заполненных ячеек.');
+   warnings.push('Итоги и разница по сумме учитывают заполненные ячейки. Покрытие может различаться.');
    for(const [label,period] of [['База',summary.before],['Анализ',summary.after]]){
     const note=averageNote(period);
     if(note)warnings.push(label+' · '+note);
@@ -300,7 +305,7 @@ async function comparison(index=0,paging=false){
    const now=afterValues?.[metric],old=beforeValues?.[metric],card=UI.el('div',null,'kpi');
    const totalDiff=metric==='average'&&summary.average
     ?[summary.average.delta,summary.average.percent]
-    :metric==='amount'&&(summary.before.amount_missing_rows||summary.after.amount_missing_rows)?[null,null]:rawDifference(now,old);
+    :rawDifference(now,old);
    card.append(UI.el('span',titles[metric]+' · анализируемый период'),UI.el('strong',fmt(now,metric)),
     UI.el('small',totalDiff[0]==null?'Сравнение недоступно':[delta(totalDiff[0],metric),percent(totalDiff[1])].join(' · ')));
    $('kpis').append(card);
@@ -377,7 +382,7 @@ async function departmentComparison(task,index){
  reset();
  const coverage=$('comparisonCoverage'),warnings=[];
  if(organizations.some(org=>!org.complete))warnings.push('Сравнение по доступным отчётам. Разница и проценты требуют данных у обоих подразделений.');
- if(organizations.some(org=>org.amount_missing_rows))warnings.push('В некоторых строках сумма не указана. Итоги и доли рассчитаны по заполненным суммам. Разница по сумме доступна при заполненных суммах у обоих подразделений.');
+ if(organizations.some(org=>org.amount_missing_rows))warnings.push('Итоги, доли и разница по сумме рассчитаны по заполненным ячейкам. Покрытие может различаться.');
  sampleNote(coverage,reference?sample:null,warnings.join(' '),true);
  if(reference){$('comparisonBaseOrg').replaceChildren(...s.organizations.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));$('comparisonBaseOrg').value=baseOrg;}
  $('comparisonHelp').textContent='Общий интервал для подразделений. Разница относительно '+baseOrg+'. При нулевой базе процент не рассчитывается. Чтобы сравнить одну работу, выберите её в фильтре «Работы» и оставьте одну отметку в «Показатели сравнения».';
@@ -387,11 +392,15 @@ async function departmentComparison(task,index){
  organizationTotals(s,totals);
  const historyScope={...s,historyMetrics:chosen};
  for(const metric of chosen){const raw=[],rows=[];
-  const comparable=row=>metric==='amount'&&row?.amount_missing_rows?null:observed(row)?.[metric];
+  const comparable=row=>observed(row)?.[metric];
   const cells=(org,values)=>{
    const row=values.find(o=>o.org===org),base=values.find(o=>o.org===baseOrg);
-   const n=observed(row)?.[metric]??null;
-   return org===baseOrg?[n]:[n,...rawDifference(comparable(row),comparable(base))];
+   const n=comparable(row)??null;
+   if(org===baseOrg)return [n];
+   const partial=Number.isFinite(observed(row)?.partial_average_quantity)||Number.isFinite(observed(base)?.partial_average_quantity);
+   const sameWork=row?.average_source_work!=null&&row.average_source_work===base?.average_source_work;
+   const baseValue=metric==='average'&&partial&&!sameWork?null:comparable(base);
+   return [n,...rawDifference(n,baseValue)];
   };
   const make=(label,values)=>[label,...s.organizations.flatMap(org=>cells(org,values).map((n,i)=>i===0?fmt(n,metric):i===1?delta(n,metric):percent(n)))];
   const makeRaw=(label,values)=>[label,...s.organizations.flatMap(org=>cells(org,values))];
@@ -530,7 +539,7 @@ async function patterns(mode,index=0,paging=false){
    if(page.current_amount_incomplete&&(usualMetrics.has('amount')||usualMetrics.has('average')))warnings.push('В некоторых строках сумма не указана. Показана сумма заполненных ячеек.');
    if(page.used<2)warnings.push('Для оценки отклонения нужны минимум два исторических окна с отчётами.');
    if(warnings.length)$(name+'Coverage').append(UI.el('p',warnings.join(' '),'warn small'));
-   if(usualMetrics.has('amount')||usualMetrics.has('average'))$(name+'Coverage').append(UI.el('p','Пустые суммы могут сделать отклонение по сумме или средней недоступным. При нулевой базе процент недоступен.','muted small'));
+   if(usualMetrics.has('amount')||usualMetrics.has('average'))$(name+'Coverage').append(UI.el('p','Среднее рассчитано по строкам с суммой и сопоставимым количеством. При нулевой базе процент недоступен.','muted small'));
   }else if(normal){
    $(name+'Coverage').append(UI.el('p','Для частоты учитываются календарные периоды, в которых есть отчёты выбранных подразделений в пределах соответствующего диапазона.','muted small'));
   }

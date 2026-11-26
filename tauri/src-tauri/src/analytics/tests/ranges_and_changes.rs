@@ -584,11 +584,15 @@ fn partial_analytics_keeps_observed_amounts_and_report_gaps_separate() {
     assert_eq!(page["rows"][0]["observed_before"]["average"], 10.);
     assert_eq!(page["rows"][0]["average"]["delta"], -2.5);
     assert_eq!(page["rows"][0]["observed_after"]["amount"], 30.);
-    assert!(page["rows"][0]["amount"].is_null());
+    assert_eq!(page["rows"][0]["amount"]["delta"], 10.);
     assert_eq!(page["rows"][0]["count"]["delta"], -1.);
     assert!(page["rows"][0]["status"].is_null());
     let selection = ChangeQuery { method:"range".into(), from:range.from.clone(),to:range.to.clone(),
         percent:0., min_count:0., min_amount:0. };
+    let contribution_query = ChangeQuery { from: q.after.from.clone(), to: q.after.to.clone(), ..selection.clone() };
+    let contributions = store.advanced_composition(revision, &selected, &contribution_query, None,
+        &q.before, "contributions", "amount", None).unwrap();
+    assert_eq!(contributions["rows"][0]["delta"], 10.);
     let structure = store.advanced_composition(revision,&selected,&selection,None,&q.before,"structure","amount",None).unwrap();
     assert_eq!(structure["currentAvailable"],true);
     assert_eq!(structure["currentComplete"],false);
@@ -610,7 +614,7 @@ fn partial_analytics_keeps_observed_amounts_and_report_gaps_separate() {
     let same = serde_json::to_value(store.analysis_comparison_window(revision, &selected, &same_day, None, 0, 50).unwrap()).unwrap();
     assert_eq!(same["rows"][0]["count"]["delta"], 0.);
     assert_eq!(same["rows"][0]["count"]["percent"], 0.);
-    assert!(same["rows"][0]["amount"].is_null());
+    assert_eq!(same["rows"][0]["amount"]["delta"], 0.);
 }
 
 #[test]
@@ -648,6 +652,7 @@ fn partial_average_uses_priced_rows_of_one_original_work() {
     assert_eq!(summary.available_total.count, Some(19.));
     assert_eq!(summary.available_total.amount, Some(35000.));
     assert_eq!(summary.available_total.partial_average_quantity, Some(15.));
+    assert_eq!((summary.priced_rows, summary.report_rows), (2, 3));
     assert_eq!(summary.available_total.average, Some(35000. / 15.));
     let mixed = store.analysis_range_summary(revision, &selected, &query("2024-01-01", "2024-01-02")).unwrap();
     assert_eq!(mixed.available_total.amount, Some(40000.));

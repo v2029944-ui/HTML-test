@@ -59,6 +59,10 @@ pub struct ChangeValue {
     pub count: ChangeMeasure,
     pub amount: Option<ChangeMeasure>,
     pub average: AverageChange,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_amount_before: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_amount_after: Option<f64>,
 }
 impl ChangeValue {
     pub fn cursor(&self) -> ChangeCursor {
@@ -142,8 +146,14 @@ pub(super) fn average_change(b: Option<f64>, a: Option<f64>, threshold: f64) -> 
     }
 }
 pub(super) fn status(bc: f64, ba: Option<f64>, cc: f64, ca: Option<f64>) -> String {
-    let b = bc != 0. || ba.is_some_and(|n| n != 0.);
-    let c = cc != 0. || ca.is_some_and(|n| n != 0.);
+    status_with_observed_amounts(bc, ba, cc, ca, ba, ca).into()
+}
+pub(super) fn status_with_observed_amounts(
+    bc: f64, ba: Option<f64>, cc: f64, ca: Option<f64>,
+    observed_base: Option<f64>, observed_current: Option<f64>,
+) -> &'static str {
+    let b = bc != 0. || observed_base.is_some_and(|n| n != 0.);
+    let c = cc != 0. || observed_current.is_some_and(|n| n != 0.);
     if bc == 0. && ba == Some(0.) && c {
         "new"
     } else if b && cc == 0. && ca == Some(0.) {
@@ -151,14 +161,13 @@ pub(super) fn status(bc: f64, ba: Option<f64>, cc: f64, ca: Option<f64>) -> Stri
     } else {
         "existing"
     }
-    .into()
 }
 pub(super) fn fill_changes(c: &Connection, s: &AnalysisScope, q: &ChangeQuery) -> Result<(), String> {
     thresholds(q)?;
     c.execute_batch("CREATE TEMP TABLE an_currents(start TEXT PRIMARY KEY,base TEXT) WITHOUT ROWID;
  CREATE TEMP TABLE an_pairs(start TEXT,base TEXT,org TEXT,base_id TEXT,current_id TEXT,warned INTEGER,partial INTEGER DEFAULT 0,PRIMARY KEY(start,org)) WITHOUT ROWID;
- CREATE TEMP TABLE an_period_values(start TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,PRIMARY KEY(start,org,key)) WITHOUT ROWID;
- CREATE TEMP TABLE an_changes(start TEXT,base TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL,PRIMARY KEY(start,org,key)) WITHOUT ROWID;").map_err(err)?;
+ CREATE TEMP TABLE an_period_values(start TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,known_amount REAL,paired_count REAL,source_work TEXT,PRIMARY KEY(start,org,key)) WITHOUT ROWID;
+ CREATE TEMP TABLE an_changes(start TEXT,base TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL,b_known REAL,a_known REAL,b_paired REAL,a_paired REAL,same_source_work INTEGER,PRIMARY KEY(start,org,key)) WITHOUT ROWID;").map_err(err)?;
     if q.method == "previous" {
         let d = date(&q.to)?;
         let b = shift(&s.report_type, d, -1)?;
@@ -183,11 +192,11 @@ pub(super) fn fill_changes(c: &Connection, s: &AnalysisScope, q: &ChangeQuery) -
         }
     }
     c.execute("INSERT INTO temp.an_pairs(start,base,org,base_id,current_id,warned) SELECT p.start,p.base,f.item,b.report_id,v.report_id,COALESCE(b.warned,0) OR COALESCE(v.warned,0) FROM temp.an_currents p CROSS JOIN analysis_filter_items f LEFT JOIN temp.an_valid b ON b.org=f.item AND b.start=p.base LEFT JOIN temp.an_valid v ON v.org=f.item AND v.start=p.start WHERE f.id=?1",[&s.organizations]).map_err(err)?;
-    c.execute("INSERT INTO temp.an_period_values SELECT v.start,v.org,COALESCE(g.key,'work:'||x.work),COALESCE(g.name,x.work),CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,SUM(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END FROM temp.an_valid v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work WHERE EXISTS(SELECT 1 FROM temp.an_pairs p WHERE p.org=v.org AND p.base_id IS NOT NULL AND p.current_id IS NOT NULL AND (p.base=v.start OR p.start=v.start)) AND (?1 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=COALESCE(g.name,x.work))) GROUP BY v.start,v.org,COALESCE(g.key,'work:'||x.work)",[&s.names]).map_err(err)?;
+    c.execute("INSERT INTO temp.an_period_values SELECT v.start,v.org,COALESCE(g.key,'work:'||x.work),COALESCE(g.name,x.work),CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,SUM(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount),SUM(x.count) FILTER (WHERE x.amount IS NOT NULL),CASE WHEN MIN(x.work)=MAX(x.work) THEN MIN(x.work) END FROM temp.an_valid v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work WHERE EXISTS(SELECT 1 FROM temp.an_pairs p WHERE p.org=v.org AND p.base_id IS NOT NULL AND p.current_id IS NOT NULL AND (p.base=v.start OR p.start=v.start)) AND (?1 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=COALESCE(g.name,x.work))) GROUP BY v.start,v.org,COALESCE(g.key,'work:'||x.work)",[&s.names]).map_err(err)?;
     finish_changes(c)
 }
 pub(super) fn finish_changes(c: &Connection) -> Result<(), String> {
-    c.execute_batch("INSERT INTO temp.an_changes SELECT p.start,p.base,p.org,k.key,COALESCE(b.name,a.name),COALESCE(b.kind,a.kind),COALESCE(b.count,0),CASE WHEN b.key IS NULL THEN 0 ELSE b.amount END,COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END FROM temp.an_pairs p JOIN (SELECT p.start,p.org,v.key FROM temp.an_pairs p JOIN temp.an_period_values v ON v.org=p.org AND (v.start=p.base OR v.start=p.start) WHERE p.base_id IS NOT NULL AND p.current_id IS NOT NULL GROUP BY p.start,p.org,v.key) k ON k.start=p.start AND k.org=p.org LEFT JOIN temp.an_period_values b ON b.start=p.base AND b.org=p.org AND b.key=k.key LEFT JOIN temp.an_period_values a ON a.start=p.start AND a.org=p.org AND a.key=k.key;").map_err(err)?;
+    c.execute_batch("INSERT INTO temp.an_changes SELECT p.start,p.base,p.org,k.key,COALESCE(b.name,a.name),COALESCE(b.kind,a.kind),COALESCE(b.count,0),CASE WHEN b.key IS NULL THEN 0 ELSE b.amount END,COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END,b.known_amount,a.known_amount,CASE WHEN b.source_work IS NOT NULL THEN b.paired_count END,CASE WHEN a.source_work IS NOT NULL THEN a.paired_count END,COALESCE(b.source_work=a.source_work,0) FROM temp.an_pairs p JOIN (SELECT p.start,p.org,v.key FROM temp.an_pairs p JOIN temp.an_period_values v ON v.org=p.org AND (v.start=p.base OR v.start=p.start) WHERE p.base_id IS NOT NULL AND p.current_id IS NOT NULL GROUP BY p.start,p.org,v.key) k ON k.start=p.start AND k.org=p.org LEFT JOIN temp.an_period_values b ON b.start=p.base AND b.org=p.org AND b.key=k.key LEFT JOIN temp.an_period_values a ON a.start=p.start AND a.org=p.org AND a.key=k.key;").map_err(err)?;
     validate_numbers(c, "SELECT count,amount FROM temp.an_period_values")?;
     validate_numbers(
         c,
@@ -214,6 +223,8 @@ pub(super) fn change_value(r: &rusqlite::Row<'_>, q: &ChangeQuery) -> Result<Cha
         name: r.get(4).map_err(err)?,
         kind: r.get(5).map_err(err)?,
         status: status(bc, ba, cc, ca),
+        observed_amount_before: None,
+        observed_amount_after: None,
         count: measure(bc, cc, q.min_count, q.percent)?,
         amount: ba.zip(ca).map(|(b,a)| measure(b,a,q.min_amount,q.percent)).transpose()?,
         average: average_change(b.average, a.average, q.percent)?,

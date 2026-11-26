@@ -46,7 +46,10 @@
     const total = observed(period);
     if (Number.isFinite(total?.partial_average_quantity)) {
       const quantity = new Intl.NumberFormat('ru-RU', {maximumFractionDigits: 8}).format(total.partial_average_quantity);
-      return 'Частичное среднее рассчитано по строкам с указанной суммой. Количество в расчёте: ' + quantity + '.';
+      const coverage = Number.isSafeInteger(period?.priced_rows) && Number.isSafeInteger(period?.report_rows)
+        ? ' Покрытие суммы: ' + period.priced_rows + ' из ' + period.report_rows + ' строк.'
+        : '';
+      return 'Частичное среднее рассчитано по строкам с указанной суммой. Количество в расчёте: ' + quantity + '.' + coverage;
     }
     if (period?.amount_missing_rows && Number.isFinite(total?.count)) {
       return 'Для частичного среднего нужны сопоставимые строки одной работы с указанной суммой и положительным суммарным количеством.';

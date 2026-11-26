@@ -636,7 +636,7 @@ fn print_streams_the_complete_sorted_filter_from_one_snapshot_in_bounded_batches
 }
 
 #[test]
-fn reference_changes_show_observed_values_without_fabricating_deltas() {
+fn reference_changes_compare_known_sums_but_require_reports_on_both_sides() {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();
     let mut unknown = row("A", "Work", 4., 0.);
@@ -649,14 +649,42 @@ fn reference_changes_show_observed_values_without_fabricating_deltas() {
     ]);
     let mut q = request(revision);
     q.kind = "significant".into();
+    q.min_amount = 0.;
     let result = store.reference_changes(&q).unwrap();
     assert!(result.comparable.is_empty());
-    assert_eq!(result.significant, 0);
+    assert_eq!(result.significant, 1);
     assert_eq!(result.rows.len(), 2);
-    assert_eq!((result.rows[0].before, result.rows[0].after, result.rows[0].delta), (Some(20.),Some(30.),None));
+    assert_eq!((result.rows[0].before, result.rows[0].after, result.rows[0].delta), (Some(20.),Some(30.),Some(10.)));
     assert_eq!((result.rows[1].before, result.rows[1].after, result.rows[1].delta), (None,Some(40.),None));
     let path = dir.path().join("changes.csv");
     store.reference_changes_csv(&q,&path).unwrap();
     let csv = fs::read_to_string(path).unwrap();
+    assert!(csv.lines().any(|line| line == r#""Work";"A";"20";"30";"10";"50""#));
     assert!(csv.lines().any(|line| line == r#""Work";"B";"";"40";"";"""#));
+}
+
+#[test]
+fn new_and_gone_use_the_known_side_of_partially_priced_work() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut new_unpriced = row("A", "Only current", 0., 0.);
+    new_unpriced["amount"] = Value::Null;
+    let mut gone_unpriced = row("A", "Only baseline", 0., 0.);
+    gone_unpriced["amount"] = Value::Null;
+    let revision = prepare(&store, vec![
+        report("base", "2024-01-01", json!([row("A", "Only baseline", 0., 15.), gone_unpriced])),
+        report("now", "2024-01-10", json!([row("A", "Only current", 0., 20.), new_unpriced])),
+        report("next", "2024-01-11", json!([])),
+    ]);
+    let mut q = request(revision);
+    q.organizations = vec!["A".into()];
+    q.kind = "new".into();
+    let page = store.reference_changes(&q).unwrap();
+    assert_eq!((page.counts.new, page.counts.gone), (1, 1));
+    assert_eq!(page.rows[0].name, "Only current");
+    assert_eq!((page.rows[0].before, page.rows[0].after, page.rows[0].delta), (Some(0.), Some(20.), Some(20.)));
+    q.kind = "gone".into();
+    let page = store.reference_changes(&q).unwrap();
+    assert_eq!(page.rows[0].name, "Only baseline");
+    assert_eq!((page.rows[0].before, page.rows[0].after, page.rows[0].delta), (Some(15.), Some(0.), Some(-15.)));
 }
