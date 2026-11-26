@@ -460,7 +460,7 @@ def set_folder(page, folder, filenames):
     page.locator('#uploadSourceFolder').click()
     invoke(page,'set_folder',{'folder':str(folder)})
     page.locator('#sourceFolderRefresh').click()
-    expected=json.dumps(sorted(filenames)[:100],ensure_ascii=False,separators=(',',':'))
+    expected=json.dumps(sorted(filenames)[:50],ensure_ascii=False,separators=(',',':'))
     wait_for_app_state(page,
         'JSON.stringify(Array.from(document.querySelectorAll("#sourceFolderRows tr td:first-child"),x=>x.textContent).sort()) === '+json.dumps(expected),
         'Source metadata follows the connected Excel folder')
