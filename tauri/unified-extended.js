@@ -5,6 +5,7 @@ const UI=window.unifiedUI,$=UI.$,api=UI.api;
 const {titles,observed,incomplete,averageNote}=window.analysisSummary;
 const usualLabels={normal:'Обычный уровень',high:'Необычно выше',low:'Необычно ниже',insufficient:'Недостаточно данных'};
 const regularLabels={frequent:'Часто',rare:'Редко',rarer:'Заметно реже',disappeared:'Перестала встречаться',new:'Впервые в загруженной истории',dormant:'Долго без выполнений',occasional:'Встречается',absent:'Нет выполнений',uncertain:'Есть пропуски',unknown:'Нет сопоставимых отчётов'};
+const RESULTS_PAGE_SIZE=50;
 const channels=new Map();
 let initialized=false,scope=null,activeView='dashboard',dateKind=null,changesKind=null;
 let changeOrganizations=new Set(),changeMetrics=new Set(['count','amount']),usualMetrics=new Set(['count','amount','average']),comparisonMetrics=new Set(['amount']);
@@ -30,7 +31,7 @@ function invalidate(name){const s=slot(name);for(const id of s.ids||[]){if($(id)
 function pager(name,result,index){
  const state=slot(name);state.page=result;state.index=index;
  const root=$(name+'Results'),previous=$(name+'Prev'),next=$(name+'Next'),label=$(name+'Page'),revision=UI.revision,mine=state.ticket;
- const count=result.rows?.length??result.count??0,total=result.total_rows,size=50,pages=Math.max(1,Math.ceil(total/size));
+ const count=result.rows?.length??result.count??0,total=result.total_rows,size=RESULTS_PAGE_SIZE,pages=Math.max(1,Math.ceil(total/size));
  const run=name==='changes'?i=>changes(i,true):name==='contribution'?i=>contributions(i,true):i=>patterns(name,i,true);
  const go=i=>{if(current(state,mine,revision)&&state.page===result&&Number.isSafeInteger(i)&&i>=0&&i<pages&&i!==index)return run(i);return false;};
  if(root&&window.sqlRowScroll?.attach(root,{index,size,count,total,label:'Результаты анализа',direct:true,go,footer:previous?.parentElement})){window.sqlRowScroll?.retire?.(previous,next,label);if(label)label.textContent='';return;}
@@ -174,7 +175,12 @@ function renderChangeSummary(summary,chosen){clear('changesSummary');const root=
 }
 async function changes(index=0,paging=false){
  changeLayout();const task=loading('changes',['changesResults','changesSummary','changesWarnings'],paging);$('changeDetails').hidden=true;
- try{const captured=changeContext(),result=await api.unifiedChangesPageAtPage(captured.request,captured.options,index);if(!task.valid())return;
+ try{
+  const captured=changeContext(),chosen=captured.options.metrics;
+  // One 50-record SQL page expands to one 50-row display page per selected metric.
+  const sqlIndex=Math.floor(index/chosen.length),first=(index%chosen.length)*RESULTS_PAGE_SIZE;
+  const result=await api.unifiedChangesPageAtPage(captured.request,captured.options,sqlIndex);if(!task.valid())return;
+  const end=Math.min(first+RESULTS_PAGE_SIZE,result.rows.length*chosen.length);
   clear('changesResults','',false);clear('changesWarnings','',false);renderChangeSummary(result.summary,captured.options.metrics);
   const diagnostic=result.summary.totals;
   const missingAmount=result.summary.rows_with_missing_amount??0;
@@ -191,14 +197,16 @@ async function changes(index=0,paging=false){
    $('changesWarnings').append(UI.el('p','Сопоставимых строк по текущим фильтрам: '+total+'. '+problems.join(' ')+' Пропуски не считаются нулём.','warn small'));
   }
   for(const pair of result.missing_examples||[])$('changesWarnings').append(UI.el('p',pair.org+': нет отчётов за '+[pair.missing_base?pair.base_start:null,pair.missing_current?pair.current_start:null].filter(Boolean).map(date=>periodLabel(date,captured.scope.displayType)).join(', '),'warn small'));
-  if(!result.rows.length)clear('changesResults','Нет сопоставимых записей по выбранным условиям. Измените фильтры или проверьте наличие соседних отчётов.',false);
+  if(first>=end)clear('changesResults','Нет сопоставимых записей по выбранным условиям. Измените фильтры или проверьте наличие соседних отчётов.',false);
   const rows=[],raw=[];
-  for(const row of result.rows)for(const metric of captured.options.metrics){const m=changeMeasure(row,metric),name=itemButton(row,{...captured.scope,from:row.baseStart,to:captured.scope.source==='daily'?periodEnd(row.currentStart,captured.scope.displayType):row.currentStart},row.org,'change');const shown=window.analysisSummary.displayedChange(m.delta,metric,fmt),direction=changeLabel(row,m,shown),kind=m.smallBase?' · малая база':'';
+  for(let position=first;position<end;position++){
+   const row=result.rows[Math.floor(position/chosen.length)],metric=chosen[position%chosen.length];
+   const m=changeMeasure(row,metric),name=itemButton(row,{...captured.scope,from:row.baseStart,to:captured.scope.source==='daily'?periodEnd(row.currentStart,captured.scope.displayType):row.currentStart},row.org,'change');const shown=window.analysisSummary.displayedChange(m.delta,metric,fmt),direction=changeLabel(row,m,shown),kind=m.smallBase?' · малая база':'';
    rows.push([name,row.org,periodLabel(row.baseStart,captured.scope.displayType),periodLabel(row.currentStart,captured.scope.displayType),titles[metric],fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent),UI.el('span',direction+kind,changeColor(shown.direction))]);raw.push([row.name,row.org,row.baseStart,row.currentStart,titles[metric],m.base,m.current,m.delta,m.percent,direction+kind]);}
   if(rows.length)UI.table($('changesResults'),'count',caption(captured.scope),['Работа / группа','Подразделение','Базовый период','Текущий период','Показатель','Было','Стало','Изменение','Изменение, %','Направление'],rows,{title:'Изменения между соседними периодами',totalRow:false,csvRows:raw,csvContext:{text:'Все строки по текущим фильтрам',export:async()=>{
    if(!task.valid())throw Error('Параметры анализа изменились. Рассчитайте заново.');const path=await api.chooseCsvPath('izmeneniya-'+captured.scope.from+'-'+captured.scope.to+'.csv');if(!path)return;if(!task.valid())throw Error('Данные изменились. Рассчитайте заново.');await api.unifiedChangesCsv(captured.request,captured.options,path);
   }}});
-  task.s.captured=captured;pager('changes',result,index);
+  task.s.captured=captured;pager('changes',{count:rows.length,total_rows:result.total_rows*chosen.length},index);
  }catch(error){task.error(error);}finally{task.done();}
 }
 function referencePanel(id){return window.referenceDetail?.active===id;}
@@ -679,7 +687,7 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
  bind(['changesMethod','changesFrom','changesTo','changesMode','changesDirection','changesSort'],'change',()=>{invalidate('changes');changes();});
  bind(['changesPercent','changesCountMin','changesAmountMin','changesSearch'],'input',()=>{explainSensitivity();describeActiveFilters();schedule('changes',changes);});
  $('changesType').addEventListener('change',()=>{changesKind=value('changesType');for(const id of ['changesFrom','changesTo'])setDate(id,changesKind,scope?.to||new Date().toISOString().slice(0,10),true);invalidate('changes');changes();});
- for(const name of ['changes','contribution','usual','regularity']){const run=name==='changes'?changes:name==='contribution'?contributions:index=>patterns(name,index);$(name+'Prev').addEventListener('click',()=>{const state=slot(name);if(state.index>0)return run(state.index-1);});$(name+'Next').addEventListener('click',()=>{const state=slot(name);if((state.index+1)*50<(state.page?.total_rows||0))return run(state.index+1);});}
+ for(const name of ['changes','contribution','usual','regularity']){const run=name==='changes'?changes:name==='contribution'?contributions:index=>patterns(name,index);$(name+'Prev').addEventListener('click',()=>{const state=slot(name);if(state.index>0)return run(state.index-1);});$(name+'Next').addEventListener('click',()=>{const state=slot(name);if((state.index+1)*RESULTS_PAGE_SIZE<(state.page?.total_rows||0))return run(state.index+1);});}
  bind(['comparisonMode','periodComparisonScope','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonScope','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','comparisonBaseOrg'],'change',()=>{invalidate('comparison');invalidate('contribution');comparison();});
  bind(['structureBase','structureCurrent','structureMetric','structureLimit','structureScope'],'change',structure);bind(['usualPeriod','usualWindow'],'change',()=>patterns('usual'));bind(['usualPercent'],'input',()=>schedule('usual',()=>patterns('usual')));bind(['regularityGap','regularityStatus'],'change',()=>patterns('regularity'));bind(['regularitySearch'],'input',()=>schedule('regularity',()=>patterns('regularity')));
  for(const [id,run] of [['advancedAnalytics',()=>{comparison();if(!window.referenceDetail?.active&&compositionVisible())structure();}],['usualPanel',()=>patterns('usual')],['regularityPanel',()=>patterns('regularity')]])$(id).addEventListener('toggle',()=>{if($(id).open&&scope)run();});

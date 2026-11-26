@@ -39,15 +39,39 @@ function page(name='Work'){
  const measure={base:0,current:2,delta:2,percent:null,negative:false,small_base:true,significant:false,notable:true};
  return {rows:[{key:'work:'+name,name,kind:'work',org:'A',baseStart:'2024-01-01',currentStart:'2024-01-02',status:'new',count:measure,amount:measure}],next:null,total_rows:1,summary:{rows:1,grown:0,fallen:0,new:1,gone:0,top_count:null,top_amount:null,totals:{missing_pairs:0,invalid_reports:0,duplicate_issues:0,overlap_issues:0,import_warning_pairs:0}},missing_examples:[]};
 }
+function changePage(index,total=120){
+ const offset=index*50;
+ return {...page(),total_rows:total,rows:Array.from({length:Math.min(50,total-offset)},(_,position)=>page('Work '+(offset+position+1)).rows[0])};
+}
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
 test('extended SQL pagination seeks directly, removes duplicate ranges and rejects stale callbacks',async()=>{
- const requests=[];let fail=false;const fx=fixture({unifiedChangesPageAtPage:async(...args)=>{requests.push(args);if(fail)throw Error('scroll SQL failed');return {...page(),next:args[2]?null:'changes-cursor',total_rows:120};}});
+ const requests=[];let fail=false;const fx=fixture({unifiedChangesPageAtPage:async(...args)=>{requests.push(args);if(fail)throw Error('scroll SQL failed');return changePage(args[2]);}});
  const attached=[],reset=[];fx.window.sqlRowScroll={attach:(root,options)=>{attached.push({root,options});return root;},reset:root=>reset.push(root),retire:(...nodes)=>nodes.forEach(node=>{if(node)node.hidden=true;})};
- fx.publish();fx.view('changes');await settle();let entry=attached.findLast(x=>x.root.id==='changesResults');assert.ok(entry);assert.equal(entry.options.size,50);assert.equal(entry.options.direct,true);assert.equal(entry.options.total,120);
+ const rendered=()=>fx.tables.at(-1).rows;
+ const ends=()=>[rendered()[0][0].textContent,rendered().at(-1)[0].textContent];
+ fx.publish();fx.view('changes');await settle();let entry=attached.findLast(x=>x.root.id==='changesResults');assert.ok(entry);assert.equal(entry.options.size,50);assert.equal(entry.options.direct,true);assert.equal(entry.options.total,240);assert.equal(entry.options.count,50);
+ assert.equal(rendered().length,50);assert.deepEqual(ends(),['Work 1','Work 25']);
+ assert.deepEqual(Array.from(rendered().slice(0,2),row=>row[4]),['Количество / объём','Сумма']);
  assert.equal(fx.nodes.get('changesPrev').hidden,true);assert.equal(fx.nodes.get('changesNext').hidden,true);assert.equal(fx.nodes.get('changesPage').textContent,'');
- const resets=reset.filter(root=>root.id==='changesResults').length;await entry.options.go(4);assert.equal(requests.length,1);await entry.options.go(2);assert.equal(requests[1][2],2);entry=attached.at(-1);await entry.options.go(1);assert.equal(requests[2][2],1);entry=attached.at(-1);assert.equal(entry.options.index,1);
- await entry.options.go(0);assert.equal(requests[3][2],0);assert.equal(reset.filter(root=>root.id==='changesResults').length,resets,'successful paging must preserve shared pending edge');assert.doesNotMatch(fx.nodes.get('changesPage').textContent,/Страница/);entry=attached.at(-1);fail=true;await entry.options.go(1);assert.match(entry.root.textContent,/scroll SQL failed/);assert.ok(reset.includes(entry.root));
+ const resets=reset.filter(root=>root.id==='changesResults').length;
+ await entry.options.go(5);assert.equal(requests.length,1);
+ await entry.options.go(4);assert.equal(requests[1][2],2);entry=attached.at(-1);assert.equal(entry.options.count,40);assert.equal(rendered().length,40);assert.deepEqual(ends(),['Work 101','Work 120']);
+ await entry.options.go(1);assert.equal(requests[2][2],0);entry=attached.at(-1);assert.equal(entry.options.index,1);assert.equal(rendered().length,50);assert.deepEqual(ends(),['Work 26','Work 50']);
+ await entry.options.go(2);assert.equal(requests[3][2],1);entry=attached.at(-1);assert.equal(rendered().length,50);assert.deepEqual(ends(),['Work 51','Work 75']);
+ await entry.options.go(0);assert.equal(requests[4][2],0);assert.equal(reset.filter(root=>root.id==='changesResults').length,resets,'successful paging must preserve shared pending edge');assert.doesNotMatch(fx.nodes.get('changesPage').textContent,/Страница/);entry=attached.at(-1);fail=true;await entry.options.go(1);assert.match(entry.root.textContent,/scroll SQL failed/);assert.ok(reset.includes(entry.root));
  const count=requests.length;await entry.options.go(0);assert.equal(requests.length,count);fx.publish(null);assert.ok(reset.includes(entry.root));
+});
+test('selecting one change metric keeps every record on its native page',async()=>{
+ const requests=[],attached=[];
+ const fx=fixture({unifiedChangesPageAtPage:async(...args)=>{requests.push(args);return changePage(args[2],51);}});
+ fx.window.sqlRowScroll={attach:(root,options)=>{if(root.id==='changesResults')attached.push(options);return root;},reset(){}};
+ fx.publish();fx.view('changes');await settle();
+ const amount=fx.nodes.get('changesMetrics').children[1].children[0];amount.checked=false;amount.dispatch('change');await settle();
+ assert.deepEqual(Array.from(requests.at(-1)[1].metrics),['count']);
+ assert.equal(attached.at(-1).total,51);assert.equal(fx.tables.at(-1).rows.length,50);
+ await attached.at(-1).go(1);
+ assert.equal(requests.at(-1)[2],1);assert.equal(attached.at(-1).count,1);
+ assert.equal(fx.tables.at(-1).rows[0][0].textContent,'Work 51');
 });
 test('original controls initialize once and changes discard a late SQL response',async()=>{
  const first=deferred(),second=deferred();let reads=0;const fx=fixture({unifiedChangesPage:()=>++reads===1?first.promise:second.promise});fx.window.unifiedExtended.init();fx.publish();fx.view('changes');
