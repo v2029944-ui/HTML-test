@@ -250,7 +250,7 @@
 :is(#s1,#s2,#sharedHeader,#reportShell) .table-viewport td {font-size:14px;line-height:1.4;padding:12px 10px;border-bottom:1px solid #303945;font-variant-numeric:tabular-nums}
 :is(#s1,#s2,#sharedHeader,#reportShell) .table-viewport tr:last-child td {border-bottom-color:transparent}
 :is(#s1,#s2,#sharedHeader,#reportShell) .table-viewport tbody tr:hover {background:#202833}
-#refRoot[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) .table-viewport tbody tr:hover {background:var(--hover)}
+:scope[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) .table-viewport tbody tr:hover {background:var(--hover)}
 :is(#s1,#sharedHeader,#reportShell) .table-viewport td:first-child {font-weight:650}
 :is(#s1,#sharedHeader,#reportShell) .bar {height:4px;width:80%;max-width:96px;margin:5px auto 0;border-radius:3px;background:#303945}
 :is(#s1,#sharedHeader,#reportShell) .bar i {background:#e8bf5b;border-radius:3px}

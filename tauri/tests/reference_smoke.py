@@ -774,6 +774,19 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                         page.set_viewport_size({'width':width,'height':749})
                         page.screenshot(animations='disabled')
                         check_shell_layout(page, headings=True)
+                        if theme == 'light':
+                            row = page.locator('#s1 .table-viewport tbody tr').first
+                            cell = row.locator('td').first
+                            cell.hover()
+                            expected = cell.evaluate("""cell => {
+                              const probe = document.createElement('span');
+                              probe.style.backgroundColor = 'var(--hover)';
+                              cell.append(probe);
+                              const color = getComputedStyle(probe).backgroundColor;
+                              probe.remove();
+                              return color;
+                            }""")
+                            expect(row).to_have_css('background-color', expected)
                         record(f'17-shell-{theme}-{width}',page.locator('#reportShell'))
                         fold.locator('summary').click()
                         page.screenshot(animations='disabled')
