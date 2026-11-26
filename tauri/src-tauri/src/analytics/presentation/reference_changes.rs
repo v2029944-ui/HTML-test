@@ -163,11 +163,12 @@ fn prepare_reference(c:&Connection,q:&ReferenceChangesRequest,s:&AnalysisScope)-
             continue;
         };
         let value = measure(b, a, minimum, q.percent)?;
+        // Both intervals have reports here. Zero describes the work in those observed reports.
         let kind = if value.delta == 0. {
             ""
-        } else if complete && bc == 0. && ba == Some(0.) && (ac != 0. || aa.is_some_and(|n| n != 0.)) {
+        } else if bc == 0. && ba == Some(0.) && (ac != 0. || aa.is_some_and(|n| n != 0.)) {
             "new"
-        } else if complete && (bc != 0. || ba.is_some_and(|n| n != 0.)) && ac == 0. && aa == Some(0.) {
+        } else if (bc != 0. || ba.is_some_and(|n| n != 0.)) && ac == 0. && aa == Some(0.) {
             "gone"
         } else if (b != 0. || !complete) && value.significant {
             if value.delta > 0. {

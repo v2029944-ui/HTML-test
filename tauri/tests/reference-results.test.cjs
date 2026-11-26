@@ -162,6 +162,8 @@ test('change table has one read-only metric and headings follow the active categ
  assert.equal(f.s2.querySelectorAll('[data-change-metric]').length,0);assert.equal(f.s2.querySelector('[data-current-change-metric]').textContent,'Сумма');
  assert.equal(f.s2.querySelector('.changes-heading h2').textContent,'Значимые изменения');
  await f.s2.querySelectorAll('.kpi')[0].click();assert.equal(f.s2.querySelector('.changes-heading h2').textContent,'Рост');
+ await f.s2.querySelectorAll('.kpi')[2].click();assert.equal(f.s2.querySelector('.changes-heading h2').textContent,'Новые работы');
+ await f.s2.querySelectorAll('.kpi')[3].click();assert.equal(f.s2.querySelector('.changes-heading h2').textContent,'Без выполнений');
  f.scope.metric='count';await f.window.referenceResults.refresh(f.scope);assert.equal(f.s2.querySelector('[data-current-change-metric]').textContent,'Количество / объём');
 });
 

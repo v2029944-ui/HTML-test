@@ -129,7 +129,7 @@ fn significant_filter_counts_partial_changes_and_keeps_confirmed_zero() {
     q.kind = "significant".into();
     q.organizations = vec!["A".into(), "B".into()];
     let result = store.reference_changes(&q).unwrap();
-    assert_eq!((result.total, result.significant, result.counts.up, result.counts.down), (2, 2, 1, 1));
+    assert_eq!((result.total, result.significant, result.counts.up, result.counts.down, result.counts.gone), (2, 2, 1, 0, 1));
     assert!(!result.partial_fallback);
     let partial = result.rows.iter().find(|row| row.org == "B").unwrap();
     assert_eq!((partial.before, partial.after, partial.delta, partial.percent), (Some(20.), Some(0.), Some(-20.), Some(-100.)));
@@ -141,6 +141,44 @@ fn significant_filter_counts_partial_changes_and_keeps_confirmed_zero() {
     q.kind = "up".into();
     let result = store.reference_changes(&q).unwrap();
     assert_eq!(result.rows.iter().map(|row| row.org.as_str()).collect::<Vec<_>>(), ["A"]);
+}
+
+#[test]
+fn new_and_gone_use_observed_reports_without_classifying_missing_intervals_as_zero() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let revision = prepare(&store, vec![
+        json!({"id":"base","type":"day","start":"2024-01-01","end":"2024-01-01",
+            "organizations":["A","D"],"rows":[row("A","Stopped",2.,20.),row("D","NoCurrent",3.,30.)]}),
+        json!({"id":"now","type":"day","start":"2024-01-10","end":"2024-01-10",
+            "organizations":["A","B"],"rows":[row("A","Started",1.,10.),row("B","NoBase",4.,40.)]}),
+    ]);
+    let mut q = request(revision);
+    q.organizations = vec!["A".into(), "B".into(), "D".into()];
+    q.base_to = "2024-01-02".into();
+    q.min_count = 100.;
+    q.min_amount = 100.;
+    for (metric, started, stopped) in [("amount",10.,20.), ("count",1.,2.)] {
+        q.metric = metric.into();
+        for (kind, name, before, after, delta, percent, csv_suffix) in [
+            ("new", "Started", 0., started, started, None, r#";"""#),
+            ("gone", "Stopped", stopped, 0., -stopped, Some(-100.), r#";"-100""#),
+        ] {
+            q.kind = kind.into();
+            let data = store.reference_changes(&q).unwrap();
+            assert!(data.comparable.is_empty());
+            assert_eq!((data.counts.new,data.counts.gone,data.total), (1,1,1), "{metric}/{kind}");
+            let found = &data.rows[0];
+            assert_eq!((found.name.as_str(),found.org.as_str()), (name,"A"));
+            assert_eq!((found.before,found.after,found.delta,found.percent), (Some(before),Some(after),Some(delta),percent));
+            let path = dir.path().join(format!("{metric}-{kind}.csv"));
+            store.reference_changes_csv(&q,&path).unwrap();
+            let csv = fs::read_to_string(path).unwrap();
+            let expected = format!(r#""{name}";"A";"{before}";"{after}";"{delta}"{csv_suffix}"#);
+            assert!(csv.lines().any(|line| line == expected), "{csv}");
+            assert!(!csv.contains("NoBase") && !csv.contains("NoCurrent"), "{csv}");
+        }
+    }
 }
 
 #[test]
