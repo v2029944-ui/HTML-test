@@ -402,6 +402,15 @@ def verify_personal_transfer(writer, reader, folder, root, previous_generation):
     page = writer.page
     page.locator('#personalTransferPreview').click()
     expect(page.locator('#personalTransferSummary')).to_contain_text('Личная база: 365 отчётов')
+    rows = page.locator('#personalTransferList .personal-transfer-row')
+    pager = page.locator('#personalTransferPager .sql-pager')
+    expect(rows).to_have_count(50)
+    for number, count, label in [('8', 15, '351–365 из 365'), ('1', 50, '1–50 из 365')]:
+        pager.locator('[data-page-action="choose"]').click()
+        pager.locator('[data-page-input]').fill(number)
+        pager.locator('[data-page-action="apply"]').click()
+        expect(pager.locator('[data-page-range]')).to_contain_text(label)
+        expect(rows).to_have_count(count)
     page.locator('#personalTransferSelectAll').click()
     expect(page.locator('#personalTransferSummary')).to_contain_text('выбрано: 25 из 25')
     apply = page.locator('#personalTransferApply')
@@ -448,6 +457,66 @@ def remove_test_snapshot(path):
             if getattr(error, 'winerror', None) != 32 or time.monotonic() >= deadline:
                 raise
             time.sleep(0.2)
+
+
+def verify_group_cleanup(writer, reader, root):
+    before = api(writer.page, 'nativeSettingsBootstrap')
+    assert before['groups'] == 0
+    totals = api(writer.page, 'managementReportSummary', before['revision'], {'report_type': 'day'})
+    works = api(writer.page, 'unifiedManagementPage', before['revision'], 'works', '', None, 0, 1)['rows']
+    assert len(works) == 1 and works[0]['name'] == 'Альфа', works
+    saved = api(writer.page, 'unifiedGroupSave', before['revision'], None,
+        'cleanup-work', 'Группа работ', [works[0]['name']])
+    api(writer.page, 'nativeSettingsEdit', saved['revision'],
+        {'kind': 'create_group', 'id': 'cleanup-empty', 'name': 'Пустая группа'})
+    snapshot = api(writer.page, 'nativeSettingsBootstrap')
+    assert snapshot['groups'] == 2
+    prior = writer.page.evaluate("window.__TAURI__.core.invoke('shared_workspace_status')")
+    previous_generation = prior['generation']
+
+    def wait_groups(client, groups, generation, revision=None):
+        expected = {'generation': generation, 'revision': revision, 'groups': groups}
+        expression = (
+            f'window.sharedWorkspace.state?.available === true'
+            f' && window.sharedWorkspace.state?.generation === {generation}'
+            f' && window.unifiedUI.snapshot?.groups === {groups}'
+        )
+        if revision is not None:
+            expression += f' && window.unifiedUI.snapshot?.revision === {revision}'
+        # CDP polling also observes the background WebView when its animation
+        # frames are throttled. Do not force the reader window to refresh.
+        try:
+            wait_for_app_state(client.page, expression, f'{client.name} observes shared groups', 120_000)
+        except Exception as error:
+            observed = client.page.evaluate('''() => ({
+                available: window.sharedWorkspace.state?.available,
+                generation: window.sharedWorkspace.state?.generation,
+                revision: window.unifiedUI.snapshot?.revision,
+                groups: window.unifiedUI.snapshot?.groups
+            })''')
+            raise AssertionError(f'{client.name}: expected {expected}, observed {observed}') from error
+
+    # Direct fixture IPC writes do not refresh the local renderer as UI actions do.
+    # The independent reader must observe both shared generations automatically.
+    # Its private SQLite revision can include installation of its local settings.
+    writer.page.evaluate('window.unifiedUI.refresh()')
+    wait_groups(writer, 2, previous_generation, snapshot['revision'])
+    wait_groups(reader, 2, previous_generation)
+    backup = root / 'before-group-cleanup.sqlite3'
+    receipt = api(writer.page, 'unifiedGroupsDelete', snapshot['revision'], None, 2, str(backup))
+    writer.page.evaluate('window.unifiedUI.refresh()')
+    wait_groups(writer, 0, previous_generation + 1, receipt['revision'])
+    wait_groups(reader, 0, previous_generation + 1)
+    for client in (writer, reader):
+        snapshot = api(client.page, 'nativeSettingsBootstrap')
+        assert snapshot['groups'] == 0
+        after = api(client.page, 'managementReportSummary', snapshot['revision'], {'report_type': 'day'})
+        assert after == totals
+    with closing(sqlite3.connect(backup.as_uri() + '?mode=ro', uri=True)) as source:
+        assert source.execute('PRAGMA quick_check').fetchone() == ('ok',)
+        settings = source.execute("SELECT json FROM kv WHERE name='settings'").fetchone()[0]
+        assert len(json.loads(settings)['groups']) == 2
+        assert source.execute('SELECT COUNT(*) FROM reports').fetchone() == (totals['reports'],)
 
 
 def verify_explicit_reset(writer, peer, folder, root):
@@ -627,6 +696,8 @@ def run():
                 note('reader-returned-to-original-empty-personal-base')
                 totals = verify_personal_transfer(b, a, folder, root, generation + 1)
                 note('selected-personal-reports-transferred-with-verified-backup', totals=totals)
+                verify_group_cleanup(b, a, root)
+                note('group-cleanup-synced-once-with-verified-backup-and-unchanged-totals')
                 verify_explicit_reset(b, a, folder, root)
                 note('explicit-reset-retains-snapshots-and-recovers-same-path-for-two-clients', writer=b.state(), reader=a.state())
         # windows_test_workspace has now released its profile-specific workers.

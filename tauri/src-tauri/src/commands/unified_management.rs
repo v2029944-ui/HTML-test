@@ -78,6 +78,39 @@ pub async fn unified_group_save(
 }
 
 #[tauri::command]
+pub async fn unified_groups_delete(
+    app: AppHandle,
+    revision: i64,
+    handles: Option<Vec<String>>,
+    confirmed_count: usize,
+    backup: Option<String>,
+    confirmed: bool,
+    workspace_token: Option<String>,
+) -> Result<ManagementReceipt, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let handles = handles.map(|values| {
+            if values.len() > 10_000 {
+                return Err("Выберите не более 10 000 групп.".into());
+            }
+            values.into_iter().map(|value| {
+                group_handle(Some(value))?.ok_or_else(|| "Укажите группу.".to_string())
+            }).collect::<Result<Vec<_>, String>>()
+        }).transpose()?;
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Write,
+            |store| store.unified_delete_groups(
+                revision, handles.as_deref(), confirmed_count,
+                backup.as_deref().map(std::path::Path::new), confirmed,
+            ),
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub async fn unified_work_assign(
     app: AppHandle,
     revision: i64,

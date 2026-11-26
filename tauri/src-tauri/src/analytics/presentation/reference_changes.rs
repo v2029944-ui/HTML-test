@@ -1,5 +1,7 @@
 //! Independent current/baseline intervals over real work × organization facts.
 use super::*;
+
+const REFERENCE_CHANGES_PAGE_SIZE: i64 = 50;
 use std::{collections::BTreeSet, sync::atomic::AtomicBool};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -63,7 +65,7 @@ impl ReferenceChangesRequest {
             )
             || !matches!(self.sort.as_str(), "delta" | "percent" | "name")
             || self.search.len() > 512
-            || i64::from(self.page) * 12 > i64::from(i32::MAX)
+            || i64::from(self.page) * REFERENCE_CHANGES_PAGE_SIZE > i64::from(i32::MAX)
             || [self.percent, self.min_count, self.min_amount]
                 .iter()
                 .any(|n| !n.is_finite() || *n < 0.)
@@ -117,9 +119,9 @@ fn prepare_reference_values(
     periods(c, s, &q.baseline(), 1)?;
     periods(c, s, &q.current(), 2)?;
     c.execute_batch("CREATE TEMP TABLE ref_orgs(org TEXT PRIMARY KEY) WITHOUT ROWID;
-        CREATE TEMP TABLE ref_values(slot INTEGER,org TEXT,name TEXT,count REAL,amount REAL,known_amount REAL,PRIMARY KEY(slot,org,name)) WITHOUT ROWID;").map_err(err)?;
+        CREATE TEMP TABLE ref_values(slot INTEGER,org TEXT,name TEXT,count REAL,amount REAL,known_amount REAL,paired_count REAL,PRIMARY KEY(slot,org,name)) WITHOUT ROWID;").map_err(err)?;
     c.execute("INSERT INTO ref_orgs SELECT f.item FROM analysis_filter_items f WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM an_missing m WHERE m.org=f.item)",[&s.organizations]).map_err(err)?;
-    c.execute_batch("INSERT INTO ref_values SELECT p.slot,v.org,x.work,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount)
+    c.execute_batch("INSERT INTO ref_values SELECT p.slot,v.org,x.work,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount),SUM(x.count) FILTER (WHERE x.amount IS NOT NULL)
         FROM an_valid v JOIN an_periods p ON p.start=v.start
         JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY p.slot,v.org,x.work;").map_err(err)?;
     validate_numbers(c, "SELECT count,amount FROM ref_values")?;
@@ -152,24 +154,23 @@ fn prepare_reference(c:&Connection,q:&ReferenceChangesRequest,s:&AnalysisScope)-
         let before = observed_totals(bc,ba,row.get(6).map_err(err)?,row.get(8).map_err(err)?)?;
         let after = observed_totals(ac,aa,row.get(7).map_err(err)?,row.get(9).map_err(err)?)?;
         let complete: bool = row.get(10).map_err(err)?;
-        let (old, new, strict_pair, minimum) = if q.metric == "count" {
+        let (old, new, available_pair, minimum) = if q.metric == "count" {
             (before.count, after.count, Some((bc,ac)), q.min_count)
         } else {
-            (before.amount, after.amount, ba.zip(aa), q.min_amount)
+            (before.amount, after.amount, before.amount.zip(after.amount), q.min_amount)
         };
-        let Some((b, a)) = strict_pair.filter(|_| before.count.is_some() && after.count.is_some()) else {
-            put.execute(params![name, org, old, new, None::<f64>, None::<f64>, ""])
+        // A zero can only demonstrate absence on a side with observed reports.
+        let both_observed = before.count.is_some() && after.count.is_some();
+        let status = status_with_observed_amounts(bc, ba, ac, aa, before.amount, after.amount);
+        let lifecycle = if both_observed && matches!(status, "new" | "gone") { status } else { "" };
+        let Some((b, a)) = available_pair.filter(|_| both_observed) else {
+            put.execute(params![name, org, old, new, None::<f64>, None::<f64>, lifecycle])
                 .map_err(err)?;
             continue;
         };
         let value = measure(b, a, minimum, q.percent)?;
-        // Both intervals have reports here. Zero describes the work in those observed reports.
-        let kind = if value.delta == 0. {
-            ""
-        } else if bc == 0. && ba == Some(0.) && (ac != 0. || aa.is_some_and(|n| n != 0.)) {
-            "new"
-        } else if (bc != 0. || ba.is_some_and(|n| n != 0.)) && ac == 0. && aa == Some(0.) {
-            "gone"
+        let kind = if !lifecycle.is_empty() {
+            lifecycle
         } else if (b != 0. || !complete) && value.significant {
             if value.delta > 0. {
                 "up"
@@ -250,20 +251,24 @@ fn comparison_csv_context(
         let reason=match (*before,*after) {(true,true)=>"полные отчёты за оба интервала",(false,false)=>"неполные базовый и анализируемый интервалы",(false,true)=>"неполный базовый интервал",(true,false)=>"неполный анализируемый интервал"};
         csv_record(writer,&[Text("Состав сравнения"),Text(org),Text(reason)])?;
     }
-    let observed = |slot| -> Result<(AnalysisTotals, Option<f64>), String> {
-        let (count, amount, known_amount) = c.query_row("SELECT coalesce(sum(count),0.0),
+    let observed = |slot| -> Result<(AnalysisTotals, Option<String>), String> {
+        let (count, amount, known_amount, paired_count, source_work) = c.query_row("SELECT coalesce(sum(count),0.0),
             CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,
-            SUM(known_amount) FROM ref_values WHERE slot=?1", [slot], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).map_err(err)?;
+            SUM(known_amount), CASE WHEN MIN(name)=MAX(name) THEN SUM(paired_count) END,
+            CASE WHEN MIN(name)=MAX(name) THEN MIN(name) END FROM ref_values WHERE slot=?1", [slot],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).map_err(err)?;
         let available = observed_reports(c, slot, None)?;
-        Ok((observed_totals(count, amount, known_amount, available)?, amount.filter(|_| available)))
+        Ok((paired_observed_totals(count, amount, known_amount, paired_count, available)?, source_work))
     };
-    let (before, before_amount) = observed(1)?;
-    let (after, after_amount) = observed(2)?;
+    let (before, before_work) = observed(1)?;
+    let (after, after_work) = observed(2)?;
+    let same_work = before_work.as_ref().zip(after_work.as_ref()).is_some_and(|(b, a)| b == a);
+    let average_pair = comparable_averages(&before, &after, same_work);
     csv_record(writer,&[Text("Сравнение по доступным отчётам · все работы")])?;
     csv_record(writer,&[Text("Показатель"),Text("Было"),Text("Стало"),Text("Изменение"),Text("Изменение, %")])?;
-    for (label,before,after,pair) in [("Сумма",before.amount,after.amount,before_amount.zip(after_amount)),
+    for (label,before,after,pair) in [("Сумма",before.amount,after.amount,before.amount.zip(after.amount)),
         ("Количество / объём",before.count,after.count,before.count.zip(after.count)),
-        ("Сумма / количество (объём)",before.average,after.average,before.average.zip(after.average))] {
+        ("Сумма / количество (объём)",before.average,after.average,average_pair)] {
         let change=pair.map(|(before,after)|measure(before,after,0.,0.)).transpose()?;
         csv_record(writer,&[Text(label),Number(before),Number(after),Number(change.as_ref().map(|value|value.delta)),Number(change.and_then(|value|value.percent))])?;
     }
@@ -305,7 +310,7 @@ impl Analytics<'_> {
                  FROM ref_changes WHERE instr(classic_normalized(name),?2)>0"),
                 params![q.kind,search],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))
             ).map_err(err)?;
-            let rows=tx.prepare(&(filtered_rows_sql(q)+" LIMIT 12 OFFSET ?3")).map_err(err)?.query_map(params![q.kind,search,i64::from(q.page)*12],change_row).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+            let rows=tx.prepare(&(filtered_rows_sql(q)+" LIMIT ?3 OFFSET ?4")).map_err(err)?.query_map(params![q.kind,search,REFERENCE_CHANGES_PAGE_SIZE,i64::from(q.page)*REFERENCE_CHANGES_PAGE_SIZE],change_row).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
             Ok(ReferenceChangesPage {rows,total,searched,significant,counts,leader,comparable,partial_fallback:q.kind=="significant"&&total>significant})
         })
     }
@@ -405,20 +410,21 @@ impl Analytics<'_> {
                 csv_record(writer,&[Cell::Text("Наблюдаемые итоги анализируемого интервала"),Cell::Text("Все выбранные подразделения"),Cell::Text("Доли от суммы заполненных ячеек")])?;
                 csv_record(writer,&[Cell::Text("Подразделение"),Cell::Text("Сумма"),Cell::Text("Количество / объём"),Cell::Text("Доля суммы, %"),Cell::Text("Сумма / количество (объём)"),Cell::Text("Состояние")])?;
                 let mut statement=tx.prepare("WITH observed AS (
-                    SELECT v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,CASE WHEN COUNT(x.row_index)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(x.row_index) THEN SUM(x.amount) END amount,SUM(x.amount) known_amount
+                    SELECT v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,CASE WHEN COUNT(x.row_index)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(x.row_index) THEN SUM(x.amount) END amount,SUM(x.amount) known_amount,
+                           CASE WHEN MIN(x.work)=MAX(x.work) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END paired_count
                     FROM an_valid v JOIN an_periods p ON p.slot=2 AND p.start=v.start
                     LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY v.org)
                     SELECT f.item,coalesce(o.reports,0),o.count,o.amount,
                     NOT EXISTS(SELECT 1 FROM an_missing m WHERE m.slot=2 AND m.org=f.item),
-                    (SELECT SUM(coalesce(amount,known_amount)) FROM observed),o.known_amount
+                    (SELECT SUM(coalesce(amount,known_amount)) FROM observed),o.known_amount,o.paired_count
                     FROM analysis_filter_items f LEFT JOIN observed o ON o.org=f.item WHERE f.id=?1
                     ORDER BY (coalesce(o.amount,o.known_amount) IS NULL),coalesce(o.amount,o.known_amount) DESC,f.item COLLATE classic_ru,f.item").map_err(err)?;
                 let mut rows=statement.query([&scope.organizations]).map_err(err)?;
                 while let Some(row)=rows.next().map_err(err)? {
                     let org:String=row.get(0).map_err(err)?;let available:i64=row.get(1).map_err(err)?;
                     let strict_amount:Option<f64>=row.get(3).map_err(err)?;
-                    let totals=observed_totals(row.get::<_,Option<f64>>(2).map_err(err)?.unwrap_or(0.),
-                        strict_amount,row.get(6).map_err(err)?,available>0)?;
+                    let totals=paired_observed_totals(row.get::<_,Option<f64>>(2).map_err(err)?.unwrap_or(0.),
+                        strict_amount,row.get(6).map_err(err)?,row.get(7).map_err(err)?,available>0)?;
                     let total=row.get::<_,Option<f64>>(5).map_err(err)?.map(finite).transpose()?;
                     let share=match (totals.amount,total) {(Some(a),Some(t)) if t>0.=>Some(finite(a/t*100.)?),_=>None};
                     let complete:bool=row.get(4).map_err(err)?;

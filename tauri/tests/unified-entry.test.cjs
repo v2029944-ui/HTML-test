@@ -147,11 +147,21 @@ test('trend and composition occupy one presentation switch, retaining native SQL
  const html=prepareHtml(original);
  const selector=html.indexOf('id="workViewMode"'),chart=html.indexOf('id="chartPanel"'),composition=html.indexOf('id="structurePanel"'),comparison=html.indexOf('id="comparison"');
  assert.ok(selector>=0&&selector<chart&&chart<composition&&composition<comparison);
- assert.match(html,/<details class="panel" id="structurePanel" hidden>/);
+ assert.match(html,/<section class="panel" id="structurePanel" hidden aria-labelledby="structureHeading">/);
+ assert.match(html,/<h2 id="structureHeading">Состав работ и доли<\/h2>/);
+ assert.match(html,/<section id="contributions" class="extended-section" aria-labelledby="contributionsHeading">/);
+ assert.match(html,/<h3 id="contributionsHeading">Вклад работ в изменение итогов<\/h3>/);
+ assert.doesNotMatch(html,/<details\b[^>]*\bid="(?:structurePanel|contributions)"/);
  assert.match(html,/id="structureLimit"/);
  assert.match(html,/id="chartsContainer"/);
  assert.equal([...html.matchAll(/id="structurePanel"/g)].length,1);
  assert.equal([...html.matchAll(/id="chartPanel"/g)].length,1);
+});
+
+test('the installed trend table lets its inner viewport own the scroll',()=>{
+ const html=prepareHtml(original);
+ assert.match(html,/<div id="dataTable" hidden><\/div>/);
+ assert.match(original,/<div id="dataTable" class="table-scroll" hidden><\/div>/);
 });
 
 test('partial monthly chart and table headings show the actual dates but keep calendar keys for gap checks',()=>{

@@ -18,3 +18,31 @@
 .sql-pager [role=alert] {color:var(--danger,#ec9d99)}
 .sql-obsolete-control[hidden],.sql-pager[hidden],.sql-pager-controls[hidden] {display:none!important}
 @media print {.sql-pager {display:none!important}.sql-page-content {max-block-size:none!important;min-height:0!important;overflow:visible!important}}
+
+@media screen {
+  /* A table with an inner horizontal viewport also scrolls vertically there.
+     Keeping a second scroll container outside it prevents sticky headers. */
+  .sql-page-content[data-page-axis=y]:has(> :is(.table-scroll,.metric-table)) {
+    max-block-size:none;
+    overflow:visible;
+    scrollbar-gutter:auto;
+  }
+  :is(.table-scroll,.table-viewport) {
+    max-block-size:min(58vh,36rem);
+    overflow:auto;
+  }
+  :is(.table-scroll,.table-viewport,.sql-page-content) > table {
+    border-collapse:separate;
+    border-spacing:0;
+  }
+  :is(.table-scroll,.table-viewport,.sql-page-content) > table > thead {
+    position:sticky;
+    inset-block-start:0;
+    z-index:3;
+    background:var(--subtle);
+  }
+  .table-scroll > .table > thead th {
+    position:static;
+    inset-block-start:auto;
+  }
+}

@@ -161,9 +161,10 @@ impl Calendar {
             _ => "1",
         };
         c.execute_batch(&format!("INSERT INTO adv_coverage SELECT label,org,max(warned),count(*)={expected} FROM adv_reports GROUP BY label,org;
-            CREATE TEMP TABLE adv_facts(label TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,known_amount REAL,active INTEGER,PRIMARY KEY(label,org,key)) WITHOUT ROWID;")).map_err(err)?;
+            CREATE TEMP TABLE adv_facts(label TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,known_amount REAL,active INTEGER,paired_count REAL,source_work TEXT,PRIMARY KEY(label,org,key)) WITHOUT ROWID;")).map_err(err)?;
         c.execute("INSERT INTO adv_facts SELECT v.label,v.org,coalesce(g.key,'work:'||x.work),coalesce(g.name,x.work),
-            CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount),max(x.count<>0 OR x.amount IS NULL OR x.amount<>0)
+            CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount),max(x.count<>0 OR x.amount IS NULL OR x.amount<>0),
+            SUM(x.count) FILTER (WHERE x.amount IS NOT NULL),CASE WHEN MIN(x.work)=MAX(x.work) THEN MIN(x.work) END
             FROM adv_reports v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work
             WHERE (?1 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=coalesce(g.name,x.work)))
             GROUP BY v.label,v.org,coalesce(g.key,'work:'||x.work)",[&s.names]).map_err(err)?;
@@ -184,14 +185,14 @@ pub(super) fn prepare_changes(
     calendar.prepare_change_facts(c, s, q)?;
     c.execute_batch("CREATE TEMP TABLE an_currents(start TEXT PRIMARY KEY,base TEXT) WITHOUT ROWID;
         CREATE TEMP TABLE an_pairs(start TEXT,base TEXT,org TEXT,base_id TEXT,current_id TEXT,warned INTEGER,partial INTEGER,PRIMARY KEY(start,org)) WITHOUT ROWID;
-        CREATE TEMP TABLE an_period_values(start TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,PRIMARY KEY(start,org,key)) WITHOUT ROWID;
-        CREATE TEMP TABLE an_changes(start TEXT,base TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL,PRIMARY KEY(start,org,key)) WITHOUT ROWID;").map_err(err)?;
+        CREATE TEMP TABLE an_period_values(start TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,known_amount REAL,paired_count REAL,source_work TEXT,PRIMARY KEY(start,org,key)) WITHOUT ROWID;
+        CREATE TEMP TABLE an_changes(start TEXT,base TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL,b_known REAL,a_known REAL,b_paired REAL,a_paired REAL,same_source_work INTEGER,PRIMARY KEY(start,org,key)) WITHOUT ROWID;").map_err(err)?;
     calendar.fill_change_periods(c, q.method == "previous")?;
     c.execute("INSERT INTO an_pairs SELECT p.start,p.base,f.item,b.label,v.label,coalesce(b.warned,0) OR coalesce(v.warned,0),
         b.label IS NOT NULL AND v.label IS NOT NULL AND (NOT b.complete OR NOT v.complete)
         FROM an_currents p CROSS JOIN analysis_filter_items f LEFT JOIN adv_coverage b ON b.label=p.base AND b.org=f.item
         LEFT JOIN adv_coverage v ON v.label=p.start AND v.org=f.item WHERE f.id=?1",[&s.organizations]).map_err(err)?;
-    c.execute_batch("INSERT INTO an_period_values SELECT label,org,key,name,kind,count,amount FROM adv_facts WHERE label IN (SELECT start FROM an_currents UNION SELECT base FROM an_currents)").map_err(err)?;
+    c.execute_batch("INSERT INTO an_period_values SELECT label,org,key,name,kind,count,amount,known_amount,paired_count,source_work FROM adv_facts WHERE label IN (SELECT start FROM an_currents UNION SELECT base FROM an_currents)").map_err(err)?;
     finish_changes(c)
 }
 
@@ -432,46 +433,66 @@ fn usual_row(
     available: bool,
     percent: f64,
 ) -> Result<Value, String> {
-    let (bc, priced_count, ba, priced_samples, ac, aa, known_amount):
-        (f64, f64, f64, i64, f64, Option<f64>, Option<f64>) = tx.query_row(
+    let (
+        base_count_sum, strict_priced_count, strict_amount, strict_samples, base_known_amount,
+        base_paired_count, base_work, known_samples, current_count, current_amount,
+        current_known_amount, current_paired_count, current_work,
+    ): (f64, f64, f64, i64, Option<f64>, Option<f64>, Option<String>, i64,
+        f64, Option<f64>, Option<f64>, Option<f64>, Option<String>) = tx.query_row(
         "WITH historical AS (
             SELECT batch, SUM(count) AS quantity,
-                CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END AS amount
+                CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END AS amount,
+                SUM(known_amount) AS known_amount, SUM(paired_count) AS paired_count,
+                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work
             FROM adv_combined JOIN adv_dates USING(label)
             WHERE key=?1 AND slot=0 AND observed GROUP BY batch
          ), baseline AS (
             SELECT coalesce(SUM(quantity),0) AS count,
-                coalesce(SUM(quantity) FILTER(WHERE amount IS NOT NULL),0) AS priced_count,
-                coalesce(SUM(amount),0) AS amount,
-                ?2-COUNT(*) FILTER(WHERE amount IS NULL) AS priced_samples
+                coalesce(SUM(quantity) FILTER(WHERE amount IS NOT NULL),0) AS strict_count,
+                coalesce(SUM(amount),0) AS strict_amount,
+                ?2-COUNT(*) FILTER(WHERE amount IS NULL) AS strict_samples,
+                CASE WHEN COUNT(*)<?2 THEN COALESCE(SUM(known_amount),0) ELSE SUM(known_amount) END AS known_amount,
+                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN SUM(paired_count) END AS paired_count,
+                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work,
+                ?2-COUNT(*) FILTER(WHERE known_amount IS NULL) AS known_samples
             FROM historical
          ), current AS (
             SELECT coalesce(SUM(count),0) AS count,
                 CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END AS amount,
-                SUM(known_amount) AS known_amount
+                SUM(known_amount) AS known_amount,
+                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN SUM(paired_count) END AS paired_count,
+                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work
             FROM adv_combined JOIN adv_dates USING(label) WHERE key=?1 AND slot=1 AND observed
-         ) SELECT baseline.count,baseline.priced_count,baseline.amount,baseline.priced_samples,
-                current.count,current.amount,current.known_amount FROM baseline CROSS JOIN current",
+         ) SELECT baseline.*, current.* FROM baseline CROSS JOIN current",
         params![key, previous],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?,r.get(7)?,
+                 r.get(8)?,r.get(9)?,r.get(10)?,r.get(11)?,r.get(12)?)),
     ).map_err(err)?;
-    // An observed window without this work contributes zero. A window with
-    // unknown amounts contributes only to the quantity baseline.
-    let base_count = (previous > 0).then(|| bc / previous as f64).map(finite).transpose()?;
-    let valid_amount = priced_samples > 0 && (available || priced_samples == previous);
-    let base_money = totals(priced_count, valid_amount.then_some(ba), valid_amount)?;
-    let base_amount = base_money.amount.map(|v| v / priced_samples as f64);
-    let now = totals(ac, aa, current_observed)?;
-    let enough = |n| !available || n >= 2;
-    let shown_amount = if available {
-        observed_totals(ac, aa, known_amount, current_observed)?.amount
+    let base_count = (previous > 0).then(|| base_count_sum / previous as f64).map(finite).transpose()?;
+    let strict_baseline = strict_samples > 0 && strict_samples == previous;
+    let base_money = if available {
+        paired_observed_totals(
+            base_count_sum, strict_baseline.then_some(strict_amount), base_known_amount,
+            base_paired_count, known_samples > 0,
+        )?
     } else {
-        now.amount
+        totals(strict_priced_count, strict_baseline.then_some(strict_amount), strict_baseline)?
     };
+    let samples = if available { known_samples } else { strict_samples };
+    let base_amount = base_money.amount.map(|v| v / samples as f64);
+    let current = if available {
+        paired_observed_totals(current_count, current_amount, current_known_amount, current_paired_count, current_observed)?
+    } else {
+        totals(current_count, current_amount, current_observed)?
+    };
+    let enough = |n| !available || n >= 2;
+    let same_work = base_work.as_ref().zip(current_work.as_ref()).is_some_and(|(b, a)| b == a);
+    let comparable_average = comparable_averages(&base_money, &current, same_work)
+        .map(|(_, value)| value).filter(|_| enough(samples));
     Ok(json!({
-        "count": usual_metric(base_count, now.count.filter(|_| enough(previous)), now.count, previous, percent)?,
-        "amount": usual_metric(base_amount, now.amount.filter(|_| enough(priced_samples)), shown_amount, priced_samples, percent)?,
-        "average": usual_metric(base_money.average, now.average.filter(|_| enough(priced_samples)), now.average, priced_samples, percent)?
+        "count": usual_metric(base_count, current.count.filter(|_| enough(previous)), current.count, previous, percent)?,
+        "amount": usual_metric(base_amount, current.amount.filter(|_| enough(samples)), current.amount, samples, percent)?,
+        "average": usual_metric(base_money.average, comparable_average, current.average, samples, percent)?
     }))
 }
 
@@ -595,8 +616,9 @@ impl Analytics<'_> {
         tx.execute_batch("CREATE TEMP TABLE adv_complete(label TEXT PRIMARY KEY) WITHOUT ROWID;
           CREATE TEMP TABLE adv_dates(label TEXT,slot INTEGER,batch INTEGER,observed INTEGER,PRIMARY KEY(label,slot)) WITHOUT ROWID;
           CREATE TEMP TABLE adv_tail(label TEXT PRIMARY KEY,distance INTEGER) WITHOUT ROWID;
-          CREATE TEMP TABLE adv_combined(key TEXT,label TEXT,count REAL,amount REAL,known_amount REAL,active INTEGER,PRIMARY KEY(key,label)) WITHOUT ROWID;
-          INSERT INTO adv_combined SELECT key,label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),max(active) FROM adv_facts GROUP BY key,label;
+          CREATE TEMP TABLE adv_combined(key TEXT,label TEXT,count REAL,amount REAL,known_amount REAL,active INTEGER,paired_count REAL,source_work TEXT,PRIMARY KEY(key,label)) WITHOUT ROWID;
+          INSERT INTO adv_combined SELECT key,label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),max(active),SUM(paired_count),
+                   CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END FROM adv_facts GROUP BY key,label;
           CREATE TEMP TABLE adv_keys(key TEXT PRIMARY KEY,name TEXT,kind TEXT) WITHOUT ROWID;
           INSERT INTO adv_keys SELECT key,name,kind FROM adv_facts GROUP BY key;").map_err(err)?;
         tx.execute("INSERT INTO adv_complete SELECT label FROM adv_coverage WHERE complete GROUP BY label HAVING count(*)=(SELECT count(*) FROM analysis_filter_items WHERE id=?1)",[&s.organizations]).map_err(err)?;
@@ -657,7 +679,8 @@ impl Analytics<'_> {
         let mut trailing_periods = None;
         if usual {
             tx.execute_batch("INSERT INTO adv_keys VALUES('','Итого по выбранным работам','total');
-                INSERT INTO adv_combined SELECT '',label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),max(active) FROM adv_combined GROUP BY label;").map_err(err)?;
+                INSERT INTO adv_combined SELECT '',label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),max(active),SUM(paired_count),
+                   CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END FROM adv_combined GROUP BY label;").map_err(err)?;
         } else {
             tx.execute_batch("CREATE TEMP TABLE adv_baseline_active(key TEXT,label TEXT,PRIMARY KEY(key,label)) WITHOUT ROWID").map_err(err)?;
             if clipped_baseline {
@@ -823,16 +846,16 @@ fn percent_of(value: f64, total: f64, valid: bool) -> Result<Option<f64>, String
 }
 
 pub(super) fn observed_contribution_rows(c: &Connection, metric: &str) -> Result<String, String> {
-    let (before, after, delta) = match metric {
-        "count" => ("bc", "cc", "cc-bc"),
-        "amount" => ("coalesce(ba,b_known)", "coalesce(ca,a_known)", "ca-ba"),
+    let (before, after) = match metric {
+        "count" => ("bc", "cc"),
+        "amount" => ("coalesce(ba,b_known)", "coalesce(ca,a_known)"),
         _ => return Err("Select amount or count".into()),
     };
     let base_observed = observed_reports(c, 1, None)?;
     let current_observed = observed_reports(c, 2, None)?;
     let before = if base_observed { before } else { "NULL" };
     let after = if current_observed { after } else { "NULL" };
-    let delta = if base_observed && current_observed { delta } else { "NULL" };
+    let delta = format!("{after}-{before}");
     Ok(format!("SELECT key,name,kind,{before} AS base,{after} AS current,{delta} AS delta FROM an_comparison
         WHERE key NOT LIKE 'absent:%' AND ({before} IS NOT NULL OR {after} IS NOT NULL)"))
 }

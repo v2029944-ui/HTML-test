@@ -30,9 +30,11 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          node-version: "24.22.3"
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.100.0"
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
@@ -41,17 +43,13 @@ jobs:
       - name: Install Tauri CLI
         shell: pwsh
         run: |
-          npm install --prefix tauri --no-audit --no-fund --include=optional
-          if ($LASTEXITCODE -ne 0) { throw 'Tauri CLI installation failed' }
-          # npm occasionally omits the Windows native optional dependency.
-          # Install the exact platform package matching the resolved CLI version.
-          $cliVersion = (Get-Content 'tauri/node_modules/@tauri-apps/cli/package.json' -Raw | ConvertFrom-Json).version
-          if (-not (Test-Path 'tauri/node_modules/@tauri-apps/cli-win32-x64-msvc/package.json')) {
-            npm install --prefix tauri --no-save --no-package-lock --no-audit --no-fund "@tauri-apps/cli-win32-x64-msvc@$cliVersion"
-            if ($LASTEXITCODE -ne 0) { throw 'Tauri Windows native CLI installation failed' }
-          }
-          node -e "require('./tauri/node_modules/@tauri-apps/cli')"
-          if ($LASTEXITCODE -ne 0) { throw 'Tauri Windows native CLI verification failed' }
+          npm ci --prefix tauri --no-audit --no-fund --include=optional
+          if ($LASTEXITCODE -ne 0) { throw 'Locked Tauri CLI installation failed' }
+          Push-Location tauri
+          try {
+            node -e "require('./node_modules/@tauri-apps/cli'); require('./node_modules/@tauri-apps/cli-win32-x64-msvc')"
+            if ($LASTEXITCODE -ne 0) { throw 'Locked Windows Tauri CLI is missing' }
+          } finally { Pop-Location }
       - name: Check frontend bridge and prepare HTML
         shell: pwsh
         run: |
@@ -62,7 +60,7 @@ jobs:
           npm --prefix tauri run icons
           if ($LASTEXITCODE -ne 0) { throw 'Tauri icon generation failed' }
       - name: Test SQLite migration and safe folder access
-        run: cargo test --manifest-path tauri/src-tauri/Cargo.toml
+        run: cargo test --locked --manifest-path tauri/src-tauri/Cargo.toml
       - name: Test streamed native XLSX import core
         run: cargo test --locked --manifest-path tauri/import-core/Cargo.toml
       - name: Test bounded SQLite read model
@@ -85,7 +83,7 @@ jobs:
 
       - name: Build Windows installer
         if: github.ref != 'refs/heads/work/tauri-dropdown-updates-20261117'
-        run: npm --prefix tauri run build:windows
+        run: npm --prefix tauri run build:windows -- -- --locked
       - name: Preserve unsigned CI installer before GUI test build
         if: github.ref != 'refs/heads/work/tauri-dropdown-updates-20261117'
         shell: pwsh
@@ -136,7 +134,7 @@ jobs:
         run: |
           Push-Location tauri
           try {
-            npx tauri build --config tests/ci-webview2.json --features ci-webview2
+            npx tauri build --config tests/ci-webview2.json --features ci-webview2 -- --locked
             if ($LASTEXITCODE -ne 0) { throw 'WebView2 smoke build failed' }
           }
           finally { Pop-Location }

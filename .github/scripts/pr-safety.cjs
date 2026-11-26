@@ -7,8 +7,10 @@ function blocked(file){
  const name=path.posix.basename(p);
  const fixture=/^(?:tests|tauri\/tests)\/fixtures\//.test(p);
  if(name==='.env'||(name.startsWith('.env.')&&name!=='.env.example'))return true;
- if(/\.(?:sqlite3?|db)(?:-(?:wal|shm))?$/.test(name))return true;
- if(/\.(?:pem|p12|pfx|key|exe|msi|msix|sig)$/.test(name))return true;
+ if(/\.(?:sqlite3?|db)(?:-(?:wal|shm|journal))?$/.test(name))return true;
+ if(/^(?:analiz-generation-[0-9]+|pending)\.snapshot$/.test(name))return true;
+ if(/^(?:id_rsa|id_dsa|id_ecdsa|id_ed25519)$/.test(name))return true;
+ if(/\.(?:pem|p12|pfx|key|ppk|jks|keystore|exe|msi|msix|sig)$/.test(name))return true;
  if(/\.(?:xlsx|xlsm|xls)$/.test(name)&&!fixture)return true;
  if(p.startsWith('tauri/release/')&&name!=='readme.md')return true;
  if(p.startsWith('tauri/web/'))return true;

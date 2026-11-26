@@ -2,9 +2,10 @@
 (function(){
 'use strict';
 const UI=window.unifiedUI,$=UI.$,api=UI.api;
-const {titles,observed,incomplete}=window.analysisSummary;
+const {titles,observed,incomplete,averageNote}=window.analysisSummary;
 const usualLabels={normal:'Обычный уровень',high:'Необычно выше',low:'Необычно ниже',insufficient:'Недостаточно данных'};
 const regularLabels={frequent:'Часто',rare:'Редко',rarer:'Заметно реже',disappeared:'Перестала встречаться',new:'Впервые в загруженной истории',dormant:'Долго без выполнений',occasional:'Встречается',absent:'Нет выполнений',uncertain:'Есть пропуски',unknown:'Нет сопоставимых отчётов'};
+const RESULTS_PAGE_SIZE=50;
 const channels=new Map();
 let initialized=false,scope=null,activeView='dashboard',dateKind=null,changesKind=null;
 let changeOrganizations=new Set(),changeMetrics=new Set(['count','amount']),usualMetrics=new Set(['count','amount','average']),comparisonMetrics=new Set(['amount']);
@@ -23,7 +24,6 @@ function percent(n){
 }
 function delta(n,m){return window.analysisSummary.displayedChange(n,m,fmt).value;}
 function rawDifference(now,base){return [Number.isFinite(now)&&Number.isFinite(base)?now-base:null,Number.isFinite(now)&&Number.isFinite(base)&&base!==0?(now-base)/Math.abs(base)*100:null];}
-function difference(now,base,m){return [Number.isFinite(now)&&Number.isFinite(base)?delta(now-base,m):'—',Number.isFinite(now)&&Number.isFinite(base)&&base!==0?percent((now-base)/Math.abs(base)*100):'—'];}
 function number(id){const raw=value(id).trim(),n=Number(raw);if(!raw||!Number.isFinite(n)||n<0)throw Error('Укажите неотрицательные числовые пороги.');return n;}
 function textError(e){return window.analizUserError?window.analizUserError(e):(e?.message||String(e));}
 function current(s,t,revision){return s.ticket===t&&UI.revision===revision;}
@@ -31,7 +31,7 @@ function invalidate(name){const s=slot(name);for(const id of s.ids||[]){if($(id)
 function pager(name,result,index){
  const state=slot(name);state.page=result;state.index=index;
  const root=$(name+'Results'),previous=$(name+'Prev'),next=$(name+'Next'),label=$(name+'Page'),revision=UI.revision,mine=state.ticket;
- const count=result.rows?.length??result.count??0,total=result.total_rows,size=50,pages=Math.max(1,Math.ceil(total/size));
+ const count=result.rows?.length??result.count??0,total=result.total_rows,size=RESULTS_PAGE_SIZE,pages=Math.max(1,Math.ceil(total/size));
  const run=name==='changes'?i=>changes(i,true):name==='contribution'?i=>contributions(i,true):i=>patterns(name,i,true);
  const go=i=>{if(current(state,mine,revision)&&state.page===result&&Number.isSafeInteger(i)&&i>=0&&i<pages&&i!==index)return run(i);return false;};
  if(root&&window.sqlRowScroll?.attach(root,{index,size,count,total,label:'Результаты анализа',direct:true,go,footer:previous?.parentElement})){window.sqlRowScroll?.retire?.(previous,next,label);if(label)label.textContent='';return;}
@@ -153,7 +153,10 @@ function changeContext(){
  const s=scopeFor(range,{organizations:[...changeOrganizations],selectedNames:[],selectedKeys:[],allNames:true});
  return {scope:s,request:request(s,{method,percent:number('changesPercent'),min_count:number('changesCountMin'),min_amount:number('changesAmountMin')}),options:{metrics:[...changeMetrics],mode:value('changesMode'),search:value('changesSearch'),direction:value('changesDirection'),sort:value('changesSort')}};
 }
-function changeMeasure(row,metric){const m=row[metric]||{};return {...m,smallBase:m.smallBase??m.small_base??false};}
+function changeMeasure(row,metric){
+ const m=row[metric]??(metric==='amount'?{base:row.observedAmountBefore,current:row.observedAmountAfter}:{});
+ return {...m,smallBase:m.smallBase??m.small_base??false};
+}
 function changeLabel(row,m,shown){if(m.negative)return 'Изменение с отрицательными значениями';if(row.status==='new')return 'Новая';if(row.status==='gone')return 'Нет выполнений';return shown.direction==='up'?'Рост':shown.direction==='down'?'Снижение':shown.label;}
 function changeColor(direction){return direction==='up'?'numeric-rise':direction==='down'?'numeric-fall':'';}
 function renderChangeSummary(summary,chosen){clear('changesSummary');const root=$('changesSummary');
@@ -172,11 +175,18 @@ function renderChangeSummary(summary,chosen){clear('changesSummary');const root=
 }
 async function changes(index=0,paging=false){
  changeLayout();const task=loading('changes',['changesResults','changesSummary','changesWarnings'],paging);$('changeDetails').hidden=true;
- try{const captured=changeContext(),result=await api.unifiedChangesPageAtPage(captured.request,captured.options,index);if(!task.valid())return;
+ try{
+  const captured=changeContext(),chosen=captured.options.metrics;
+  // One 50-record SQL page expands to one 50-row display page per selected metric.
+  const sqlIndex=Math.floor(index/chosen.length),first=(index%chosen.length)*RESULTS_PAGE_SIZE;
+  const result=await api.unifiedChangesPageAtPage(captured.request,captured.options,sqlIndex);if(!task.valid())return;
+  const end=Math.min(first+RESULTS_PAGE_SIZE,result.rows.length*chosen.length);
   clear('changesResults','',false);clear('changesWarnings','',false);renderChangeSummary(result.summary,captured.options.metrics);
   const diagnostic=result.summary.totals;
-  if(diagnostic?.missing_pairs||diagnostic?.partial_pairs||diagnostic?.invalid_reports||diagnostic?.duplicate_issues||diagnostic?.overlap_issues||diagnostic?.import_warning_pairs){
+  const missingAmount=result.summary.rows_with_missing_amount??0;
+  if(missingAmount||diagnostic?.missing_pairs||diagnostic?.partial_pairs||diagnostic?.invalid_reports||diagnostic?.duplicate_issues||diagnostic?.overlap_issues||diagnostic?.import_warning_pairs){
    const problems=[];
+   if(missingAmount>0)problems.push('Есть строки без суммы. Сравнение суммы учитывает заполненные ячейки, а среднее — сопоставимые количества из тех же строк.');
    if(diagnostic.missing_pairs>0)problems.push('Пар без отчётов за один или оба периода: '+diagnostic.missing_pairs+' (не включены в сопоставление).');
    if(diagnostic.partial_pairs>0)problems.push('Пар по доступным отчётам: '+diagnostic.partial_pairs+' (есть пропуски).');
    if(diagnostic.import_warning_pairs>0)problems.push('Пар с замечаниями импорта: '+diagnostic.import_warning_pairs+' (проверьте источник; замечание не означает автоматического исключения).');
@@ -187,14 +197,16 @@ async function changes(index=0,paging=false){
    $('changesWarnings').append(UI.el('p','Сопоставимых строк по текущим фильтрам: '+total+'. '+problems.join(' ')+' Пропуски не считаются нулём.','warn small'));
   }
   for(const pair of result.missing_examples||[])$('changesWarnings').append(UI.el('p',pair.org+': нет отчётов за '+[pair.missing_base?pair.base_start:null,pair.missing_current?pair.current_start:null].filter(Boolean).map(date=>periodLabel(date,captured.scope.displayType)).join(', '),'warn small'));
-  if(!result.rows.length)clear('changesResults','Нет сопоставимых записей по выбранным условиям. Измените фильтры или проверьте наличие соседних отчётов.',false);
+  if(first>=end)clear('changesResults','Нет сопоставимых записей по выбранным условиям. Измените фильтры или проверьте наличие соседних отчётов.',false);
   const rows=[],raw=[];
-  for(const row of result.rows)for(const metric of captured.options.metrics){const m=changeMeasure(row,metric),name=itemButton(row,{...captured.scope,from:row.baseStart,to:captured.scope.source==='daily'?periodEnd(row.currentStart,captured.scope.displayType):row.currentStart},row.org,'change');const shown=window.analysisSummary.displayedChange(m.delta,metric,fmt),direction=changeLabel(row,m,shown),kind=m.smallBase?' · малая база':'';
+  for(let position=first;position<end;position++){
+   const row=result.rows[Math.floor(position/chosen.length)],metric=chosen[position%chosen.length];
+   const m=changeMeasure(row,metric),name=itemButton(row,{...captured.scope,from:row.baseStart,to:captured.scope.source==='daily'?periodEnd(row.currentStart,captured.scope.displayType):row.currentStart},row.org,'change');const shown=window.analysisSummary.displayedChange(m.delta,metric,fmt),direction=changeLabel(row,m,shown),kind=m.smallBase?' · малая база':'';
    rows.push([name,row.org,periodLabel(row.baseStart,captured.scope.displayType),periodLabel(row.currentStart,captured.scope.displayType),titles[metric],fmt(m.base,metric),fmt(m.current,metric),delta(m.delta,metric),percent(m.percent),UI.el('span',direction+kind,changeColor(shown.direction))]);raw.push([row.name,row.org,row.baseStart,row.currentStart,titles[metric],m.base,m.current,m.delta,m.percent,direction+kind]);}
   if(rows.length)UI.table($('changesResults'),'count',caption(captured.scope),['Работа / группа','Подразделение','Базовый период','Текущий период','Показатель','Было','Стало','Изменение','Изменение, %','Направление'],rows,{title:'Изменения между соседними периодами',totalRow:false,csvRows:raw,csvContext:{text:'Все строки по текущим фильтрам',export:async()=>{
    if(!task.valid())throw Error('Параметры анализа изменились. Рассчитайте заново.');const path=await api.chooseCsvPath('izmeneniya-'+captured.scope.from+'-'+captured.scope.to+'.csv');if(!path)return;if(!task.valid())throw Error('Данные изменились. Рассчитайте заново.');await api.unifiedChangesCsv(captured.request,captured.options,path);
   }}});
-  task.s.captured=captured;pager('changes',result,index);
+  task.s.captured=captured;pager('changes',{count:rows.length,total_rows:result.total_rows*chosen.length},index);
  }catch(error){task.error(error);}finally{task.done();}
 }
 function referencePanel(id){return window.referenceDetail?.active===id;}
@@ -237,7 +249,10 @@ function sampleNote(root,sample,message,compareAvailable=false){
 }
 function organizationRange(){return referencePanel('comparison')?scope?.overviewMode==='range':value('comparisonScope')==='range';}
 function comparisonLayout(){const organizations=value('comparisonMode')==='organizations',ranges=value('periodComparisonScope')==='range',orgRange=value('comparisonScope')==='range';
- $('periodComparisonFilters').hidden=organizations;$('orgComparisonFilters').hidden=!organizations;$('kpis').classList.toggle('kpis',!organizations);$('comparisonCharts').hidden=!organizations;$('comparisonDynamics').hidden=!organizations||!organizationRange();$('contributions').hidden=organizations;
+ $('periodComparisonFilters').hidden=organizations;$('orgComparisonFilters').hidden=!organizations;$('kpis').classList.toggle('kpis',!organizations);const charts=$('comparisonCharts');
+ charts.hidden=false;
+ charts.setAttribute('aria-label',organizations?'Графики сравнения подразделений':'Графики сравнения периодов');
+ $('comparisonDynamics').hidden=!organizations||!organizationRange();$('contributions').hidden=organizations;
  $('periodComparisonSingle').hidden=ranges;$('periodComparisonRanges').hidden=!ranges;$('comparisonPeriodLabel').hidden=orgRange;$('comparisonRangeGroup').hidden=!orgRange;
 }
 function addBoundedPager(root,state,rows,run,total){
@@ -281,7 +296,11 @@ async function comparison(index=0,paging=false){
   if(missing>0)warnings.push('Пропусков: '+missing+' (подразделение × период).');
   if([summary.before,summary.after].some(period=>period.amount_missing_rows||
      (period.complete&&Number.isFinite(observed(period)?.count)&&period.total.amount==null))){
-   warnings.push('В некоторых строках сумма не указана. Показана сумма заполненных ячеек.');
+   warnings.push('Итоги и разница по сумме учитывают заполненные ячейки. Покрытие может различаться.');
+   for(const [label,period] of [['База',summary.before],['Анализ',summary.after]]){
+    const note=averageNote(period);
+    if(note)warnings.push(label+' · '+note);
+   }
   }
   sampleNote(coverage,sample,warnings.join(' '),compareAvailable);
   for(const [label,total] of [['Первый интервал',summary.before],['Второй интервал',summary.after]]){
@@ -293,12 +312,25 @@ async function comparison(index=0,paging=false){
    return;
   }
   const onlyOne=beforeObserved!==afterObserved;
-  for(const metric of metrics()){
+  const periods=[before,after].map(range=>({
+   type:s.displayType,start:range.from,actualStart:range.from,end:visibleEnd(range),partial:true
+  }));
+  const data=[beforeValues,afterValues].map(total=>new Map([['total',total??{count:null,amount:null,average:null}]]));
+  for(const metric of comparisonMetrics){
    const now=afterValues?.[metric],old=beforeValues?.[metric],card=UI.el('div',null,'kpi');
-   const totalDiff=metric==='amount'&&(summary.before.amount_missing_rows||summary.after.amount_missing_rows)?[null,null]:rawDifference(now,old);
+   const totalDiff=metric==='average'&&summary.average
+    ?[summary.average.delta,summary.average.percent]
+    :rawDifference(now,old);
    card.append(UI.el('span',titles[metric]+' · анализируемый период'),UI.el('strong',fmt(now,metric)),
-    UI.el('small',totalDiff[0]===null?'Сравнение недоступно':difference(now,old,metric).join(' · ')));
+    UI.el('small',totalDiff[0]==null?'Сравнение недоступно':[delta(totalDiff[0],metric),percent(totalDiff[1])].join(' · ')));
    $('kpis').append(card);
+   const section=UI.el('section',null,'metric-chart'),plot=UI.el('div',null,'metric-plot');
+   section.append(UI.el('h3',titles[metric]),plot);
+   $('comparisonCharts').append(section);
+   UI.drawChart(periods,new Set(s.organizations),metric,plot,{
+    chart:'bar',comparison:true,categories:['total'],data,label:()=>titles[metric],
+    periodLabels:['Базовый период','Анализируемый период']
+   });
    const availableRange=afterObserved?after:before;
    const combinedRange={...s,from:before.from<after.from?before.from:after.from,to:before.to>after.to?before.to:after.to};
    const headers=onlyOne?['Работа / группа',afterObserved?'Значение сейчас':'Значение раньше']:
@@ -325,7 +357,7 @@ async function comparison(index=0,paging=false){
   task.done();contributionTask.done();
   if(task.valid()&&contributionInput){
    task.s.captured=contributionInput;
-   if($('contributions').open)void contributions();
+   if(!$('contributions').hidden)void contributions();
   }
  }
 }
@@ -372,7 +404,7 @@ async function departmentComparison(task,index){
  reset();
  const coverage=$('comparisonCoverage'),warnings=[];
  if(organizations.some(org=>!org.complete))warnings.push('Сравнение по доступным отчётам. Разница и проценты требуют данных у обоих подразделений.');
- if(organizations.some(org=>org.amount_missing_rows))warnings.push('В некоторых строках сумма не указана. Итоги и доли рассчитаны по заполненным суммам. Разница по сумме доступна при заполненных суммах у обоих подразделений.');
+ if(organizations.some(org=>org.amount_missing_rows))warnings.push('Итоги, доли и разница по сумме рассчитаны по заполненным ячейкам. Покрытие может различаться.');
  sampleNote(coverage,reference?sample:null,warnings.join(' '),true);
  if(reference){$('comparisonBaseOrg').replaceChildren(...s.organizations.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));$('comparisonBaseOrg').value=baseOrg;}
  $('comparisonHelp').textContent='Общий интервал для подразделений. Разница относительно '+baseOrg+'. При нулевой базе процент не рассчитывается. Чтобы сравнить одну работу, выберите её в фильтре «Работы» и оставьте одну отметку в «Показатели сравнения».';
@@ -382,11 +414,15 @@ async function departmentComparison(task,index){
  organizationTotals(s,totals);
  const historyScope={...s,historyMetrics:chosen};
  for(const metric of chosen){const raw=[],rows=[];
-  const comparable=row=>metric==='amount'&&row?.amount_missing_rows?null:observed(row)?.[metric];
+  const comparable=row=>observed(row)?.[metric];
   const cells=(org,values)=>{
    const row=values.find(o=>o.org===org),base=values.find(o=>o.org===baseOrg);
-   const n=observed(row)?.[metric]??null;
-   return org===baseOrg?[n]:[n,...rawDifference(comparable(row),comparable(base))];
+   const n=comparable(row)??null;
+   if(org===baseOrg)return [n];
+   const partial=Number.isFinite(observed(row)?.partial_average_quantity)||Number.isFinite(observed(base)?.partial_average_quantity);
+   const sameWork=row?.average_source_work!=null&&row.average_source_work===base?.average_source_work;
+   const baseValue=metric==='average'&&partial&&!sameWork?null:comparable(base);
+   return [n,...rawDifference(n,baseValue)];
   };
   const make=(label,values)=>[label,...s.organizations.flatMap(org=>cells(org,values).map((n,i)=>i===0?fmt(n,metric):i===1?delta(n,metric):percent(n)))];
   const makeRaw=(label,values)=>[label,...s.organizations.flatMap(org=>cells(org,values))];
@@ -525,7 +561,7 @@ async function patterns(mode,index=0,paging=false){
    if(page.current_amount_incomplete&&(usualMetrics.has('amount')||usualMetrics.has('average')))warnings.push('В некоторых строках сумма не указана. Показана сумма заполненных ячеек.');
    if(page.used<2)warnings.push('Для оценки отклонения нужны минимум два исторических окна с отчётами.');
    if(warnings.length)$(name+'Coverage').append(UI.el('p',warnings.join(' '),'warn small'));
-   if(usualMetrics.has('amount')||usualMetrics.has('average'))$(name+'Coverage').append(UI.el('p','Пустые суммы могут сделать отклонение по сумме или средней недоступным. При нулевой базе процент недоступен.','muted small'));
+   if(usualMetrics.has('amount')||usualMetrics.has('average'))$(name+'Coverage').append(UI.el('p','Среднее рассчитано по строкам с суммой и сопоставимым количеством. При нулевой базе процент недоступен.','muted small'));
   }else if(normal){
    $(name+'Coverage').append(UI.el('p','Для частоты учитываются календарные периоды, в которых есть отчёты выбранных подразделений в пределах соответствующего диапазона.','muted small'));
   }
@@ -613,10 +649,11 @@ function resetScope(next){if(!next){scope=null;clearExtended();return;}scope=cop
  checkboxList('changesOrganizations',orgNames.map(o=>[o,o]),changeOrganizations,()=>changes());
  const oldBase=value('comparisonBaseOrg');$('comparisonBaseOrg').replaceChildren(...scope.organizations.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));if(scope.organizations.includes(oldBase))$('comparisonBaseOrg').value=oldBase;
  if(!customComparisonMetrics)comparisonMetrics=new Set(metrics());checkboxList('comparisonMetrics',Object.entries(titles),comparisonMetrics,()=>{customComparisonMetrics=true;comparison();});
- updatePeriodOverrides();if(activeView==='changes')changes();if(activeView==='dashboard'&&$('advancedAnalytics').open){comparison();if(value('workViewMode')==='composition'&&$('structurePanel').open)structure();if($('usualPanel').open)patterns('usual');if($('regularityPanel').open)patterns('regularity');}
+ updatePeriodOverrides();if(activeView==='changes')changes();if(activeView==='dashboard'&&$('advancedAnalytics').open){comparison();if(compositionVisible())structure();if($('usualPanel').open)patterns('usual');if($('regularityPanel').open)patterns('regularity');}
 }
 function bind(ids,event,handler){for(const id of ids)$(id)?.addEventListener(event,handler);}
 
+function compositionVisible(){return value('workViewMode')==='composition'&&!$('structurePanel').hidden&&(!window.referenceDetail?.active||referencePanel('structurePanel'));}
 function workView(){
  const mode=value('workViewMode')==='composition'?'composition':'trend',showComposition=mode==='composition';
  const chart=$('chartPanel'),composition=$('structurePanel');
@@ -626,10 +663,8 @@ function workView(){
  if(help)help.textContent=showComposition?
   'Рейтинг по доле работ и сравнению с базовым периодом; расчёт выполняется отдельно в SQLite.':
   'Значения по периодам. Выбранные работы не влияют на итог по всем работам без явного фильтра.';
- if(showComposition&&composition){
-  if(!composition.open)composition.open=true;
-  else if(scope&&$('advancedAnalytics').open)void structure();
- }
+ if(showComposition&&compositionVisible()&&scope&&activeView==='dashboard')void structure();
+ else if(!showComposition)invalidate('structure');
 }
 function init(){if(initialized)return;initialized=true;explainSensitivity();describeActiveFilters();
  $('workViewMode')?.addEventListener('change',workView);
@@ -652,10 +687,10 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
  bind(['changesMethod','changesFrom','changesTo','changesMode','changesDirection','changesSort'],'change',()=>{invalidate('changes');changes();});
  bind(['changesPercent','changesCountMin','changesAmountMin','changesSearch'],'input',()=>{explainSensitivity();describeActiveFilters();schedule('changes',changes);});
  $('changesType').addEventListener('change',()=>{changesKind=value('changesType');for(const id of ['changesFrom','changesTo'])setDate(id,changesKind,scope?.to||new Date().toISOString().slice(0,10),true);invalidate('changes');changes();});
- for(const name of ['changes','contribution','usual','regularity']){const run=name==='changes'?changes:name==='contribution'?contributions:index=>patterns(name,index);$(name+'Prev').addEventListener('click',()=>{const state=slot(name);if(state.index>0)return run(state.index-1);});$(name+'Next').addEventListener('click',()=>{const state=slot(name);if((state.index+1)*50<(state.page?.total_rows||0))return run(state.index+1);});}
+ for(const name of ['changes','contribution','usual','regularity']){const run=name==='changes'?changes:name==='contribution'?contributions:index=>patterns(name,index);$(name+'Prev').addEventListener('click',()=>{const state=slot(name);if(state.index>0)return run(state.index-1);});$(name+'Next').addEventListener('click',()=>{const state=slot(name);if((state.index+1)*RESULTS_PAGE_SIZE<(state.page?.total_rows||0))return run(state.index+1);});}
  bind(['comparisonMode','periodComparisonScope','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonScope','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','comparisonBaseOrg'],'change',()=>{invalidate('comparison');invalidate('contribution');comparison();});
  bind(['structureBase','structureCurrent','structureMetric','structureLimit','structureScope'],'change',structure);bind(['usualPeriod','usualWindow'],'change',()=>patterns('usual'));bind(['usualPercent'],'input',()=>schedule('usual',()=>patterns('usual')));bind(['regularityGap','regularityStatus'],'change',()=>patterns('regularity'));bind(['regularitySearch'],'input',()=>schedule('regularity',()=>patterns('regularity')));
- for(const [id,run] of [['advancedAnalytics',comparison],['contributions',contributions],['structurePanel',structure],['usualPanel',()=>patterns('usual')],['regularityPanel',()=>patterns('regularity')]])$(id).addEventListener('toggle',()=>{if($(id).open&&scope)run();});
+ for(const [id,run] of [['advancedAnalytics',()=>{comparison();if(!window.referenceDetail?.active&&compositionVisible())structure();}],['usualPanel',()=>patterns('usual')],['regularityPanel',()=>patterns('regularity')]])$(id).addEventListener('toggle',()=>{if($(id).open&&scope)run();});
  $('closeAnalyticsDetails').addEventListener('click',()=>closeHistory('analytics'));$('closeChangeDetails').addEventListener('click',()=>closeHistory('change'));
  $('overviewShowComparison').addEventListener('click',()=>{
   $('comparisonMode').value='periods';
@@ -663,7 +698,7 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
   $('advancedAnalytics').open=true;comparison();$('comparison').scrollIntoView?.({block:'start'});
  });
  UI.onScope(resetScope);UI.onSnapshot(snapshot=>{if(!snapshot){scope=null;clearExtended();}});
- UI.onView('changes',()=>{activeView='changes';if(scope)changes();});UI.onView('dashboard',()=>{activeView='dashboard';if(scope?.revision===UI.revision&&$('advancedAnalytics').open)comparison();});for(const view of ['upload','groups','storage'])UI.onView(view,()=>{activeView=view;});
+ UI.onView('changes',()=>{activeView='changes';if(scope)changes();});UI.onView('dashboard',()=>{activeView='dashboard';if(scope?.revision===UI.revision&&$('advancedAnalytics').open){comparison();if(compositionVisible())structure();}});for(const view of ['upload','groups','storage'])UI.onView(view,()=>{activeView=view;});
 }
 function leaveDetail(){
  for(const key of ['analyticsHistory','comparison','contribution','structure','usual','regularity'])if(channels.has(key))invalidate(key);

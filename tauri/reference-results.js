@@ -5,6 +5,7 @@ const api=window.desktopAPI,$=selector=>document.querySelector(selector),all=sel
 const {titles,observed,incomplete}=window.analysisSummary,categories={up:'Рост',down:'Снижение',new:'Новые работы',gone:'Без выполнений'};
 let initialized=false,scope=null,screen='s1',generation=0,changesTicket=0,modalTicket=0,searchTimer=null,summaryData=null,changeData=null,changeRequest=null;
 let modalHeading=null,shownSummaryRevision=null,shownChangesRevision=null,scopeBlocked=false;
+const CHANGES_PAGE_SIZE=50;
 let kind='significant',page=0,percent=30,minCount=5,minAmount=1000;
 const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined&&text!==null)n.textContent=String(text);if(cls)n.className=cls;return n;};
 const button=(text,run,cls='btn')=>{const n=el('button',text,cls);n.type='button';n.addEventListener('click',run);return n;};
@@ -78,7 +79,8 @@ function notice(root,s,comparable,summary){
  const n=$(root+' .quality-notice');if(!n)return;const span=n.querySelector('span');const excluded=s.organizations.filter(org=>!comparable.includes(org));
  const warnings=historicalQuality(current);
  const missingAmount=[current,baseline].some(period=>period?.available_reports>0&&(period.amount_missing_rows===true || (period.amount_missing_rows==null&&period?.available_total?.amount==null)));
- const amountNotice=missingAmount?' В некоторых строках сумма не указана. Количество учтено, показана сумма заполненных ячеек.':'';
+ const averageNotice=window.analysisSummary.averageNote(current);
+ const amountNotice=missingAmount?' В некоторых строках сумма не указана. Количество учтено, показана сумма заполненных ячеек.'+(averageNotice?' '+averageNotice:''):'';
  const shareNotice=root==='#s1'&&current?.amount_missing_rows&&observed(current)?.amount>0?' Доли рассчитаны по заполненным суммам.':'';
  const gap=current?.missing===1&&baseline?.missing===0?current.single_missing:baseline?.missing===1&&current?.missing===0?baseline.single_missing:null;
  const detail=excluded.length===1&&gap?.org===excluded[0]&&date(gap.start)!=='—'?' · '+date(gap.start)+': нет пригодного отчёта':'';
@@ -152,7 +154,7 @@ function renderChangeLeader(leader,metric,empty='Нет сопоставимых
 function pageControls(total,captured,count){
  const root=$('#s2 .table-viewport'),footer=$('#s2 .pager-footer');
  root.dataset.sqlScrollHost='reference-changes';
- window.sqlRowScroll.attach(root,{index:captured.page,size:12,total,count,footer,label:'Страницы анализа изменений',go:i=>{if(changeRequest!==captured)return false;page=i;return refreshChanges();}});
+ window.sqlRowScroll.attach(root,{index:captured.page,size:CHANGES_PAGE_SIZE,total,count,footer,label:'Страницы анализа изменений',go:i=>{if(changeRequest!==captured)return false;page=i;return refreshChanges();}});
 }
 async function refreshChanges(debounceSearch=false){
  if(scopeBlocked)return;
@@ -176,7 +178,7 @@ async function loadChanges(s,captured,current,focusAnchor){
  try{
   if(new TextEncoder().encode(captured.search).length>512)throw Error('Сократите поисковый запрос до 512 байт UTF-8.');
   const result=await api.referenceChanges(captured);if(!current())return;
-  if(!Array.isArray(result?.rows)||result.rows.length>12||!Number.isSafeInteger(result.total)||result.total<0||!Number.isSafeInteger(result.searched)||!Number.isSafeInteger(result.significant)||result.significant<0||result.searched<result.significant||result.searched<result.total||!Array.isArray(result.comparable)||!Object.keys(categories).every(key=>Number.isSafeInteger(result.counts?.[key])&&result.counts[key]>=0))throw Error('Некорректная страница SQL-изменений.');
+  if(!Array.isArray(result?.rows)||result.rows.length>CHANGES_PAGE_SIZE||!Number.isSafeInteger(result.total)||result.total<0||!Number.isSafeInteger(result.searched)||!Number.isSafeInteger(result.significant)||result.significant<0||result.searched<result.significant||result.searched<result.total||!Array.isArray(result.comparable)||!Object.keys(categories).every(key=>Number.isSafeInteger(result.counts?.[key])&&result.counts[key]>=0))throw Error('Некорректная страница SQL-изменений.');
   captions(s,['#s2']);shownChangesRevision=s.revision;changeData=result;changeRequest=captured;renderCounts(result.counts);renderChangeLeader(result.leader,s.metric);notice('#s2',s,result.comparable,summaryData?.result.summary);
   changeLabels(s);
   const changes=result.rows.map(row=>displayedChange(row.delta,s.metric));
@@ -249,6 +251,8 @@ function printContext(root,s,comparable,overview){
  }
  const history=historicalQuality(overview?.summary?.after);
  if(history)root.append(el('p',history));
+ const averageNotice=window.analysisSummary.averageNote(summary?.after);
+ if(averageNotice)root.append(el('p',averageNotice));
  if(hasReports(summary?.before)||hasReports(summary?.after)){
   root.append(el('h2',canCompare(summary)?'Сравнение по доступным отчётам':'Доступные итоги по периодам'));
   printTable(root,['Показатель','Было','Стало','Изменение','Изменение, %'],['amount','count','average'].map(metric=>[titles[metric],fmt(observed(summary.before)?.[metric],metric),fmt(observed(summary.after)?.[metric],metric),displayedChange(summary[metric]?.delta,metric).value,pct(summary[metric]?.percent)]),'print-comparison');

@@ -75,6 +75,14 @@ function buildUnified(source){
     for(const description of periodNotices)list.append(elem('li',description));
     root.append(details);
   }`);
+ const comparisonGap='const breaks=chartTimelineGaps(periods),gapStarts=';
+ const comparisonAxis="plotPeriodLabel(p));";
+ const comparisonTitle="'aria-label':'Динамика по периодам'";
+ for(const fragment of [comparisonGap,comparisonAxis,comparisonTitle])
+  if(!script.includes(fragment))throw Error('Original comparison plot labels changed');
+ script=script.replace(comparisonGap,'const breaks=options.comparison?[]:chartTimelineGaps(periods),gapStarts=')
+  .replace(comparisonAxis,'options.periodLabels?.[i]||plotPeriodLabel(p));')
+  .replace(comparisonTitle,"'aria-label':options.comparison?'Сравнение периодов':'Динамика по периодам'");
  const departmentPlot='  svg.append(...numbers);root.append(svg);';
  if(!script.includes(departmentPlot))throw Error('Original department chart plot changed');
  script=script.replace(departmentPlot,`  svg.append(...numbers);
@@ -126,6 +134,11 @@ function buildUnified(source){
  script+='notice=(message,error)=>window.showDesktopNotice(message,error);\n';
  script+='window.unifiedOriginal=Object.freeze({state,$,el:elem,notice,fmt:formatMetric,fmtNumber,averageQuantityReason,chartNiceScale,chartTickLabel,drawChart,drawDepartments:drawDepartmentMultiChart,makeTable,tableCsvButton,initTheme,initChartTooltip,redrawCharts,renderMultiFilter,periodEnd,shiftPeriod,displayDay,displayPeriod,metricTitle,departmentChartTitle,chartRenders});\n';
  let html=source.replace(/<script>[\s\S]*?<\/script>/g,'');
+ const comparisonMetrics=/<fieldset class="multi-filter"><legend>Показатели сравнения<\/legend><div id="comparisonMetrics" class="multi-choices"><\/div><\/fieldset>/;
+ const comparisonKpis='<div class="kpis" id="kpis"></div>';
+ const comparisonMetricField=html.match(comparisonMetrics)?.[0];
+ if(!comparisonMetricField||!html.includes(comparisonKpis))throw Error('Original comparison metric controls changed');
+ html=html.replace(comparisonMetrics,'').replace(comparisonKpis,comparisonMetricField+'\n        '+comparisonKpis);
  const comparisonPlots=/<div id="comparisonTable"><\/div><div id="comparisonCharts"><\/div>\s*<details id="comparisonDynamics"[^>]*>[\s\S]*?<\/details>/;
  if(!comparisonPlots.test(html))throw Error('Original comparison charts changed');
  html=html.replace(comparisonPlots,`
@@ -134,7 +147,7 @@ function buildUnified(source){
           <p class="muted small">У каждого подразделения своя линия. Пропуски разрывают линию.</p>
           <div id="comparisonDynamicsPlots"></div>
         </section>
-        <div id="comparisonCharts" role="region" aria-label="График итогов по подразделениям"></div>
+        <div id="comparisonCharts" role="region" aria-label="Графики сравнения"></div>
         <div id="comparisonTable"></div>`);
 
  // Extend the shared preference only in the installed application.
@@ -167,6 +180,8 @@ function buildUnified(source){
  // Normalize only the labels of inclusive ranges in the desktop template.
  html=html.replace(/>С периода(?=<input|<\/label>)/g,'>С')
   .replace(/>(?:До периода|По период включительно)(?=<input|<\/label>)/g,'>По');
+ // The rendered trend table supplies its own scroll viewport.
+ html=html.replace('<div id="dataTable" class="table-scroll" hidden>','<div id="dataTable" hidden>');
  // Issue64: daily source supports every calendar granularity, without duplicate calendar selectors.
  html=html.replace('<option value="day">Дни</option></select>','<option value="day">Дни</option><option value="year">Годы</option></select>');
  html=html.replace('<div class="filters">','<div class="filters"><label>Источник<select id="unifiedSource"><option value="daily">Дневные отчёты</option><option value="imported">Отчёты выбранного типа</option></select></label>',1);
@@ -207,6 +222,18 @@ function buildUnified(source){
    .replace(longSeparate,'<option value="separate">Отдельно (значения)</option>')
    .replace(longTogether,'<option value="combined">Вместе (% макс.)</option>');
 
+ // Both analysis sections are permanent content, not disclosure widgets.
+ const contributionStart=html.indexOf('<details id="contributions" class="extended-section">');
+ const contributionEnd=html.indexOf('</section>',contributionStart);
+ if(contributionStart<0||contributionEnd<=contributionStart)throw Error('Canonical contribution layout changed');
+ const contributionMarkup=html.slice(contributionStart,contributionEnd);
+ if(!/<\/details>\s*$/.test(contributionMarkup))throw Error('Canonical contribution closing tag changed');
+ const contributionSection=contributionMarkup
+   .replace('<details id="contributions" class="extended-section">','<section id="contributions" class="extended-section" aria-labelledby="contributionsHeading">')
+   .replace('<summary>Вклад работ в изменение итогов</summary>','<h3 id="contributionsHeading">Вклад работ в изменение итогов</h3>')
+   .replace(/<\/details>(\s*)$/,'</section>$1');
+ html=html.slice(0,contributionStart)+contributionSection+html.slice(contributionEnd);
+
  // Keep the original SQLite chart and composition renderers, but give them one
  // visible presentation switch. Relocate markup, not the report calculations.
  const structureStart=html.indexOf('<details class="panel" id="structurePanel">');
@@ -214,7 +241,12 @@ function buildUnified(source){
  const comparisonStart=html.indexOf('<section class="panel" id="comparison"');
  if(structureStart<0||structureEnd<=structureStart||comparisonStart<0||comparisonStart>=structureStart)
   throw Error('Canonical work views layout changed');
- const structure=html.slice(structureStart,structureEnd).trimEnd().replace('id="structurePanel"','id="structurePanel" hidden');
+ const originalStructure=html.slice(structureStart,structureEnd).trimEnd();
+ if(!originalStructure.endsWith('</details>'))throw Error('Canonical composition closing tag changed');
+ const structure=originalStructure
+   .replace('<details class="panel" id="structurePanel">','<section class="panel" id="structurePanel" hidden aria-labelledby="structureHeading">')
+   .replace('<summary>Состав работ и доли</summary>','<h2 id="structureHeading">Состав работ и доли</h2>')
+   .replace(/<\/details>$/,'</section>');
  html=html.slice(0,structureStart)+html.slice(structureEnd);
  const switcher='<div class="work-view-switcher" role="group" aria-labelledby="workViewLabel">'+
  '<label id="workViewLabel" for="workViewMode">Показать</label>'+

@@ -335,3 +335,42 @@ test('an open audit without a valid period explains the selection and never requ
  assert.equal(m.nodes.groupAuditNext.disabled,true);assert.equal(m.nodes.worksList.children.length,0);
  assert.equal(m.messages.length,0);
 });
+
+test('bulk selection spans search pages, and deletion confirms the active workspace', async()=>{
+ const m=mount();
+ const groups=Array.from({length:52},(_,i)=>({handle:String(i+1),id:'g'+i,name:'Ремонт '+i,members:0}));
+ groups.push({handle:'53',id:'other',name:'Монтаж',members:0});
+ m.setHandler((revision,kind,query,group,offset,limit)=>{
+  const rows=kind==='groups'?groups.filter(item=>item.name.includes(query)):[];
+  return {rows:rows.slice(offset,offset+limit),total:rows.length,grouped:0};
+ });
+ m.api.unifiedGroupsDelete=async(...args)=>{m.writes.push(['groups',...JSON.parse(JSON.stringify(args))]);return {revision:8};};
+ m.sharedWorkspace.state={mode:'shared',folder:'//team/data',workspace_token:'shared',available:true};
+ m.snapshot(7);m.views.groups();await tick();
+ await actionByText(m.body,'Выбрать группы').fire();
+ m.nodes.groupSearch.value='Ремонт';await m.nodes.groupSearch.fire('input');
+ await actionByText(m.body,'Выбрать все найденные (52)').fire();
+ await m.nodes.groupList.scrollWindow.go(1);
+ assert.equal(m.nodes.groupList.querySelectorAll('input').length,2);
+ assert.ok(m.nodes.groupList.querySelectorAll('input').every(item=>item.checked));
+ m.setConfirm(false);await actionByText(m.body,'Удалить выбранные').fire();
+ assert.equal(m.writes.length,0);
+ assert.match(m.questions.at(-1),/Общая база · \/\/team\/data.*52/s);
+ m.setConfirm(true);await actionByText(m.body,'Удалить выбранные').fire();
+ assert.deepEqual(m.writes,[['groups',7,groups.slice(0,52).map(item=>item.handle),52,null]]);
+});
+
+test('clear all counts the entire workspace and stops when backup selection is cancelled', async()=>{
+ const m=mount();
+ m.api.unifiedGroupsDelete=async(...args)=>{m.writes.push(args);return {revision:8};};
+ m.snapshot(7);m.views.groups();await tick();
+ m.nodes.groupSearch.value='поиск';await m.nodes.groupSearch.fire('input');
+ await actionByText(m.body,'Очистить список групп').fire();
+ assert.equal(m.pickers.length,1);
+ assert.equal(m.writes.length,0);
+ assert.equal(m.questions.length,2);
+ assert.match(m.questions[0],/Личная база.*Удаляемых групп: 1/s);
+ m.setBackup('/before.sqlite3');
+ await actionByText(m.body,'Очистить список групп').fire();
+ assert.deepEqual(m.writes,[[7,null,1,'/before.sqlite3']]);
+});

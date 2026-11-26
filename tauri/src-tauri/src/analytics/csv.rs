@@ -21,7 +21,7 @@ pub(super) fn change_csv(w: &mut impl Write, v: &ChangeValue, metrics: &[&str]) 
         let values = match metric {
             "count" | "amount" => {
                 let measure = if metric == "count" { Some(&v.count) } else { v.amount.as_ref() };
-                measure.map_or([None; 4], |m| [Some(m.base), Some(m.current), Some(m.delta), m.percent])
+                measure.map_or([v.observed_amount_before, v.observed_amount_after, None, None], |m| [Some(m.base), Some(m.current), Some(m.delta), m.percent])
             }
             "average" => [v.average.base, v.average.current, v.average.delta, v.average.percent],
             _ => return Err("Unknown change metric".into()),

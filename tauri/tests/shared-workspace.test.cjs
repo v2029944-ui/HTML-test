@@ -40,7 +40,7 @@ function fixture(initial=personal) {
     if(name==='shared_workspace_transfer_preview'){
       assert.equal(args.workspaceToken,scenario.server.workspace_token);
       if(typeof scenario.transferPreview==='function')return scenario.transferPreview(args.page);
-      return scenario.transferPreview||{sourceRevision:7,targetRevision:3,totalReports:2,pageIndex:args.page,pageSize:25,hasNext:false,rows:[
+      return scenario.transferPreview||{sourceRevision:7,targetRevision:3,totalReports:2,pageIndex:args.page,pageSize:50,hasNext:false,rows:[
         {id:'local-new',reportType:'day',start:'2024-02-28',end:'2024-02-28',status:'ready',sourceName:'import.xlsx'},
         {id:'local-conflict',reportType:'day',start:'2024-02-29',end:'2024-02-29',status:'conflict',sourceName:'previous.xlsx'}
       ]};
@@ -56,6 +56,7 @@ function fixture(initial=personal) {
   }},dialog:{open:async options=>{scenario.chooseCalls.push(options);return scenario.selected;}}},
     confirm:async message=>{scenario.confirmation=message;return scenario.accept;},unifiedUI:{snapshot:{revision:7},refreshWorkspace:async()=>refreshes.push(window.sharedWorkspace.state)},
     addEventListener:(name,fn)=>handlers.set(name,fn),
+    sqlRowScroll:{attach:(root,options)=>{root.pager=options;},reset:root=>{root.pager=null;}},
     nativeFolderAutoImport:{stopForWorkspaceChange:async()=>{scenario.stops++;},forgetWorkspaceSession:()=>{scenario.revocations++;}}};
   const context={window,document:{getElementById:node,createElement:tag=>({
       tagName:tag.toUpperCase(),children:[],listeners:{},dataset:{},
@@ -226,28 +227,48 @@ test('transfer is unavailable in personal mode or while network publication is p
  }
 });
 
-test('personal transfer can select across pages while respecting the 25-record batch limit',async()=>{
+test('personal transfer shows 50 rows with direct navigation and keeps the 25-record batch limit',async()=>{
  const f=fixture(team);await f.window.sharedWorkspace.init();
+ const report=(i,status='ready')=>({id:'work-'+i,reportType:'day',start:'2024-01-01',end:'2024-01-01',status});
  f.scenario.transferPreview=page=>({
-  sourceRevision:7,targetRevision:3,totalReports:26,pageIndex:page,pageSize:25,
-  hasNext:page===0,initializesOrganizations:false,
-  rows:page===0?[{id:'work-1',reportType:'day',start:'2024-01-01',end:'2024-01-01',status:'ready'}]:
-    [{id:'work-2',reportType:'day',start:'2024-01-02',end:'2024-01-02',status:'ready'}]
+  sourceRevision:7,targetRevision:3,totalReports:103,pageIndex:page,pageSize:50,
+  hasNext:page<2,initializesOrganizations:false,
+  rows:page===0?Array.from({length:50},(_,i)=>report(i,i<24?'ready':'conflict')):[report(100),report(101),report(102)]
  });
  await f.click('personalTransferPreview');
+ const list=f.node('personalTransferList');
+ assert.equal(list.children.length,50);
+ assert.equal(list.pager.size,50);
+ assert.equal(list.pager.total,103);
  await f.click('personalTransferSelectAll');
- assert.match(f.node('personalTransferSummary').textContent,/выбрано: 1/);
- await f.click('personalTransferNext');
- assert.match(f.node('personalTransferSummary').textContent,/выбрано: 1/);
+ assert.match(f.node('personalTransferSummary').textContent,/выбрано: 24/);
+ await list.pager.go(2);
+ assert.equal(list.children.length,3);
+ assert.equal(list.pager.index,2);
+ assert.match(f.node('personalTransferSummary').textContent,/выбрано: 24/);
  await f.click('personalTransferSelectAll');
- assert.match(f.node('personalTransferSummary').textContent,/выбрано: 2/);
+ assert.match(f.node('personalTransferSummary').textContent,/выбрано: 25/);
+ assert.equal(list.children[1].children[0].disabled,true);
  f.scenario.accept=true;
  await f.click('personalTransferApply');
- assert.deepEqual(Array.from(f.scenario.transferApplied.selectedIds),['work-1','work-2']);
+ assert.deepEqual(Array.from(f.scenario.transferApplied.selectedIds),[...Array.from({length:24},(_,i)=>'work-'+i),'work-100']);
+});
+test('a transfer preview returns to page one if the selected page disappears',async()=>{
+ const f=fixture(team);await f.window.sharedWorkspace.init();
+ const row={id:'work-1',reportType:'day',start:'2024-01-01',end:'2024-01-01',status:'ready'};
+ f.scenario.transferPreview={sourceRevision:7,targetRevision:3,totalReports:101,pageIndex:0,pageSize:50,hasNext:true,rows:[row]};
+ await f.click('personalTransferPreview');
+ await f.click('personalTransferSelectAll');
+ f.scenario.transferPreview=page=>({sourceRevision:8,targetRevision:3,totalReports:1,pageIndex:page,pageSize:50,hasNext:false,rows:page===0?[row]:[]});
+ await f.node('personalTransferList').pager.go(2);
+ assert.deepEqual(f.calls.filter(call=>call.name==='shared_workspace_transfer_preview').map(call=>call.args.page),[0,2,0]);
+ assert.equal(f.node('personalTransferList').children.length,1);
+ assert.equal(f.node('personalTransferPager').hidden,true);
+ assert.equal(f.node('personalTransferApply').disabled,true);
 });
 test('server-side organization incompatibility disables the affected report',async()=>{
  const f=fixture(team);await f.window.sharedWorkspace.init();
- f.scenario.transferPreview={sourceRevision:7,targetRevision:3,totalReports:1,pageIndex:0,pageSize:25,
+ f.scenario.transferPreview={sourceRevision:7,targetRevision:3,totalReports:1,pageIndex:0,pageSize:50,
   hasNext:false,organizationWarning:'Названия подразделений различаются.',
   rows:[{id:'private-a',reportType:'day',start:'2024-02-28',end:'2024-02-28',status:'organization_conflict'}]
  };
@@ -261,7 +282,7 @@ test('server-side organization incompatibility disables the affected report',asy
 
 test('reviewing a date range from the team applies only reviewed IDs to personal SQLite',async()=>{
  const f=fixture(team);await f.window.sharedWorkspace.init();
- f.scenario.transferPreview={sourceRevision:9,targetRevision:6,totalReports:3,pageIndex:0,pageSize:25,
+ f.scenario.transferPreview={sourceRevision:9,targetRevision:6,totalReports:3,pageIndex:0,pageSize:50,
   hasNext:false,rows:[
    {id:'ready',reportType:'day',start:'2024-02-28',end:'2024-02-28',status:'ready'},
    {id:'duplicate',reportType:'day',start:'2024-02-29',end:'2024-02-29',status:'duplicate'},

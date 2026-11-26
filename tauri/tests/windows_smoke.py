@@ -460,7 +460,7 @@ def set_folder(page, folder, filenames):
     page.locator('#uploadSourceFolder').click()
     invoke(page,'set_folder',{'folder':str(folder)})
     page.locator('#sourceFolderRefresh').click()
-    expected=json.dumps(sorted(filenames)[:100],ensure_ascii=False,separators=(',',':'))
+    expected=json.dumps(sorted(filenames)[:50],ensure_ascii=False,separators=(',',':'))
     wait_for_app_state(page,
         'JSON.stringify(Array.from(document.querySelectorAll("#sourceFolderRows tr td:first-child"),x=>x.textContent).sort()) === '+json.dumps(expected),
         'Source metadata follows the connected Excel folder')
@@ -1351,9 +1351,11 @@ def check_extended(page):
     expect(page.locator('#comparison .detail-date-scope')).to_contain_text('28.02.2023')
     common_period(page,'Месяц','2024-02-01',base='prevMonth')
     wait_for_text(page,'#comparisonCoverage','Первый интервал: Полные данные',90_000)
-    page.locator('#contributions > summary').click()
+    expect(page.locator('#contributions > h3')).to_be_visible()
+    expect(page.locator('#contributions')).to_have_js_property('tagName', 'SECTION')
     wait_for_text(page,'#contributionCheck','совпадает',90_000)
     navigate(page,'structurePanel')
+    expect(page.locator('#structurePanel > h2')).to_be_visible()
     expect(page.locator('#chartPanel')).to_be_hidden()
     wait_for_text(page,'#structureResults','Итог:',90_000)
     trend=page.locator('.tool-tabs [data-section="chartPanel"]')
@@ -1378,7 +1380,7 @@ def check_extended(page):
     # The pager can remain mounted while a date change reloads the KPIs.
     expect(page.locator('#changesSummary .kpi-action')).to_have_count(4,timeout=90_000)
     expect(page.locator('#changesSummary')).to_have_attribute('aria-busy','false')
-    assert page.locator('#changesResults tbody tr').count()<=100
+    assert page.locator('#changesResults tbody tr').count()<=50
     slider=page.locator('#changesPercent')
     slider.focus();slider.press('End')
     expect(page.locator('#changesSensitivityValue')).to_have_text('200%')
@@ -1391,6 +1393,24 @@ def check_extended(page):
     page.locator('#changesSummary .kpi-action').filter(has_text='Значительно снизилось').click()
     expect(page.locator('#changesActiveFilter')).to_contain_text('значительное снижение')
     expect(page.locator('#changesDirection')).to_have_value('significant-down')
+
+    # The synthetic daily workbook has one work per department, giving 60 adjacent records.
+    common_period(page,'День','2024-01-01','2024-01-16')
+    page.locator('#changesDirection').select_option('all')
+    rows=page.locator('#changesResults tbody tr')
+    pager=page.locator('[data-sql-pager="changesResults"]')
+    position=pager.locator('[data-page-range]')
+    expect(position).to_have_text('Позиции 1–50 из 120',timeout=90_000)
+    expect(rows).to_have_count(50)
+    expect(rows.nth(0).locator('td').nth(4)).to_have_text('Количество / объём')
+    expect(rows.nth(1).locator('td').nth(4)).to_have_text('Сумма')
+    pager.locator('[data-page-action="next"]').click()
+    expect(position).to_have_text('Позиции 51–100 из 120',timeout=90_000)
+    expect(rows).to_have_count(50)
+    pager.locator('[data-page-action="choose"]').click()
+    pager.locator('[data-page-number="3"]').click()
+    expect(position).to_have_text('Позиции 101–120 из 120',timeout=90_000)
+    expect(rows).to_have_count(20)
 
 
 def check_groups(page, confirmations):
@@ -1470,6 +1490,12 @@ def check_groups(page, confirmations):
     # Removing the final member intentionally removes its source group.
     # Recreate it to verify the separate explicit-delete confirmation path.
     group=create()
+    page.get_by_role('button',name='Выбрать группы',exact=True).click()
+    group.get_by_role('checkbox',name='Выбрать «Группа CI»',exact=True).check()
+    expect(page.locator('.group-removal')).to_contain_text('Выбрано групп: 1')
+    confirmations.cancel_only(page.get_by_role('button',name='Удалить выбранные',exact=True),
+        'Удаляемых групп: 1.')
+    page.get_by_role('button',name='Завершить выбор',exact=True).click()
     confirmations.cancel_then_accept(group.get_by_role('button',name='Удалить группу',exact=True),
         'Удалить группу «Группа CI»? Исходные работы останутся.')
     wait_for_text(page,'#flash','Группа удалена.',90_000)
@@ -2098,7 +2124,7 @@ def run():
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 check_delete_without_backup(page,tmp,confirmations)
                 report['checks'].append('Single, selected, period and clear-all deletion preserve settings, XLSX and shared diagnostics, protect surviving linked reports, and reject stale revisions')
-            with independent('Print all thirteen changes'), installed_page(print_probe_phase=True) as (page,_,pid):
+            with independent('Print all fifty-one changes'), installed_page(print_probe_phase=True) as (page,_,pid):
                 ready(page,0)
                 check_print_all_changes(page,tmp,output,pid,api,quality_evidence_xlsx,open_daily_overview)
                 report['checks'].append('Both native print previews contained all 13 filtered SQLite rows in order')

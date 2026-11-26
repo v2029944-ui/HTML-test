@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
-function mount(){const calls=[],events=[];const window={__TAURI__:{core:{invoke:async(command,args)=>{calls.push({command,args});return {ok:true};}},dialog:{open:async()=>null,save:async()=>null}},dispatchEvent:event=>events.push(event)};class CustomEvent{constructor(type,init){this.type=type;this.detail=init.detail;}}vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../bridge.js'),'utf8'),{window,CustomEvent});return{api:window.desktopAPI,calls,events};}
+function mount(handle=async()=>({ok:true})){const calls=[],events=[];const window={__TAURI__:{core:{invoke:async(command,args)=>{calls.push({command,args});return handle(command,args);}},dialog:{open:async()=>null,save:async()=>null}},dispatchEvent:event=>events.push(event)};class CustomEvent{constructor(type,init){this.type=type;this.detail=init.detail;}}vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../bridge.js'),'utf8'),{window,CustomEvent});return{api:window.desktopAPI,calls,events};}
 test('worksheet metadata discovery is a tracked read with the original source path',async()=>{
  const m=mount();await m.api.nativeImportSheets('C:/Excel/quarters.xlsx');
  assert.deepEqual(JSON.parse(JSON.stringify(m.calls[0])),{command:'native_import_sheets',args:{source:'C:/Excel/quarters.xlsx'}});
@@ -60,4 +60,35 @@ test('organization work pages carry the same scope, revision and absolute page a
  await m.api.unifiedOrganizationWorkWindow(request,1,50);
  assert.deepEqual(JSON.parse(JSON.stringify(m.calls[0])),{command:'unified_organization_work_window',args:{request,pageIndex:1,limit:50}});
  assert.equal(m.events.at(-1).detail.reads,0);
+});
+
+test('critical IPC forwards reviewed requests, optional fields and native errors', async () => {
+ const nativeError=Error('Stale SQLite revision');
+ const m=mount(async command=>{if(command==='unified_delete_reports')throw nativeError;return {ok:true};});
+ const importRequest={revision:7,session:'session-token',folder:'C:/Excel',name:'day.xlsx',signature:'file-signature'};
+ const deletion={kind:'period',from:'2024-01-01',to:'2024-01-02'};
+ const summaryRequest={revision:7,reportType:'day',organizations:['A'],from:'2024-01-02',to:'2024-01-02',
+  baseFrom:'2024-01-01',baseTo:'2024-01-01',metric:'amount',percent:0,minCount:0,minAmount:0,kind:'all',search:'',sort:'name',page:0};
+ const request={revision:7,source:'daily',displayType:'day',organizations:['A'],selectedNames:[],
+  query:{method:'range',from:'2024-01-02',to:'2024-01-02',percent:0,min_count:0,min_amount:0}};
+ const detail={request,section:'organizations',metric:'amount',before:null,baseOrg:'A',limit:null};
+ await m.api.nativeFolderImportPreview(importRequest);
+ await m.api.nativeFolderImportApply(importRequest,'review-token');
+ await m.api.unifiedReportDeletionCount(7,deletion);
+ await assert.rejects(m.api.unifiedDeleteReports(7,deletion,2),error=>error===nativeError);
+ await m.api.referenceSummaryCsv(summaryRequest,'C:/export/summary.csv');
+ await m.api.referenceDetailCsv(detail,'C:/export/detail.csv');
+ await m.api.nativeRestoreSchedule('C:/backups/profile.sqlite3','verified-hash',7);
+ assert.deepEqual(JSON.parse(JSON.stringify(m.calls)),[
+  {command:'native_folder_import_preview',args:{request:importRequest}},
+  {command:'native_folder_import_apply',args:{request:importRequest,reviewToken:'review-token'}},
+  {command:'unified_report_deletion_count',args:{revision:7,scope:deletion}},
+  {command:'unified_delete_reports',args:{revision:7,scope:deletion,confirmedCount:2}},
+  {command:'reference_summary_csv',args:{request:summaryRequest,destination:'C:/export/summary.csv'}},
+  {command:'reference_detail_csv',args:{payload:detail,destination:'C:/export/detail.csv'}},
+  {command:'native_restore_schedule',args:{source:'C:/backups/profile.sqlite3',verification:'verified-hash',revision:7}}
+ ]);
+ assert.deepEqual(m.events.map(event=>[event.detail.reads,event.detail.saves]),[
+  [1,0],[0,0],[0,1],[0,0],[1,0],[0,0],[0,1],[0,0],[0,1],[0,0],[0,1],[0,0],[0,1],[0,0]
+ ]);
 });

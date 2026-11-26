@@ -22,6 +22,7 @@ pub struct UnifiedChangeSummary {
     pub gone: i64,
     pub top_count: Option<ChangeValue>,
     pub top_amount: Option<ChangeValue>,
+    pub rows_with_missing_amount: i64,
     pub totals: ChangesSummary,
 }
 #[derive(Serialize)]
@@ -128,12 +129,22 @@ fn prepare_unified(
     let mut expressions = Vec::new();
     for (m, b, a, min) in [
         ("count", "bc", "cc", q.min_count),
-        ("amount", "ba", "ca", q.min_amount),
+        ("amount", "bamount", "camount", q.min_amount),
         ("average", "bavg", "cavg", 0.),
     ] {
-        expressions.push(format!("{b} AS {m}_base,{a} AS {m}_current,({a}-{b}) AS {m}_delta,CASE WHEN {b}<>0 THEN ({a}-{b})/abs({b})*100 END AS {m}_percent,({b}<0 OR {a}<0) AS {m}_negative,({b}=0 OR abs({b})<{min}) AS {m}_small,(({a}-{b})<>0 AND ({b}=0 OR abs(({a}-{b})/abs({b})*100)>={pct})) AS {m}_notable,(({a}-{b})<>0 AND abs({a}-{b})>={min} AND ({b}=0 OR abs(({a}-{b})/abs({b})*100)>={pct})) AS {m}_significant",pct=q.percent));
+        let diff = if m == "average" {
+            format!("(CASE WHEN average_comparable THEN {a}-{b} END)")
+        } else {
+            format!("({a}-{b})")
+        };
+        expressions.push(format!("{b} AS {m}_base,{a} AS {m}_current,{diff} AS {m}_delta,CASE WHEN {b}<>0 THEN {diff}/abs({b})*100 END AS {m}_percent,({b}<0 OR {a}<0) AS {m}_negative,({b}=0 OR abs({b})<{min}) AS {m}_small,({diff}<>0 AND ({b}=0 OR abs({diff}/abs({b})*100)>={pct})) AS {m}_notable,({diff}<>0 AND abs({diff})>={min} AND ({b}=0 OR abs({diff}/abs({b})*100)>={pct})) AS {m}_significant",pct=q.percent));
     }
-    c.execute_batch(&format!("CREATE TEMP TABLE unified_values AS WITH averages AS (SELECT *,CASE WHEN bc>0 THEN ba/bc END bavg,CASE WHEN cc>0 THEN ca/cc END cavg FROM an_changes) SELECT *,classic_normalized(name) normalized_name,((bc=0 AND ba=0) AND (cc<>0 OR ca<>0)) is_new,((bc<>0 OR ba<>0) AND (cc=0 AND ca=0)) is_gone,{} FROM averages",expressions.join(","))).map_err(err)?;
+    c.execute_batch(&format!("CREATE TEMP TABLE unified_values AS WITH averages AS (
+        SELECT *, coalesce(ba,b_known) bamount,coalesce(ca,a_known) camount,
+        CASE WHEN ba IS NOT NULL AND bc>0 THEN ba/bc WHEN ba IS NULL AND b_paired>0 THEN b_known/b_paired END bavg,
+        CASE WHEN ca IS NOT NULL AND cc>0 THEN ca/cc WHEN ca IS NULL AND a_paired>0 THEN a_known/a_paired END cavg,
+        (ba IS NOT NULL AND ca IS NOT NULL) OR same_source_work average_comparable FROM an_changes
+    ) SELECT *,classic_normalized(name) normalized_name,((bc=0 AND ba=0) AND (cc<>0 OR camount<>0)) is_new,((bc<>0 OR bamount<>0) AND (cc=0 AND ca=0)) is_gone,{} FROM averages",expressions.join(","))).map_err(err)?;
     let direction = match o.direction.as_str() {
         "significant-up" => significant_direction(o, ">"),
         "significant-down" => significant_direction(o, "<"),
@@ -188,13 +199,35 @@ fn prepare_unified(
     };
     Ok(order)
 }
-const COLS: &str = "start,base,org,key,name,kind,bc,ba,cc,ca";
+const COLS: &str = "start,base,org,key,name,kind,bc,ba,cc,ca,bamount,camount,bavg,cavg,average_comparable";
+
+fn unified_change_value(row: &rusqlite::Row<'_>, q: &ChangeQuery) -> Result<ChangeValue, String> {
+    let mut value = change_value(row, q)?;
+    let number = |column| row.get::<_, Option<f64>>(column).map_err(err)?.map(finite).transpose();
+    let before = number(10)?;
+    let after = number(11)?;
+    value.status = status_with_observed_amounts(
+        value.count.base, number(7)?, value.count.current, number(9)?, before, after,
+    ).into();
+    value.amount = before.zip(after).map(|(b, a)| measure(b, a, q.min_amount, q.percent)).transpose()?;
+    if value.amount.is_none() {
+        value.observed_amount_before = before;
+        value.observed_amount_after = after;
+    }
+    let (base, current) = (number(12)?, number(13)?);
+    value.average = if row.get(14).map_err(err)? {
+        average_change(base, current, q.percent)?
+    } else {
+        AverageChange { base, current, delta: None, percent: None, flags: None }
+    };
+    Ok(value)
+}
 fn top(c: &Connection, q: &ChangeQuery, m: &str) -> Result<Option<ChangeValue>, String> {
     let mut stmt=c.prepare(&format!("SELECT {COLS} FROM unified_values WHERE {m}_delta<>0 ORDER BY abs({m}_delta) DESC,start,org,key LIMIT 1")).map_err(err)?;
     let mut rows = stmt.query([]).map_err(err)?;
     rows.next()
         .map_err(err)?
-        .map(|r| change_value(r, q))
+        .map(|r| unified_change_value(r, q))
         .transpose()
 }
 impl Analytics<'_> {
@@ -409,6 +442,7 @@ impl Analytics<'_> {
             gone: unique("is_gone")?,
             top_count: top(&tx, q, "count")?,
             top_amount: top(&tx, q, "amount")?,
+            rows_with_missing_amount: count_sql(&tx, "SELECT COUNT(*) FROM unified_visible WHERE ba IS NULL OR ca IS NULL")?,
             totals,
         };
         let total_rows = count_sql(&tx, "SELECT count(*) FROM unified_visible")?;
@@ -426,7 +460,7 @@ impl Analytics<'_> {
             .map_err(err)?;
         let mut rows = Vec::new();
         while let Some(r) = result.next().map_err(err)? {
-            rows.push(change_value(r, q)?)
+            rows.push(unified_change_value(r, q)?)
         }
         let next = if rows.len() > 50 {
             rows.pop();
@@ -493,6 +527,9 @@ impl Analytics<'_> {
                 );
                 csv_record(w, &[Text("Качество данных"), Text(&coverage)])?;
             }
+            if count_sql(&tx, "SELECT COUNT(*) FROM unified_visible WHERE ba IS NULL OR ca IS NULL")? > 0 {
+                csv_record(w, &[Text("Качество данных"), Text("Есть строки без суммы. Сравнение суммы учитывает заполненные ячейки, а среднее — сопоставимые количества из тех же строк.")])?;
+            }
             let metrics: Vec<_> = options.metrics.iter().map(String::as_str).collect();
             changes_csv_header(w, &metrics)?;
             let mut stmt = tx
@@ -508,7 +545,7 @@ impl Analytics<'_> {
             }
             .map_err(err)?;
             while let Some(r) = rows.next().map_err(err)? {
-                change_csv(w, &change_value(r, q)?, &metrics)?
+                change_csv(w, &unified_change_value(r, q)?, &metrics)?
             }
             Ok(())
         })

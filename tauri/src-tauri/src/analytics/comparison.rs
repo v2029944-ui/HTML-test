@@ -67,7 +67,7 @@ pub(super) fn comparison(
     org_check(c, s, org)?;
     fill_range(c, s, &q.before, 1)?;
     fill_range(c, s, &q.after, 2)?;
-    c.execute_batch("CREATE TEMP TABLE an_comparison(key TEXT PRIMARY KEY,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL,b_known REAL,a_known REAL) WITHOUT ROWID;").map_err(err)?;
+    c.execute_batch("CREATE TEMP TABLE an_comparison(key TEXT PRIMARY KEY,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL,b_known REAL,a_known REAL,b_paired REAL,a_paired REAL,same_source_work INTEGER) WITHOUT ROWID;").map_err(err)?;
     let table = if org.is_some() {
         "temp.an_values"
     } else {
@@ -78,8 +78,8 @@ pub(super) fn comparison(
     } else {
         "AND ?1 IS NULL"
     };
-    c.execute(&format!("INSERT INTO temp.an_comparison WITH b AS (SELECT * FROM {table} WHERE slot=1 {predicate}),a AS (SELECT * FROM {table} WHERE slot=2 {predicate}),keys AS (SELECT key FROM b UNION SELECT key FROM a) SELECT keys.key,COALESCE(b.name,a.name),COALESCE(b.kind,a.kind),COALESCE(b.count,0),CASE WHEN b.key IS NULL THEN 0 ELSE b.amount END,COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END,b.known_amount,a.known_amount FROM keys LEFT JOIN b USING(key) LEFT JOIN a USING(key)"),[org]).map_err(err)?;
-    c.execute("INSERT INTO temp.an_comparison SELECT 'absent:'||f.item,f.item,'work',0,0,0,0,NULL,NULL FROM analysis_filter_items f WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM temp.an_comparison a WHERE a.name=f.item)",[&s.names]).map_err(err)?;
+    c.execute(&format!("INSERT INTO temp.an_comparison WITH b AS (SELECT * FROM {table} WHERE slot=1 {predicate}),a AS (SELECT * FROM {table} WHERE slot=2 {predicate}),keys AS (SELECT key FROM b UNION SELECT key FROM a) SELECT keys.key,COALESCE(b.name,a.name),COALESCE(b.kind,a.kind),COALESCE(b.count,0),CASE WHEN b.key IS NULL THEN 0 ELSE b.amount END,COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END,b.known_amount,a.known_amount,CASE WHEN b.source_work IS NOT NULL THEN b.paired_count END,CASE WHEN a.source_work IS NOT NULL THEN a.paired_count END,b.source_work IS NOT NULL AND b.source_work=a.source_work FROM keys LEFT JOIN b USING(key) LEFT JOIN a USING(key)"),[org]).map_err(err)?;
+    c.execute("INSERT INTO temp.an_comparison SELECT 'absent:'||f.item,f.item,'work',0,0,0,0,NULL,NULL,NULL,NULL,0 FROM analysis_filter_items f WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM temp.an_comparison a WHERE a.name=f.item)",[&s.names]).map_err(err)?;
     Ok((complete(c, 1, org)?, complete(c, 2, org)?))
 }
 pub(super) fn comparison_value(
@@ -123,6 +123,32 @@ pub(super) fn comparison_value(
         },
     })
 }
+const COMPARISON_COLUMNS: &str =
+    "key,name,kind,bc,ba,cc,ca,b_known,a_known,b_paired,a_paired,same_source_work";
+
+fn observed_comparison_value(
+    row: &rusqlite::Row<'_>, q: &ComparisonQuery, before_observed: bool, after_observed: bool,
+) -> Result<ComparisonValue, String> {
+    let mut value = comparison_value(row, q, before_observed, after_observed)?;
+    let base = paired_observed_totals(row.get(3).map_err(err)?, row.get(4).map_err(err)?,
+        row.get(7).map_err(err)?, row.get(9).map_err(err)?, before_observed)?;
+    let current = paired_observed_totals(row.get(5).map_err(err)?, row.get(6).map_err(err)?,
+        row.get(8).map_err(err)?, row.get(10).map_err(err)?, after_observed)?;
+    if let (Some(bc), Some(cc)) = (base.count, current.count) {
+        value.status = Some(status_with_observed_amounts(
+            bc, row.get(4).map_err(err)?, cc, row.get(6).map_err(err)?, base.amount, current.amount,
+        ).into());
+    }
+    value.amount = base.amount.zip(current.amount)
+        .map(|(b, a)| measure(b, a, q.min_amount, q.percent)).transpose()?;
+    if row.get::<_, Option<bool>>(11).map_err(err)?.unwrap_or(false) {
+        value.average = average_change(base.average, current.average, q.percent)?;
+    }
+    value.observed_before = Some(base);
+    value.observed_after = Some(current);
+    Ok(value)
+}
+
 impl Analytics<'_> {
     pub(super) fn analysis_comparison_summary(
         &self,
@@ -171,10 +197,10 @@ impl Analytics<'_> {
         let count = if let (Some(b), Some(a)) = (before.available_total.count, after.available_total.count) {
             Some(measure(b, a, q.min_count, q.percent)?)
         } else { None };
-        let amount = if let (Some(b), Some(a)) = (before.comparison_amount(), after.comparison_amount()) {
+        let amount = if let (Some(b), Some(a)) = (before.available_total.amount, after.available_total.amount) {
             Some(measure(b, a, q.min_amount, q.percent)?)
         } else { None };
-        let average = average_change(before.available_total.average, after.available_total.average, q.percent)?;
+        let average = observed_average_change(&before, &after, q.percent)?;
         let summary = ComparisonSummary {
             before, after,
             values: count_sql(&tx, "SELECT COUNT(*) FROM temp.an_comparison")?,
@@ -217,14 +243,14 @@ impl Analytics<'_> {
         let mut top_count=Vec::new();
         if summary.before.available_reports > 0 && summary.after.available_reports > 0 {
             for metric in ["amount","count"] {
-                let sql = "SELECT key,name,kind,bc,ba,cc,ca FROM temp.an_comparison
-                    WHERE ?1='count' OR (ba IS NOT NULL AND ca IS NOT NULL)
-                    ORDER BY ABS(CASE WHEN ?1='amount' THEN ca-ba ELSE cc-bc END) DESC,
-                             key ASC LIMIT 12";
-                let mut ranking = tx.prepare(sql).map_err(err)?;
+                let sql = format!("SELECT {COMPARISON_COLUMNS} FROM temp.an_comparison
+                    WHERE ?1='count' OR (coalesce(ba,b_known) IS NOT NULL AND coalesce(ca,a_known) IS NOT NULL)
+                    ORDER BY ABS(CASE WHEN ?1='amount' THEN coalesce(ca,a_known)-coalesce(ba,b_known)
+                                      ELSE cc-bc END) DESC, key ASC LIMIT 12");
+                let mut ranking = tx.prepare(&sql).map_err(err)?;
                 let mut values=ranking.query([metric]).map_err(err)?;
                 while let Some(row)=values.next().map_err(err)? {
-                    let mut item=comparison_value(row,q,true,true)?;
+                    let mut item=observed_comparison_value(row,q,true,true)?;
                     if !(before_complete && after_complete) {
                         item.status = None;
                     }
@@ -245,18 +271,14 @@ impl Analytics<'_> {
         let offset=crate::storage::direct_page_offset(page_index,size,total_rows)?;
         let b_observed = observed_reports(&tx,1,org)?;
         let a_observed = observed_reports(&tx,2,org)?;
-        let mut statement=tx.prepare("SELECT key,name,kind,bc,ba,cc,ca,b_known,a_known FROM temp.an_comparison ORDER BY key LIMIT ?1 OFFSET ?2").map_err(err)?;
+        let mut statement=tx.prepare(&format!("SELECT {COMPARISON_COLUMNS} FROM temp.an_comparison ORDER BY key LIMIT ?1 OFFSET ?2")).map_err(err)?;
         let mut result=statement.query(params![limit,offset]).map_err(err)?;
         let mut rows=Vec::new();
         while let Some(row)=result.next().map_err(err)? {
-            let mut value = comparison_value(row,q,b_observed,a_observed)?;
+            let mut value = observed_comparison_value(row,q,b_observed,a_observed)?;
             if !(before && after) {
                 value.status = None;
             }
-            value.observed_before = Some(observed_totals(row.get(3).map_err(err)?, row.get(4).map_err(err)?,
-                row.get(7).map_err(err)?, b_observed)?);
-            value.observed_after = Some(observed_totals(row.get(5).map_err(err)?, row.get(6).map_err(err)?,
-                row.get(8).map_err(err)?, a_observed)?);
             rows.push(value);
         }
         Ok(SqlPage {rows,total_rows})

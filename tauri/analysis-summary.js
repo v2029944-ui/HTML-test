@@ -42,5 +42,19 @@
   function incomplete(item) {
     return item?.complete === false || item?.missing > 0 || (Number.isFinite(observed(item)?.count) && item?.total?.amount == null);
   }
-  window.analysisSummary = Object.freeze({titles,read,timelinePeriods,displayedChange,itemLabel,observed,incomplete});
+  function averageNote(period) {
+    const total = observed(period);
+    if (Number.isFinite(total?.partial_average_quantity)) {
+      const quantity = new Intl.NumberFormat('ru-RU', {maximumFractionDigits: 8}).format(total.partial_average_quantity);
+      const coverage = Number.isSafeInteger(period?.priced_rows) && Number.isSafeInteger(period?.report_rows)
+        ? ' Покрытие суммы: ' + period.priced_rows + ' из ' + period.report_rows + ' строк.'
+        : '';
+      return 'Частичное среднее рассчитано по строкам с указанной суммой. Количество в расчёте: ' + quantity + '.' + coverage;
+    }
+    if (period?.amount_missing_rows && Number.isFinite(total?.count)) {
+      return 'Для частичного среднего нужны сопоставимые строки одной работы с указанной суммой и положительным суммарным количеством.';
+    }
+    return '';
+  }
+  window.analysisSummary = Object.freeze({titles,read,timelinePeriods,displayedChange,itemLabel,observed,incomplete,averageNote});
 })();

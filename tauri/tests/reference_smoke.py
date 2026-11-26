@@ -10,7 +10,7 @@ from pathlib import Path
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, expect
 
 from reference_control_layout import check_control_layout
-from reference_shell_layout import check_filter_placement, check_shell_layout
+from reference_shell_layout import check_filter_placement, check_shell_layout, check_sticky_table_header
 from reference_table_help import check_table_help
 from reference_data_smoke import choose_calendar_date, select_filter_period
 from shared_period_controls import common_period
@@ -511,6 +511,9 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
             help_tables = {'structurePanel': '#structureResults .metric-table',
                            'usualPanel': '#usualResults .metric-table',
                            'regularityPanel': '#regularityResults .metric-table'}
+            if target == 'structurePanel':
+                expect(page.locator('#structurePanel')).to_have_js_property('tagName', 'SECTION')
+                expect(page.locator('#structurePanel > h2')).to_contain_text('Состав работ и доли')
             if target in help_tables:
                 table_help(help_tables[target], '08-' + target + '-table-help',
                            expected_count=2 if target == 'usualPanel' else None)
@@ -521,11 +524,9 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                     expect(hints.nth(1)).to_have_attribute('aria-label', 'Пояснение: Оценка')
             if target == 'comparison':
                 contribution = page.locator('#contributions')
-                contribution_summary = contribution.locator(':scope > summary')
-                expect(contribution_summary).to_be_visible(timeout=TIMEOUT)
-                if not contribution.evaluate('(node) => node.open'):
-                    contribution_summary.click()
-                expect(contribution).to_have_js_property('open', True)
+                expect(contribution.locator(':scope > h3')).to_be_visible(timeout=TIMEOUT)
+                expect(contribution).to_have_js_property('tagName', 'SECTION')
+                expect(contribution.locator(':scope > summary')).to_have_count(0)
                 table_help('#contributionResults .metric-table', '08-contributions-table-help')
             if target == 'chartPanel':
                 breakdown = page.locator('#chartBreakdown')
@@ -774,7 +775,21 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                         page.set_viewport_size({'width':width,'height':749})
                         page.screenshot(animations='disabled')
                         check_shell_layout(page, headings=True)
+                        check_sticky_table_header(page)
                         record(f'17-shell-{theme}-{width}',page.locator('#reportShell'))
+                        if theme == 'light':
+                            row = page.locator('#s1 .table-viewport tbody tr').first
+                            cell = row.locator('td').first
+                            cell.hover()
+                            expected = cell.evaluate("""cell => {
+                              const probe = document.createElement('span');
+                              probe.style.backgroundColor = 'var(--hover)';
+                              cell.append(probe);
+                              const color = getComputedStyle(probe).backgroundColor;
+                              probe.remove();
+                              return color;
+                            }""")
+                            expect(row).to_have_css('background-color', expected)
                         fold.locator('summary').click()
                         page.screenshot(animations='disabled')
                         check_shell_layout(page, folded=True)

@@ -250,6 +250,7 @@
 :is(#s1,#s2,#sharedHeader,#reportShell) .table-viewport td {font-size:14px;line-height:1.4;padding:12px 10px;border-bottom:1px solid #303945;font-variant-numeric:tabular-nums}
 :is(#s1,#s2,#sharedHeader,#reportShell) .table-viewport tr:last-child td {border-bottom-color:transparent}
 :is(#s1,#s2,#sharedHeader,#reportShell) .table-viewport tbody tr:hover {background:#202833}
+:scope[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) .table-viewport tbody tr:hover {background:var(--hover)}
 :is(#s1,#sharedHeader,#reportShell) .table-viewport td:first-child {font-weight:650}
 :is(#s1,#sharedHeader,#reportShell) .bar {height:4px;width:80%;max-width:96px;margin:5px auto 0;border-radius:3px;background:#303945}
 :is(#s1,#sharedHeader,#reportShell) .bar i {background:#e8bf5b;border-radius:3px}
@@ -1090,6 +1091,8 @@ body:has(#refRoot)>footer {display:none}
 
 /* Group members and work pages use the vertical scroll of the workspace. */
 #groupWorkspace :is(.group-members,.works-list) {max-height:none;overflow:visible}
+#groupWorkspace .group-removal {align-items:center}
+#groupWorkspace .group-selection {margin-inline-start:.5rem; cursor:pointer}
 #groupWorkspace .group-result-counts {display:flex;flex-wrap:wrap;gap:0 1rem}
 #groupWorkspace .group-assign {justify-self:end;width:auto;min-height:34px;padding:6px 10px}
 #groupPickerDialog {

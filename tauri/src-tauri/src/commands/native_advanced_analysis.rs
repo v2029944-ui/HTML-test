@@ -3,7 +3,7 @@ use serde::Deserialize;
 use tauri::AppHandle;
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AdvancedRequest {
     revision: i64,
     source: String,
@@ -236,4 +236,28 @@ pub async fn native_composition_page(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+    use serde_json::{from_value, json};
+
+    #[test]
+    fn advanced_ipc_deserializes_the_desktop_request_shape() {
+        let raw = json!({
+            "revision":7,"source":"daily","displayType":"day","organizations":["A"],"selectedNames":[],
+            "query":{"method":"range","from":"2024-01-02","to":"2024-01-02","percent":0,"min_count":0,"min_amount":0}
+        });
+        let request: AdvancedRequest = from_value(raw.clone()).unwrap();
+        assert_eq!(request.revision, 7);
+        assert_eq!(request.query.min_amount, 0.);
+        assert!(request.selected_names.is_empty());
+        let mut unknown = raw.clone();
+        unknown["selectedName"] = json!("ignored filter");
+        assert!(from_value::<AdvancedRequest>(unknown).is_err());
+        let mut invalid = raw;
+        invalid["revision"] = json!("7");
+        assert!(from_value::<AdvancedRequest>(invalid).is_err());
+    }
 }

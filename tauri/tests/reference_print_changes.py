@@ -6,15 +6,18 @@ from reference_print_probe import probe_reference_print
 
 def check_print_all_changes(page, temporary, output, pid, api, make_workbook, open_day):
     snapshot = api(page, 'nativeSettingsBootstrap')
-    names = [f'Позиция {i:02d}' for i in range(1, 14)]
-    totals = [130, 1300, 130, 1300 + 1000 * sum(range(1, 14))]
+    page_size = 50
+    positions = range(1, page_size + 2)
+    names = [f'Позиция {i:02d}' for i in positions]
+    quantity, base_amount = 10 * len(names), 100 * len(names)
+    totals = [quantity, base_amount, quantity, base_amount + 1000 * sum(positions)]
     rows = [['Работа', '2019-02-01', '2019-02-01', '2019-02-02', '2019-02-02'],
             ['', 'Количество', 'Сумма', 'Количество', 'Сумма'],
             [snapshot['org_names'][0], *totals]]
     rows.extend([name, 10, 100, 10, 100 + i * 1000] for i, name in enumerate(names, 1))
     rows.extend([org, 0, 0, 0, 0] for org in snapshot['org_names'][1:])
     rows.append(['Итого', *totals])
-    source = temporary / 'print-thirteen.xlsx'
+    source = temporary / 'print-changes.xlsx'
     source.write_bytes(make_workbook(rows))
     options = {'year': 2019, 'sheets': [], 'mappings': {}, 'organizations': snapshot['org_names']}
     preview = api(page, 'nativeWideImportPreview', str(source), options)
@@ -27,9 +30,9 @@ def check_print_all_changes(page, temporary, output, pid, api, make_workbook, op
     page.locator('#sharedHeader .main-nav').get_by_role('button', name='Анализ изменений', exact=True).click()
     page.locator('#s2 [data-sort]').select_option('name')
     on_screen = page.locator('#s2 .changes-card tbody tr')
-    expect(on_screen).to_have_count(12)
+    expect(on_screen).to_have_count(page_size)
     expect(on_screen.first).to_contain_text(names[0])
-    expect(on_screen.last).to_contain_text(names[11])
+    expect(on_screen.last).to_contain_text(names[page_size - 1])
     search = page.locator('#s2 input[placeholder]')
     # Capture action availability in the input event, before the debounced SQL read.
     search.evaluate("""input => input.addEventListener('input', () => {
@@ -47,7 +50,7 @@ def check_print_all_changes(page, temporary, output, pid, api, make_workbook, op
     expect(on_screen).to_have_count(1)
     expect(on_screen.first).to_contain_text(names[-1])
     search.fill('')
-    expect(on_screen).to_have_count(12)
+    expect(on_screen).to_have_count(page_size)
     expect(on_screen.first).to_contain_text(names[0])
     page.evaluate("""() => {
       window.printedChangeRows = [];
@@ -61,6 +64,6 @@ def check_print_all_changes(page, temporary, output, pid, api, make_workbook, op
     assert probe['status'] == 'observed-cancel-reopen-escape-and-focus', probe['status']
     captured = page.evaluate('window.printedChangeRows')
     assert len(captured) >= 2 and all(batch == names for batch in captured), captured
-    expect(on_screen).to_have_count(12)
+    expect(on_screen).to_have_count(page_size)
     expect(on_screen.first).to_contain_text(names[0])
-    (output / 'reference-print-13.json').write_text(json.dumps(captured, ensure_ascii=False), encoding='utf-8')
+    (output / 'reference-print-51.json').write_text(json.dumps(captured, ensure_ascii=False), encoding='utf-8')

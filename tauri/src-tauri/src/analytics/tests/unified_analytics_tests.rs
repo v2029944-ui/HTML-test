@@ -750,3 +750,32 @@ fn calendar_finds_all_saved_weeks_covering_a_day_on_mixed_schedules() {
     assert_eq!(november.rows[3].end,"2026-11-22");
     assert!(lookup("2026-12-01").rows.is_empty());
 }
+
+#[test]
+fn changes_compare_the_available_pairs_for_one_original_work() {
+    let (_dir, store, _, scope) = fixture();
+    let mut data = store.load().unwrap();
+    data["reports"][1]["rows"].as_array_mut().unwrap().push(json!({
+        "organization":"A","work":"ЯРКАЯ услуга","count":4.0,"amount":null
+    }));
+    store.save(data).unwrap();
+    let revision = store.revision().unwrap();
+    for id in ["d0", "d1"] {
+        store.analysis_index_report(id, revision).unwrap();
+    }
+    store.analysis_index_settings(revision).unwrap();
+    let organizations = store.analysis_filter_create(revision, "organizations").unwrap();
+    store.analysis_filter_append(revision, &organizations, &["A".into()]).unwrap();
+    store.analysis_filter_seal(revision, &organizations).unwrap();
+    let scope = AnalysisScope { organizations, ..scope };
+    let options = UnifiedChangeOptions {
+        metrics: vec!["amount".into(), "average".into()],
+        mode: "all".into(), search: "яркая".into(), direction: "all".into(), sort: "name".into(),
+    };
+    let page = store.unified_changes_page(revision, &scope, &query(), None, &options, None).unwrap();
+    let row = &page.rows[0];
+    assert_eq!(row.count.current, 6.);
+    assert_eq!(row.amount.as_ref().unwrap().delta, 10.);
+    assert_eq!(row.average.current, Some(47.));
+    assert_eq!(row.average.delta, Some(-37.));
+}
