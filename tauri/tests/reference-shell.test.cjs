@@ -51,3 +51,29 @@ test('desktop compact scales match the picker and keep existing preference value
   assert.equal(html.split('id="appVersion"').length - 1, 1);
   assert.match(html, /id="onlineUpdates"[^>]*>[\s\S]*?Приложение и обновления<\/h2>\s*<span id="appVersion"/);
 });
+
+test('reference table row hover uses readable light-palette colors without changing dark styling', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../reference-shell.css'), 'utf8');
+  assert.ok(css.includes('#refRoot[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) .table-viewport tbody tr:hover {background:var(--hover)}'));
+  const luminance = hex => {
+    const channels = hex.slice(1).match(/../g).map(channel => {
+      const value = parseInt(channel, 16) / 255;
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    });
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  const ratio = (a, b) => {
+    const values = [luminance(a), luminance(b)].sort((a,b) => b-a);
+    return (values[0]+0.05)/(values[1]+0.05);
+  };
+  const palettes = [...original.matchAll(/:root\[data-palette="([^"]+)"\]\[data-theme="light"\]\{([^}]+)\}/g)];
+  assert.ok(palettes.length >= 6);
+  for (const [, name, tokens] of palettes) {
+    const color = token => tokens.match(new RegExp('--'+token+':(#[0-9a-f]{6})(?:;|$)', 'i'))[1];
+    for (const ink of ['text','muted','accent','positive','negative','warning']) {
+      assert.ok(ratio(color(ink),color('hover')) >= 4.5, name + ' / ' + ink);
+    }
+    for (const ink of ['#075d87','#9c421e']) assert.ok(ratio(ink,color('hover')) >= 4.5, name + ' / ' + ink);
+  }
+  assert.ok(css.includes(':is(#s1,#s2,#sharedHeader,#reportShell) .table-viewport tbody tr:hover {background:#202833}'));
+});
