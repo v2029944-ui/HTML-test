@@ -22,6 +22,7 @@ function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve
 function fixture(overrides={}){
  const nodes=new Map();for(const match of original.matchAll(/<([a-z][\w-]*)\b[^>]*\bid="([^"]+)"[^>]*>/gi)){const el=new Element(match[1]);el.id=match[2];nodes.set(el.id,el);}
  for(const id of ['comparisonPeriodOverride','structurePeriodOverride','changesPeriodOverride','comparisonPeriodReset','structurePeriodReset','changesPeriodReset','changesSensitivityValue','changesSensitivityExample','changesActiveFilter','workViewMode','workViewDescription']){const el=new Element('div');el.id=id;nodes.set(id,el);}
+ for(const id of ['structurePanel','contributions'])nodes.get(id).tagName='SECTION';
  const defaults={changesType:'day',changesMethod:'previous',changesFrom:'2024-01-01',changesTo:'2024-01-02',changesPercent:'30',changesCountMin:'5',changesAmountMin:'1000',changesMode:'all',changesDirection:'all',changesSort:'name',comparisonMode:'periods',periodComparisonScope:'single',comparisonScope:'single',structureMetric:'amount',structureLimit:'10',structureScope:'selected',usualWindow:'4',usualPercent:'30',regularityGap:'4',regularityStatus:'all'};
  for(const [id,value]of Object.entries(defaults))nodes.get(id).value=value;
  const hooks={scope:[],snapshot:[],views:{}},tables=[],calls=[];
@@ -102,7 +103,7 @@ test('composition hides base-share columns and zero-valued rows when baseline is
   rows:[{key:'work:A',name:'АКБ Замена,',current:15,share:100,cumulative:100,base:null,baseShare:null,shareChange:null},
         {key:'work:Zero',name:'Нулевая работа',current:0,share:0,cumulative:100,base:null}]
  })});
- f.publish();f.nodes.get('structurePanel').open=true;f.nodes.get('structurePanel').dispatch('toggle');await settle();
+ f.publish();f.nodes.get('workViewMode').value='composition';f.nodes.get('workViewMode').dispatch('change');await settle();
  const table=f.tables.find(t=>t.root==='structureResults');
  assert.ok(table);assert.deepEqual(Array.from(table.headers),['Услуга / группа','Значение сейчас','Доля сейчас','Накопленная доля']);
  assert.equal(table.rows.length,1);assert.equal(table.rows[0][0].textContent,'АКБ Замена');
@@ -142,7 +143,7 @@ test('imported week captions and one-period chart bounds show Sunday as the end'
  })});
  f.UI.drawChart=(...args)=>plots.push(args);
  f.publish({displayType:'week',type:'week',source:'imported',from:'2024-01-01',to:'2024-01-01',baseFrom:'2023-12-25',baseTo:'2023-12-25'});
- f.nodes.get('structurePanel').open=true;f.nodes.get('structurePanel').dispatch('toggle');await settle();
+ f.nodes.get('workViewMode').value='composition';f.nodes.get('workViewMode').dispatch('change');await settle();
  const table=f.tables.find(t=>t.root==='structureResults');assert.ok(table);
  assert.match(table.caption,/01\.01\.2024 — 07\.01\.2024/);
  assert.equal(plots[0][0][0].end,'2024-01-07');
@@ -203,7 +204,7 @@ test('missing report pairs are reported separately with formatted dates',async()
  assert.match(message,/01\.01\.2024/);
 });
 
-test('work view toggle keeps composition SQL request limited and uses existing controls',async()=>{
+test('composition loads on selection without disclosure and keeps SQL requests bounded',async()=>{
  const queries=[];
  const f=fixture({nativeCompositionPage:async(request,base,mode,metric,cursor,limit)=>{
   queries.push({request,base,mode,metric,cursor,limit});
@@ -216,7 +217,8 @@ test('work view toggle keeps composition SQL request limited and uses existing c
  f.nodes.get('workViewMode').dispatch('change');
  assert.equal(f.nodes.get('chartPanel').hidden,true);
  assert.equal(f.nodes.get('structurePanel').hidden,false);
- f.nodes.get('structurePanel').dispatch('toggle');await settle();
+ assert.equal(f.nodes.get('structurePanel').listeners.toggle,undefined);
+ await settle();
  assert.equal(queries.length,1);
  assert.equal(queries[0].mode,'structure');
  assert.equal(queries[0].limit,10);
@@ -225,6 +227,11 @@ test('work view toggle keeps composition SQL request limited and uses existing c
  assert.equal(f.nodes.get('chartPanel').hidden,false);
  assert.equal(f.nodes.get('structurePanel').hidden,true);
  assert.equal(queries.length,1,'trends must not fetch composition rows');
+ f.window.referenceDetail={active:'structurePanel'};f.nodes.get('advancedAnalytics').open=true;
+ f.nodes.get('workViewMode').value='composition';f.nodes.get('workViewMode').dispatch('change');await settle();
+ f.publish({to:'2024-01-03'});await settle();
+ assert.equal(queries.length,3,'changing a visible composition scope must refresh SQL results');
+ assert.equal(queries.at(-1).request.query.to,'2024-01-03');
 });
 
 test('department comparison dynamics include selected organizations beyond eight',async()=>{
@@ -407,7 +414,7 @@ test('contribution CSV becomes unavailable as soon as the local baseline changes
  f.window.referenceDetail={active:'comparison',currentComparison:()=>({
   before:{from:baseline,to:'2024-01-09'},after:{from:'2024-01-10',to:'2024-01-11'}})};
  f.publish();const detail=f.nodes.get('contributions'),results=f.nodes.get('contributionResults');
- detail.open=true;await f.window.unifiedExtended.openComparison();await settle();
+ assert.equal(detail.listeners.toggle,undefined);await f.window.unifiedExtended.openComparison();await settle();
  const old=f.tables.findLast(t=>t.root===results.id).options.csvContext;
  const dialog=deferred();f.UI.api.chooseCsvPath=()=>dialog.promise;
  const saving=old.export();
@@ -416,11 +423,11 @@ test('contribution CSV becomes unavailable as soon as the local baseline changes
  assert.equal(results.inert,true);
  dialog.resolve('/tmp/old.csv');await assert.rejects(saving,/изменились/);
  await assert.rejects(old.export(),/изменились/);
- detail.dispatch('toggle');await settle();
+ assert.equal(detail.listeners.toggle,undefined);await settle();
  assert.deepEqual(compositionReads,['2024-01-08']);
  blocked.reject(Error('comparison read failed'));await update;
  assert.match(results.textContent,/comparison read failed/);assert.equal(results.children.some(n=>n.tagName==='TABLE'),false);
- detail.dispatch('toggle');await settle();await assert.rejects(old.export(),/изменились/);
+ assert.equal(detail.listeners.toggle,undefined);await settle();await assert.rejects(old.export(),/изменились/);
  assert.deepEqual(compositionReads,['2024-01-08']);assert.equal(saved.length,0);
  blocked=null;await f.window.unifiedExtended.openComparison();await settle();
  await f.tables.findLast(t=>t.root===results.id).options.csvContext.export();
@@ -446,7 +453,7 @@ test('partial contributions retain all selected departments and display calculat
  f.window.referenceDetail={active:'comparison',currentComparison:()=>({
   before:{from:'2024-01-01',to:'2024-01-02'},after:{from:'2024-01-03',to:'2024-01-04'}
  })};
- f.publish({organizations:['A','B']});f.nodes.get('contributions').open=true;
+ f.publish({organizations:['A','B']});
  await f.window.unifiedExtended.openComparison();await settle();
  assert.equal(reads.length,2);assert.ok(reads.every(([organizations])=>organizations.join()=== 'A,B'));
  const notice=f.nodes.get('contributionCheck').children.filter(n=>n.className.includes('warn'));
@@ -471,8 +478,8 @@ test('month scope with equal-length October baseline uses exact daily intervals 
  });
  f.UI.state.selectedMetrics=new Set(['amount']);f.window.referenceDetail={active:'structurePanel'};
  f.publish({displayType:'month',from:'2026-11-01',to:'2026-11-30',baseFrom:'2026-10-02',baseTo:'2026-10-31'});
- f.nodes.get('structurePanel').open=true;f.nodes.get('structurePanel').dispatch('toggle');await settle();
- f.window.referenceDetail.active='comparison';f.nodes.get('contributions').open=true;
+ f.nodes.get('workViewMode').value='composition';f.nodes.get('workViewMode').dispatch('change');await settle();
+ f.window.referenceDetail.active='comparison';
  await f.window.unifiedExtended.openComparison();await settle();
  for(const [mode,req,before] of reads){
   assert.equal(req.displayType,'day',mode);
@@ -545,7 +552,7 @@ test('composition chart distinguishes a work and matching group just like its ta
  const f=fixture({nativeCompositionPage:async()=>({rows,total:3,currentComplete:true,baseComplete:true,sharesValid:true})});
  let labels;
  f.UI.drawChart=(_p,_o,_m,_root,options)=>{labels=options.categories.map(options.label);};
- f.publish({allNames:true});f.nodes.get('structurePanel').open=true;f.nodes.get('structurePanel').dispatch('toggle');await settle();
+ f.publish({allNames:true});f.nodes.get('workViewMode').value='composition';f.nodes.get('workViewMode').dispatch('change');await settle();
  const names=f.tables.find(t=>t.root==='structureResults').rows.map(row=>row[0].textContent);
  assert.deepEqual(Array.from(labels),Array.from(names));assert.equal(new Set(labels).size,2);
 });
@@ -608,7 +615,7 @@ test('contribution detail respects the selected work scope used by its parent co
  f.window.referenceDetail={active:'comparison',currentComparison:()=>({
   before:{from:'2024-01-01',to:'2024-01-01'},after:{from:'2024-01-02',to:'2024-01-02'}
  })};
- f.publish();f.nodes.get('contributions').open=true;
+ f.publish();
  await f.window.unifiedExtended.openComparison();await settle();
  assert.ok(contributions.length);
  assert.deepEqual(Array.from(contributions[0].selectedNames),['Work']);

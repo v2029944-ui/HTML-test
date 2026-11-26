@@ -511,6 +511,9 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
             help_tables = {'structurePanel': '#structureResults .metric-table',
                            'usualPanel': '#usualResults .metric-table',
                            'regularityPanel': '#regularityResults .metric-table'}
+            if target == 'structurePanel':
+                expect(page.locator('#structurePanel')).to_have_js_property('tagName', 'SECTION')
+                expect(page.locator('#structurePanel > h2')).to_contain_text('Состав работ и доли')
             if target in help_tables:
                 table_help(help_tables[target], '08-' + target + '-table-help',
                            expected_count=2 if target == 'usualPanel' else None)
@@ -521,11 +524,9 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                     expect(hints.nth(1)).to_have_attribute('aria-label', 'Пояснение: Оценка')
             if target == 'comparison':
                 contribution = page.locator('#contributions')
-                contribution_summary = contribution.locator(':scope > summary')
-                expect(contribution_summary).to_be_visible(timeout=TIMEOUT)
-                if not contribution.evaluate('(node) => node.open'):
-                    contribution_summary.click()
-                expect(contribution).to_have_js_property('open', True)
+                expect(contribution.locator(':scope > h3')).to_be_visible(timeout=TIMEOUT)
+                expect(contribution).to_have_js_property('tagName', 'SECTION')
+                expect(contribution.locator(':scope > summary')).to_have_count(0)
                 table_help('#contributionResults .metric-table', '08-contributions-table-help')
             if target == 'chartPanel':
                 breakdown = page.locator('#chartBreakdown')

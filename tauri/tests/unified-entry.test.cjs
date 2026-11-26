@@ -147,7 +147,11 @@ test('trend and composition occupy one presentation switch, retaining native SQL
  const html=prepareHtml(original);
  const selector=html.indexOf('id="workViewMode"'),chart=html.indexOf('id="chartPanel"'),composition=html.indexOf('id="structurePanel"'),comparison=html.indexOf('id="comparison"');
  assert.ok(selector>=0&&selector<chart&&chart<composition&&composition<comparison);
- assert.match(html,/<details class="panel" id="structurePanel" hidden>/);
+ assert.match(html,/<section class="panel" id="structurePanel" hidden aria-labelledby="structureHeading">/);
+ assert.match(html,/<h2 id="structureHeading">Состав работ и доли<\/h2>/);
+ assert.match(html,/<section id="contributions" class="extended-section" aria-labelledby="contributionsHeading">/);
+ assert.match(html,/<h3 id="contributionsHeading">Вклад работ в изменение итогов<\/h3>/);
+ assert.doesNotMatch(html,/<details\b[^>]*\bid="(?:structurePanel|contributions)"/);
  assert.match(html,/id="structureLimit"/);
  assert.match(html,/id="chartsContainer"/);
  assert.equal([...html.matchAll(/id="structurePanel"/g)].length,1);
