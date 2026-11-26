@@ -2098,7 +2098,7 @@ def run():
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 check_delete_without_backup(page,tmp,confirmations)
                 report['checks'].append('Single, selected, period and clear-all deletion preserve settings, XLSX and shared diagnostics, protect surviving linked reports, and reject stale revisions')
-            with independent('Print all thirteen changes'), installed_page(print_probe_phase=True) as (page,_,pid):
+            with independent('Print all fifty-one changes'), installed_page(print_probe_phase=True) as (page,_,pid):
                 ready(page,0)
                 check_print_all_changes(page,tmp,output,pid,api,quality_evidence_xlsx,open_daily_overview)
                 report['checks'].append('Both native print previews contained all 13 filtered SQLite rows in order')
