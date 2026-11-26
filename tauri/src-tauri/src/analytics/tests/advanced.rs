@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn daily_week_changes_use_complete_weeks_and_ignore_imported_totals() {
+fn daily_week_changes_use_available_reports_and_ignore_imported_totals() {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();
     let mut data = fixture();
@@ -21,7 +21,7 @@ fn daily_week_changes_use_complete_weeks_and_ignore_imported_totals() {
     let q = ChangeQuery {
         method: "range".into(),
         from: "2024-01-01".into(),
-        to: "2024-01-21".into(),
+        to: "2024-01-28".into(),
         percent: 20.,
         min_count: 1.,
         min_amount: 1.,
@@ -30,7 +30,11 @@ fn daily_week_changes_use_complete_weeks_and_ignore_imported_totals() {
         .advanced_changes_page(rev, &s, &q, Some("week"), None)
         .unwrap();
     assert_eq!(page.summary.missing_pairs, 1);
-    assert_eq!(page.rows.len(), 1);
+    assert_eq!(page.summary.partial_pairs, 1);
+    assert_eq!(page.missing_examples[0].current_start, "2024-01-22");
+    assert!(!page.missing_examples[0].missing_base);
+    assert!(page.missing_examples[0].missing_current);
+    assert_eq!(page.rows.len(), 2);
     let item = &page.rows[0];
     assert_eq!(
         (&item.base_start, &item.current_start),
@@ -41,6 +45,24 @@ fn daily_week_changes_use_complete_weeks_and_ignore_imported_totals() {
         (0., -7., 77.)
     );
     assert_eq!(item.count.percent, None);
+    let partial = &page.rows[1];
+    assert_eq!(partial.current_start, "2024-01-15");
+    assert_eq!((partial.count.base, partial.count.current), (-7., -6.));
+    assert_eq!(partial.amount.as_ref().unwrap().current, 109.);
+
+    let file = dir.path().join("changes.csv");
+    let options = UnifiedChangeOptions {
+        metrics: vec!["amount".into()],
+        mode: "all".into(),
+        search: String::new(),
+        direction: "all".into(),
+        sort: "name".into(),
+    };
+    store.unified_changes_csv(rev, &s, &q, Some("week"), &options, &file).unwrap();
+    let csv = fs::read_to_string(file).unwrap();
+    assert!(csv.contains("Пар по доступным отчётам: 1. Пар без отчётов за один или оба периода: 1."));
+    assert!(csv.lines().any(|row| row.starts_with("\"work:item\"") && row.contains("\"109\"")));
+    assert!(!csv.contains("2024-01-22"));
 }
 
 #[test]

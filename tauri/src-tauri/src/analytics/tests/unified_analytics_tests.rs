@@ -468,7 +468,7 @@ fn unified_historical_picker_keys_have_zero_only_with_complete_coverage() {
 }
 
 #[test]
-fn reference_usual_uses_whole_equal_windows_and_excludes_partial_samples() {
+fn reference_usual_uses_available_reports_inside_equal_windows() {
     let (_dir, store, revision, scope) = fixture();
     let options = UnifiedPatternOptions {
         search: "яркая".into(), status: "all".into(), range_window: true, baseline: None,
@@ -495,8 +495,8 @@ fn reference_usual_uses_whole_equal_windows_and_excludes_partial_samples() {
     assert_eq!(with_sample.rows[0]["count"]["base"], 3.0);
     assert!(with_sample.rows[0]["count"]["current"].is_null());
     let partial_sample = run("2024-01-04", "2024-01-06");
-    assert_eq!(partial_sample.used, 0);
-    assert!(partial_sample.rows[0]["count"]["base"].is_null());
+    assert_eq!(partial_sample.used, 1);
+    assert_eq!(partial_sample.rows[0]["count"]["base"], 3.0);
     let mut data = store.load().unwrap();
     data["reports"][1]["rows"].as_array_mut().unwrap().retain(|row| row["work"] != "ЯРКАЯ услуга");
     store.save(data).unwrap();
@@ -517,6 +517,115 @@ fn reference_usual_uses_whole_equal_windows_and_excludes_partial_samples() {
 }
 
 #[test]
+fn reference_usual_calculates_deviation_for_partial_current_and_historical_windows() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().join("store")).unwrap();
+    let reports: Vec<_> = [
+        ("2023-12-31", 8, None),
+        ("2024-01-02", 0, Some(0)),
+        ("2024-01-04", 4, Some(20)),
+        ("2024-01-06", 6, Some(60)),
+    ]
+        .into_iter()
+        .map(|(day, count, amount)| {
+            json!({"id":day,"type":"day","start":day,"end":day,"organizations":["A"],
+                "rows":[{"organization":"A","work":"Работа","count":count,"amount":amount}]})
+        })
+        .collect();
+    store.save(json!({"reports":reports,"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}})).unwrap();
+    let revision = store.revision().unwrap();
+    for id in ["2023-12-31", "2024-01-02", "2024-01-04", "2024-01-06"] {
+        store.analysis_index_report(id, revision).unwrap();
+    }
+    store.analysis_index_settings(revision).unwrap();
+    let scope = partial_pattern_scope(&store, revision);
+    let q = ChangeQuery { from: "2024-01-05".into(), to: "2024-01-06".into(), ..query() };
+    let options = UnifiedPatternOptions {
+        search: "работа".into(), status: "all".into(), range_window: true, baseline: None,
+    };
+    let page = store.unified_pattern_page_at_page(revision, &scope, &q, None, "usual", 4, &options, 0).unwrap();
+    assert_eq!((page.used, page.expected, page.current_complete), (3, 4, false));
+    for (metric, base, current, delta) in [("count", 4., 6., 2.), ("amount", 10., 60., 50.), ("average", 5., 10., 5.)] {
+        let value = &page.rows[0][metric];
+        assert_eq!((&value["base"], &value["current"], &value["delta"]), (&json!(base), &json!(current), &json!(delta)));
+        assert_eq!(value["status"], "high");
+    }
+
+    let spec = serde_json::from_value(json!({"section":"usual","metric":"amount","window":4,"options":options})).unwrap();
+    let target = dir.path().join("usual.csv");
+    store.reference_detail_csv(revision, &scope, &q, None, &spec, &target).unwrap();
+    let csv = std::fs::read_to_string(target).unwrap();
+    assert!(csv.contains(r#""Работа";"10";"60";"50";"500";"Необычно выше""#), "{csv}");
+
+    let q = ChangeQuery { from: "2024-01-03".into(), to: "2024-01-04".into(), ..q };
+    let page = store.unified_pattern_page_at_page(revision, &scope, &q, None, "usual", 4, &options, 0).unwrap();
+    assert_eq!(page.rows[0]["count"]["delta"], 0.);
+    assert_eq!(page.rows[0]["amount"]["base"], 0.);
+    assert!(page.rows[0]["amount"]["delta"].is_null());
+}
+
+fn partial_pattern_scope(store: &Storage, revision: i64) -> AnalysisScope {
+    let organizations = store.analysis_filter_create(revision, "organizations").unwrap();
+    store.analysis_filter_append(revision, &organizations, &["A".into(), "B".into()]).unwrap();
+    store.analysis_filter_seal(revision, &organizations).unwrap();
+    AnalysisScope { report_type: "day".into(), organizations, names: None }
+}
+
+#[test]
+fn reference_frequency_counts_reports_from_partially_covered_periods() {
+    let (_dir, store, revision, _) = fixture();
+    let scope = partial_pattern_scope(&store, revision);
+    let q = ChangeQuery { from: "2024-01-02".into(), to: "2024-01-03".into(), ..query() };
+    let options = UnifiedPatternOptions {
+        search: "яркая".into(), status: "all".into(), range_window: false,
+        baseline: Some(RangeQuery { from: "2024-01-01".into(), to: "2024-01-01".into() }),
+    };
+    let page = store.unified_pattern_page_at_page(revision, &scope, &q, None, "regularity", 4, &options, 0).unwrap();
+    assert_eq!((page.used, page.expected, page.previous_used, page.current_complete), (1, 2, 1, false));
+    let row = &page.rows[0];
+    assert_eq!(row["hits"], 1);
+    assert_eq!(row["previousHits"], 1);
+    assert_eq!(row["frequency"], 100.0);
+    assert_eq!(row["previousFrequency"], 100.0);
+
+    let q = ChangeQuery { from: "2024-01-03".into(), ..q };
+    let empty = store.unified_pattern_page_at_page(revision, &scope, &q, None, "regularity", 4, &options, 0).unwrap();
+    assert_eq!(empty.used, 0);
+    assert!(empty.rows[0]["frequency"].is_null());
+    assert!(empty.rows[0]["trailing"].is_null());
+}
+
+#[test]
+fn reference_frequency_counts_inactive_observed_periods_with_partial_coverage() {
+    let (dir, store, _, _) = fixture();
+    let mut snapshot = store.load().unwrap();
+    snapshot["reports"][1]["rows"].as_array_mut().unwrap()
+        .retain(|row| row["work"] != "ЯРКАЯ услуга");
+    store.save(snapshot).unwrap();
+    let revision = store.revision().unwrap();
+    for id in ["d0","d1"] {
+        store.analysis_index_report(id, revision).unwrap();
+    }
+    store.analysis_index_settings(revision).unwrap();
+    let scope = partial_pattern_scope(&store, revision);
+    let options = UnifiedPatternOptions {
+        search: "яркая".into(), status: "disappeared".into(), range_window: false,
+        baseline: Some(RangeQuery { from: "2024-01-01".into(), to: "2024-01-01".into() }),
+    };
+    let q = ChangeQuery { from: "2024-01-02".into(), to: "2024-01-02".into(), ..query() };
+    let page = store.unified_pattern_page_at_page(revision, &scope, &q, None, "regularity", 4, &options, 0).unwrap();
+    assert!(!page.current_complete);
+    assert_eq!(page.rows.len(), 1);
+    assert_eq!(page.rows[0]["frequency"], 0.);
+    assert_eq!(page.rows[0]["trailing"], 1);
+    let spec = serde_json::from_value(json!({"section":"regularity","metric":"count","window":4,"options":options})).unwrap();
+    let path = dir.path().join("partial-inactivity.csv");
+    store.reference_detail_csv(revision, &scope, &q, None, &spec, &path).unwrap();
+    let csv = std::fs::read_to_string(path).unwrap();
+    assert!(csv.contains(r#""ЯРКАЯ услуга";"0";"0";"1";"100";"-100";"2024-01-01";"2024-01-01";"1";"Перестала встречаться""#), "{csv}");
+}
+
+#[test]
 fn reference_frequency_counts_overlapping_and_future_baseline_days_separately() {
     let (_dir, store, revision, scope) = fixture();
     let q = ChangeQuery { from: "2024-01-01".into(), to: "2024-01-01".into(), ..query() };
@@ -533,17 +642,19 @@ fn reference_frequency_counts_overlapping_and_future_baseline_days_separately() 
 }
 
 #[test]
-fn reference_frequency_keeps_only_whole_months_inside_exact_baseline() {
+fn reference_frequency_includes_observed_months_inside_exact_baseline() {
     let (dir, store, _, mut scope) = fixture();
     let first = date("2024-01-01").unwrap();
-    let reports: Vec<Value> = (0..91).map(|offset| {
+    let offsets = (0..91).filter(|&offset| offset != 62);
+    let reports: Vec<Value> = offsets.clone().map(|offset| {
         let day = (first + Duration::days(offset)).to_string();
+        let count = i64::from(offset < 27 || offset >= 59);
         json!({"id":day,"type":"day","start":day,"end":day,"organizations":["A"],
-               "rows":[{"organization":"A","work":"Работа","count":1.0,"amount":null}]})
+               "rows":[{"organization":"A","work":"Работа","count":count,"amount":0}]})
     }).collect();
     store.save(json!({"reports":reports,"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}})).unwrap();
     let revision = store.revision().unwrap();
-    for offset in 0..91 {
+    for offset in offsets {
         store.analysis_index_report(&(first + Duration::days(offset)).to_string(), revision).unwrap();
     }
     store.analysis_index_settings(revision).unwrap();
@@ -551,27 +662,30 @@ fn reference_frequency_keeps_only_whole_months_inside_exact_baseline() {
     store.analysis_filter_append(revision, &scope.organizations, &["A".into()]).unwrap();
     store.analysis_filter_seal(revision, &scope.organizations).unwrap();
     let q = ChangeQuery { from: "2024-03-01".into(), to: "2024-03-31".into(), ..query() };
-    for (from, to, expected) in [("2024-01-28", "2024-02-29", 1), ("2024-01-28", "2024-02-28", 0)] {
+    for (from, to, previous_used, hits, frequency, values) in [
+        ("2024-01-28", "2024-02-29", 2, 1, Some(50.), r#""Работа";"1";"100";"1";"50";"50""#),
+        ("2024-01-28", "2024-02-28", 2, 0, Some(0.), r#""Работа";"1";"100";"0";"0";"100""#),
+        ("2024-03-03", "2024-03-03", 0, 0, None, r#""Работа";"1";"100";"";"";"""#),
+    ] {
         let options = UnifiedPatternOptions {
             search: "".into(), status: "all".into(), range_window: false,
             baseline: Some(RangeQuery { from: from.into(), to: to.into() }),
         };
         let result = store.unified_pattern_page_at_page(revision, &scope, &q, Some("month"), "regularity", 4, &options, 0).unwrap();
+        assert!(!result.current_complete);
         assert_eq!(result.used, 1);
-        assert_eq!(result.previous_used, expected);
+        assert_eq!(result.previous_used, previous_used);
         assert_eq!(result.rows[0]["frequency"], 100.);
-        assert_eq!(result.rows[0]["previousHits"], expected);
-        assert_eq!(result.rows[0]["previousFrequency"].as_f64(), (expected == 1).then_some(100.));
+        assert_eq!(result.rows[0]["previousHits"], hits);
+        assert_eq!(result.rows[0]["previousFrequency"].as_f64(), frequency);
 
         let spec = serde_json::from_value(json!({
             "section":"regularity","metric":"count","window":4,"options":options
         })).unwrap();
-        let target = dir.path().join(format!("frequency-{expected}.csv"));
+        let target = dir.path().join(format!("frequency-{to}.csv"));
         store.reference_detail_csv(revision, &scope, &q, Some("month"), &spec, &target).unwrap();
         let csv = std::fs::read_to_string(target).unwrap();
         assert!(csv.contains(&format!(r#""Базовый период";"{from}";"{to}""#)));
-        let values = if expected == 1 { r#""Работа";"1";"100";"1";"100";"0""# }
-            else { r#""Работа";"1";"100";"";"";"""# };
         assert!(csv.contains(values), "{csv}");
     }
 }

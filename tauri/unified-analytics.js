@@ -106,7 +106,8 @@ async function top(eager=false){
  if(!scope)return false;const mine=ticket,request=++selectionTicket,s={...scope,organizations:orgs()};
  const current=()=>valid(mine,s.revision)&&request===selectionTicket;
  try{const result=await api.nativeAnalysisRanking(s.revision,s.type,s.from,s.to,s.organizations,null,chosenMetrics()[0]||'amount','selectable',null,null);if(!current())return null;
-  if(!result.complete){if(!eager)UI.notice('Для рейтинга нужны полные отчёты выбранных подразделений за весь диапазон.',true);return false;}
+  if(!result.complete&&!result.rows.length){if(!eager)UI.notice('Нет данных для рейтинга за выбранный диапазон.',true);return false;}
+  if(!eager&&!result.complete)UI.notice('Рейтинг рассчитан по доступным отчётам. В выбранном диапазоне есть пропуски.',true);
   selectedRows=new Map(result.rows.slice(0,8).map(row=>[row.key,{key:row.key,name:row.name,kind:row.kind}]));allNames=false;selectionReady=true;selectionCount();return true;
  }catch(error){if(!current())return null;if(!eager)UI.notice(errorText(error),true);return false;}
 }

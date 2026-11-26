@@ -53,6 +53,7 @@ pub struct OrganizationSummary {
     pub org: String,
     pub complete: bool,
     pub missing: i64,
+    pub amount_missing_rows: bool,
     pub total: AnalysisTotals,
     pub available_total: AnalysisTotals,
 }
@@ -229,9 +230,7 @@ impl Analytics<'_> {
         workspace(&tx, expected, s)?;
         org_check(&tx, s, org)?;
         fill_range(&tx, s, q, 1)?;
-        if !complete(&tx, 1, org)? {
-            return Ok(RankingSummary { complete: false, rows: Vec::new() });
-        }
+        let complete = complete(&tx, 1, org)?;
         // The manual work filter accepts unique names of at most 512 UTF-8 bytes.
         // Apply its catalog before the ranking limit, preserving the unrestricted ranking.
         let names_filter = if category == "selectable" {
@@ -266,7 +265,7 @@ impl Analytics<'_> {
                 active: r.get(5).map_err(err)?,
             });
         }
-        Ok(RankingSummary { complete: true, rows })
+        Ok(RankingSummary { complete, rows })
     }
     pub(super) fn analysis_range_summary(
         &self,
@@ -348,12 +347,14 @@ impl Analytics<'_> {
         let mut out = Vec::new();
         while let Some(r) = rows.next().map_err(err)? {
             let missing: i64 = r.get(1).map_err(err)?;
+            let amount: Option<f64> = r.get(3).map_err(err)?;
             out.push(OrganizationSummary {
                 org: r.get(0).map_err(err)?,
                 complete: missing == 0,
                 missing,
-                total: totals(r.get(2).map_err(err)?, r.get(3).map_err(err)?, missing == 0)?,
-                available_total: observed_totals(r.get(2).map_err(err)?, r.get(3).map_err(err)?,
+                amount_missing_rows: amount.is_none(),
+                total: totals(r.get(2).map_err(err)?, amount, missing == 0)?,
+                available_total: observed_totals(r.get(2).map_err(err)?, amount,
                     r.get(4).map_err(err)?, missing < periods)?,
             })
         }

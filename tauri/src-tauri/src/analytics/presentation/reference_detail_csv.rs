@@ -126,9 +126,11 @@ fn export_patterns(
         headers(w, &["Фильтр признака", &opts.status])?;
         let usual = table.section == "usual";
         if usual {
+            let observed_windows = previous.to_string();
+            headers(w, &["Исторических окон с отчётами", &observed_windows])?;
             let mut notices = Vec::new();
             if !current_complete {
-                notices.push("Текущий интервал неполон. Показаны доступные значения. Отклонение не рассчитывается.");
+                notices.push("Текущий интервал неполон. Показаны доступные значения. Отклонение рассчитывается при достаточной истории по показателю.");
             }
             if current_amount_incomplete && table.metric != "count" {
                 notices.push("В некоторых строках сумма не указана. Показана сумма заполненных ячеек.");
@@ -148,6 +150,13 @@ fn export_patterns(
                 ],
             )?;
         } else {
+            let current_with_reports = used.to_string();
+            let base_with_reports = previous.to_string();
+            headers(w, &["Периодов с отчётами сейчас", &current_with_reports])?;
+            headers(w, &["Периодов с отчётами раньше", &base_with_reports])?;
+            if !current_complete {
+                headers(w, &["Качество данных", "Текущий интервал неполон. Частота рассчитана по периодам с доступными отчётами."])?;
+            }
             headers(
                 w,
                 &[
@@ -334,8 +343,8 @@ fn write_structure(w: &mut impl Write, page: &Value) -> Result<(), String> {
     if page["currentComplete"] != true && page["currentAvailable"] != true {
         return Err("Incomplete current interval".into());
     }
-    let complete = page["baseComplete"] == true;
-    let (head, keys): (&[&str], &[&str]) = if complete {
+    let base_available = page["baseAvailable"] == true;
+    let (head, keys): (&[&str], &[&str]) = if base_available {
         (
             &[
                 "Услуга / группа",
@@ -379,12 +388,18 @@ fn write_structure(w: &mut impl Write, page: &Value) -> Result<(), String> {
         record.extend(keys.iter().map(|key| Number(row[*key].as_f64())));
         csv_record(w, &record)?;
     }
-    if page["currentComplete"] != true {
-        csv_record(w,&[Text("Качество данных"),Text("Частичные значения; доли не рассчитываются")])?;
+    if page["currentComplete"] != true || (base_available && page["baseComplete"] != true) {
+        let note = if page["sharesValid"] == true {
+            "Частичные значения. Доли рассчитаны от доступного итога."
+        } else {
+            "Частичные значения. Доли недоступны."
+        };
+        csv_record(w, &[Text("Качество данных"), Text(note)])?;
     }
     Ok(())
 }
 fn write_contributions(w: &mut impl Write, tx: &Connection, metric: &str, complete: bool) -> Result<(), String> {
+    use super::advanced_analysis::{observed_contribution_delta, observed_contribution_metrics, observed_contribution_rows};
     let (before, after) = match metric {
         "count" => ("bc", "cc"),
         "amount" => ("ba", "ca"),
@@ -394,9 +409,16 @@ fn write_contributions(w: &mut impl Write, tx: &Connection, metric: &str, comple
         "SELECT EXISTS(SELECT 1 FROM an_comparison WHERE ba IS NULL OR ca IS NULL)",
         [], |r| r.get::<_,bool>(0),
     ).map_err(err)?;
-    let partial = !complete || incomplete_amount;
-    if partial {
-        headers(w, &["Качество данных", "Показаны доступные значения. Изменение и вклад требуют полных данных за оба интервала."])?;
+    let both_observed = observed_reports(tx, 1, None)? && observed_reports(tx, 2, None)?;
+    if !complete || incomplete_amount {
+        let note = if both_observed && incomplete_amount {
+            "Показаны доступные значения. Вклады рассчитаны по работам с известной суммой в обоих интервалах."
+        } else if both_observed {
+            "Показаны доступные значения. Изменение и вклад рассчитаны по доступным отчётам."
+        } else {
+            "Показаны доступные значения. Для расчёта изменения нужны отчёты в обоих интервалах."
+        };
+        headers(w, &["Качество данных", note])?;
     }
     headers(
         w,
@@ -409,15 +431,19 @@ fn write_contributions(w: &mut impl Write, tx: &Connection, metric: &str, comple
             "Вклад в общее изменение, %",
         ],
     )?;
-    if partial {
-        let source = super::advanced_analysis::observed_contribution_rows(tx, metric)?;
+    if !both_observed || incomplete_amount {
+        let source = observed_contribution_rows(tx, metric)?;
+        let compared_delta = observed_contribution_delta(tx, &source)?;
         let mut stmt = tx.prepare(&format!("{source} ORDER BY key")).map_err(err)?;
         let mut rows = stmt.query([]).map_err(err)?;
         let mut row = rows.next().map_err(err)?.ok_or("No available contribution values")?;
         loop {
             let name = work_label(&row.get::<_, String>(1).map_err(err)?, &row.get::<_, String>(2).map_err(err)?);
-            csv_record(w, &[Text(&name), Number(row.get(3).map_err(err)?), Number(row.get(4).map_err(err)?),
-                Number(None), Number(None), Number(None)])?;
+            let base = row.get(3).map_err(err)?;
+            let delta = row.get::<_, Option<f64>>(5).map_err(err)?.map(finite).transpose()?;
+            let (percent, contribution) = observed_contribution_metrics(base, delta, compared_delta)?;
+            csv_record(w, &[Text(&name), Number(base), Number(row.get(4).map_err(err)?),
+                Number(delta), Number(percent), Number(contribution)])?;
             let Some(next) = rows.next().map_err(err)? else { break };
             row = next;
         }
@@ -537,12 +563,14 @@ fn ordered_organization_totals(
     while let Some(row) = rows.next().map_err(err)? {
         let missing = row.get(1).map_err(err)?;
         let complete = missing == 0;
+        let amount: Option<f64> = row.get(3).map_err(err)?;
         result.push(OrganizationSummary {
             org: row.get(0).map_err(err)?,
             complete,
             missing,
-            total: totals(row.get(2).map_err(err)?, row.get(3).map_err(err)?, complete)?,
-            available_total: observed_totals(row.get(2).map_err(err)?, row.get(3).map_err(err)?,
+            amount_missing_rows: amount.is_none(),
+            total: totals(row.get(2).map_err(err)?, amount, complete)?,
+            available_total: observed_totals(row.get(2).map_err(err)?, amount,
                 row.get(4).map_err(err)?, missing < periods)?,
         });
     }
@@ -584,12 +612,14 @@ fn visit_all_organization_works(
         let mut rows = Vec::with_capacity(organizations.len());
         for org in organizations {
             let row = values.next().map_err(err)?.ok_or("Missing selected organization")?;
+            let amount: Option<f64> = row.get(1).map_err(err)?;
             rows.push(OrganizationSummary {
                 org: org.org.clone(),
                 complete: org.complete,
                 missing: org.missing,
-                total: totals(row.get(0).map_err(err)?, row.get(1).map_err(err)?, org.complete)?,
-                available_total: observed_totals(row.get(0).map_err(err)?, row.get(1).map_err(err)?,
+                amount_missing_rows: amount.is_none(),
+                total: totals(row.get(0).map_err(err)?, amount, org.complete)?,
+                available_total: observed_totals(row.get(0).map_err(err)?, amount,
                     row.get(2).map_err(err)?, org.available_total.count.is_some())?,
             });
         }
@@ -662,13 +692,19 @@ fn write_organizations(
         }
     }
     headers(w, &head.iter().map(String::as_str).collect::<Vec<_>>())?;
+    let comparable = |row: &OrganizationSummary| {
+        if table.metric == "amount" && row.amount_missing_rows {
+            return None;
+        }
+        value(&row.available_total, &table.metric)
+    };
     let mut emit = |name: &str, values: &[OrganizationSummary]| -> Result<(), String> {
-        let base = value(&values[base_index].total, &table.metric);
+        let base = comparable(&values[base_index]);
         let mut line = vec![Text(name)];
         for (i, row) in values.iter().enumerate() {
             line.push(Number(value(&row.available_total, &table.metric)));
             if i != base_index {
-                let m = average_change(base, value(&row.total, &table.metric), 0.)?;
+                let m = average_change(base, comparable(row), 0.)?;
                 line.push(Number(m.delta));
                 line.push(Number(m.percent));
             }
@@ -698,9 +734,10 @@ fn write_organizations(
             while let Some(r) = values.next().map_err(err)? {
                 let org = organizations.get(cells.len()).ok_or("Unexpected organization")?;
                 let count = r.get(1).map_err(err)?;
-                let amount = r.get(2).map_err(err)?;
+                let amount: Option<f64> = r.get(2).map_err(err)?;
                 cells.push(OrganizationSummary {
                     org: org.org.clone(), complete: org.complete, missing: org.missing,
+                    amount_missing_rows: amount.is_none(),
                     total: totals(count, amount, org.complete)?,
                     available_total: observed_totals(count, amount, r.get(3).map_err(err)?, org.available_total.count.is_some())?,
                 });
@@ -713,9 +750,15 @@ fn write_organizations(
         }
     }
     for org in &organizations {
-        if org.missing > 0 || org.total.amount.is_none() {
-            let status = if org.missing > 0 {format!("Пропусков: {}",org.missing)} else {"Есть строки без суммы".into()};
-            csv_record(w, &[Text("Качество данных"),Text(&org.org),Text(&status)])?;
+        let mut status = Vec::new();
+        if org.missing > 0 {
+            status.push(format!("Пропусков: {}", org.missing));
+        }
+        if org.amount_missing_rows {
+            status.push("Есть строки без суммы".into());
+        }
+        if !status.is_empty() {
+            csv_record(w, &[Text("Качество данных"), Text(&org.org), Text(&status.join(". "))])?;
         }
     }
     Ok(())

@@ -142,35 +142,6 @@ impl Calendar {
         Ok(())
     }
 
-    /// Keep full calendar buckets inside an exact baseline. Edge dates
-    /// outside those buckets must not contribute even when reports exist.
-    fn whole_buckets(&self, from: NaiveDate, to: NaiveDate) -> Result<Option<(NaiveDate, NaiveDate)>, String> {
-        let start = |d: NaiveDate| match self.kind.as_str() {
-            "week" => d - Duration::days(i64::from(d.weekday().num_days_from_monday())),
-            "month" => d.with_day(1).expect("Every month has a first day"),
-            "year" => d.with_ordinal(1).expect("Every year has a first day"),
-            _ => d,
-        };
-        let ends_at_boundary = match self.kind.as_str() {
-            "week" => to.weekday() == chrono::Weekday::Sun,
-            "month" => to.succ_opt().is_some_and(|d| d.day() == 1),
-            "year" => to.month() == 12 && to.day() == 31,
-            _ => true,
-        };
-        let mut first = start(from);
-        let mut last = start(to);
-        if first == last && (from != first || !ends_at_boundary) {
-            return Ok(None);
-        }
-        if from != first {
-            first = step(&self.kind, first, 1)?;
-        }
-        if !ends_at_boundary {
-            last = step(&self.kind, last, -1)?;
-        }
-        Ok((first <= last).then_some((first, last)))
-    }
-
     fn facts(
         &self,
         c: &Connection,
@@ -182,14 +153,14 @@ impl Calendar {
             SELECT org,start,{bucket} label,report_id,warned FROM temp.an_valid WHERE (?1 IS NULL OR start>=?1) AND (?2 IS NULL OR start<=?2)"),
             params![range.as_ref().map(|r|&r.0),range.as_ref().map(|r|r.1)]).map_err(err)?;
         c.execute_batch("CREATE INDEX temp.adv_label_org ON adv_reports(label,org);
-            CREATE TEMP TABLE adv_coverage(label TEXT,org TEXT,warned INTEGER,PRIMARY KEY(label,org)) WITHOUT ROWID;").map_err(err)?;
+            CREATE TEMP TABLE adv_coverage(label TEXT,org TEXT,warned INTEGER,complete INTEGER,PRIMARY KEY(label,org)) WITHOUT ROWID;").map_err(err)?;
         let expected = match self.kind.as_str() {
             "week" if s.report_type == "day" => "7",
             "month" if s.report_type == "day" => "julianday(label,'+1 month')-julianday(label)",
             "year" if s.report_type == "day" => "julianday(label,'+1 year')-julianday(label)",
             _ => "1",
         };
-        c.execute_batch(&format!("INSERT INTO adv_coverage SELECT label,org,max(warned) FROM adv_reports GROUP BY label,org HAVING count(*)={expected};
+        c.execute_batch(&format!("INSERT INTO adv_coverage SELECT label,org,max(warned),count(*)={expected} FROM adv_reports GROUP BY label,org;
             CREATE TEMP TABLE adv_facts(label TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,known_amount REAL,active INTEGER,PRIMARY KEY(label,org,key)) WITHOUT ROWID;")).map_err(err)?;
         c.execute("INSERT INTO adv_facts SELECT v.label,v.org,coalesce(g.key,'work:'||x.work),coalesce(g.name,x.work),
             CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount),max(x.count<>0 OR x.amount IS NULL OR x.amount<>0)
@@ -212,11 +183,12 @@ pub(super) fn prepare_changes(
     }
     calendar.prepare_change_facts(c, s, q)?;
     c.execute_batch("CREATE TEMP TABLE an_currents(start TEXT PRIMARY KEY,base TEXT) WITHOUT ROWID;
-        CREATE TEMP TABLE an_pairs(start TEXT,base TEXT,org TEXT,base_id TEXT,current_id TEXT,warned INTEGER,PRIMARY KEY(start,org)) WITHOUT ROWID;
+        CREATE TEMP TABLE an_pairs(start TEXT,base TEXT,org TEXT,base_id TEXT,current_id TEXT,warned INTEGER,partial INTEGER,PRIMARY KEY(start,org)) WITHOUT ROWID;
         CREATE TEMP TABLE an_period_values(start TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,PRIMARY KEY(start,org,key)) WITHOUT ROWID;
         CREATE TEMP TABLE an_changes(start TEXT,base TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL,PRIMARY KEY(start,org,key)) WITHOUT ROWID;").map_err(err)?;
     calendar.fill_change_periods(c, q.method == "previous")?;
-    c.execute("INSERT INTO an_pairs SELECT p.start,p.base,f.item,b.label,v.label,coalesce(b.warned,0) OR coalesce(v.warned,0)
+    c.execute("INSERT INTO an_pairs SELECT p.start,p.base,f.item,b.label,v.label,coalesce(b.warned,0) OR coalesce(v.warned,0),
+        b.label IS NOT NULL AND v.label IS NOT NULL AND (NOT b.complete OR NOT v.complete)
         FROM an_currents p CROSS JOIN analysis_filter_items f LEFT JOIN adv_coverage b ON b.label=p.base AND b.org=f.item
         LEFT JOIN adv_coverage v ON v.label=p.start AND v.org=f.item WHERE f.id=?1",[&s.organizations]).map_err(err)?;
     c.execute_batch("INSERT INTO an_period_values SELECT label,org,key,name,kind,count,amount FROM adv_facts WHERE label IN (SELECT start FROM an_currents UNION SELECT base FROM an_currents)").map_err(err)?;
@@ -344,6 +316,7 @@ impl Analytics<'_> {
                 ("revision", revision),
                 ("comparableRows", coverage.rows),
                 ("missingPairs", coverage.missing_pairs),
+                ("partialPairs", coverage.partial_pairs),
                 ("importWarningPairs", coverage.import_warning_pairs),
                 ("invalidReports", coverage.invalid_reports),
                 ("duplicateIssues", coverage.duplicate_issues),
@@ -451,29 +424,75 @@ fn usual_metric(
     )
 }
 
+fn usual_row(
+    tx: &Connection,
+    key: &str,
+    previous: i64,
+    current_observed: bool,
+    available: bool,
+    percent: f64,
+) -> Result<Value, String> {
+    let (bc, priced_count, ba, priced_samples, ac, aa, known_amount):
+        (f64, f64, f64, i64, f64, Option<f64>, Option<f64>) = tx.query_row(
+        "WITH historical AS (
+            SELECT batch, SUM(count) AS quantity,
+                CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END AS amount
+            FROM adv_combined JOIN adv_dates USING(label)
+            WHERE key=?1 AND slot=0 AND observed GROUP BY batch
+         ), baseline AS (
+            SELECT coalesce(SUM(quantity),0) AS count,
+                coalesce(SUM(quantity) FILTER(WHERE amount IS NOT NULL),0) AS priced_count,
+                coalesce(SUM(amount),0) AS amount,
+                ?2-COUNT(*) FILTER(WHERE amount IS NULL) AS priced_samples
+            FROM historical
+         ), current AS (
+            SELECT coalesce(SUM(count),0) AS count,
+                CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END AS amount,
+                SUM(known_amount) AS known_amount
+            FROM adv_combined JOIN adv_dates USING(label) WHERE key=?1 AND slot=1 AND observed
+         ) SELECT baseline.count,baseline.priced_count,baseline.amount,baseline.priced_samples,
+                current.count,current.amount,current.known_amount FROM baseline CROSS JOIN current",
+        params![key, previous],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)),
+    ).map_err(err)?;
+    // An observed window without this work contributes zero. A window with
+    // unknown amounts contributes only to the quantity baseline.
+    let base_count = (previous > 0).then(|| bc / previous as f64).map(finite).transpose()?;
+    let valid_amount = priced_samples > 0 && (available || priced_samples == previous);
+    let base_money = totals(priced_count, valid_amount.then_some(ba), valid_amount)?;
+    let base_amount = base_money.amount.map(|v| v / priced_samples as f64);
+    let now = totals(ac, aa, current_observed)?;
+    let enough = |n| !available || n >= 2;
+    let shown_amount = if available {
+        observed_totals(ac, aa, known_amount, current_observed)?.amount
+    } else {
+        now.amount
+    };
+    Ok(json!({
+        "count": usual_metric(base_count, now.count.filter(|_| enough(previous)), now.count, previous, percent)?,
+        "amount": usual_metric(base_amount, now.amount.filter(|_| enough(priced_samples)), shown_amount, priced_samples, percent)?,
+        "average": usual_metric(base_money.average, now.average.filter(|_| enough(priced_samples)), now.average, priced_samples, percent)?
+    }))
+}
+
 fn regularity_row(
     tx: &Connection,
     key: &str,
     from: &str,
     to: &str,
     used: i64,
-    expected: i64,
+    can_classify_absence: bool,
     previous: i64,
     gap: i64,
+    trailing_periods: Option<i64>,
 ) -> Result<Value, String> {
     let (first,last,hits,old_hits,last_index):(Option<String>,Option<String>,i64,i64,Option<i64>)=tx.query_row(
-        "SELECT min(f.label) FILTER(WHERE f.label<=?2),max(f.label) FILTER(WHERE f.label<=?2),count(CASE WHEN d.slot=1 AND d.complete THEN 1 END),
-            count(CASE WHEN d.slot=0 AND d.complete THEN 1 END),min(t.distance)
-         FROM adv_combined f LEFT JOIN adv_dates d ON d.label=f.label LEFT JOIN adv_tail t ON t.label=f.label
-         WHERE f.key=?1 AND f.active AND (f.label<=?2 OR d.slot=0)",params![key,to],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(err)?;
-    let trailing = if last.is_some() {
-        Some(match last_index {
-            Some(n) => n,
-            None => count_sql(tx, "SELECT count(*) FROM adv_tail")?,
-        })
-    } else {
-        None
-    };
+        "SELECT min(f.label),max(f.label),count(CASE WHEN d.observed THEN 1 END),
+            (SELECT count(*) FROM adv_baseline_active WHERE key=?1),min(t.distance)
+         FROM adv_combined f LEFT JOIN adv_dates d ON d.label=f.label AND d.slot=1
+         LEFT JOIN adv_tail t ON t.label=f.label WHERE f.key=?1 AND f.active AND f.label<=?2",
+        params![key,to],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(err)?;
+    let trailing = last.as_ref().and(trailing_periods).map(|n| last_index.unwrap_or(n));
     let frequency = (used > 0).then(|| hits as f64 / used as f64 * 100.);
     let old_frequency = (previous > 0).then(|| old_hits as f64 / previous as f64 * 100.);
     let mut statuses = Vec::new();
@@ -491,7 +510,7 @@ fn regularity_row(
     {
         statuses.push("rarer");
     }
-    if hits == 0 && used == expected && old_hits > 0 {
+    if hits == 0 && can_classify_absence && old_hits > 0 {
         statuses.push("disappeared");
     }
     if hits > 0 && first.as_deref().is_some_and(|d| d >= from) {
@@ -505,7 +524,7 @@ fn regularity_row(
             "unknown"
         } else if hits > 0 {
             "occasional"
-        } else if used < expected {
+        } else if !can_classify_absence {
             "uncertain"
         } else {
             "absent"
@@ -574,91 +593,100 @@ impl Analytics<'_> {
         }else{0};
         calendar.facts(&tx, s, None)?;
         tx.execute_batch("CREATE TEMP TABLE adv_complete(label TEXT PRIMARY KEY) WITHOUT ROWID;
-          CREATE TEMP TABLE adv_dates(label TEXT,slot INTEGER,batch INTEGER,complete INTEGER,PRIMARY KEY(label,slot)) WITHOUT ROWID;
+          CREATE TEMP TABLE adv_dates(label TEXT,slot INTEGER,batch INTEGER,observed INTEGER,PRIMARY KEY(label,slot)) WITHOUT ROWID;
           CREATE TEMP TABLE adv_tail(label TEXT PRIMARY KEY,distance INTEGER) WITHOUT ROWID;
           CREATE TEMP TABLE adv_combined(key TEXT,label TEXT,count REAL,amount REAL,known_amount REAL,active INTEGER,PRIMARY KEY(key,label)) WITHOUT ROWID;
           INSERT INTO adv_combined SELECT key,label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),max(active) FROM adv_facts GROUP BY key,label;
           CREATE TEMP TABLE adv_keys(key TEXT PRIMARY KEY,name TEXT,kind TEXT) WITHOUT ROWID;
           INSERT INTO adv_keys SELECT key,name,kind FROM adv_facts GROUP BY key;").map_err(err)?;
-        tx.execute("INSERT INTO adv_complete SELECT label FROM adv_coverage GROUP BY label HAVING count(*)=(SELECT count(*) FROM analysis_filter_items WHERE id=?1)",[&s.organizations]).map_err(err)?;
+        tx.execute("INSERT INTO adv_complete SELECT label FROM adv_coverage WHERE complete GROUP BY label HAVING count(*)=(SELECT count(*) FROM analysis_filter_items WHERE id=?1)",[&s.organizations]).map_err(err)?;
         tx.execute("INSERT INTO adv_keys SELECT coalesce(g.key,'work:'||f.item),f.item,CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END FROM analysis_filter_items f
             LEFT JOIN analysis_group_names g ON g.name=f.item WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM adv_keys k WHERE k.name=f.item)",[&s.names]).map_err(err)?;
         let usual = mode == "usual";
+        let available = options.is_some();
+        // Unified calculations accept any valid report in a period.
+        let coverage_table = if available { "adv_reports" } else { "adv_complete" };
+        let mut insert_date = tx.prepare(&format!("INSERT INTO adv_dates VALUES(?1,?2,?3,
+            EXISTS(SELECT 1 FROM {coverage_table} WHERE label=?1))")).map_err(err)?;
         let range_window = options.is_some_and(|o| o.range_window);
         let (first, last) = calendar.current_bounds(usual && !range_window);
         let mut count = 0;
         calendar.for_each_bucket(first, |d| {
-            tx.execute("INSERT INTO adv_dates VALUES(?1,1,0,EXISTS(SELECT 1 FROM adv_complete WHERE label=?1))",[d.to_string()]).map_err(err)?;
+            insert_date.execute(params![d.to_string(), 1, 0]).map_err(err)?;
             count += 1;
             Ok(())
         })?;
         let sample_length = if range_window { count } else { 1 };
-        let (baseline_from, baseline_to, baseline_buckets) = if let Some(base) = options.and_then(|o| o.baseline.as_ref()) {
+        let exact_baseline = options.and_then(|o| o.baseline.as_ref());
+        let clipped_baseline = exact_baseline.is_some() && matches!(grouping, Some("week" | "month" | "year"));
+        let (baseline_from, baseline_to) = if let Some(base) = exact_baseline {
             let selected = ChangeQuery { from: base.from.clone(), to: base.to.clone(), ..q.clone() };
             let baseline = Calendar::new(s, &selected, None)?;
-            let bounds = baseline.current_bounds(false);
-            let buckets = if grouping.is_some() {
-                calendar.whole_buckets(bounds.0, bounds.1)?
-            } else {
-                Some(bounds)
-            };
-            (bounds.0, bounds.1, buckets)
+            baseline.current_bounds(false)
         } else {
             let base_count = if usual { window * sample_length } else { count };
-            let bounds = (step(&calendar.kind, first, -base_count)?, step(&calendar.kind, first, -1)?);
-            (bounds.0, bounds.1, Some(bounds))
+            (step(&calendar.kind, first, -base_count)?, step(&calendar.kind, first, -1)?)
         };
-        if let Some((mut day, last)) = baseline_buckets {
+        if clipped_baseline {
+            tx.execute("INSERT INTO adv_dates SELECT label,0,row_number() OVER (ORDER BY label),1
+                FROM (SELECT DISTINCT label FROM adv_reports WHERE start BETWEEN ?1 AND ?2)",
+                params![baseline_from.to_string(), baseline_to.to_string()]).map_err(err)?;
+        } else {
+            let mut day = baseline_from;
             let mut index = 0;
             loop {
-                tx.execute("INSERT INTO adv_dates VALUES(?1,0,?2,EXISTS(SELECT 1 FROM adv_complete WHERE label=?1))",
-                    params![day.to_string(), index / sample_length]).map_err(err)?;
-                if day == last { break; }
+                insert_date.execute(params![day.to_string(), 0, index / sample_length]).map_err(err)?;
+                if day == baseline_to { break; }
                 day = step(&calendar.kind, day, 1)?;
                 index += 1;
             }
         }
-        // A missing day excludes its entire historical sample from the mean.
-        // Other samples retain their original values, including observed zeros.
-        if range_window {
-            tx.execute_batch("UPDATE adv_dates SET complete=0 WHERE slot=0 AND batch IN
-                (SELECT batch FROM adv_dates WHERE slot=0 GROUP BY batch HAVING min(complete)=0)").map_err(err)?;
-        }
+        drop(insert_date);
         let previous = count_sql(&tx,
-            "SELECT count(DISTINCT batch) FROM adv_dates WHERE slot=0 AND complete")?;
+            "SELECT count(DISTINCT batch) FROM adv_dates WHERE slot=0 AND observed")?;
         let used = count_sql(
             &tx,
-            "SELECT count(*) FROM adv_dates WHERE slot=1 AND complete",
+            "SELECT count(*) FROM adv_dates WHERE slot=1 AND observed",
         )?;
-        let current_complete = used == i64::from(count);
-        let (current_observed, current_amount_incomplete) = if usual && options.is_some() {
-            tx.query_row("SELECT
-                EXISTS(SELECT 1 FROM adv_dates d JOIN adv_reports r USING(label) WHERE d.slot=1),
-                EXISTS(SELECT 1 FROM adv_dates d JOIN adv_facts f USING(label) WHERE d.slot=1 AND f.amount IS NULL)",
-                [], |r| Ok((r.get(0)?, r.get(1)?))).map_err(err)?
-        } else {
-            (false, false)
-        };
+        let current_complete = count_sql(&tx,
+            "SELECT count(*) FROM adv_dates JOIN adv_complete USING(label) WHERE slot=1")? == i64::from(count);
+        let current_amount_incomplete = usual && available && tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM adv_dates JOIN adv_facts USING(label) WHERE slot=1 AND amount IS NULL)",
+            [], |r| r.get::<_, bool>(0),
+        ).map_err(err)?;
+        let mut trailing_periods = None;
         if usual {
             tx.execute_batch("INSERT INTO adv_keys VALUES('','Итого по выбранным работам','total');
                 INSERT INTO adv_combined SELECT '',label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),max(active) FROM adv_combined GROUP BY label;").map_err(err)?;
         } else {
+            tx.execute_batch("CREATE TEMP TABLE adv_baseline_active(key TEXT,label TEXT,PRIMARY KEY(key,label)) WITHOUT ROWID").map_err(err)?;
+            if clipped_baseline {
+                // Group activity only after clipping the reports to the exact
+                // baseline dates, so a boundary bucket never adds outside rows.
+                tx.execute("INSERT INTO adv_baseline_active
+                    SELECT DISTINCT k.key,v.label FROM adv_reports v
+                    JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
+                    LEFT JOIN analysis_groups g ON g.work=x.work
+                    JOIN adv_keys k ON k.key=coalesce(g.key,'work:'||x.work)
+                    WHERE v.start BETWEEN ?1 AND ?2 AND (x.count<>0 OR x.amount IS NULL OR x.amount<>0)",
+                    params![baseline_from.to_string(), baseline_to.to_string()]).map_err(err)?;
+            } else {
+                tx.execute_batch("INSERT INTO adv_baseline_active SELECT key,label FROM adv_combined
+                    JOIN adv_dates USING(label) WHERE slot=0 AND observed AND active").map_err(err)?;
+            }
             let mut d = last;
             let mut distance = 0;
-            while tx
-                .execute(
-                    "INSERT INTO adv_tail SELECT label,?2 FROM adv_complete WHERE label=?1",
-                    params![d.to_string(), distance],
-                )
-                .map_err(err)?
-                != 0
-            {
+            let mut add_period = tx.prepare(&format!(
+                "INSERT INTO adv_tail SELECT ?1,?2 WHERE EXISTS(SELECT 1 FROM {coverage_table} WHERE label=?1)"
+            )).map_err(err)?;
+            while add_period.execute(params![d.to_string(), distance]).map_err(err)? != 0 {
                 distance += 1;
                 let Ok(prev) = step(&calendar.kind, d, -1) else {
                     break;
                 };
                 d = prev;
             }
+            trailing_periods = (!available || distance > 0).then_some(distance);
         }
         // The filtered path streams one computed row into a temporary SQL
         // table at a time. Filtering/sorting/summary/LIMIT then share one view;
@@ -685,20 +713,7 @@ impl Analytics<'_> {
             }else{legacy_keys.next()};
             let Some((key,name,kind))=next_key else {break};
             let mut row = if usual {
-                let (bc,ba,ac,aa,known_amount):(f64,Option<f64>,f64,Option<f64>,Option<f64>)=tx.query_row("SELECT
-                    coalesce(sum(count) FILTER(WHERE slot=0),0),CASE WHEN COUNT(*) FILTER(WHERE slot=0)=0 THEN 0 WHEN COUNT(amount) FILTER(WHERE slot=0)=COUNT(*) FILTER(WHERE slot=0) THEN SUM(amount) FILTER(WHERE slot=0) END,
-                    coalesce(sum(count) FILTER(WHERE slot=1),0),CASE WHEN COUNT(*) FILTER(WHERE slot=1)=0 THEN 0 WHEN COUNT(amount) FILTER(WHERE slot=1)=COUNT(*) FILTER(WHERE slot=1) THEN SUM(amount) FILTER(WHERE slot=1) END,
-                    SUM(known_amount) FILTER(WHERE slot=1)
-                    FROM adv_combined JOIN adv_dates USING(label) WHERE key=?1 AND (slot=1 OR complete)",[&key],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).map_err(err)?;
-                let base = totals(bc, ba, previous > 0)?;
-                let now = totals(ac, aa, current_complete)?;
-                let shown = options
-                    .map(|_| observed_totals(ac, aa, known_amount, current_observed))
-                    .transpose()?;
-                let shown = shown.as_ref().unwrap_or(&now);
-                json!({"count":usual_metric(base.count.map(|v|v/previous as f64),now.count,shown.count,previous,q.percent)?,
-                    "amount":usual_metric(base.amount.map(|v|v/previous as f64),now.amount,shown.amount,previous,q.percent)?,
-                    "average":usual_metric(base.average,now.average,shown.average,previous,q.percent)?})
+                usual_row(&tx, &key, previous, used > 0, available, q.percent)?
             } else {
                 regularity_row(
                     &tx,
@@ -706,9 +721,10 @@ impl Analytics<'_> {
                     &first.to_string(),
                     &last.to_string(),
                     used,
-                    i64::from(count),
+                    current_complete || (available && used > 0),
                     previous,
                     i64::from(window),
+                    trailing_periods,
                 )?
             };
             row["key"] = if key.is_empty() {
@@ -807,15 +823,29 @@ fn percent_of(value: f64, total: f64, valid: bool) -> Result<Option<f64>, String
 }
 
 pub(super) fn observed_contribution_rows(c: &Connection, metric: &str) -> Result<String, String> {
-    let (before, after) = match metric {
-        "count" => ("bc", "cc"),
-        "amount" => ("coalesce(ba,b_known)", "coalesce(ca,a_known)"),
+    let (before, after, delta) = match metric {
+        "count" => ("bc", "cc", "cc-bc"),
+        "amount" => ("coalesce(ba,b_known)", "coalesce(ca,a_known)", "ca-ba"),
         _ => return Err("Select amount or count".into()),
     };
-    let before = if observed_reports(c, 1, None)? { before } else { "NULL" };
-    let after = if observed_reports(c, 2, None)? { after } else { "NULL" };
-    Ok(format!("SELECT key,name,kind,{before} AS base,{after} AS current FROM an_comparison
+    let base_observed = observed_reports(c, 1, None)?;
+    let current_observed = observed_reports(c, 2, None)?;
+    let before = if base_observed { before } else { "NULL" };
+    let after = if current_observed { after } else { "NULL" };
+    let delta = if base_observed && current_observed { delta } else { "NULL" };
+    Ok(format!("SELECT key,name,kind,{before} AS base,{after} AS current,{delta} AS delta FROM an_comparison
         WHERE key NOT LIKE 'absent:%' AND ({before} IS NOT NULL OR {after} IS NOT NULL)"))
+}
+
+pub(super) fn observed_contribution_delta(c: &Connection, source: &str) -> Result<Option<f64>, String> {
+    c.query_row(&format!("SELECT SUM(delta) FROM ({source})"), [], |r| r.get::<_, Option<f64>>(0))
+        .map_err(err)?.map(finite).transpose()
+}
+
+pub(super) fn observed_contribution_metrics(base: Option<f64>, delta: Option<f64>, total: Option<f64>) -> Result<(Option<f64>, Option<f64>), String> {
+    let percent = delta.zip(base).map(|(change, value)| percent_of(change, value.abs(), true)).transpose()?.flatten();
+    let contribution = delta.zip(total).map(|(change, total)| percent_of(change, total, true)).transpose()?.flatten();
+    Ok((percent, contribution))
 }
 
 impl Analytics<'_> {
@@ -876,10 +906,9 @@ impl Analytics<'_> {
         workspace(&tx, revision, s)?;
         let (base_complete, mut current_complete) = comparison(&tx, s, &q, None)?;
         let mut result = json!({"baseComplete":base_complete,"currentComplete":current_complete,"total_rows":0,"rows":[],"next":null});
-        if mode == "contributions" && page_index.is_none() && !(current_complete && base_complete) {
-            return Ok(result);
-        }
-        if mode == "structure" && !observed_reports(&tx,2,None)? {
+        let base_observed = observed_reports(&tx, 1, None)?;
+        let current_observed = observed_reports(&tx, 2, None)?;
+        if mode == "structure" && !current_observed {
             return Ok(result);
         }
         // Explicitly selected names absent in both ranges are added by the
@@ -897,43 +926,58 @@ impl Analytics<'_> {
         result["currentComplete"] = json!(current_complete);
         let base_complete = base_complete && bt.is_some();
         result["baseComplete"] = json!(base_complete);
-        if mode == "contributions" && !(base_complete && current_complete) {
-            if let Some(index) = page_index {
-                let source = observed_contribution_rows(&tx, metric)?;
-                let total = count_sql(&tx, &format!("SELECT count(*) FROM ({source})"))?;
-                let offset = crate::storage::direct_page_offset(index, 50, total)?;
-                let mut stmt = tx.prepare(&format!("{source} ORDER BY key LIMIT 50 OFFSET ?1")).map_err(err)?;
-                let mut data = stmt.query([offset]).map_err(err)?;
-                let mut rows = Vec::new();
-                while let Some(row) = data.next().map_err(err)? {
-                    let base = row.get::<_,Option<f64>>(3).map_err(err)?.map(finite).transpose()?;
-                    let current = row.get::<_,Option<f64>>(4).map_err(err)?.map(finite).transpose()?;
-                    rows.push(json!({"key":row.get::<_,String>(0).map_err(err)?,
-                        "name":row.get::<_,String>(1).map_err(err)?,"kind":row.get::<_,String>(2).map_err(err)?,
-                        "base":base,"current":current,"delta":null,"percent":null,"contribution":null}));
-                }
-                result["rows"] = json!(rows);
-                result["total_rows"] = json!(total);
+        if mode == "contributions" && !(base_observed && current_observed && bt.is_some() && at.is_some()) {
+            if let Some(cursor) = after {
+                finite(cursor.magnitude)?;
+                key_bound(&cursor.key)?;
             }
+            let source = observed_contribution_rows(&tx, metric)?;
+            let total = count_sql(&tx, &format!("SELECT count(*) FROM ({source})"))?;
+            let offset = page_index.map(|index| crate::storage::direct_page_offset(index, 50, total)).transpose()?.unwrap_or(0);
+            let compared_delta = observed_contribution_delta(&tx, &source)?;
+            let mut stmt = tx.prepare(&format!("SELECT * FROM ({source}) WHERE (?1 IS NULL OR key>?1) ORDER BY key LIMIT 51 OFFSET ?2")).map_err(err)?;
+            let mut data = stmt.query(params![after.map(|cursor| &cursor.key), offset]).map_err(err)?;
+            let mut rows = Vec::<Value>::new();
+            while let Some(row) = data.next().map_err(err)? {
+                if rows.len() == 50 {
+                    result["next"] = json!({"key":rows[49]["key"],"magnitude":0.});
+                    break;
+                }
+                let base = row.get::<_,Option<f64>>(3).map_err(err)?.map(finite).transpose()?;
+                let current = row.get::<_,Option<f64>>(4).map_err(err)?.map(finite).transpose()?;
+                let delta = row.get::<_,Option<f64>>(5).map_err(err)?.map(finite).transpose()?;
+                let (percent, contribution) = observed_contribution_metrics(base, delta, compared_delta)?;
+                rows.push(json!({"key":row.get::<_,String>(0).map_err(err)?,
+                    "name":row.get::<_,String>(1).map_err(err)?,"kind":row.get::<_,String>(2).map_err(err)?,
+                    "base":base,"current":current,"delta":delta,"percent":percent,"contribution":contribution}));
+            }
+            result["rows"] = json!(rows);
+            result["total_rows"] = json!(total);
             return Ok(result);
         }
-        // The structure can list observed values even where the full
-        // denominator is unknown. Such rows never receive shares.
+        // Use the same observed values for the displayed amounts and their shares.
         let a = if mode == "structure" && metric == "amount" { "coalesce(ca,a_known)" } else { a };
         let current_total = if mode == "structure" && at.is_none() {
             range_summary(&tx,s,2)?.available_total.amount
         } else { at };
         let Some(at) = current_total else { return Ok(result); };
+        let b = if mode == "structure" && metric == "amount" { "coalesce(ba,b_known)" } else { b };
+        let bt = if mode == "structure" && base_observed && bt.is_none() {
+            range_summary(&tx,s,1)?.available_total.amount
+        } else {
+            bt.filter(|_| base_observed)
+        };
         if mode == "structure" {
             result["currentAvailable"] = json!(true);
+            result["baseAvailable"] = json!(bt.is_some());
         }
         let bt = bt.map(finite).transpose()?;
         finite(at)?;
         let mut rows = Vec::new();
         if mode == "structure" {
             let (bv,av):(bool,bool)=tx.query_row(&format!("SELECT NOT EXISTS(SELECT 1 FROM an_comparison WHERE {b}<0),NOT EXISTS(SELECT 1 FROM an_comparison WHERE {a}<0)"),[],|r|Ok((r.get(0)?,r.get(1)?))).map_err(err)?;
-            let valid = current_complete && av && at > 0.;
-            let base_valid = bv && bt.is_some_and(|n| n > 0.) && base_complete;
+            let valid = av && at > 0.;
+            let base_valid = bv && bt.is_some_and(|n| n > 0.);
             let locale: icu_provider::DataLocale = "ru".parse().map_err(err)?;
             let collator =
                 icu_collator::Collator::try_new(&locale, Default::default()).map_err(err)?;
@@ -955,7 +999,7 @@ impl Analytics<'_> {
             .map_err(err)?;
             let mut stmt=tx.prepare(&format!("WITH ranked AS (SELECT key,name,kind,{b} base,{a} current,row_number() OVER(ORDER BY abs({a}) DESC,name COLLATE classic_ru,encounter) n FROM an_comparison JOIN adv_encounter USING(key))
                 SELECT key,name,kind,base,current,n,0 FROM ranked WHERE n<={structure_limit} UNION ALL
-                SELECT NULL,'Остальные услуги ('||count(*)||')',NULL,CASE WHEN COUNT(base)=COUNT(*) THEN SUM(base) END,sum(current),{others},1 FROM ranked WHERE n>{structure_limit} HAVING count(*)>0 ORDER BY 6",others=structure_limit+1)).map_err(err)?;
+                SELECT NULL,'Остальные услуги ('||count(*)||')',NULL,sum(base),sum(current),{others},1 FROM ranked WHERE n>{structure_limit} HAVING count(*)>0 ORDER BY 6",others=structure_limit+1)).map_err(err)?;
             let mut data = stmt.query([]).map_err(err)?;
             let mut cumulative = 0.;
             while let Some(r) = data.next().map_err(err)? {
@@ -967,7 +1011,9 @@ impl Analytics<'_> {
                 if let Some(value) = current { cumulative = finite(cumulative + value)?; }
                 let share = current.map(|value| percent_of(value,at,valid)).transpose()?.flatten();
                 let base_share = base.zip(bt).map(|(base,bt)| percent_of(base,bt,base_valid)).transpose()?.flatten();
-                let mut row = json!({"key":key,"name":name,"base":base.filter(|_|base_complete),"current":current,"share":share,"baseShare":base_share,"cumulative":percent_of(cumulative,at,valid)?,"shareChange":share.zip(base_share).map(|(a,b)|a-b)});
+                let cumulative_share = current.map(|_| percent_of(cumulative, at, valid)).transpose()?.flatten();
+                let share_change = share.zip(base_share).map(|(a,b)| a-b);
+                let mut row = json!({"key":key,"name":name,"base":base.filter(|_|bt.is_some()),"current":current,"share":share,"baseShare":base_share,"cumulative":cumulative_share,"shareChange":share_change});
                 if kind.is_some() {
                     row["kind"] = json!(kind);
                 } else {

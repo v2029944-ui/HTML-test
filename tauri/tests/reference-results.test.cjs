@@ -67,7 +67,7 @@ test('summary keeps quantities and reports unavailable amounts in complete perio
  assert.deepEqual(f.s1.querySelectorAll('.metric-value').map(n=>n.textContent),['—','17,000','—']);
  assert.match(f.s1.querySelector('.quality-notice').textContent,/сумма не указана.*Количество учтено/);
  await f.s1.querySelector('.metric-sample').click();
- assert.match(f.document.querySelector('#sheet').textContent,/A: включено/);
+ assert.match(f.document.querySelector('#sheet').textContent,/A: полные отчёты за оба интервала/);
 });
 test('null refresh rejects stale summary and changes replies',async()=>{
  const delayed=deferred(),f=fixture({nativeAnalysisCompare:()=>delayed.promise});assert.ok(f.window.referenceResults);f.window.referenceResults.init();const pending=f.window.referenceResults.refresh(f.scope);await f.window.referenceResults.refresh(null);delayed.resolve({summary:{before:f.full,after:f.full},divisions:[],top_amount:[],top_count:[]});await pending;assert.doesNotMatch(f.s1.querySelector('.metric-value').textContent,/100/);
@@ -90,8 +90,8 @@ test('summary orders observed amounts with null last and warns for either missin
  const f=fixture(),tot=amount=>({count:1,amount,average:amount});f.scope.organizations=['A','B','C','D'];
  f.api.nativeAnalysisCompare=async(...args)=>({summary:{before:f.full,after:f.full},divisions:args[6].map(organization=>({organization,before:organization==='B'?{count:null,amount:null,average:null}:tot(1),after:organization==='C'?{count:null,amount:null,average:null}:tot(1)})),top_amount:[],top_count:[]});
  f.api.nativeAnalysisOrganizations=async()=>[{org:'A',complete:true,total:tot(50)},{org:'B',complete:true,total:tot(100)},{org:'C',complete:false,total:{count:null,amount:null,average:null}},{org:'D',complete:true,total:tot(-5)}];f.api.nativeAnalysisRange=async()=>({...f.full,available_reports:0,available_total:{count:null,amount:null,average:null}});
- f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);const rows=f.s1.querySelectorAll('tbody tr');assert.deepEqual(rows.map(row=>row.children[0].textContent),['B','A','D','C (частичные данные)']);
- const warnings=f.s1.querySelectorAll('.org-warning');assert.equal(warnings.length,2);assert.match(warnings[0].getAttribute('aria-label'),/^B/);await warnings[0].click();assert.match(f.document.getElementById('sheet').textContent,/неполный базовый интервал/);await f.document.getElementById('sheet').close();assert.equal(warnings[0].focused,true);await warnings[0].click();await f.window.referenceResults.refresh(null);assert.equal(f.document.getElementById('sheet').open,false,'stale sample modal must close on refresh');
+ f.window.referenceResults.init();await f.window.referenceResults.refresh(f.scope);const rows=f.s1.querySelectorAll('tbody tr');assert.deepEqual(rows.map(row=>row.children[0].textContent),['B','A','D','C (нет данных)']);
+ const warnings=f.s1.querySelectorAll('.org-warning');assert.equal(warnings.length,2);assert.match(warnings[0].getAttribute('aria-label'),/^B/);await warnings[0].click();assert.match(f.document.getElementById('sheet').textContent,/неполный базовый интервал/);assert.match(f.document.getElementById('sheet').textContent,/Сравнить только подразделения с полными отчётами/);await f.document.getElementById('sheet').close();assert.equal(warnings[0].focused,true);await warnings[0].click();await f.window.referenceResults.refresh(null);assert.equal(f.document.getElementById('sheet').open,false,'stale sample modal must close on refresh');
 });
 test('KPI direction follows the displayed precision and preserves measurable differences',async()=>{
  const f=fixture();
@@ -144,7 +144,7 @@ test('print includes every filtered SQL row in order from page zero while leavin
  const button=f.s2.querySelectorAll('button').find(n=>n.textContent==='Печать / PDF');await button.click();
  assert.deepEqual(printed.rows.map(row=>row[0]),rows.map(row=>row.name));assert.equal(printed.mode,'document');
  assert.equal(printed.rows[12][2],'0,00');assert.equal(printed.rows[12][5],'—');
- assert.match(printed.text,/Значимые изменения/);assert.match(printed.text,/Строк: 13/);assert.match(printed.text,/Сопоставимые подразделения: 1 из 1/);
+ assert.match(printed.text,/Значимые изменения/);assert.match(printed.text,/Подразделения с полными отчётами: 1 из 1/);
  assert.deepEqual(queries.map(q=>q.page),[0,1]);assert.deepEqual(prints.map(q=>q.page),[1]);assert.ok(queries.every(q=>q.metric==='amount'&&q.kind==='significant'&&q.revision===1));
  assert.equal(f.s2.querySelectorAll('.changes-table tbody tr').length,1);assert.equal(f.s2.querySelector('.changes-table tbody tr').children[0].textContent,'Position 13');
  assert.equal(f.document.getElementById('referencePrintDocument'),null);assert.equal(f.document.body.dataset.referencePrint,undefined);assert.equal(button.disabled,false);assert.equal(button.focused,true);
@@ -162,6 +162,8 @@ test('change table has one read-only metric and headings follow the active categ
  assert.equal(f.s2.querySelectorAll('[data-change-metric]').length,0);assert.equal(f.s2.querySelector('[data-current-change-metric]').textContent,'Сумма');
  assert.equal(f.s2.querySelector('.changes-heading h2').textContent,'Значимые изменения');
  await f.s2.querySelectorAll('.kpi')[0].click();assert.equal(f.s2.querySelector('.changes-heading h2').textContent,'Рост');
+ await f.s2.querySelectorAll('.kpi')[2].click();assert.equal(f.s2.querySelector('.changes-heading h2').textContent,'Новые работы');
+ await f.s2.querySelectorAll('.kpi')[3].click();assert.equal(f.s2.querySelector('.changes-heading h2').textContent,'Без выполнений');
  f.scope.metric='count';await f.window.referenceResults.refresh(f.scope);assert.equal(f.s2.querySelector('[data-current-change-metric]').textContent,'Количество / объём');
 });
 
@@ -354,4 +356,20 @@ test('missing baseline explains an unavailable comparison while preserving an ob
  await print.click();
  assert.match(printed,/За базовый интервал нет пригодных данных/);
  assert.deepEqual(totals,['Сумма','—','0,00','—','—']);
+});
+
+test('summary displays shares of known amounts and average for covered values',async()=>{
+ const f=fixture(),known={amount:60,count:4,average:15},partial={amount:40,count:5,average:null};
+ const current={...f.full,amount_missing_rows:true,available_total:{amount:100,count:9,average:null}};
+ f.api.nativeAnalysisCompare=async()=>({summary:{before:f.full,after:current},divisions:[],top_amount:[],top_count:[]});
+ f.api.nativeAnalysisOrganizations=async()=>[
+  {org:'A',complete:false,missing:1,available_total:known},
+  {org:'B',complete:false,missing:1,available_total:partial}
+ ];
+ f.scope.organizations=['A','B'];
+ f.window.referenceResults.init();
+ await f.window.referenceResults.refresh(f.scope);
+ const rows=f.s1.querySelectorAll('tbody tr');
+ assert.deepEqual(rows.map(row=>row.children.slice(3).map(cell=>cell.textContent)),[['60,0%','15,00'],['40,0%','—']]);
+ assert.match(f.s1.querySelector('.quality-notice').textContent,/Доли рассчитаны по заполненным суммам/);
 });

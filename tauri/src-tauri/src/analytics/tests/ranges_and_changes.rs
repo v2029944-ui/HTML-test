@@ -67,12 +67,17 @@ fn detail_views_distinguish_missing_amount_missing_report_and_zero_baseline() {
             assert_eq!(structure["total"], total);
             let alpha = &structure["rows"][0];
             assert_eq!(alpha["name"], "Alpha");
-            if complete && metric == "count" {
+            assert_eq!(structure["currentComplete"], complete && metric == "count");
+            let beta = &structure["rows"][1];
+            if metric == "count" {
                 assert_eq!(alpha["share"], 75.);
                 assert_eq!(alpha["cumulative"], 75.);
-                assert_eq!(structure["rows"][1]["cumulative"], 100.);
+                assert_eq!(beta["share"], 25.);
+                assert_eq!(beta["cumulative"], 100.);
             } else {
-                assert!(alpha["share"].is_null() && alpha["cumulative"].is_null());
+                assert_eq!(alpha["share"], 100.);
+                assert_eq!(alpha["cumulative"], 100.);
+                assert!(beta["current"].is_null() && beta["share"].is_null() && beta["cumulative"].is_null());
             }
         }
         let comparison = store.analysis_comparison_summary(rev, &all, &ComparisonQuery {
@@ -94,6 +99,7 @@ fn detail_views_distinguish_missing_amount_missing_report_and_zero_baseline() {
             assert_eq!(alpha["amount"]["delta"], 20.);
             assert_eq!(alpha["amount"]["percent"], 200.);
         } else {
+            assert_eq!(alpha["amount"]["base"], 20.);
             assert!(alpha["amount"]["delta"].is_null() && alpha["amount"]["percent"].is_null());
         }
     }
@@ -335,7 +341,7 @@ fn old_js_comparison_selected_absent_names_and_display_name_filter() {
 }
 
 #[test]
-fn sql_ranking_is_sorted_bounded_and_complete() {
+fn sql_ranking_is_sorted_bounded_and_uses_available_reports() {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();
     let rev = prepare(&store, &fixture());
@@ -369,7 +375,13 @@ fn sql_ranking_is_sorted_bounded_and_complete() {
         rev, &combined, &query("2024-02-28", "2024-03-01"), None, "amount", "all"
     ).unwrap();
     assert!(!incomplete.complete);
-    assert!(incomplete.rows.is_empty());
+    assert_eq!(incomplete.rows[0].name, "Group");
+    assert_eq!(incomplete.rows[0].amount, Some(110.));
+    let absent = store.analysis_ranking(
+        rev, &combined, &query("2024-04-01", "2024-04-02"), None, "amount", "all"
+    ).unwrap();
+    assert!(!absent.complete);
+    assert!(absent.rows.is_empty());
 
     assert!(store.analysis_ranking(rev, &selected, &days, None, "percent", "all").is_err());
     assert!(store.analysis_ranking(rev, &selected, &days, None, "amount", "unknown").is_err());
@@ -552,6 +564,8 @@ fn partial_analytics_keeps_observed_amounts_and_report_gaps_separate() {
     let departments = serde_json::to_value(store.analysis_organization_page(revision, &selected, &range, None, 50).unwrap()).unwrap();
     assert_eq!(departments[0]["available_total"]["amount"], 20.);
     assert_eq!(departments[1]["available_total"]["amount"], 30.);
+    assert_eq!(departments[0]["amount_missing_rows"], false);
+    assert_eq!(departments[1]["amount_missing_rows"], true);
     let by_org = serde_json::to_value(store.analysis_organization_trends(revision, &selected, &range).unwrap()).unwrap();
     assert!(by_org["series"][1]["points"][0]["available_total"]["amount"].is_null());
     assert_eq!(by_org["series"][1]["points"][0]["available_total"]["count"], 3.);
@@ -575,7 +589,9 @@ fn partial_analytics_keeps_observed_amounts_and_report_gaps_separate() {
     assert_eq!(structure["currentComplete"],false);
     assert_eq!(structure["total"],50.);
     assert_eq!(structure["rows"][0]["current"],50.);
-    assert!(structure["rows"][0]["share"].is_null());
+    assert_eq!(structure["sharesValid"], true);
+    assert_eq!(structure["rows"][0]["share"], 100.);
+    assert_eq!(structure["rows"][0]["cumulative"], 100.);
 
     let known_day = "2024-01-01".to_owned();
     let known = RangeQuery { from: known_day.clone(), to: known_day.clone() };

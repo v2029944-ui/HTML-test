@@ -163,11 +163,12 @@ fn prepare_reference(c:&Connection,q:&ReferenceChangesRequest,s:&AnalysisScope)-
             continue;
         };
         let value = measure(b, a, minimum, q.percent)?;
+        // Both intervals have reports here. Zero describes the work in those observed reports.
         let kind = if value.delta == 0. {
             ""
-        } else if complete && bc == 0. && ba == Some(0.) && (ac != 0. || aa.is_some_and(|n| n != 0.)) {
+        } else if bc == 0. && ba == Some(0.) && (ac != 0. || aa.is_some_and(|n| n != 0.)) {
             "new"
-        } else if complete && (bc != 0. || ba.is_some_and(|n| n != 0.)) && ac == 0. && aa == Some(0.) {
+        } else if (bc != 0. || ba.is_some_and(|n| n != 0.)) && ac == 0. && aa == Some(0.) {
             "gone"
         } else if (b != 0. || !complete) && value.significant {
             if value.delta > 0. {
@@ -243,10 +244,10 @@ fn comparison_csv_context(
         .query_map([&s.organizations],|row|Ok((row.get::<_,String>(0)?,row.get::<_,bool>(1)?,row.get::<_,bool>(2)?))).map_err(err)?
         .collect::<Result<Vec<_>,_>>().map_err(err)?;
     let included:Vec<_>=members.iter().filter(|(_,before,after)|*before&&*after).map(|(org,_,_)|org.as_str()).collect();
-    csv_record(writer,&[Text("Сопоставимые подразделения"),Number(Some(included.len() as f64)),Number(Some(members.len() as f64)),Text(&included.join(", "))])?;
+    csv_record(writer,&[Text("Подразделения с полными отчётами"),Number(Some(included.len() as f64)),Number(Some(members.len() as f64)),Text(&included.join(", "))])?;
     csv_record(writer,&[Text("Выборка сравнения"),Text("Сводные итоги учитывают доступные отчёты выбранных подразделений. Пропуск не означает ноль.")])?;
     for (org,before,after) in &members {
-        let reason=match (*before,*after) {(true,true)=>"включено",(false,false)=>"неполные базовый и анализируемый интервалы",(false,true)=>"неполный базовый интервал",(true,false)=>"неполный анализируемый интервал"};
+        let reason=match (*before,*after) {(true,true)=>"полные отчёты за оба интервала",(false,false)=>"неполные базовый и анализируемый интервалы",(false,true)=>"неполный базовый интервал",(true,false)=>"неполный анализируемый интервал"};
         csv_record(writer,&[Text("Состав сравнения"),Text(org),Text(reason)])?;
     }
     let observed = |slot| -> Result<(AnalysisTotals, Option<f64>), String> {
@@ -401,7 +402,7 @@ impl Analytics<'_> {
             prepare_reference_values(&tx,q,scope)?;
             export(destination,|writer| {
                 comparison_csv_context(writer,&tx,q,scope,"Сводка доступных данных")?;
-                csv_record(writer,&[Cell::Text("Наблюдаемые итоги анализируемого интервала"),Cell::Text("Все выбранные подразделения")])?;
+                csv_record(writer,&[Cell::Text("Наблюдаемые итоги анализируемого интервала"),Cell::Text("Все выбранные подразделения"),Cell::Text("Доли от суммы заполненных ячеек")])?;
                 csv_record(writer,&[Cell::Text("Подразделение"),Cell::Text("Сумма"),Cell::Text("Количество / объём"),Cell::Text("Доля суммы, %"),Cell::Text("Сумма / количество (объём)"),Cell::Text("Состояние")])?;
                 let mut statement=tx.prepare("WITH observed AS (
                     SELECT v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,CASE WHEN COUNT(x.row_index)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(x.row_index) THEN SUM(x.amount) END amount,SUM(x.amount) known_amount
@@ -409,7 +410,7 @@ impl Analytics<'_> {
                     LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY v.org)
                     SELECT f.item,coalesce(o.reports,0),o.count,o.amount,
                     NOT EXISTS(SELECT 1 FROM an_missing m WHERE m.slot=2 AND m.org=f.item),
-                    (SELECT CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END FROM observed),o.known_amount
+                    (SELECT SUM(coalesce(amount,known_amount)) FROM observed),o.known_amount
                     FROM analysis_filter_items f LEFT JOIN observed o ON o.org=f.item WHERE f.id=?1
                     ORDER BY (coalesce(o.amount,o.known_amount) IS NULL),coalesce(o.amount,o.known_amount) DESC,f.item COLLATE classic_ru,f.item").map_err(err)?;
                 let mut rows=statement.query([&scope.organizations]).map_err(err)?;

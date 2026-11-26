@@ -1,6 +1,7 @@
 //! Bounded SQL presentation queries for the original interface.
 use super::*;
 use super::analysis_presentation::{fingerprint, next_cursor, normalized, page_offset, presentation_functions};
+use super::changes::change_pair_coverage;
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -476,6 +477,7 @@ impl Analytics<'_> {
         let tx = conn.transaction().map_err(err)?;
         workspace(&tx, revision, s)?;
         let order = prepare_unified(&tx, s, q, grouping, options)?;
+        let (missing_pairs, partial_pairs) = change_pair_coverage(&tx)?;
         export(destination, |w| {
             use Cell::*;
             csv_record(
@@ -485,6 +487,12 @@ impl Analytics<'_> {
                     Text(&serde_json::to_string(options).map_err(err)?),
                 ],
             )?;
+            if missing_pairs > 0 || partial_pairs > 0 {
+                let coverage = format!(
+                    "Пар по доступным отчётам: {partial_pairs}. Пар без отчётов за один или оба периода: {missing_pairs}."
+                );
+                csv_record(w, &[Text("Качество данных"), Text(&coverage)])?;
+            }
             let metrics: Vec<_> = options.metrics.iter().map(String::as_str).collect();
             changes_csv_header(w, &metrics)?;
             let mut stmt = tx
