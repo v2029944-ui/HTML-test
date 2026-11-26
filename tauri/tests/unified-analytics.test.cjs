@@ -685,6 +685,16 @@ test('clearing the work selection supersedes an in-flight top-eight ranking',asy
  assert.deepEqual(Array.from(fx.published.at(-1).selectedKeys),[]);
 });
 
+test('top-eight selection uses ranked work from partial reports',async()=>{
+ const work={key:'work:Шины',name:'Шины',kind:'work'};
+ const f=fixture({nativeAnalysisRanking:async()=>({complete:false,rows:[work]})});
+ await f.bootstrap();
+ assert.deepEqual(Array.from(f.published.at(-1).selectedKeys),[work.key]);
+ f.nodes.get('selectTop').dispatch('click');await settle();
+ assert.deepEqual(Array.from(f.published.at(-1).selectedKeys),[work.key]);
+ assert.ok(f.notices.some(([message])=>message.includes('по доступным отчётам')));
+});
+
 test('the local all-works control stays accurate when same-name series cannot be selected individually',async()=>{
  const fx=fixture({unifiedNameOptionsAtPage:async()=>({rows:[],total_rows:0})});
  await fx.bootstrap();fx.nodes.get('selectAll').dispatch('click');await settle();

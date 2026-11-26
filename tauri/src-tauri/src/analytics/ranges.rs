@@ -230,9 +230,7 @@ impl Analytics<'_> {
         workspace(&tx, expected, s)?;
         org_check(&tx, s, org)?;
         fill_range(&tx, s, q, 1)?;
-        if !complete(&tx, 1, org)? {
-            return Ok(RankingSummary { complete: false, rows: Vec::new() });
-        }
+        let complete = complete(&tx, 1, org)?;
         // The manual work filter accepts unique names of at most 512 UTF-8 bytes.
         // Apply its catalog before the ranking limit, preserving the unrestricted ranking.
         let names_filter = if category == "selectable" {
@@ -267,7 +265,7 @@ impl Analytics<'_> {
                 active: r.get(5).map_err(err)?,
             });
         }
-        Ok(RankingSummary { complete: true, rows })
+        Ok(RankingSummary { complete, rows })
     }
     pub(super) fn analysis_range_summary(
         &self,

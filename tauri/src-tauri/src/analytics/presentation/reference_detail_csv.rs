@@ -126,9 +126,11 @@ fn export_patterns(
         headers(w, &["Фильтр признака", &opts.status])?;
         let usual = table.section == "usual";
         if usual {
+            let observed_windows = previous.to_string();
+            headers(w, &["Исторических окон с отчётами", &observed_windows])?;
             let mut notices = Vec::new();
             if !current_complete {
-                notices.push("Текущий интервал неполон. Показаны доступные значения. Отклонение не рассчитывается.");
+                notices.push("Текущий интервал неполон. Показаны доступные значения. Отклонение рассчитывается при достаточной истории по показателю.");
             }
             if current_amount_incomplete && table.metric != "count" {
                 notices.push("В некоторых строках сумма не указана. Показана сумма заполненных ячеек.");
@@ -148,6 +150,13 @@ fn export_patterns(
                 ],
             )?;
         } else {
+            let current_with_reports = used.to_string();
+            let base_with_reports = previous.to_string();
+            headers(w, &["Периодов с отчётами сейчас", &current_with_reports])?;
+            headers(w, &["Периодов с отчётами раньше", &base_with_reports])?;
+            if !current_complete {
+                headers(w, &["Качество данных", "Текущий интервал неполон. Частота рассчитана по периодам с доступными отчётами."])?;
+            }
             headers(
                 w,
                 &[
@@ -334,8 +343,8 @@ fn write_structure(w: &mut impl Write, page: &Value) -> Result<(), String> {
     if page["currentComplete"] != true && page["currentAvailable"] != true {
         return Err("Incomplete current interval".into());
     }
-    let complete = page["baseComplete"] == true;
-    let (head, keys): (&[&str], &[&str]) = if complete {
+    let base_available = page["baseAvailable"] == true;
+    let (head, keys): (&[&str], &[&str]) = if base_available {
         (
             &[
                 "Услуга / группа",
@@ -379,7 +388,7 @@ fn write_structure(w: &mut impl Write, page: &Value) -> Result<(), String> {
         record.extend(keys.iter().map(|key| Number(row[*key].as_f64())));
         csv_record(w, &record)?;
     }
-    if page["currentComplete"] != true {
+    if page["currentComplete"] != true || (base_available && page["baseComplete"] != true) {
         let note = if page["sharesValid"] == true {
             "Частичные значения. Доли рассчитаны от доступного итога."
         } else {
@@ -390,6 +399,7 @@ fn write_structure(w: &mut impl Write, page: &Value) -> Result<(), String> {
     Ok(())
 }
 fn write_contributions(w: &mut impl Write, tx: &Connection, metric: &str, complete: bool) -> Result<(), String> {
+    use super::advanced_analysis::{observed_contribution_delta, observed_contribution_metrics, observed_contribution_rows};
     let (before, after) = match metric {
         "count" => ("bc", "cc"),
         "amount" => ("ba", "ca"),
@@ -399,9 +409,16 @@ fn write_contributions(w: &mut impl Write, tx: &Connection, metric: &str, comple
         "SELECT EXISTS(SELECT 1 FROM an_comparison WHERE ba IS NULL OR ca IS NULL)",
         [], |r| r.get::<_,bool>(0),
     ).map_err(err)?;
-    let partial = !complete || incomplete_amount;
-    if partial {
-        headers(w, &["Качество данных", "Показаны доступные значения. Изменение и вклад требуют полных данных за оба интервала."])?;
+    let both_observed = observed_reports(tx, 1, None)? && observed_reports(tx, 2, None)?;
+    if !complete || incomplete_amount {
+        let note = if both_observed && incomplete_amount {
+            "Показаны доступные значения. Вклады рассчитаны по работам с известной суммой в обоих интервалах."
+        } else if both_observed {
+            "Показаны доступные значения. Изменение и вклад рассчитаны по доступным отчётам."
+        } else {
+            "Показаны доступные значения. Для расчёта изменения нужны отчёты в обоих интервалах."
+        };
+        headers(w, &["Качество данных", note])?;
     }
     headers(
         w,
@@ -414,15 +431,19 @@ fn write_contributions(w: &mut impl Write, tx: &Connection, metric: &str, comple
             "Вклад в общее изменение, %",
         ],
     )?;
-    if partial {
-        let source = super::advanced_analysis::observed_contribution_rows(tx, metric)?;
+    if !both_observed || incomplete_amount {
+        let source = observed_contribution_rows(tx, metric)?;
+        let compared_delta = observed_contribution_delta(tx, &source)?;
         let mut stmt = tx.prepare(&format!("{source} ORDER BY key")).map_err(err)?;
         let mut rows = stmt.query([]).map_err(err)?;
         let mut row = rows.next().map_err(err)?.ok_or("No available contribution values")?;
         loop {
             let name = work_label(&row.get::<_, String>(1).map_err(err)?, &row.get::<_, String>(2).map_err(err)?);
-            csv_record(w, &[Text(&name), Number(row.get(3).map_err(err)?), Number(row.get(4).map_err(err)?),
-                Number(None), Number(None), Number(None)])?;
+            let base = row.get(3).map_err(err)?;
+            let delta = row.get::<_, Option<f64>>(5).map_err(err)?.map(finite).transpose()?;
+            let (percent, contribution) = observed_contribution_metrics(base, delta, compared_delta)?;
+            csv_record(w, &[Text(&name), Number(base), Number(row.get(4).map_err(err)?),
+                Number(delta), Number(percent), Number(contribution)])?;
             let Some(next) = rows.next().map_err(err)? else { break };
             row = next;
         }

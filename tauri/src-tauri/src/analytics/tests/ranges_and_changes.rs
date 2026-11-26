@@ -99,6 +99,7 @@ fn detail_views_distinguish_missing_amount_missing_report_and_zero_baseline() {
             assert_eq!(alpha["amount"]["delta"], 20.);
             assert_eq!(alpha["amount"]["percent"], 200.);
         } else {
+            assert_eq!(alpha["amount"]["base"], 20.);
             assert!(alpha["amount"]["delta"].is_null() && alpha["amount"]["percent"].is_null());
         }
     }
@@ -340,7 +341,7 @@ fn old_js_comparison_selected_absent_names_and_display_name_filter() {
 }
 
 #[test]
-fn sql_ranking_is_sorted_bounded_and_complete() {
+fn sql_ranking_is_sorted_bounded_and_uses_available_reports() {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();
     let rev = prepare(&store, &fixture());
@@ -374,7 +375,13 @@ fn sql_ranking_is_sorted_bounded_and_complete() {
         rev, &combined, &query("2024-02-28", "2024-03-01"), None, "amount", "all"
     ).unwrap();
     assert!(!incomplete.complete);
-    assert!(incomplete.rows.is_empty());
+    assert_eq!(incomplete.rows[0].name, "Group");
+    assert_eq!(incomplete.rows[0].amount, Some(110.));
+    let absent = store.analysis_ranking(
+        rev, &combined, &query("2024-04-01", "2024-04-02"), None, "amount", "all"
+    ).unwrap();
+    assert!(!absent.complete);
+    assert!(absent.rows.is_empty());
 
     assert!(store.analysis_ranking(rev, &selected, &days, None, "percent", "all").is_err());
     assert!(store.analysis_ranking(rev, &selected, &days, None, "amount", "unknown").is_err());

@@ -193,11 +193,13 @@ test('import warnings are not mislabeled as missing comparisons',async()=>{
 test('missing report pairs are reported separately with formatted dates',async()=>{
  const p=page('Missing');
  p.summary.totals.missing_pairs=2;
+ p.summary.totals.partial_pairs=3;
  p.missing_examples=[{org:'A',missing_base:true,base_start:'2024-01-01',missing_current:false}];
  const f=fixture({unifiedChangesPage:async()=>p});f.publish();f.view('changes');await settle();
  const message=f.nodes.get('changesWarnings').textContent;
- assert.match(message,/Нет полной пары отчётов: 2/);
+ assert.match(message,/Пар без отчётов за один или оба периода: 2/);
  assert.match(message,/не включены в сопоставление/);
+ assert.match(message,/Пар по доступным отчётам: 3/);
  assert.match(message,/01\.01\.2024/);
 });
 
@@ -313,7 +315,7 @@ test('reference regularity retains incomplete organizations and matches the chos
  const calls=[];
  const f=fixture({
   nativeAnalysisOrganizations:async()=>{throw Error('Do not exclude entire organization');},
-  unifiedPatternPage:async(...args)=>{calls.push(args);return {rows:[],total_rows:0,used:0,expected:1,previous_used:1,current_complete:false};}
+  unifiedPatternPage:async(...args)=>{calls.push(args);return {rows:[],total_rows:0,used:1,expected:1,previous_used:1,current_complete:false};}
  });
  f.window.referenceDetail={active:'regularityPanel'};
  f.publish({from:'2024-02-01',to:'2024-02-29',displayType:'month',baseFrom:'2023-02-01',baseTo:'2023-02-28'});
@@ -321,7 +323,8 @@ test('reference regularity retains incomplete organizations and matches the chos
  assert.equal(calls.length,1);
  assert.equal(calls[0][0].displayType,'month');
  assert.deepEqual({...calls[0][3].baseline},{from:'2023-02-01',to:'2023-02-28'});
- assert.match(f.nodes.get('regularityCoverage').textContent,/Полных периодов анализа: 0 из 1/);
+ assert.match(f.nodes.get('regularityCoverage').textContent,/Периодов с отчётами: 1 из 1/);
+ assert.match(f.nodes.get('regularityCoverage').textContent,/Анализируемый интервал неполон/);
 });
 
 test('reference comparison and its CSV keep four organizations and calculate differences on available totals',async()=>{
@@ -424,7 +427,7 @@ test('contribution CSV becomes unavailable as soon as the local baseline changes
  assert.equal(saved.length,1);assert.deepEqual({...saved[0].before},{from:'2024-01-05',to:'2024-01-09'});
 });
 
-test('partial contributions retain all selected departments and export observed rows without changes',async()=>{
+test('partial contributions retain all selected departments and display calculated changes',async()=>{
  const complete={complete:true,periods:2,missing:0,total:{count:2,amount:20,average:10}};
  const partial={...complete,complete:false,missing:1,total:{count:null,amount:null,average:null},available_total:{count:1,amount:0,average:0}};
  const reads=[],exports=[];
@@ -435,7 +438,7 @@ test('partial contributions retain all selected departments and export observed 
   nativeCompositionPageAtPage:async (request,_before,section,metric,index)=>{
    reads.push([Array.from(request.organizations),section,metric,index]);
    return {baseComplete:true,currentComplete:false,total_rows:1,rows:[
-    {key:'work:Work',name:'Work',kind:'work',base:20,current:0,delta:null,percent:null,contribution:null}
+    {key:'work:Work',name:'Work',kind:'work',base:20,current:0,delta:-20,percent:-100,contribution:100}
    ]};
   },
   chooseCsvPath:async()=>'/tmp/partial.csv',referenceDetailCsv:async spec=>exports.push(spec)
@@ -449,8 +452,8 @@ test('partial contributions retain all selected departments and export observed 
  const notice=f.nodes.get('contributionCheck').children.filter(n=>n.className.includes('warn'));
  assert.equal(notice.length,1);assert.match(notice[0].textContent,/Показаны доступные значения/);
  const table=f.tables.find(t=>t.root==='contributionResults'&&t.metric==='amount');
- assert.deepEqual(Array.from(table.rows[0].slice(1)),['20','0','—','—','—']);
- assert.deepEqual(Array.from(table.options.csvRows[0]),['Work',20,0,null,null,null]);
+ assert.deepEqual(Array.from(table.rows[0].slice(1)),['20','0','−20','-100%','100%']);
+ assert.deepEqual(Array.from(table.options.csvRows[0]),['Work',20,0,-20,-100,100]);
  await table.options.csvContext.export();
  assert.deepEqual(Array.from(exports[0].request.organizations),['A','B']);
  assert.equal(exports[0].section,'contributions');
@@ -735,8 +738,9 @@ test('deviations explain missing reports and insufficient historical windows',as
  f.publish({baseFrom:'2023-12-30',baseTo:'2023-12-31'});
  f.nodes.get('usualPanel').open=true;f.nodes.get('usualPanel').dispatch('toggle');await settle();
  const message=f.nodes.get('usualCoverage').textContent;
- assert.match(message,/прочерк.*неполном интервале/i);
- assert.match(message,/минимум два полных исторических окна/i);
+ assert.match(message,/Исторических окон с отчётами: 1 из 4/);
+ assert.match(message,/Пропуски могут влиять на отклонение/);
+ assert.match(message,/минимум два исторических окна с отчётами/i);
 });
 
 test('one metric and one work can be compared across three selected departments',async()=>{

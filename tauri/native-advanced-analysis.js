@@ -63,9 +63,10 @@ function display(result,mode,request,baseline){
    if(result.first_base)context+=' · Первая база: '+result.first_base+' · Последний период: '+result.last_current;
    const s=result.summary;
    $('Status').textContent='Сопоставимых строк: '+s.rows+'. Пропущено пар подразделение–период: '+s.missing_pairs+'. Пар с замечаниями импорта: '+s.import_warning_pairs+'. Некорректных отчётов: '+s.invalid_reports+', дубликатов: '+s.duplicate_issues+', пересечений: '+s.overlap_issues+'.';
+   if(s.partial_pairs>0)$('Status').textContent+=' Пар по доступным отчётам: '+s.partial_pairs+' (есть пропуски).';
    for(const pair of result.missing_examples||[]){
      const dates=[pair.missing_base?pair.base_start:null,pair.missing_current?pair.current_start:null].filter(Boolean);
-     $('Status').textContent+=' '+pair.org+' — нет полного отчёта за '+dates.join(', ')+'.';
+     $('Status').textContent+=' '+pair.org+' — нет отчётов за '+dates.join(', ')+'.';
    }
  }else if(composition){
    context+=' · База: '+baseline.from+' — '+baseline.to;

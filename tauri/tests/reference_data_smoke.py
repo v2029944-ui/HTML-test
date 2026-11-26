@@ -251,6 +251,40 @@ def select_filter_period(container, unit, mode):
     container.locator('[data-period-selection]').select_option(f'{units[unit]}:{mode}')
 
 
+def check_partial_comparison_details(page, organizations):
+    def tab(key):
+        page.locator(f'#toolsPage .tool-tabs [data-section="{key}"]').click()
+        expect(page.locator('#refNative')).to_have_attribute('data-panel', key)
+
+    page.locator('#refAnalytics').click()
+    try:
+        tab('comparison')
+        page.locator('#refComparisonModes [data-value="organizations"]').click()
+        coverage = page.locator('#comparisonCoverage')
+        expect(coverage).to_contain_text('Полные отчёты у 0 из 4', timeout=TIMEOUT)
+        expect(coverage.locator(':scope > *')).to_have_count(1)
+        expect(coverage).not_to_contain_text('Нет сопоставимых подразделений')
+        summary = page.locator('#kpis table tbody tr')
+        expect(summary).to_have_count(4)
+        for row in summary.all():
+            assert row.locator('th').text_content() in organizations
+            assert [_number(v) for v in row.locator('td').all_text_contents()] == [5, .5, 25, 10]
+        amount = page.locator('#comparisonTable .metric-table').filter(
+            has=page.get_by_role('heading', name='Сумма', exact=True))
+        cells = amount.locator('tbody tr').first.locator('td')
+        expect(cells).to_have_count(11, timeout=TIMEOUT)
+        assert [_number(v) for v in cells.all_text_contents()[1:]] == [5] + [5, 0, 0] * 3
+        tab('structurePanel')
+        page.locator('#structureMetric').select_option('amount')
+        structure = page.locator('#structureResults')
+        expect(structure).to_contain_text('Доли рассчитаны от доступного итога каждого периода', timeout=TIMEOUT)
+        cells = structure.locator('table tbody tr').first.locator('td')
+        expect(cells).to_have_count(7, timeout=TIMEOUT)
+        assert [_number(v.removesuffix(' п. п.')) for v in cells.all_text_contents()[1:]] == [20, 20, 100, 100, 100, 0]
+    finally:
+        page.locator('#backBtn').click()
+
+
 def choose_calendar_date(page, trigger, value):
     trigger.click()
     dialog = page.locator('dialog.period-calendar[open]')
@@ -599,6 +633,9 @@ def check_reference_data(page, output):
                 reason, 'База: пропусков отчётов — 4', 'Анализ: пропусков отчётов — 4')), frame
             assert [_number(n) for n in frame['comparison'][0][1:5]] == [20, 20, 0, 0], frame
             csv_export('referenceSummaryCsv', scratch / 'partial-summary.csv', coverage='partial')
+            assert all([_number(v) for v in row.locator('td').all_text_contents()[1:]] == [5, .5, 25, 10]
+                       for row in page.locator('#s1 table tbody tr').all())
+            check_partial_comparison_details(page, organizations)
             navigate('Анализ изменений')
             expect(page.locator('#s2 .table-empty')).to_contain_text('Значимых изменений нет')
             page.locator('#s2 .match-note').get_by_role('button', name='Показать все 4', exact=True).click()
