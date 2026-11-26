@@ -259,7 +259,13 @@ def check_partial_comparison_details(page, organizations):
     page.locator('#refAnalytics').click()
     try:
         tab('comparison')
+        charts = page.locator('#comparisonCharts')
+        period_plot = charts.locator('svg[aria-label="Сравнение периодов"]').first
+        expect(period_plot).to_be_visible(timeout=TIMEOUT)
+        expect(period_plot).to_contain_text('Базовый период')
+        expect(period_plot).to_contain_text('Анализируемый период')
         page.locator('#refComparisonModes [data-value="organizations"]').click()
+        expect(charts).to_have_attribute('aria-label', 'Графики сравнения подразделений')
         coverage = page.locator('#comparisonCoverage')
         expect(coverage).to_contain_text('Полные отчёты у 0 из 4', timeout=TIMEOUT)
         expect(coverage.locator(':scope > *')).to_have_count(1)

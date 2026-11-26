@@ -539,7 +539,7 @@ test('opening a group uses the same qualified label in the history title and cha
   unifiedComparisonWindow:async()=>({rows:[{name:'Ремонт',kind:'group',key:'group:g',amount:metric}],total_rows:1}),
   nativeWorkTimeline:async()=>({granularity:'period',points:[{start:'2024-01-02',missing:0,total:{amount:25}}]})
  });
- const labels=[];f.UI.drawChart=(_p,_o,_m,_root,options)=>labels.push(options.label());
+ const labels=[];f.UI.drawChart=(_p,_o,_m,_root,options)=>{if(!options.comparison)labels.push(options.label());};
  f.publish();await f.window.unifiedExtended.openComparison();
  const button=f.tables.find(t=>t.metric==='amount').rows[1][0];
  assert.equal(button.textContent,'Ремонт (группа)');button.dispatch('click');await settle();
@@ -823,4 +823,31 @@ test('department comparison uses observed totals and shows one coverage notice',
  const summary=f.nodes.get('kpis').textContent;
  assert.match(summary,/Доля суммыСумма \/ количество \(объём\)/);
  assert.match(summary,/A20523,5%4B30835,3%3\.75C351041,2%—D————/);
+});
+
+test('period comparison plots the SQL values for both intervals without turning missing values into zero',async()=>{
+ const complete={complete:true,periods:1,missing:0,total:{count:0,amount:0,average:null},available_total:{count:0,amount:0,average:null}};
+ const partial={complete:false,periods:2,missing:1,available_total:{count:4,amount:null,average:2.5}};
+ const fx=fixture({
+  nativeAnalysisCompare:async()=>({summary:{before:complete,after:partial}}),
+  unifiedComparisonWindow:async()=>({rows:[],total_rows:0}),
+ });
+ const charts=[];
+ fx.UI.state.selectedMetrics.add('average');
+ fx.UI.drawChart=(...args)=>charts.push(args);
+ fx.publish();
+ fx.nodes.get('advancedAnalytics').open=true;
+ fx.nodes.get('advancedAnalytics').dispatch('toggle');
+ await settle();
+ const chart=fx.nodes.get('comparisonCharts');
+ assert.equal(chart.hidden,false);
+ assert.equal(chart.attributes['aria-label'],'Графики сравнения периодов');
+ assert.deepEqual(charts.map(args=>args[2]),['count','amount','average'],fx.nodes.get('comparisonTable').textContent);
+ for(const args of charts){
+  const [periods, , metric, , options]=args;
+  assert.equal(periods.length,2);
+  assert.equal(options.comparison,true);
+  assert.equal(options.data[0].get('total')[metric],complete.available_total[metric]);
+  assert.equal(options.data[1].get('total')[metric],partial.available_total[metric]);
+ }
 });

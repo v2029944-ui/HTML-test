@@ -241,7 +241,10 @@ function sampleNote(root,sample,message,compareAvailable=false){
 }
 function organizationRange(){return referencePanel('comparison')?scope?.overviewMode==='range':value('comparisonScope')==='range';}
 function comparisonLayout(){const organizations=value('comparisonMode')==='organizations',ranges=value('periodComparisonScope')==='range',orgRange=value('comparisonScope')==='range';
- $('periodComparisonFilters').hidden=organizations;$('orgComparisonFilters').hidden=!organizations;$('kpis').classList.toggle('kpis',!organizations);$('comparisonCharts').hidden=!organizations;$('comparisonDynamics').hidden=!organizations||!organizationRange();$('contributions').hidden=organizations;
+ $('periodComparisonFilters').hidden=organizations;$('orgComparisonFilters').hidden=!organizations;$('kpis').classList.toggle('kpis',!organizations);const charts=$('comparisonCharts');
+ charts.hidden=false;
+ charts.setAttribute('aria-label',organizations?'Графики сравнения подразделений':'Графики сравнения периодов');
+ $('comparisonDynamics').hidden=!organizations||!organizationRange();$('contributions').hidden=organizations;
  $('periodComparisonSingle').hidden=ranges;$('periodComparisonRanges').hidden=!ranges;$('comparisonPeriodLabel').hidden=orgRange;$('comparisonRangeGroup').hidden=!orgRange;
 }
 function addBoundedPager(root,state,rows,run,total){
@@ -301,7 +304,11 @@ async function comparison(index=0,paging=false){
    return;
   }
   const onlyOne=beforeObserved!==afterObserved;
-  for(const metric of metrics()){
+  const periods=[before,after].map(range=>({
+   type:s.displayType,start:range.from,actualStart:range.from,end:visibleEnd(range),partial:true
+  }));
+  const data=[beforeValues,afterValues].map(total=>new Map([['total',total??{count:null,amount:null,average:null}]]));
+  for(const metric of comparisonMetrics){
    const now=afterValues?.[metric],old=beforeValues?.[metric],card=UI.el('div',null,'kpi');
    const totalDiff=metric==='average'&&summary.average
     ?[summary.average.delta,summary.average.percent]
@@ -309,6 +316,13 @@ async function comparison(index=0,paging=false){
    card.append(UI.el('span',titles[metric]+' · анализируемый период'),UI.el('strong',fmt(now,metric)),
     UI.el('small',totalDiff[0]==null?'Сравнение недоступно':[delta(totalDiff[0],metric),percent(totalDiff[1])].join(' · ')));
    $('kpis').append(card);
+   const section=UI.el('section',null,'metric-chart'),plot=UI.el('div',null,'metric-plot');
+   section.append(UI.el('h3',titles[metric]),plot);
+   $('comparisonCharts').append(section);
+   UI.drawChart(periods,new Set(s.organizations),metric,plot,{
+    chart:'bar',comparison:true,categories:['total'],data,label:()=>titles[metric],
+    periodLabels:['Базовый период','Анализируемый период']
+   });
    const availableRange=afterObserved?after:before;
    const combinedRange={...s,from:before.from<after.from?before.from:after.from,to:before.to>after.to?before.to:after.to};
    const headers=onlyOne?['Работа / группа',afterObserved?'Значение сейчас':'Значение раньше']:
