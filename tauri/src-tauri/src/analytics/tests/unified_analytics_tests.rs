@@ -564,6 +564,56 @@ fn reference_usual_calculates_deviation_for_partial_current_and_historical_windo
     assert!(page.rows[0]["amount"]["delta"].is_null());
 }
 
+#[test]
+fn reference_usual_classifies_decimal_thresholds_and_equivalent_totals() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().join("store")).unwrap();
+    let works = [
+        ("Точно вверх", 0.01, 0.013, 0.),
+        ("Ниже порога вверх", 0.01, 0.012999, 0.),
+        ("Выше порога вверх", 0.01, 0.013001, 0.),
+        ("Точно вниз", 0.03, 0.021, 0.),
+        ("Ниже порога вниз", 0.03, 0.021001, 0.),
+        ("Выше порога вниз", 0.03, 0.020999, 0.),
+        ("Равная сумма", 0.30, 0.10, 0.20),
+        ("Нулевая база", 0., 0.000001, 0.),
+        ("Малое реальное изменение", 0.30, 0.30, 0.00000001),
+    ];
+    let days = ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-06"];
+    let reports: Vec<_> = days.iter().enumerate().map(|(index, day)| {
+        let rows: Vec<_> = works.iter().map(|(name, base, first, second)| {
+            let amount = match index { 0 | 2 => *base, 4 => *first, 5 => *second, _ => 0. };
+            json!({"organization":"A","work":name,"count":1,"amount":amount})
+        }).collect();
+        json!({"id":day,"type":"day","start":day,"end":day,"organizations":["A"],"rows":rows})
+    }).collect();
+    store.save(json!({"reports":reports,"settings":{"orgNames":["A","B","C","D"],"groups":[],"catalog":[]}})).unwrap();
+    let revision = store.revision().unwrap();
+    for day in days { store.analysis_index_report(day, revision).unwrap(); }
+    store.analysis_index_settings(revision).unwrap();
+    let scope = partial_pattern_scope(&store, revision);
+    let options = UnifiedPatternOptions { search: String::new(), status: "all".into(), range_window: true, baseline: None };
+    let read = |percent| {
+        let q = ChangeQuery { from: "2024-01-05".into(), to: "2024-01-06".into(), percent, ..query() };
+        let page = store.unified_pattern_page(revision, &scope, &q, None, "usual", 4, &options, None).unwrap();
+        assert_eq!(page.used, 2);
+        page.rows
+    };
+    let measure = |rows: &[Value], name: &str| {
+        rows.iter().find(|r| r["name"] == name).unwrap()["amount"].clone()
+    };
+    let threshold = read(30.);
+    let zero = read(0.);
+    let report: Vec<_> = works.iter().map(|(name, ..)| measure(&threshold, name)["status"].clone()).collect();
+    let equal = measure(&zero, "Равная сумма");
+    assert_eq!(
+        (json!(report), equal["status"].clone(), equal["delta"].clone(), equal["percent"].clone()),
+        (json!(["high","normal","high","low","normal","low","normal","high","normal"]), json!("normal"), json!(0.0), json!(0.0))
+    );
+    assert_eq!(measure(&zero, "Малое реальное изменение")["status"], "high");
+    assert!(measure(&threshold, "Нулевая база")["percent"].is_null());
+}
+
 fn partial_pattern_scope(store: &Storage, revision: i64) -> AnalysisScope {
     let organizations = store.analysis_filter_create(revision, "organizations").unwrap();
     store.analysis_filter_append(revision, &organizations, &["A".into(), "B".into()]).unwrap();
