@@ -1,5 +1,7 @@
 //! Independent current/baseline intervals over real work × organization facts.
 use super::*;
+
+const REFERENCE_CHANGES_PAGE_SIZE: i64 = 50;
 use std::{collections::BTreeSet, sync::atomic::AtomicBool};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -63,7 +65,7 @@ impl ReferenceChangesRequest {
             )
             || !matches!(self.sort.as_str(), "delta" | "percent" | "name")
             || self.search.len() > 512
-            || i64::from(self.page) * 12 > i64::from(i32::MAX)
+            || i64::from(self.page) * REFERENCE_CHANGES_PAGE_SIZE > i64::from(i32::MAX)
             || [self.percent, self.min_count, self.min_amount]
                 .iter()
                 .any(|n| !n.is_finite() || *n < 0.)
@@ -305,7 +307,7 @@ impl Analytics<'_> {
                  FROM ref_changes WHERE instr(classic_normalized(name),?2)>0"),
                 params![q.kind,search],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))
             ).map_err(err)?;
-            let rows=tx.prepare(&(filtered_rows_sql(q)+" LIMIT 12 OFFSET ?3")).map_err(err)?.query_map(params![q.kind,search,i64::from(q.page)*12],change_row).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+            let rows=tx.prepare(&(filtered_rows_sql(q)+" LIMIT ?3 OFFSET ?4")).map_err(err)?.query_map(params![q.kind,search,REFERENCE_CHANGES_PAGE_SIZE,i64::from(q.page)*REFERENCE_CHANGES_PAGE_SIZE],change_row).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
             Ok(ReferenceChangesPage {rows,total,searched,significant,counts,leader,comparable,partial_fallback:q.kind=="significant"&&total>significant})
         })
     }
