@@ -248,16 +248,19 @@ impl Analytics<'_> {
             ("temp.an_combined", "?3 IS NULL")
         };
         let sql = format!(
-            "SELECT key,name,kind,count,amount,active FROM {table}
+            "SELECT key,name,kind,count,amount,active,known_amount,
+                    CASE WHEN source_work IS NOT NULL THEN paired_count END
+             FROM {table}
              WHERE slot=1 AND {division} AND (?1 IN ('all','selectable') OR kind=?1) {names_filter}
-               AND (?2='count' OR amount IS NOT NULL)
-             ORDER BY ABS(CASE WHEN ?2='count' THEN count ELSE amount END) DESC, key ASC LIMIT 12"
+               AND (?2='count' OR coalesce(amount,known_amount) IS NOT NULL)
+             ORDER BY ABS(CASE WHEN ?2='count' THEN count ELSE coalesce(amount,known_amount) END) DESC, key ASC LIMIT 12"
         );
         let mut stmt = tx.prepare(&sql).map_err(err)?;
         let mut cursor = stmt.query(params![category, metric, org]).map_err(err)?;
         let mut rows = Vec::new();
         while let Some(r) = cursor.next().map_err(err)? {
-            let t = totals(r.get(3).map_err(err)?, r.get(4).map_err(err)?, true)?;
+            let t = paired_observed_totals(r.get(3).map_err(err)?, r.get(4).map_err(err)?,
+                r.get(6).map_err(err)?, r.get(7).map_err(err)?, true)?;
             rows.push(RangeValue {
                 key: r.get(0).map_err(err)?,
                 name: r.get(1).map_err(err)?,
