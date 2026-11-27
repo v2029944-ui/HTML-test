@@ -181,7 +181,26 @@ function buildUnified(source){
           <p id="importLayoutHint" class="muted small" aria-live="polite"></p></div>`);
  html=html.replace('Выберите отчётные листы. Итоги квартала или года проверяются отдельно и не становятся дополнительным днём. При неоднозначной шапке укажите год и ручные столбцы; пустые дни не заменяются нулями.', 'Приложение сверит значения с итогами Excel. Пустой период останется пропуском.');
  html=html.replace('</head>', '<style>#importLayoutSummary:not([hidden]){display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px 8px}#importLayoutSummary span{grid-column:1/-1;font-weight:600}#importLayoutSummary strong{overflow-wrap:anywhere}#importLayoutHint{margin:8px 0 0}.import-layout-control{min-width:0}</style></head>');
- const metricMarkup="<details id=\"additionalMetrics\" class=\"panel group-section\"><summary>Другие показатели — трудозатраты и план / факт</summary>\n<p class=\"muted small\">Независимые виды отчётов со своими полями и единицами измерения. Их показатели не прибавляются к суммам выполненных работ.</p>\n<div class=\"metric-controls\">\n<label>Вид отчёта<select id=\"metricKindSelect\"></select></label>\n<label>С<input id=\"metricKindFrom\" type=\"date\"></label>\n<label>По<input id=\"metricKindTo\" type=\"date\"></label>\n<button type=\"button\" id=\"metricKindCalculate\" class=\"button secondary\">Рассчитать</button></div>\n<p id=\"metricKindCount\" class=\"muted small\">Пустые даты при расчёте означают всю историю.</p>\n<div id=\"metricKindTotals\" class=\"metric-results\"></div>\n<div class=\"metric-controls\">\n<label>Шаблон XLSX<select id=\"metricXlsxProfile\"></select></label>\n<button type=\"button\" id=\"metricKindChooseXlsx\" class=\"button secondary\">Импорт XLSX</button>\n<button type=\"button\" id=\"metricKindChoose\" class=\"button secondary\">Импорт JSON</button>\n<button type=\"button\" id=\"metricKindApply\" class=\"button primary\" disabled>Подтвердить импорт</button></div>\n<p class=\"muted small\">Для XLSX сначала укажите обе даты и шаблон. Перед записью проверьте значения: импорт не заменяет существующие отчёты. Лимит XLSX — 30 МиБ, JSON — 8 МиБ, не более 10 000 строк в отчёте.</p>\n<p id=\"metricKindFile\" class=\"muted small\">Файл ещё не выбран.</p>\n<div id=\"metricKindPreview\" class=\"metric-results\"></div>\n<p id=\"metricKindStatus\" class=\"status muted\" role=\"status\" aria-live=\"polite\">Загрузка видов отчётов…</p></details>";
+ const metricMarkup=`<details id="additionalMetrics" class="panel group-section"><summary>Другие показатели — трудозатраты и план / факт</summary>
+<p class="muted small">Независимые виды отчётов со своими полями и единицами измерения. Их показатели не прибавляются к суммам выполненных работ.</p>
+<section><h3>Расчёт показателей</h3>
+<div class="metric-controls">
+<label>Вид отчёта<select id="metricKindSelect"></select></label>
+<label>С<input id="metricKindFrom" type="date"></label>
+<label>По<input id="metricKindTo" type="date"></label>
+<button type="button" id="metricKindCalculate" class="button secondary">Рассчитать</button></div>
+<p id="metricKindCount" class="muted small">Пустые даты при расчёте означают всю историю.</p>
+<div id="metricKindTotals" class="metric-results"></div></section>
+<section><h3>Импорт XLSX или JSON</h3>
+<div class="metric-controls">
+<label>Шаблон XLSX<select id="metricXlsxProfile"></select></label>
+<button type="button" id="metricKindChooseXlsx" class="button secondary">Импорт XLSX</button>
+<button type="button" id="metricKindChoose" class="button secondary">Импорт JSON</button>
+</div>
+<p class="muted small">Для XLSX укажите обе даты периода в полях «С» и «По» выше и выберите шаблон. Перед записью проверьте значения: импорт не заменяет существующие отчёты. Лимит XLSX — 30 МиБ, JSON — 8 МиБ, не более 10 000 строк в отчёте.</p>
+<p id="metricKindFile" class="muted small">Файл ещё не выбран.</p>
+<div id="metricKindPreview" class="metric-results"></div>
+<p id="metricKindStatus" class="status muted" role="status" aria-live="polite">Загрузка видов отчётов…</p><button type="button" id="metricKindApply" class="button primary" disabled>Подтвердить импорт</button></section></details>`;
  if(!html.includes('<section id="upload" class="view">'))throw Error('Original Excel upload panel changed');
  html=html.replace('<section id="upload" class="view">','<section id="upload" class="view">'+metricMarkup);
  html=html.replaceAll('Средняя сумма на работу','Средняя сумма на единицу')

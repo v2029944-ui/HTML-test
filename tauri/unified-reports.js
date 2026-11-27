@@ -15,7 +15,7 @@ function init(){
  const activeWorkspace=()=>workspaceState()?.mode==='shared'?workspaceState().folder:null;
  const workspaceReady=()=>!window.sharedWorkspace||(workspaceState()?.available===true&&!workspaceState().pending);
  let wideSheetRows=[],sourceFolderContext=null,workspaceFolder=activeWorkspace();
- let uploadMode='import';
+ let uploadMode='import',sourceWasChecked=false;
  const uploadPanels={import:$('excelFile').closest?.('.panel'),calendar:$('reportPeriods'),quality:$('qualityHeading').closest?.('.panel')};
  const listPanel=el('section',undefined,'panel');listPanel.id='unifiedSavedReports';
  const databaseLabel=el('p',undefined,'muted');databaseLabel.id='unifiedReportDatabase';databaseLabel.hidden=true;
@@ -500,9 +500,38 @@ function init(){
   acknowledgements.hidden=overlap.parentElement.hidden&&quality.parentElement.hidden;
  }
  const importStatus=el('p',undefined,'muted small');importStatus.id='unifiedImportStatus';importStatus.setAttribute('aria-live','polite');$('importPreview').before(importStatus);
- function importLock(){for(const id of ['excelFile','importFormat','importType','importWeek','importMonth','sheetSelect','dailyYear','importMappingMode','replaceExisting','unifiedAcceptOverlap','unifiedAcceptQuality'])$(id).disabled=importBusy||(id==='sheetSelect'&&!sourcePath);$('inspectFile').disabled=importBusy||!sourcePath||!$('importFormat').value;$('saveImport').disabled=importBusy||!review;$('addImportMapping').disabled=importBusy;$('saveDailyFolderRule').disabled=importBusy||!review;if($('editImportLayout'))$('editImportLayout').disabled=importBusy;for(const root of [$('importColumnMappings'),$('importPeriodDates'),$('dailySheetChoices')])for(const control of root.querySelectorAll('input,select,textarea,button'))control.disabled=importBusy;}
- function resetReview(message){review=null;options=null;$('importPreview').replaceChildren();if(uploadMode==='quality'&&$('qualitySource').value==='pending'){qualityOffset=0;syncQualityPeriods();void loadQuality();}$('saveDailyFolderRule').hidden=true;$('saveImport').disabled=true;syncAcknowledgements();if(message)status('unifiedImportStatus',message);}
- function changed(){++parameterTicket;resetReview('Настройки изменены. Проверьте Excel заново.');}
+ const stepLabel=el('p',undefined,'upload-step');
+ stepLabel.id='uploadStep';stepLabel.setAttribute('role','status');
+ const inspectHint=el('p',undefined,'muted small');inspectHint.id='inspectFileHint';
+ const layoutCards=el('div',undefined,'upload-layout-cards');
+ layoutCards.setAttribute('role','group');layoutCards.setAttribute('aria-label','Примеры структуры Excel');
+ for(const [value,title,rows] of [
+  ['daily-wide','Названия слева, периоды в столбцах',[['Работа','Период 1','Период 2'],['А','Кол. / Σ','Кол. / Σ']]],
+  ['legacy','Названия повторяются для каждого периода',[['Период 1','Период 2'],['А · Кол. / Σ','Б · Кол. / Σ']]]
+ ]){
+  const card=button(title,()=>{$('importFormat').value=value;formatChanged();});
+  card.dataset.layout=value;
+  const diagram=el('span',undefined,'upload-layout-diagram');diagram.setAttribute('aria-hidden','true');
+  for(const cells of rows){const row=el('span');for(const cell of cells)row.append(el('span',cell));diagram.append(row);}
+  card.append(diagram);layoutCards.append(card);
+ }
+ function updateImportStep(){
+  const layout=$('importFormat').value;
+  stepLabel.textContent=!sourcePath?'Шаг 1 из 4 · Выберите файл Excel':!layout?'Шаг 2 из 4 · Выберите структуру и лист':
+   review?'Шаг 4 из 4 · Подтвердите сохранение':'Шаг 3 из 4 · Проверьте лист и параметры Excel';
+  inspectHint.textContent=!sourcePath?'Сначала выберите файл.':!layout?'Сначала выберите структуру Excel.':'';
+  $('inspectFile').className='button '+(sourcePath&&layout&&!review?'primary':'secondary');
+  const save=$('saveImport');
+  save.disabled=importBusy||!review||!workspaceReady();
+  save.textContent=workspaceReady()?(workspaceState()?.mode==='shared'?'Сохранить в общую базу':'Сохранить в личную базу'):'База назначения недоступна';
+  for(const card of layoutCards.children){
+   card.disabled=importBusy||!sourcePath;
+   card.setAttribute('aria-pressed',String(card.dataset.layout===layout));
+  }
+ }
+ function importLock(){for(const id of ['excelFile','importFormat','importType','importWeek','importMonth','sheetSelect','dailyYear','importMappingMode','replaceExisting','unifiedAcceptOverlap','unifiedAcceptQuality'])$(id).disabled=importBusy||(id==='sheetSelect'&&!sourcePath);$('inspectFile').disabled=importBusy||!sourcePath||!$('importFormat').value;$('addImportMapping').disabled=importBusy;$('saveDailyFolderRule').disabled=importBusy||!review;if($('editImportLayout'))$('editImportLayout').disabled=importBusy;for(const root of [$('importColumnMappings'),$('importPeriodDates'),$('dailySheetChoices')])for(const control of root.querySelectorAll('input,select,textarea,button'))control.disabled=importBusy;updateImportStep();}
+ function resetReview(message){review=null;options=null;$('importPreview').replaceChildren();if(uploadMode==='quality'&&$('qualitySource').value==='pending'){qualityOffset=0;syncQualityPeriods();void loadQuality();}$('saveDailyFolderRule').hidden=true;$('saveImport').disabled=true;syncAcknowledgements();updateImportStep();if(message!==undefined)status('unifiedImportStatus',message);}
+ function changed(){++parameterTicket;resetReview(sourceWasChecked?'Настройки изменены. Проверьте Excel заново.':'');}
  function periodLayoutChanged(){
   $('importPeriodDates').replaceChildren(el('p','Даты наборов будут показаны после проверки Excel.','muted small'));
   changed();
@@ -511,7 +540,7 @@ function init(){
   const summary=$('importLayoutSummary'),label=$('importLayoutLabel');if(!summary||!label)return;
   const option=Array.from($('importFormat').children).find(item=>item.value===$('importFormat').value);
   $('importLayoutName').textContent=option?.textContent||'';
-  summary.hidden=!show||!option;label.hidden=!summary.hidden;
+  summary.hidden=!show||!option;label.hidden=!summary.hidden;layoutCards.hidden=!summary.hidden;
  }
  $('editImportLayout')?.addEventListener('click',()=>{layoutSummary(false);$('importFormat').focus();});
  function formatChanged(){
@@ -639,7 +668,7 @@ function init(){
   event?.preventDefault();event?.stopImmediatePropagation?.();if(importBusy)return;
   let ticket=sourceTicket,retargeting=false;importBusy=true;importLock();
   try{const path=requestedPath||await api.chooseWideXlsx();if(ticket!==sourceTicket)return;if(!path){status('unifiedImportStatus','Выбор файла отменён.');return;}
-   ticket=++sourceTicket;retargeting=true;sourceFolderContext=null;resetReview();const previousPath=sourcePath;
+   ticket=++sourceTicket;retargeting=true;sourceWasChecked=false;sourceFolderContext=null;resetReview();const previousPath=sourcePath;
    sourcePath=null;sheets=[];
    const context=await api.nativeImportFolderContext(path);if(ticket!==sourceTicket)return;
    const rule=context?.rule;
@@ -770,18 +799,18 @@ function init(){
  $('inspectFile').addEventListener('click',async()=>{
   if(importBusy||!sourcePath)return;importBusy=true;resetReview();importLock();const rev=UI.revision,ticket=sourceTicket,parameters=parameterTicket,epoch=generation;
   const assertCurrent=()=>{if(epoch!==generation||ticket!==sourceTicket||UI.revision!==rev||parameters!==parameterTicket)throw Error('Данные или файл изменились. Проверьте Excel заново.');};
-  try{const wide=$('importFormat').value==='daily-wide';await refreshRuleContext(sourcePath,rev);assertCurrent();options=getOptions();const result=await (wide?api.nativeWideImportPreview(sourcePath,options):api.nativeLegacyImportPreview(sourcePath,options));assertCurrent();if(!result||typeof result.reviewToken!=='string'||!/^[a-f0-9]{64}$/.test(result.reviewToken))throw Error('Некорректный токен проверки импорта.');review=result;renderReview(result);if(uploadMode==='quality'&&$('qualitySource').value==='pending'){syncQualityPeriods();void loadQuality();}}
+  try{const wide=$('importFormat').value==='daily-wide';await refreshRuleContext(sourcePath,rev);assertCurrent();options=getOptions();const result=await (wide?api.nativeWideImportPreview(sourcePath,options):api.nativeLegacyImportPreview(sourcePath,options));assertCurrent();if(!result||typeof result.reviewToken!=='string'||!/^[a-f0-9]{64}$/.test(result.reviewToken))throw Error('Некорректный токен проверки импорта.');review=result;renderReview(result);sourceWasChecked=true;if(uploadMode==='quality'&&$('qualitySource').value==='pending'){syncQualityPeriods();void loadQuality();}}
   catch(error){resetReview();if($('importFormat').value==='daily-wide'){if(/year|год/i.test(String(error.message||error)))yearDetails.open=true;else wideManual.open=true;}else if($('importAdvanced'))$('importAdvanced').open=true;status('unifiedImportStatus','Не удалось проверить Excel: '+String(error.message||error));$('importPreview').replaceChildren();}
   finally{importBusy=false;importLock();}
  });
  $('saveImport').addEventListener('click',async()=>{
-  if(importBusy||!review||!sourcePath||!options)return;
+  if(importBusy||!review||!sourcePath||!options||!workspaceReady())return;
   const c=review.conflicts||{},q=review.quality||{},replace=$('replaceExisting').checked,overlap=$('unifiedAcceptOverlap').checked,quality=$('unifiedAcceptQuality').checked;
   if((c.replacements>0&&!replace)||(c.cross_type_overlaps>0&&!overlap)||((q.issues>0||q.mismatch_reports>0||q.relevant_source_issues>0)&&!quality)){status('unifiedImportStatus','Подтвердите найденные замены, пересечения и замечания.');return;}
-  const checked={revision:UI.revision,generation,sourceTicket,parameterTicket,source:sourcePath,options,review,wide:$('importFormat').value==='daily-wide'};
-  const current=()=>Number.isSafeInteger(checked.revision)&&UI.revision===checked.revision&&generation===checked.generation&&sourceTicket===checked.sourceTicket&&parameterTicket===checked.parameterTicket&&sourcePath===checked.source&&options===checked.options&&review===checked.review;
+  const checked={workspace:workspaceState()?.workspace_token,revision:UI.revision,generation,sourceTicket,parameterTicket,source:sourcePath,options,review,wide:$('importFormat').value==='daily-wide'};
+  const current=()=>workspaceReady()&&workspaceState()?.workspace_token===checked.workspace&&Number.isSafeInteger(checked.revision)&&UI.revision===checked.revision&&generation===checked.generation&&sourceTicket===checked.sourceTicket&&parameterTicket===checked.parameterTicket&&sourcePath===checked.source&&options===checked.options&&review===checked.review;
   importBusy=true;importLock();
-  try{if(await window.confirm('Повторно проверить Excel и атомарно сохранить '+checked.review.reportCount+' '+reportNoun(checked.review.reportCount)+(checked.review.catalogEntries>0?' и новые названия из справочника Excel':'')+'?')!==true){status('unifiedImportStatus','Сохранение отменено.');return;}
+  try{if(await window.confirm('Повторно проверить Excel и атомарно сохранить '+checked.review.reportCount+' '+reportNoun(checked.review.reportCount)+(checked.review.catalogEntries>0?' и новые названия из справочника Excel':'')+(workspaceState()?.mode==='shared'?' в общую базу':' в личную базу')+'?')!==true){status('unifiedImportStatus','Сохранение отменено.');return;}
    if(!current())throw Error('Данные, файл или параметры изменились. Проверьте Excel заново.');
    let backupDestination=null;if(c.replacements>0){backupDestination=await api.chooseSqliteBackupPath('analiz-before-import-'+new Date().toISOString().slice(0,10)+'.sqlite3');if(!backupDestination){status('unifiedImportStatus','Сохранение отменено: для замены требуется резервная копия SQLite.');return;}}
    if(!current())throw Error('Данные, файл или параметры изменились. Проверьте Excel заново.');
@@ -819,7 +848,7 @@ function init(){
   intro.textContent='Выберите книгу Excel, проверьте периоды и сохраните отчёты в активную базу.';
   const layout=el('div',undefined,'upload-layout'),source=el('section'),parameters=el('section'),result=el('section');
   source.id='uploadEntryCard';parameters.id='uploadParameterCard';result.id='uploadReviewCard';
-  source.append(el('h3','Источник Excel'));parameters.append(el('h3','Параметры отчёта'));result.append(el('h3','Результат проверки'));
+  source.append(el('h3','Файл Excel'));parameters.append(el('h3','Структура и лист'));result.append(el('h3','Результат проверки'));
   const fileField=$('excelFile').closest('.import-file-field'),fileGrid=fileField.parentElement;
   const folder=$('desktopSource'),hint=el('p',undefined,'muted small');
   const filePicker=el('div',undefined,'import-grid upload-file-picker');filePicker.append(fileField);
@@ -839,9 +868,10 @@ function init(){
   showSource(false);
   const book=el('p',undefined,'upload-selected-book');book.id='uploadSelectedBook';book.hidden=true;source.append(book);
   const inspect=$('inspectFile'),save=$('saveImport'),actions=inspect.parentElement;
-  parameters.append(fileGrid,$('importDateEvidence'),$('dailyWideOptions'),$('ordinaryImportHint'),$('importAdvanced'),inspect,importStatus);
+  inspect.setAttribute('aria-describedby','inspectFileHint');
+  parameters.append(fileGrid,layoutCards,$('importDateEvidence'),$('dailyWideOptions'),$('ordinaryImportHint'),$('importAdvanced'),inspect,inspectHint,importStatus);
   result.append($('importPreview'),$('replaceExisting').parentElement,acknowledgements,save);
-  actions.remove();layout.append(source,parameters,result);intro.after(layout);
+  actions.remove();layout.append(stepLabel,source,parameters,result);intro.after(layout);
  }
  function folderControls(){
   if(!api.list||!api.chooseFolder)return;
@@ -871,10 +901,10 @@ function init(){
   databaseLabel.textContent=databaseScope().label;
   const folder=activeWorkspace();
   if(folder!==workspaceFolder){
-   workspaceFolder=folder;++sourceTicket;sourcePath=null;sourceFolderContext=null;sheets=[];wideSheetRows=[];
+   workspaceFolder=folder;sourceWasChecked=false;++sourceTicket;sourcePath=null;sourceFolderContext=null;sheets=[];wideSheetRows=[];
    clearSourceOverrides();$('sheetSelect').replaceChildren();$('dailySheetChoices').replaceChildren();status('excelFileStatus','Выбрать файл Excel…');importLock();updateSelectedBook();
   }
-  ++generation;++reportTicket;++calendarTicket;++qualityTicket;++detailTicket;savedQualityPeriods.clear();syncQualityPeriods();if(!snapshot){window.sqlRowScroll?.reset($('reports'));window.sqlRowScroll?.reset($('qualityTable'));qualityActions.replaceChildren();reportPageStatus.textContent='Данные обновляются';resetReview();status('unifiedImportStatus',sourcePath?'Обновление данных. Проверьте Excel заново.':'');$('reports').replaceChildren();$('reportCalendar').replaceChildren();$('calendarDetails').replaceChildren();$('qualityTable').replaceChildren();$('qualityPrev').disabled=$('qualityNext').disabled=true;return;}reportIndex=0;qualityOffset=0;resetReview();status('unifiedImportStatus',sourcePath?'Данные обновлены. Перед импортом выполните новую проверку.':'');
+  ++generation;++reportTicket;++calendarTicket;++qualityTicket;++detailTicket;savedQualityPeriods.clear();syncQualityPeriods();if(!snapshot){window.sqlRowScroll?.reset($('reports'));window.sqlRowScroll?.reset($('qualityTable'));qualityActions.replaceChildren();reportPageStatus.textContent='Данные обновляются';resetReview();status('unifiedImportStatus',sourceWasChecked?'Обновление данных. Проверьте Excel заново.':'');$('reports').replaceChildren();$('reportCalendar').replaceChildren();$('calendarDetails').replaceChildren();$('qualityTable').replaceChildren();$('qualityPrev').disabled=$('qualityNext').disabled=true;return;}reportIndex=0;qualityOffset=0;resetReview();status('unifiedImportStatus',sourceWasChecked?'Данные обновлены. Перед импортом выполните новую проверку.':'');
   const selected=$('qualityOrg').value;$('qualityOrg').replaceChildren();for(const [value,label]of [['all','Все подразделения'],...(snapshot.org_names||[]).map(v=>[v,v])]){const o=el('option',label);o.value=value;$('qualityOrg').append(o);}$('qualityOrg').value=(snapshot.org_names||[]).includes(selected)?selected:'all';
   void refreshUpload();
  });
