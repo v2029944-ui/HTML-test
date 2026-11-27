@@ -12,7 +12,7 @@
   // Keep the legacy route keys for transitions, but do not duplicate the
   // main summary and adjacent-history tools among the five detail tabs.
   const analyticsTabs = ['chartPanel','structurePanel','comparison','usualPanel','regularityPanel'];
-  let active = 's1', panel = '', panelOpener = null, dialogOpener = null;
+  let active = 's1', panel = '', analyticsTab = 'chartPanel', panelOpener = null, dialogOpener = null;
   let panelChange = 0;
   let returnPanel = null;
   function button(text, action) {
@@ -44,12 +44,11 @@
   }
 
   function disclosures() {
-    byId('refAnalytics').setAttribute('aria-expanded', String(Boolean(panel) && !management.includes(panel)));
     byId('refSettings').setAttribute('aria-expanded', String(panel === 'storage'));
   }
 
   function closePanel(restoreFocus = true) {
-    if (!panel) return;
+    if (!panel || (restoreFocus && analyticsTabs.includes(panel))) return;
     if (restoreFocus && returnPanel) {
       const previous = returnPanel;
       returnPanel = null;
@@ -58,6 +57,11 @@
       return;
     }
     returnPanel = null;
+    if (restoreFocus && active === 's1') {
+      openPanel(analyticsTab, null, false);
+      if (panelOpener?.isConnected) panelOpener.focus({preventScroll:true});
+      return;
+    }
     window.referenceDetail.hide();
     panel = '';
     byId('toolsPage').hidden = true;
@@ -67,7 +71,7 @@
     if (restoreFocus && panelOpener?.isConnected) panelOpener.focus({preventScroll: true});
   }
 
-  function openPanel(key, opener) {
+  function openPanel(key, opener, moveFocus = true) {
     if (!Object.hasOwn(sections, key)) return;
     const tools = byId('toolsPage'), nav = tools.querySelector('.tool-tabs');
     const change = ++panelChange;
@@ -78,6 +82,8 @@
       if (!window.referenceFilters.atSide()) window.referenceFilters.closeFilters();
     }
     panel = key;
+    if (analyticsTabs.includes(key)) analyticsTab = key;
+    byId('backBtn').hidden = analyticsTabs.includes(key);
     tools.hidden = false;
     byId('refNative').dataset.panel = key;
     const manage = management.includes(key);
@@ -97,7 +103,7 @@
     if (!manage) window.referenceFilters.syncDetails();
     disclosures();
     const focus = opener ? byId('toolsTitle') : (nav.querySelector('[aria-pressed=true]') || byId('toolsTitle'));
-    focus.focus({preventScroll:true});
+    if (moveFocus) focus.focus({preventScroll:true});
     if (opener) {
       // Collapsing filters changes the sticky offset in ResizeObserver. Scroll
       // after that layout rather than retaining the expanded filter height.
@@ -109,7 +115,7 @@
 
   function navigate(id) {
     if (id !== 's1' && id !== 's2') return;
-    closePanel(false);
+    if (id === 's2') closePanel(false);
     active = id;
     byId('s1').hidden = id !== 's1';
     byId('s2').hidden = id !== 's2';
@@ -119,6 +125,7 @@
       else tab.removeAttribute('aria-current');
     }
     window.referenceResults.setScreen(active);
+    if (id === 's1' && !analyticsTabs.includes(panel)) openPanel(analyticsTab, null, false);
     window.scrollTo(0, 0);
   }
 
@@ -149,8 +156,14 @@
     byId('refImport').addEventListener('click', event => openPanel('upload', event.currentTarget));
     byId('refSettings').addEventListener('click', event => panel === 'storage' ? closePanel() : openPanel('storage', event.currentTarget));
     byId('referenceAdjacentHistory')?.addEventListener('click', event => openPanel('changes', event.currentTarget));
-    byId('refAnalytics').addEventListener('click', event =>
-      panel && !management.includes(panel) ? closePanel() : openPanel('chartPanel', event.currentTarget));
+    byId('refAnalytics').addEventListener('click', event => {
+      if (!analyticsTabs.includes(panel)) {
+        openPanel(analyticsTab, event.currentTarget);
+      } else {
+        byId('toolsTitle').focus({preventScroll:true});
+        tools.scrollIntoView({block:'start'});
+      }
+    });
     byId('backBtn').addEventListener('click', () => closePanel());
     root.addEventListener('keydown', event => {
       // Let the browser dismiss only the active select picker.
@@ -164,7 +177,7 @@
         else disclosure.open = false;
         disclosure.querySelector(':scope > summary')?.focus({preventScroll:true});
         event.preventDefault();
-      } else if (panel && tools.contains(event.target)) {
+      } else if (panel && !analyticsTabs.includes(panel) && tools.contains(event.target)) {
         closePanel();
         event.preventDefault();
       }

@@ -41,7 +41,6 @@
 #refNative .detail-date-scope {display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;color:var(--muted);margin:8px 0 14px}
 #refNative .detail-date-scope button {font:inherit;color:var(--accent);text-decoration:underline;background:transparent;border:none;cursor:pointer}
 #refNative[data-panel] .change-pagination {flex-wrap:wrap;align-items:center}
-#refNative[data-panel] .change-pagination > :is(button,span) {padding:6px 10px}
 @media(max-width:640px) {
   #refNative[data-panel] .sectionbar {flex-wrap:wrap}
   #refNative[data-panel] .panel {padding:12px}
@@ -80,8 +79,11 @@
 #refNative #regularityResults .table :is(th,td) {
   white-space:normal;overflow-wrap:anywhere;hyphens:auto;padding-inline:6px;
 }
-#refNative #regularityResults .table tr > :first-child {width:18%;text-align:start}
-#refNative #regularityResults .table th:last-child {width:14%}
+#refNative #regularityResults .table th:first-child {width:29%}
+#refNative #regularityResults .table th:is(:nth-child(7),:nth-child(8)) {width:9%}
+#refNative #regularityResults .table th:last-child {width:15%}
+#refNative #regularityResults .table :is(th:first-child,tbody td:first-child) {text-align:start}
+#refNative #regularityResults .table tbody td:not(:first-child,:last-child) {white-space:nowrap}
 #refNative .calendar-day-heading h4 {scroll-margin-top:calc(var(--sticky-filter-height,48px) + 16px)}
 #refNative #overviewKpis > .kpi {display:grid;grid-row:span 3;grid-template-rows:subgrid;row-gap:4px;align-content:start}
 

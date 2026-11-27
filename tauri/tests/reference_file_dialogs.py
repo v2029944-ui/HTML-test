@@ -566,7 +566,7 @@ def check_reference_file_dialogs(page, nativeConfirmations, output):
     metric_date('metricKindTo', clear=True)
 
     page.locator('#backBtn').click()
-    expect(page.locator('#toolsPage')).not_to_be_visible()
+    expect(page.locator('#refNative')).to_have_attribute('data-panel','chartPanel')
     page.locator('#sharedHeader .main-nav').get_by_role('button', name='Сводка', exact=True).click()
     assert nativeConfirmations.revision() == revision
     assert page.evaluate('window.unifiedUI.snapshot.reports') == 0

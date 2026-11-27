@@ -150,11 +150,19 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
     def panel(target):
         expect(page.locator('#toolsPage')).to_be_visible(timeout=TIMEOUT)
         expect(page.locator('#' + target)).to_be_visible(timeout=TIMEOUT)
-        expect(page.locator('#backBtn')).to_be_visible()
+        back = page.locator('#backBtn')
+        if target in ('chartPanel','structurePanel','comparison','usualPanel','regularityPanel'):
+            expect(back).to_be_hidden()
+        else:
+            expect(back).to_be_visible()
 
     def close_panel(trigger):
         page.locator('#backBtn').click()
-        expect(page.locator('#toolsPage')).not_to_be_visible(timeout=TIMEOUT)
+        if page.locator('#s1').is_visible():
+            expect(page.locator('#toolsPage')).to_be_visible(timeout=TIMEOUT)
+            expect(page.locator('#backBtn')).to_be_hidden()
+        else:
+            expect(page.locator('#toolsPage')).not_to_be_visible(timeout=TIMEOUT)
         focused(trigger)
 
     def export_available(selector, has_rows, name):
@@ -317,7 +325,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         expect(page.locator('#reportShell')).to_be_visible(timeout=TIMEOUT)
         expect(page.locator('#s1')).to_be_visible(timeout=TIMEOUT)
         expect(page.locator('#s2')).not_to_be_visible()
-        expect(page.locator('#toolsPage')).not_to_be_visible()
+        panel('chartPanel')
         assert page.evaluate('window.unifiedUI.snapshot.reports > 0') is bool(has_reports)
         assert 'Демоданные' not in page.locator('#sharedHeader').inner_text()
         # The installed route uses the existing native document, never an iframe importer.
@@ -599,12 +607,11 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
             # Closing/reopening a result disclosure reruns SQL and replaces its
             # table. Check heading controls before exercising that lifecycle.
             check_disclosures(page.locator('#toolsPage'), '08-analytics-disclosures')
-        close_panel(analytics)
         analytics.click()
         panel('chartPanel')
-        analytics.click()
-        expect(page.locator('#toolsPage')).not_to_be_visible()
-        focused(analytics)
+        focused(page.locator('#toolsTitle'))
+        page.keyboard.press('Escape')
+        panel('chartPanel')
 
         settings = page.locator('#refSettings')
         settings.click()
@@ -636,7 +643,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         panel('storage')
         page.locator('#appearanceTheme').focus()
         page.keyboard.press('Escape')
-        expect(page.locator('#toolsPage')).not_to_be_visible()
+        panel('chartPanel')
         focused(settings)
 
         if has_reports:
@@ -672,7 +679,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         settings.click()
         panel('storage')
         settings.click()
-        expect(page.locator('#toolsPage')).not_to_be_visible()
+        panel('chartPanel')
         focused(settings)
 
         # Shared date/unit and picker dialogs are tested from the actual toolbar.
