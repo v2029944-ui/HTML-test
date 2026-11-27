@@ -649,7 +649,13 @@ function resetScope(next){if(!next){scope=null;clearExtended();return;}scope=cop
  checkboxList('changesOrganizations',orgNames.map(o=>[o,o]),changeOrganizations,()=>changes());
  const oldBase=value('comparisonBaseOrg');$('comparisonBaseOrg').replaceChildren(...scope.organizations.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));if(scope.organizations.includes(oldBase))$('comparisonBaseOrg').value=oldBase;
  if(!customComparisonMetrics)comparisonMetrics=new Set(metrics());checkboxList('comparisonMetrics',Object.entries(titles),comparisonMetrics,()=>{customComparisonMetrics=true;comparison();});
- updatePeriodOverrides();if(activeView==='changes')changes();if(activeView==='dashboard'&&$('advancedAnalytics').open){comparison();if(compositionVisible())structure();if(referencePanel('usualPanel'))patterns('usual');if(referencePanel('regularityPanel'))patterns('regularity');}
+ updatePeriodOverrides();
+ if(activeView==='changes')changes();
+ if($('advancedAnalytics').open){
+  if(activeView==='dashboard'){comparison();if(compositionVisible())structure();}
+  if(referencePanel('usualPanel'))patterns('usual');
+  if(referencePanel('regularityPanel'))patterns('regularity');
+ }
 }
 function bind(ids,event,handler){for(const id of ids)$(id)?.addEventListener(event,handler);}
 

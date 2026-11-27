@@ -342,6 +342,25 @@ test('reference comparison uses exact shared intervals and preserves selected or
  f.window.referenceDetail.active='storage';await assert.rejects(exportView.export(),/изменились/);assert.equal(exports.length,1);
 });
 
+test('switching from settings recalculates frequency when the shared scope changes before dashboard activation',async()=>{
+ const calls=[];
+ const f=fixture({unifiedPatternPage:async(req,mode)=>{
+  calls.push([req.query.from,mode]);
+  return {rows:[],total_rows:0,used:1,expected:1,previous_used:1,baseline_from:req.query.from,baseline_to:req.query.from,current_complete:true};
+ }});
+ f.publish();
+ f.view('storage');
+ f.window.referenceDetail={active:'regularityPanel'};
+ f.nodes.get('advancedAnalytics').open=true;
+ const first=f.window.unifiedExtended.openPatterns('regularity');
+ f.publish({from:'2024-01-02',to:'2024-01-02'});
+ f.view('dashboard');
+ await first;
+ await settle();
+ assert.deepEqual(calls,[['2024-01-01','regularity'],['2024-01-02','regularity']]);
+ assert.match(f.nodes.get('regularityCoverage').textContent,/Периодов с отчётами/);
+});
+
 test('reference regularity retains incomplete organizations and matches the chosen monthly unit',async()=>{
  const calls=[];
  const f=fixture({
