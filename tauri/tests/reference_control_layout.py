@@ -25,8 +25,10 @@ def check_control_layout(page):
         for (const table of tables) {
           if (!visible(table)) continue;
           for (const cell of table.querySelectorAll('thead tr:first-child > :is(th,td),tbody tr:first-child > :is(td,th)')) {
-            if (visible(cell) && getComputedStyle(cell).textAlign !== 'center')
-              errors.push([table.caption?.innerText || table.className,cell.textContent.slice(0,60),'cell content not centered']);
+            const numeric = cell.matches('#s1 .data-card table :is(th,td):nth-child(n+2),#s2 .changes-table :is(th,td):nth-child(n+3)');
+            const expected = numeric ? 'right' : 'center';
+            if (visible(cell) && getComputedStyle(cell).textAlign !== expected)
+              errors.push([table.caption?.innerText || table.className,cell.textContent.slice(0,60),'expected alignment: '+expected]);
           }
         }
       }

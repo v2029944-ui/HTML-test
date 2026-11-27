@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
 pub(super) const GROUP_PARENTS_FIELD: &str = "workGroupTreeParents";
-const MAX_GROUP_DEPTH: usize = 32;
+pub(super) const MAX_GROUPS: usize = 20_000;
+const MAX_GROUP_DEPTH: usize = 64;
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

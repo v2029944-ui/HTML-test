@@ -422,14 +422,12 @@ function keepFilterSpace(){
 function openFilters(){
  const fold=one('.filter-fold');
  keepFilterSpace();
- panel.removeAttribute('data-auto-folded');
  fold.open=true;
  fold.querySelector('summary').focus({preventScroll:true});
 }
 function closeFilters(){
  const fold=one('.filter-fold');
  if(fold.open)keepFilterSpace();
- panel.removeAttribute('data-auto-folded');
  fold.open=false;
 }
 function initPlacement(){
@@ -442,8 +440,6 @@ function initPlacement(){
   panel.style.setProperty('--filter-top-gap',gap+'px');
  }
  function releaseSpace(){
-  if(panel.hasAttribute('data-auto-folded'))fold.open=true;
-  panel.removeAttribute('data-auto-folded');
   panel.removeAttribute('data-floating');
   panel.style.removeProperty('--filter-slot');
  }
@@ -478,27 +474,10 @@ function initPlacement(){
   try{window.localStorage.setItem(layoutKey,placement.value);}
   catch{UI.notice('Расположение фильтра изменено на этот сеанс. Сохранить настройку на устройстве не удалось.');}
  };
- summary.addEventListener('click',event=>{
-  // One click also opens a partly scrolled-away filter.
-  const reveal=fold.open && !atSide() && !panel.hasAttribute('data-floating') && panel.getBoundingClientRect().top < headerBottom()-1;
-  keepFilterSpace();
-  panel.removeAttribute('data-auto-folded');
-  if(reveal)event.preventDefault();
- });
- // When the initial inline controls leave the viewport, only the summary
- // remains. Leave a focused input or an explicitly opened pinned panel alone.
- function updatePinnedState(){
-  if(atSide()){fitSidebar();return;}
-  if(!fold.open || panel.hasAttribute('data-floating') || (document.activeElement!==summary && panel.contains(document.activeElement)))return;
-  const bounds=panel.getBoundingClientRect();
-  if(bounds.top>=headerBottom() || bounds.bottom>headerBottom()+summary.getBoundingClientRect().height+4)return;
-  keepFilterSpace();
-  panel.setAttribute('data-auto-folded','');
-  fold.open=false;
- }
+ summary.addEventListener('click',keepFilterSpace);
  window.addEventListener('scroll',()=>{
   if(window.scrollY===0)releaseSpace();
-  updatePinnedState();
+  if(atSide())fitSidebar();
  },{passive:true});
  const sizeObserver=new ResizeObserver(()=>{
   root.style.setProperty('--app-header-height',header.offsetHeight+'px');
@@ -508,9 +487,8 @@ function initPlacement(){
   panel.style.setProperty('--filter-zoom',panel.currentCSSZoom || Number(getComputedStyle(panel).zoom) || 1);
   const summaryHeight=Math.ceil(summary.getBoundingClientRect().height)+'px';
   panel.style.setProperty('--filter-heading-height',summaryHeight);
-  panel.style.setProperty('--filter-scroll-away',Math.max(0,panel.offsetHeight-summary.offsetHeight-2)+'px');
-  root.style.setProperty('--sticky-filter-height',atSide()?'0px':summaryHeight);
-  updatePinnedState();
+  root.style.setProperty('--sticky-filter-height',atSide()?'0px':Math.ceil(fold.getBoundingClientRect().height)+'px');
+  if(atSide())fitSidebar();
  });
  sizeObserver.observe(summary);sizeObserver.observe(panel);sizeObserver.observe(root);sizeObserver.observe(header);
 }
