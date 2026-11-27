@@ -1057,6 +1057,13 @@ def check_partial_amount_charts(page, temporary, output):
 
     navigate(page,'comparison')
     wait_for_text(page,'#comparisonCoverage','базового и анализируемого периодов',90_000)
+    # Isolate amount so the graph assertions do not depend on the default KPI selection.
+    metric_picker=page.locator('#comparisonMetrics details')
+    metric_picker.locator('summary').click()
+    metric_picker.locator('input[value="amount"]').check()
+    for other in metric_picker.locator('input:not([value="amount"]):checked').all():
+        other.uncheck()
+    metric_picker.locator('summary').click()
     comparison=page.locator('#comparisonTable table').first
     expect(comparison).to_be_visible(timeout=90_000)
     expect(comparison).to_contain_text('Значение сейчас')

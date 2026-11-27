@@ -443,7 +443,12 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
 
         # Tabs must switch actual native sections, not another application route.
         analytics = page.locator('#refAnalytics')
-        analytics.click()
+        if has_reports:
+            analytics.click()
+        else:
+            expect(analytics).to_be_hidden()
+            expect(page.locator('#toolsPage')).to_be_visible()
+            page.locator('#toolsPage .tool-tabs [data-section="chartPanel"]').click()
         panel('chartPanel')
         sections = [('Состав работ', 'structurePanel'), ('Сравнение', 'comparison'),
                     ('Отклонения', 'usualPanel'), ('Частота', 'regularityPanel'),
@@ -607,9 +612,14 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
             # Closing/reopening a result disclosure reruns SQL and replaces its
             # table. Check heading controls before exercising that lifecycle.
             check_disclosures(page.locator('#toolsPage'), '08-analytics-disclosures')
-        analytics.click()
+        if has_reports:
+            analytics.click()
+            focused(page.locator('#toolsTitle'))
+        else:
+            chart_tab = page.locator('#toolsPage .tool-tabs [data-section="chartPanel"]')
+            chart_tab.focus()
+            focused(chart_tab)
         panel('chartPanel')
-        focused(page.locator('#toolsTitle'))
         page.keyboard.press('Escape')
         panel('chartPanel')
 
