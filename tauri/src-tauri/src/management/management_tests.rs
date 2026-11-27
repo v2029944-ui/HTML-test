@@ -60,6 +60,11 @@ fn unified_search_is_bounded_russian_case_insensitive_prefix_first() {
     let dir = tempdir().unwrap();
     let s = Storage::new(dir.path().into()).unwrap();
     let rev = management_setup(&s, &json!({"reports":[],"settings":{"orgNames":["А","Б","В","Г"],"groups":[],"catalog":[{"work":"Я ремонт","organization":"А"},{"work":"РЕМОНТ двигателя","organization":"Б"},{"work":"Ремонт блока","organization":"А"}]}}));
+    let all = s.unified_management_page(rev, "works", "  ", None, 0, 2).unwrap();
+    assert_eq!((all.total, all.grouped, all.ungrouped), (3, 0, 3));
+    assert_eq!(all.rows.len(), 2);
+    let absent = s.unified_management_page(rev, "works", "нет совпадений", None, 0, 1).unwrap();
+    assert_eq!((absent.total, absent.grouped, absent.ungrouped), (0, 0, 0));
     let page = s.unified_management_page(rev, "works", "ремонт", None, 0, 1).unwrap();
     assert_eq!(page.total, 3);
     assert_eq!(page.rows.len(), 1);
