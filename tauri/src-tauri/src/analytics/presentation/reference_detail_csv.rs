@@ -125,6 +125,14 @@ fn export_patterns(
         headers(w, &["Поиск", &opts.search])?;
         headers(w, &["Фильтр признака", &opts.status])?;
         let usual = table.section == "usual";
+        if let Some(window) = table.window {
+            if usual || opts.baseline.is_none() {
+                headers(w, &["Запрошено исторических периодов", &window.to_string()])?;
+            }
+            if !usual {
+                headers(w, &["Порог отсутствия, периодов", &window.to_string()])?;
+            }
+        }
         if usual {
             let observed_windows = previous.to_string();
             headers(w, &["Исторических окон с отчётами", &observed_windows])?;

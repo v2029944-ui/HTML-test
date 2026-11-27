@@ -191,6 +191,6 @@ test('installed department comparison presents charts before the table',()=>{
  const html=prepareHtml(original);
  const order=(source,...ids)=>ids.map(id=>source.indexOf('id="'+id+'"')).every((offset,i,offsets)=>offset>=0&&(i===0||offset>offsets[i-1]));
  assert.ok(order(html,'comparisonMetrics','comparisonDynamics','comparisonCharts','comparisonTable'));
- assert.match(html,/<h3 id="comparisonDynamicsHeading">Линейный график по периодам<\/h3>/);
+ assert.match(html,/<h3 id="comparisonDynamicsHeading">Динамика по периодам<\/h3>/);
  assert.ok(order(original,'comparisonTable','comparisonCharts','comparisonDynamics'));
 });

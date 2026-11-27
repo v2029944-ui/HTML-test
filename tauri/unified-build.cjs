@@ -143,13 +143,26 @@ function buildUnified(source){
  if(!comparisonPlots.test(html))throw Error('Original comparison charts changed');
  html=html.replace(comparisonPlots,`
         <section id="comparisonDynamics" class="extended-section" aria-labelledby="comparisonDynamicsHeading" hidden>
-          <h3 id="comparisonDynamicsHeading">Линейный график по периодам</h3>
+          <h3 id="comparisonDynamicsHeading">Динамика по периодам</h3>
           <p class="muted small">У каждого подразделения своя линия. Пропуски разрывают линию.</p>
           <div id="comparisonDynamicsPlots"></div>
         </section>
         <div id="comparisonCharts" role="region" aria-label="Графики сравнения"></div>
         <div id="comparisonTable"></div>`);
 
+ const historyControls=[
+  ['usualWindow','Окон для среднего','Длина каждого окна равна анализируемому диапазону.'],
+  ['regularityGap','Исторических периодов','Также порог признака «Долго без выполнений».']
+ ];
+ for(const [id,label,help] of historyControls){
+  const select=new RegExp('<label>[^<]+<select id="'+id+'"[^>]*>[\\s\\S]*?</select></label>');
+  if(!select.test(html))throw Error('Original historical period control changed: '+id);
+  const baseline=id==='regularityGap'?'<label><input type="checkbox" id="regularityUseBaseline" checked> Сравнить с выбранным базовым периодом</label>':'';
+  html=html.replace(select,`<div class="pattern-window"><label>${label}<input id="${id}" type="number" min="1" max="120" step="1" value="4" title="${help}"></label>
+    <div class="button-row"><button id="${id}4" type="button" class="button secondary" aria-label="${label}: 4">4</button>
+    <button id="${id}8" type="button" class="button secondary" aria-label="${label}: 8">8</button></div></div>${baseline}`);
+ }
+ html=html.replace('прошло 4 или 8 полных периодов подряд','прошло указанное число периодов подряд с доступными отчётами');
  // Extend the shared preference only in the installed application.
  const compactSizes=['80','90'];
  script+=`\nUI_SIZES.unshift(...${JSON.stringify(compactSizes)});\n`;

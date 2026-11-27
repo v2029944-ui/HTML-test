@@ -87,8 +87,29 @@ tableCsvButton=function(root,title,metric,caption,headers,rows,context,unit){
   const button=el('button','Скачать CSV','button secondary');button.type='button';
   button.addEventListener('click',async()=>{button.disabled=true;try{await context.export();}catch(error){O.notice(error.message||String(error),true);}finally{button.disabled=false;}});root.append(button);return;
  }
- originalCsv(root,title+' — текущая страница',metric,caption,headers,rows,Array.isArray(context)?context:null,unit);
+ const allRows=context?.allRows===true;
+ originalCsv(root,allRows?title:title+' — текущая страница',metric,caption,headers,rows,
+  allRows?context.metadata:Array.isArray(context)?context:null,unit);
 };
+function addTablePrint(host,title,caption,headers,rows,isCurrent){
+ const button=el('button','Печать текущей страницы','button secondary');button.type='button';
+ button.addEventListener('click',()=>{
+  if(!isCurrent())return;
+  const report=$('printReport'),table=el('table'),head=el('thead'),header=el('tr'),body=el('tbody');
+  for(const label of headers){const cell=el('th',label);cell.scope='col';header.append(cell);}
+  head.append(header);
+  for(const values of rows){
+   const row=el('tr');
+   for(const value of values)row.append(el('td',String(value?.textContent??value??'—')));
+   body.append(row);
+  }
+  table.append(head,body);
+  report.replaceChildren(el('h1',title),el('p',caption+' · текущая страница'),table);
+  report.hidden=false;
+  try{window.print();}finally{report.hidden=true;}
+ });
+ (host.lastElementChild??host).append(button);
+}
 async function notify(value){for(const listener of snapshots)await listener(value);}
 async function refresh(){
  if(refreshing)return refreshing;
@@ -143,7 +164,7 @@ function init(){
  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&$('managementNav').open){$('managementNav').open=false;$('managementToggle').focus();}});
  activate('dashboard');
 }
-const U={api,state,$,el,notice:O.notice,fmt:O.fmt,table,tableHelp,drawChart:O.drawChart,drawDepartments:O.drawDepartments,setPeriodInput,range:(...args)=>window.nativePeriodSelection.range(...args),request,refresh,refreshWorkspace,activate,init,
+const U={api,state,$,el,notice:O.notice,fmt:O.fmt,table,tableHelp,addTablePrint,drawChart:O.drawChart,drawDepartments:O.drawDepartments,setPeriodInput,range:(...args)=>window.nativePeriodSelection.range(...args),request,refresh,refreshWorkspace,activate,init,
  get revision(){return revision;},get snapshot(){return snapshot;},get scope(){return scope;},get generation(){return generation;},
  onSnapshot(fn){snapshots.add(fn);return()=>snapshots.delete(fn);},onView(name,fn){if(!views.has(name))views.set(name,new Set());views.get(name).add(fn);},
  onScope(fn){scopes.add(fn);},publishScope(value){scope=value;for(const fn of scopes)fn(value);},isCurrent(value){return revision!==null&&value===revision;}};

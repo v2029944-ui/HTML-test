@@ -829,3 +829,31 @@ fn changes_compare_the_available_pairs_for_one_original_work() {
     assert_eq!(row.average.current, Some(47.));
     assert_eq!(row.average.delta, Some(-37.));
 }
+
+#[test]
+fn configurable_pattern_history_uses_calendar_windows_and_bounds_requests() {
+    let (_dir, store, revision, _) = fixture();
+    let scope = partial_pattern_scope(&store, revision);
+    let q = ChangeQuery { from: "2024-01-03".into(), to: "2024-01-03".into(), ..query() };
+    let options = UnifiedPatternOptions {
+        search: "яркая".into(), status: "all".into(), range_window: true, baseline: None,
+    };
+    for (window, first) in [(1, "2024-01-02"), (3, "2023-12-31"), (4, "2023-12-30"),
+        (8, "2023-12-26"), (12, "2023-12-22"), (120, "2023-09-05")] {
+        let page = store.unified_pattern_page_at_page(revision, &scope, &q, None, "usual", window, &options, 0).unwrap();
+        assert_eq!((page.expected, page.baseline_from.as_str(), page.baseline_to.as_str()),
+            (i64::from(window), first, "2024-01-02"));
+        assert!(page.used < page.expected || window == 1);
+    }
+    let frequency = UnifiedPatternOptions { range_window: false, ..options };
+    let page = store.unified_pattern_page_at_page(revision, &scope, &q, None, "regularity", 3, &frequency, 0).unwrap();
+    assert_eq!(page.baseline_from, "2023-12-31");
+    assert_eq!(page.baseline_to, "2024-01-02");
+    let month = ChangeQuery { from: "2024-01-01".into(), to: "2024-01-31".into(), ..q.clone() };
+    let full_windows = UnifiedPatternOptions { range_window: true, ..frequency.clone() };
+    let bounded = store.unified_pattern_page_at_page(revision, &scope, &month, None, "usual", 120, &full_windows, 0);
+    assert!(bounded.err().unwrap().contains("3660 calendar buckets"));
+    for invalid in [-1, 0, 121] {
+        assert!(store.unified_pattern_page_at_page(revision, &scope, &q, None, "usual", invalid, &frequency, 0).is_err());
+    }
+}

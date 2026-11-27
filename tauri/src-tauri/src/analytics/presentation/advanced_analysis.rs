@@ -6,7 +6,7 @@ use super::*;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UnifiedPatternOptions {
-    /// Mean of 4/8 whole intervals of the same length as the selected interval.
+    /// Mean of whole intervals of the same length as the selected interval.
     #[serde(default)]
     pub range_window: bool,
     /// Exact comparison interval for frequency, including non-adjacent periods.
@@ -606,8 +606,11 @@ impl Analytics<'_> {
         &self, revision:i64, s:&AnalysisScope, q:&ChangeQuery, grouping:Option<&str>,
         mode:&str, window:i32, after:Option<&str>, options:Option<&UnifiedPatternOptions>, write:Option<&PatternWriter<'_>>, page_index:Option<usize>,
     )->Result<PatternPage,String> {
-        if !matches!(mode, "usual" | "regularity") || !matches!(window, 4 | 8) {
-            return Err("Invalid pattern mode or window".into());
+        if !matches!(mode, "usual" | "regularity") {
+            return Err("Invalid pattern mode".into());
+        }
+        if !(1..=120).contains(&window) {
+            return Err("Pattern window must be between 1 and 120 periods".into());
         }
         if let Some(key) = after.filter(|_|options.is_none()) {
             key_bound(key)?;
@@ -657,7 +660,16 @@ impl Analytics<'_> {
             let baseline = Calendar::new(s, &selected, None)?;
             baseline.current_bounds(false)
         } else {
-            let base_count = if usual { window * sample_length } else { count };
+            let base_count = if usual {
+                window * sample_length
+            } else if available {
+                window
+            } else {
+                count
+            };
+            if base_count > 3660 {
+                return Err("Pattern history exceeds 3660 calendar buckets. Shorten the analysis range or reduce the number of historical windows.".into());
+            }
             (step(&calendar.kind, first, -base_count)?, step(&calendar.kind, first, -1)?)
         };
         if clipped_baseline {
