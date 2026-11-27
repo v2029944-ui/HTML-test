@@ -158,7 +158,7 @@ function buildUnified(source){
  html=html.replace(comparisonPlots,`
         <section id="comparisonDynamics" class="extended-section" aria-labelledby="comparisonDynamicsHeading" hidden>
           <h3 id="comparisonDynamicsHeading">Динамика по периодам</h3>
-          <p class="muted small">У каждого подразделения своя линия. Пропуски разрывают линию.</p>
+          <p class="muted small">Пропуски разрывают линию графика.</p>
           <div id="comparisonDynamicsPlots"></div>
         </section>
         <div id="comparisonCharts" role="region" aria-label="Графики сравнения"></div>

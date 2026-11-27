@@ -65,7 +65,7 @@ function chosenBaseRange(current){
 function layout(){const single=value('overviewMode')==='single';$('overviewSingle').hidden=!single;$('overviewRange').hidden=single;if(single){$('rangeStart').value=value('overviewPeriod');$('rangeEnd').value=value('overviewPeriod');}
  const departments=value('chartBreakdown')==='organizations',chosen=departments?[...state.chartMetrics]:chosenMetrics();
  $('chartOrgScopeLabel').hidden=!departments;$('chartMetricsWrap').hidden=!departments;$('chartSeriesLayoutLabel').hidden=!departments||chosen.length<2;$('chartNotes').hidden=!departments;$('chartComparisonHint').hidden=!departments;$('chartReadGuide').hidden=!departments||state.chart==='table';
- $('chartDescription').textContent=departments?'Показатели подразделений за общий период. Настройки этого графика — ниже.':'Отмеченные работы и группы из общих фильтров.';
+ $('chartDescription').textContent=departments?'Все выбранные подразделения за один период.':'Отмеченные работы и группы из общих фильтров.';
  $('chartComparisonHint').textContent='Подразделения выбираются вверху страницы. Показатели этого графика задаются независимо от показателей обзора и работ.';
  $('chartReadGuide').textContent=chosen.length>1&&value('chartSeriesLayout')==='combined'?'Цвет обозначает подразделение. В совместной диаграмме значения показаны в % от максимума каждого показателя, а не как процент изменения.':'У каждого показателя своя шкала в исходных единицах. Цвет обозначает подразделение.';
  const displayed=displayedChart&&displayedChart.scope.revision===UI.revision?displayedChart.mode:state.chart;

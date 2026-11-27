@@ -1512,7 +1512,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         </div>
       </section>
       <section class="panel" id="comparison" aria-labelledby="comparisonHeading">
-        <div class="sectionbar"><div><h2 id="comparisonHeading">Сравнение периодов и подразделений</h2><p class="muted small">Сопоставьте два интервала или подразделения за общий период.</p></div></div>
+        <div class="sectionbar"><div><h2 id="comparisonHeading">Сравнение периодов и подразделений</h2></div></div>
         <div class="section-filter-row"><label>Что сравниваем<select id="comparisonMode"><option value="periods">Периоды</option><option value="organizations">Подразделения</option></select></label></div>
         <div id="periodComparisonFilters" class="comparison-filters">
           <label>Интервалы сравнения<select id="periodComparisonScope"><option value="single">Два отдельных периода</option><option value="range">Два диапазона</option></select></label>
@@ -1682,14 +1682,14 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <p id="ordinaryImportHint" class="muted small">Для обычных недельных и дневных отчётов укажите первую дату по данным вашего Excel: название файла не определяет начало периода. Даты последующих наборов рассчитываются последовательно, при пропусках их можно скорректировать вручную. Недельные суммы автоматически по дням не распределяются. HTML работает без интернета.</p>
         <details class="quick-help import-advanced" id="importAdvanced">
           <summary>Столбцы и даты каждого набора</summary>
-          <p>Обычно столбцы распознаются автоматически, а периоды идут подряд. Для другого формата Excel включите ручную настройку: укажите буквы столбцов работы, количества и суммы и номер строки заголовка для каждого набора. Даты ниже можно изменить по отдельности без изменения первого периода.</p>
+          <p>При ручной настройке укажите для каждого набора буквы столбцов и номер строки заголовка.</p>
           <label>Способ распознавания<select id="importMappingMode"><option value="auto">Автоматически</option><option value="manual">Указать столбцы вручную</option></select></label>
           <div id="importManualWrap" hidden>
             <div id="importColumnMappings"></div>
             <button type="button" id="addImportMapping" class="button secondary">Добавить набор столбцов</button>
           </div>
           <h3>Даты наборов</h3>
-          <p class="muted small">Необязательно менять: по умолчанию периоды последовательные от первой даты. Укажите дату отдельно, если есть пропуски или непоследовательный порядок.</p>
+          <p class="muted small">Периоды отсчитываются от первой даты. Если есть пропуск или нарушен порядок, исправьте дату нужного набора.</p>
           <div id="importPeriodDates" class="import-date-grid" aria-live="polite"><p class="muted small">Выберите Excel-файл для настройки дат.</p></div>
         </details>
         <label class="checkline"><input type="checkbox" id="replaceExisting"> Заменить уже сохранённый отчёт за совпадающий период</label>
@@ -1732,7 +1732,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
     <section id="groups" class="view">
       <section class="panel" id="groupWorkspace" aria-labelledby="groupHeading">
         <h2 id="groupHeading">Группы работ</h2>
-        <p class="muted small">Общие группы действуют для всех подразделений. Раскройте группу, чтобы посмотреть состав или перенести работу. Исходные показатели не меняются.</p>
+        <p class="muted small">Группы общие для всех подразделений.</p>
         <div class="actions"><button id="createGroup" class="button primary" type="button">Создать группу</button><button id="exportGroups" class="button secondary" title="Скачать список групп без отчётов">Скачать группы (JSON)</button><label class="button secondary file-label">Импорт групп JSON<input type="file" id="importGroups" accept=".json,application/json" hidden></label><label class="button secondary file-label">Добавить справочник услуг из Excel<input id="catalogFile" type="file" accept=".xlsx" hidden></label></div>
 <p class="muted small">Файл JSON содержит названия групп и входящие работы, без отчётов. Импорт заменяет текущий список групп после подтверждения.</p>
         <p id="groupCoverage" class="group-coverage" role="status" aria-live="polite"></p>
@@ -1741,13 +1741,13 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <div id="groupList"></div>
       <details class="group-section" id="groupEditor">
         <summary>Создание и изменение группы</summary>
-        <p class="muted">Задайте название и отметьте работы. Одна работа входит максимум в одну группу; отметки сохраняются при поиске и смене страницы.</p>
+        <p class="muted">Работа может входить только в одну группу. Выбор сохраняется при поиске и смене страницы.</p>
         <div class="group-edit">
           <label>Название группы<input id="groupName" placeholder="Например, Ремонт форсунок" maxlength="120"></label>
           <div class="group-filters">
             <label>Поиск работ<input id="workSearch" type="search" placeholder="Введите часть названия"></label>
           </div>
-          <p id="nameSearchHelp" class="muted small">Поиск: сначала названия, начинающиеся с введённого текста, затем совпадения внутри. В каждой части — по алфавиту, при любой длине запроса.</p>
+          <p id="nameSearchHelp" class="muted small">Совпадения в начале названия показаны первыми.</p>
           <div class="works-list" id="worksList" aria-label="Выбор работ"></div>
           <div class="change-pagination"><button id="workPrev" class="button secondary" type="button">← Предыдущая</button><span id="workPage" class="muted small" aria-live="polite"></span><button id="workNext" class="button secondary" type="button">Следующая →</button></div>
           <div class="actions"><button id="saveGroup" class="button primary">Сохранить группу</button><button id="resetGroup" class="button secondary" title="Сбросить только форму, не удаляя сохранённые группы">Сбросить форму</button></div>
@@ -1777,18 +1777,18 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
     <section id="storage" class="view">
       <section class="panel" aria-labelledby="appearanceHeading">
         <h2 id="appearanceHeading">Оформление</h2>
-        <p class="muted small">Цвета и дизайн настраиваются независимо. У каждой палитры и каждого дизайна есть светлая и тёмная версия. Изменения сохраняются на этом устройстве.</p>
+        <p class="muted small">Оформление применяется сразу и сохраняется на этом устройстве.</p>
         <div class="appearance-categories">
-          <fieldset class="appearance-category"><legend>Цвета</legend><p class="muted small">Тема определяет яркость, палитра — цвета интерфейса и графиков.</p><div class="appearance-grid">
+          <fieldset class="appearance-category"><legend>Цвета</legend><div class="appearance-grid">
             <label>Тема<select id="appearanceTheme"><option value="system">Как на устройстве</option><option value="light">Светлая</option><option value="dark">Тёмная</option></select></label>
             <label>Цветовая палитра<select id="appearancePalette"><option value="minimal">Синий</option><option value="neon">Бирюзовый и фиолетовый</option><option value="glass">Сиреневый и голубой</option><option value="corporate">Тёмно-синий и графит</option><option value="paper">Терракотовый и оливковый</option><option value="industrial">Жёлтый и графит</option></select></label>
           </div></fieldset>
-          <fieldset class="appearance-category"><legend>Дизайн интерфейса</legend><p class="muted small">Формы, отступы, шрифты и эффекты. Готовое сочетание меняет палитру и дизайн, сохраняя тему.</p><div class="appearance-grid">
+          <fieldset class="appearance-category"><legend>Дизайн интерфейса</legend><p class="muted small">Готовое сочетание меняет палитру и дизайн, сохраняя тему.</p><div class="appearance-grid">
             <label>Дизайн<select id="appearanceDesign"><option value="modern">Современный</option><option value="classic">Строгий</option><option value="compact">Компактный</option><option value="neon">Неоновый</option><option value="glass">Стеклянный</option><option value="corporate">Корпоративный</option><option value="paper">Бумажный</option><option value="industrial">Индустриальный</option></select></label>
             <label>Готовое сочетание<select id="appearancePreset"><option value="custom" disabled>Своё сочетание</option><option value="minimal">Минимализм</option><option value="neon">Неон</option><option value="glass">Мягкое стекло</option><option value="corporate">Корпоративный</option><option value="paper">Редакционный</option><option value="industrial">Индустриальный</option></select></label>
           </div></fieldset>
           <fieldset class="appearance-category appearance-size"><legend>Размер интерфейса</legend>
-            <p class="muted small">Размер текста, таблиц и элементов управления. Не меняет тему, палитру, дизайн или исходные данные.</p>
+
             <div class="appearance-grid"><label>Масштаб текста и элементов<select id="appearanceSize"><option value="standard">Стандартный (100%)</option><option value="large">Крупный (около 115%)</option><option value="xlarge">Очень крупный (около 130%)</option></select></label></div>
           </fieldset>
         </div>
