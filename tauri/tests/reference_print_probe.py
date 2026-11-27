@@ -545,8 +545,9 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
         save()
         try:
             trigger = page.locator('#sharedHeader .main-nav button[aria-current="page"]')
-            trigger.focus()
-            page.keyboard.press('Control+p')
+            # The source renderer can block on the native modal during key dispatch.
+            # Return to the external window probe even if the key event is still pending.
+            trigger.press('Control+p', timeout=5000, no_wait_after=True)
             attempt['click'] = 'completed'
         except PlaywrightError as error:
             # Modal print UI may block completion; still inspect the external native UI.
