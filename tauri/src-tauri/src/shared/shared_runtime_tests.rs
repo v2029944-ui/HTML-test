@@ -1108,3 +1108,97 @@ fn bulk_group_removal_publishes_once_for_both_clients_without_changing_reports()
     }).is_err());
     assert_eq!(reader.sync().unwrap().generation, second.generation);
 }
+
+pub(in crate::storage) fn verify_nested_group_edits_between_clients(share: &Path) {
+    use super::super::{GroupTreeEdit, ManagementJob};
+
+    let (_writer_root, writer) = runtime_fixture();
+    let (_reader_root, reader) = runtime_fixture();
+    let team = connect(&writer, share);
+    let mut initial = data("retained");
+    initial["reports"][0]["rows"] = json!([
+        {"organization":"A","work":"Known","count":4,"amount":15},
+        {"organization":"A","work":"Incomplete","count":2,"amount":null}
+    ]);
+    initial["settings"]["groups"] = json!([
+        {"id":"root","name":"Root","works":["Known"]},
+        {"id":"alternate","name":"Alternate","works":["Incomplete"]}
+    ]);
+    let initial_revision = writer.execute(Some(&team.workspace_token), Access::Write, |store| {
+        store.save(initial.clone())?;
+        store.revision()
+    }).unwrap();
+    let peer = connect(&reader, share);
+    let generation = peer.generation.unwrap();
+
+    let create_child = |revision, parent: &str, id: &str, name: &str| {
+        writer.execute(Some(&team.workspace_token), Access::Write, |store| {
+            store.management_index_settings(revision, &ManagementJob::new())?;
+            let parent = store.management_group_page(revision, "", None, 50)?
+                .into_iter().find(|row| row.id == parent).unwrap().handle;
+            let receipt = store.unified_group_tree_edit(revision, GroupTreeEdit::Create {
+                id: id.into(), name: name.into(), parent: Some(parent),
+            })?;
+            Ok(receipt.revision)
+        }).unwrap()
+    };
+    let branch_revision = create_child(initial_revision, "root", "branch", "Branch");
+    assert_eq!(writer.status().unwrap().generation, Some(generation + 1));
+    let revision = create_child(branch_revision, "branch", "leaf", "Leaf");
+    assert!(revision > branch_revision && branch_revision > initial_revision);
+
+    let peer = reader.sync().unwrap();
+    assert_eq!(peer.generation, Some(generation + 2));
+    let received = read(&reader, &peer.workspace_token);
+    assert_eq!(received["reports"], initial["reports"]);
+    assert_eq!(received["settings"]["workGroupTreeParents"], json!([
+        {"child":"branch","parent":"root"},
+        {"child":"leaf","parent":"branch"}
+    ]));
+    let (branch, alternate) = reader.execute(Some(&peer.workspace_token), Access::Read, |store| {
+        assert_eq!(store.revision()?, revision);
+        store.management_index_settings(revision, &ManagementJob::new())?;
+        let roots = store.unified_management_page(revision, "group_tree", "", None, 0, 50)?;
+        assert_eq!(roots.total, 2);
+        let root = roots.rows.iter().find(|row| row.id.as_deref() == Some("root")).unwrap();
+        assert_eq!(root.children, Some(1));
+        let root = root.handle.as_ref().unwrap().parse().unwrap();
+        let children = store.unified_management_page(revision, "group_tree", "", Some(root), 0, 50)?;
+        assert_eq!(children.total, 1);
+        let branch = &children.rows[0];
+        assert_eq!(branch.id.as_deref(), Some("branch"));
+        assert_eq!(branch.children, Some(1));
+        let branch = branch.handle.as_ref().unwrap().parse().unwrap();
+        let leaves = store.unified_management_page(revision, "group_tree", "", Some(branch), 0, 50)?;
+        assert_eq!(leaves.total, 1);
+        assert_eq!(leaves.rows[0].id.as_deref(), Some("leaf"));
+        let alternate = roots.rows.iter().find(|row| row.id.as_deref() == Some("alternate")).unwrap()
+            .handle.as_ref().unwrap().parse().unwrap();
+        Ok((branch, alternate))
+    }).unwrap();
+
+    let move_branch = |revision| reader.execute(Some(&peer.workspace_token), Access::Write, |store| {
+        let receipt = store.unified_group_tree_edit(
+            revision, GroupTreeEdit::Move { group: branch, parent: Some(alternate) },
+        )?;
+        Ok(receipt.revision)
+    });
+    assert!(move_branch(branch_revision).is_err());
+    assert_eq!(reader.status().unwrap().generation, peer.generation);
+    let moved_revision = move_branch(revision).unwrap();
+    assert!(moved_revision > revision);
+
+    let refreshed = writer.sync().unwrap();
+    assert_eq!(refreshed.generation, Some(generation + 3));
+    let received = read(&writer, &refreshed.workspace_token);
+    assert_eq!(received["reports"], initial["reports"]);
+    let parent_links = received["settings"]["workGroupTreeParents"].as_array().unwrap();
+    assert_eq!(parent_links.len(), 2);
+    assert!(parent_links.contains(&json!({"child":"branch","parent":"alternate"})));
+    assert!(parent_links.contains(&json!({"child":"leaf","parent":"branch"})));
+    // Pull restores the client's separate local config after installing the
+    // published snapshot. Its kv insert increments the local revision once.
+    assert_eq!(writer.execute(Some(&refreshed.workspace_token), Access::Read, |store| {
+        store.revision()
+    }).unwrap(), moved_revision + 1);
+}

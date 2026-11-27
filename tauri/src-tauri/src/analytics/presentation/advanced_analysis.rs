@@ -6,7 +6,7 @@ use super::*;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct UnifiedPatternOptions {
-    /// Mean of 4/8 whole intervals of the same length as the selected interval.
+    /// Mean of whole intervals of the same length as the selected interval.
     #[serde(default)]
     pub range_window: bool,
     /// Exact comparison interval for frequency, including non-adjacent periods.
@@ -164,9 +164,9 @@ impl Calendar {
             CREATE TEMP TABLE adv_facts(label TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,known_amount REAL,active INTEGER,paired_count REAL,source_work TEXT,PRIMARY KEY(label,org,key)) WITHOUT ROWID;")).map_err(err)?;
         c.execute("INSERT INTO adv_facts SELECT v.label,v.org,coalesce(g.key,'work:'||x.work),coalesce(g.name,x.work),
             CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount),max(x.count<>0 OR x.amount IS NULL OR x.amount<>0),
-            SUM(x.count) FILTER (WHERE x.amount IS NOT NULL),CASE WHEN MIN(x.work)=MAX(x.work) THEN MIN(x.work) END
-            FROM adv_reports v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work
-            WHERE (?1 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=coalesce(g.name,x.work)))
+            SUM(x.count) FILTER (WHERE x.amount IS NOT NULL),CASE WHEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL)=MAX(x.work) FILTER (WHERE x.amount IS NOT NULL) THEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL) END
+            FROM adv_reports v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN an_scope_groups g ON g.work=x.work
+            WHERE (?1 IS NULL OR COALESCE(g.selected, EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=coalesce(g.name,x.work))))
             GROUP BY v.label,v.org,coalesce(g.key,'work:'||x.work)",[&s.names]).map_err(err)?;
         validate_numbers(c, "SELECT count,known_amount FROM adv_facts")
     }
@@ -184,12 +184,13 @@ pub(super) fn prepare_changes(
     }
     calendar.prepare_change_facts(c, s, q)?;
     c.execute_batch("CREATE TEMP TABLE an_currents(start TEXT PRIMARY KEY,base TEXT) WITHOUT ROWID;
-        CREATE TEMP TABLE an_pairs(start TEXT,base TEXT,org TEXT,base_id TEXT,current_id TEXT,warned INTEGER,partial INTEGER,PRIMARY KEY(start,org)) WITHOUT ROWID;
+        CREATE TEMP TABLE an_pairs(start TEXT,base TEXT,org TEXT,base_id TEXT,current_id TEXT,warned INTEGER,partial INTEGER,base_complete INTEGER,current_complete INTEGER,PRIMARY KEY(start,org)) WITHOUT ROWID;
         CREATE TEMP TABLE an_period_values(start TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,known_amount REAL,paired_count REAL,source_work TEXT,PRIMARY KEY(start,org,key)) WITHOUT ROWID;
-        CREATE TEMP TABLE an_changes(start TEXT,base TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL,b_known REAL,a_known REAL,b_paired REAL,a_paired REAL,same_source_work INTEGER,PRIMARY KEY(start,org,key)) WITHOUT ROWID;").map_err(err)?;
+        CREATE TEMP TABLE an_changes(start TEXT,base TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL,b_known REAL,a_known REAL,b_paired REAL,a_paired REAL,same_source_work INTEGER,base_observed INTEGER,current_observed INTEGER,PRIMARY KEY(start,org,key)) WITHOUT ROWID;").map_err(err)?;
     calendar.fill_change_periods(c, q.method == "previous")?;
     c.execute("INSERT INTO an_pairs SELECT p.start,p.base,f.item,b.label,v.label,coalesce(b.warned,0) OR coalesce(v.warned,0),
-        b.label IS NOT NULL AND v.label IS NOT NULL AND (NOT b.complete OR NOT v.complete)
+        b.label IS NOT NULL AND v.label IS NOT NULL AND (NOT b.complete OR NOT v.complete),
+        coalesce(b.complete,0),coalesce(v.complete,0)
         FROM an_currents p CROSS JOIN analysis_filter_items f LEFT JOIN adv_coverage b ON b.label=p.base AND b.org=f.item
         LEFT JOIN adv_coverage v ON v.label=p.start AND v.org=f.item WHERE f.id=?1",[&s.organizations]).map_err(err)?;
     c.execute_batch("INSERT INTO an_period_values SELECT label,org,key,name,kind,count,amount,known_amount,paired_count,source_work FROM adv_facts WHERE label IN (SELECT start FROM an_currents UNION SELECT base FROM an_currents)").map_err(err)?;
@@ -212,7 +213,7 @@ impl Analytics<'_> {
         let summary = changes_summary(&tx, q)?;
         let mut stmt = tx
             .prepare(
-                "SELECT start,base,org,key,name,kind,bc,ba,cc,ca FROM an_changes
+                "SELECT start,base,org,key,name,kind,bc,ba,cc,ca,base_observed,current_observed FROM an_changes
             WHERE ?1 IS NULL OR (start,org,key)>(?1,?2,?3) ORDER BY start,org,key LIMIT 51",
             )
             .map_err(err)?;
@@ -453,7 +454,7 @@ fn usual_row(
             SELECT batch, SUM(count) AS quantity,
                 CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END AS amount,
                 SUM(known_amount) AS known_amount, SUM(paired_count) AS paired_count,
-                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work
+                CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work
             FROM adv_combined JOIN adv_dates USING(label)
             WHERE key=?1 AND slot=0 AND observed GROUP BY batch
          ), baseline AS (
@@ -462,16 +463,16 @@ fn usual_row(
                 coalesce(SUM(amount),0) AS strict_amount,
                 ?2-COUNT(*) FILTER(WHERE amount IS NULL) AS strict_samples,
                 CASE WHEN COUNT(*)<?2 THEN COALESCE(SUM(known_amount),0) ELSE SUM(known_amount) END AS known_amount,
-                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN SUM(paired_count) END AS paired_count,
-                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work,
+                CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN SUM(paired_count) END AS paired_count,
+                CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work,
                 ?2-COUNT(*) FILTER(WHERE known_amount IS NULL) AS known_samples
             FROM historical
          ), current AS (
             SELECT coalesce(SUM(count),0) AS count,
                 CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END AS amount,
                 SUM(known_amount) AS known_amount,
-                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN SUM(paired_count) END AS paired_count,
-                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work
+                CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN SUM(paired_count) END AS paired_count,
+                CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work
             FROM adv_combined JOIN adv_dates USING(label) WHERE key=?1 AND slot=1 AND observed
          ) SELECT baseline.*, current.* FROM baseline CROSS JOIN current",
         params![key, previous],
@@ -605,8 +606,11 @@ impl Analytics<'_> {
         &self, revision:i64, s:&AnalysisScope, q:&ChangeQuery, grouping:Option<&str>,
         mode:&str, window:i32, after:Option<&str>, options:Option<&UnifiedPatternOptions>, write:Option<&PatternWriter<'_>>, page_index:Option<usize>,
     )->Result<PatternPage,String> {
-        if !matches!(mode, "usual" | "regularity") || !matches!(window, 4 | 8) {
-            return Err("Invalid pattern mode or window".into());
+        if !matches!(mode, "usual" | "regularity") {
+            return Err("Invalid pattern mode".into());
+        }
+        if !(1..=120).contains(&window) {
+            return Err("Pattern window must be between 1 and 120 periods".into());
         }
         if let Some(key) = after.filter(|_|options.is_none()) {
             key_bound(key)?;
@@ -628,12 +632,18 @@ impl Analytics<'_> {
           CREATE TEMP TABLE adv_tail(label TEXT PRIMARY KEY,distance INTEGER) WITHOUT ROWID;
           CREATE TEMP TABLE adv_combined(key TEXT,label TEXT,count REAL,amount REAL,known_amount REAL,active INTEGER,paired_count REAL,source_work TEXT,PRIMARY KEY(key,label)) WITHOUT ROWID;
           INSERT INTO adv_combined SELECT key,label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),max(active),SUM(paired_count),
-                   CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END FROM adv_facts GROUP BY key,label;
+                   CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END FROM adv_facts GROUP BY key,label;
           CREATE TEMP TABLE adv_keys(key TEXT PRIMARY KEY,name TEXT,kind TEXT) WITHOUT ROWID;
           INSERT INTO adv_keys SELECT key,name,kind FROM adv_facts GROUP BY key;").map_err(err)?;
         tx.execute("INSERT INTO adv_complete SELECT label FROM adv_coverage WHERE complete GROUP BY label HAVING count(*)=(SELECT count(*) FROM analysis_filter_items WHERE id=?1)",[&s.organizations]).map_err(err)?;
-        tx.execute("INSERT INTO adv_keys SELECT coalesce(g.key,'work:'||f.item),f.item,CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END FROM analysis_filter_items f
+        if super::workspace::tree_indexed(&tx)? {
+            tx.execute_batch("INSERT INTO adv_keys
+                SELECT s.key,s.name,s.kind FROM an_scope_selections s
+                WHERE NOT EXISTS(SELECT 1 FROM adv_keys k WHERE k.key=s.key)").map_err(err)?;
+        } else {
+            tx.execute("INSERT INTO adv_keys SELECT coalesce(g.key,'work:'||f.item),f.item,CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END FROM analysis_filter_items f
             LEFT JOIN analysis_group_names g ON g.name=f.item WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM adv_keys k WHERE k.name=f.item)",[&s.names]).map_err(err)?;
+        }
         let usual = mode == "usual";
         let available = options.is_some();
         // Unified calculations accept any valid report in a period.
@@ -656,7 +666,16 @@ impl Analytics<'_> {
             let baseline = Calendar::new(s, &selected, None)?;
             baseline.current_bounds(false)
         } else {
-            let base_count = if usual { window * sample_length } else { count };
+            let base_count = if usual {
+                window * sample_length
+            } else if available {
+                window
+            } else {
+                count
+            };
+            if base_count > 3660 {
+                return Err("Pattern history exceeds 3660 calendar buckets. Shorten the analysis range or reduce the number of historical windows.".into());
+            }
             (step(&calendar.kind, first, -base_count)?, step(&calendar.kind, first, -1)?)
         };
         if clipped_baseline {
@@ -690,7 +709,7 @@ impl Analytics<'_> {
         if usual {
             tx.execute_batch("INSERT INTO adv_keys VALUES('','Итого по выбранным работам','total');
                 INSERT INTO adv_combined SELECT '',label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),max(active),SUM(paired_count),
-                   CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END FROM adv_combined GROUP BY label;").map_err(err)?;
+                   CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END FROM adv_combined GROUP BY label;").map_err(err)?;
         } else {
             tx.execute_batch("CREATE TEMP TABLE adv_baseline_active(key TEXT,label TEXT,PRIMARY KEY(key,label)) WITHOUT ROWID").map_err(err)?;
             if clipped_baseline {
@@ -699,7 +718,7 @@ impl Analytics<'_> {
                 tx.execute("INSERT INTO adv_baseline_active
                     SELECT DISTINCT k.key,v.label FROM adv_reports v
                     JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
-                    LEFT JOIN analysis_groups g ON g.work=x.work
+                    LEFT JOIN an_scope_groups g ON g.work=x.work
                     JOIN adv_keys k ON k.key=coalesce(g.key,'work:'||x.work)
                     WHERE v.start BETWEEN ?1 AND ?2 AND (x.count<>0 OR x.amount IS NULL OR x.amount<>0)",
                     params![baseline_from.to_string(), baseline_to.to_string()]).map_err(err)?;
@@ -1025,7 +1044,7 @@ impl Analytics<'_> {
                 FROM an_periods p JOIN an_valid v ON v.start=p.start
                 JOIN analysis_filter_items f ON f.id=?1 AND f.item=v.org
                 JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
-                LEFT JOIN analysis_groups g ON g.work=x.work
+                LEFT JOIN an_scope_groups g ON g.work=x.work
                 JOIN an_comparison c ON c.key=coalesce(g.key,'work:'||x.work) GROUP BY c.key",
                 [&s.organizations],
             )

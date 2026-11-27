@@ -38,7 +38,7 @@ fn organization_totals_csv(
 ) -> Result<(), String> {
     let mut stmt = tx.prepare(
         "SELECT f.item,(SELECT count(*) FROM an_missing m WHERE slot=1 AND m.org=f.item),
-         coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END FROM analysis_filter_items f
+         coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.paired_count) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END FROM analysis_filter_items f
          LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item WHERE f.id=?1 GROUP BY f.item ORDER BY f.item"
     ).map_err(err)?;
     let periods = count_sql(tx,"SELECT COUNT(*) FROM temp.an_periods WHERE slot=1")?;
@@ -81,6 +81,33 @@ fn trend_csv_totals(row: &rusqlite::Row<'_>, match_chart: bool, organizations: i
     }
 }
 
+// Write a group before its children and stream each subtotal from the
+// underlying rows. The grand total comes from the separate union query.
+fn prepare_trend_tree(tx: &Connection, selected: bool) -> Result<(), String> {
+    super::workspace::create_tree_catalog(tx)?;
+    let roots = if selected {
+        "SELECT n.key,n.name,0,printf('%08x',n.position) FROM ordered n JOIN an_scope_selections s USING(key)"
+    } else {
+        "SELECT n.key,n.name,0,printf('%08x',n.position) FROM ordered n WHERE n.parent_key IS NULL"
+    };
+    tx.execute_batch(&format!("CREATE TEMP TABLE trend_tree_rows(key TEXT PRIMARY KEY,label TEXT,depth INTEGER,path TEXT) WITHOUT ROWID;
+        INSERT INTO trend_tree_rows
+        WITH RECURSIVE ordered AS MATERIALIZED (
+            SELECT key,name,parent_key,row_number() OVER(ORDER BY name COLLATE classic_ru,key) position
+            FROM an_tree_catalog
+        ), tree(key,label,depth,path) AS (
+            {roots}
+            UNION ALL
+            SELECT n.key,n.name,t.depth+1,t.path||'/'||printf('%08x',n.position)
+            FROM tree t JOIN ordered n ON n.parent_key=t.key
+        ) SELECT * FROM tree;
+        CREATE TEMP VIEW trend_tree_members AS
+        SELECT n.work,n.key FROM an_tree_catalog n JOIN trend_tree_rows t ON t.key=n.key WHERE n.kind='work'
+        UNION ALL
+        SELECT g.work,a.ancestor_key FROM analysis_groups g
+        JOIN analysis_group_ancestors a ON a.descendant_key=g.key JOIN trend_tree_rows t ON t.key=a.ancestor_key;")).map_err(err)
+}
+
 impl Analytics<'_> {
     pub(super) fn reference_trend_csv(&self, revision: i64, scope: &AnalysisScope, range: &RangeQuery,
         grouping: Option<&str>, options: &TrendCsvOptions, destination: &Path) -> Result<(), String> {
@@ -106,7 +133,17 @@ impl Analytics<'_> {
         let (mode,_)=timeline_grouping(scope,range,grouping,periods)?;
         let works=options.table==TrendTable::Works;
         let organizations=selected_organization_count(&tx,scope)?;
-        let member=if works {"coalesce(g.key,'work:'||x.work)"} else {"v.org"};
+        let hierarchy = works && super::workspace::tree_indexed(&tx)?;
+        if works {
+            super::analysis_presentation::presentation_functions(&tx)?;
+            if hierarchy {
+                prepare_trend_tree(&tx, scope.names.is_some())?;
+            } else {
+                create_name_catalog(&tx, scope.names.is_none())?;
+            }
+        }
+        let member = if hierarchy {"tree.key"} else if works {"coalesce(g.key,'work:'||x.work)"} else {"v.org"};
+        let tree_join = if hierarchy {"JOIN trend_tree_members tree ON tree.work=x.work"} else {""};
         tx.execute("CREATE TEMP TABLE trend_dates AS SELECT start,
             CASE ?1 WHEN 1 THEN substr(start,1,7) WHEN 2 THEN date(start,'-'||((cast(strftime('%w',start) AS integer)+6)%7)||' days')
                     WHEN 3 THEN substr(start,1,4)||'-01-01' ELSE start END label FROM an_periods WHERE slot=1",[mode]).map_err(err)?;
@@ -115,10 +152,11 @@ impl Analytics<'_> {
             FROM an_missing m JOIN trend_dates d USING(start) WHERE m.slot=1 GROUP BY m.org,d.label;
             CREATE UNIQUE INDEX trend_org_missing ON trend_missing(org,label);
             CREATE TEMP TABLE trend_series(member TEXT,label TEXT,qty REAL,money REAL,known_amount REAL,paired_count REAL,PRIMARY KEY(member,label)) WITHOUT ROWID;").map_err(err)?;
-        tx.execute(&format!("INSERT INTO trend_series SELECT {member},d.label,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount),CASE WHEN MIN(x.work)=MAX(x.work) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END
+        tx.execute(&format!("INSERT INTO trend_series SELECT {member},d.label,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount),CASE WHEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL)=MAX(x.work) FILTER (WHERE x.amount IS NOT NULL) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END
             FROM trend_dates d JOIN an_valid v ON v.start=d.start JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
-            LEFT JOIN analysis_groups g ON g.work=x.work WHERE ?1 IS NULL OR EXISTS(
-                SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=coalesce(g.name,x.work))
+            {tree_join}
+            LEFT JOIN an_scope_groups g ON g.work=x.work WHERE ?1 IS NULL OR COALESCE(g.selected, EXISTS(
+                SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=coalesce(g.name,x.work)))
             GROUP BY {member},d.label"),[&scope.names]).map_err(err)?;
         tx.execute_batch("CREATE TEMP TABLE trend_buckets(
             label TEXT PRIMARY KEY,periods INTEGER,missing INTEGER,qty REAL,money REAL,active INTEGER,first_start TEXT,last_start TEXT,known_amount REAL,paired_count REAL
@@ -128,10 +166,6 @@ impl Analytics<'_> {
         tx.execute(&format!("INSERT INTO trend_buckets {TIMELINE_BUCKET_TOTALS}"),
             params![mode, &scope.organizations, &scope.names]).map_err(err)?;
         if count_sql(&tx,"SELECT count(*) FROM trend_buckets")?>124 {return Err("Analysis timeline exceeds 124 points".into());}
-        if works {
-            super::analysis_presentation::presentation_functions(&tx)?;
-            create_name_catalog(&tx,scope.names.is_none())?;
-        }
         let hide = options.hide_empty;
         let visible = if hide && options.match_chart {
             fill_timeline_report_buckets(&tx, mode, scope)?;
@@ -174,12 +208,15 @@ impl Analytics<'_> {
             };
             quality.push(status);
         }
-        let members=if works {"SELECT n.key,n.label FROM unified_names n
+        let members=if hierarchy {"SELECT key,label,depth FROM trend_tree_rows ORDER BY path"}
+            else if works {"SELECT n.key,n.label,0 FROM unified_names n
             LEFT JOIN analysis_filter_items f ON f.id=?1 AND f.item=n.name WHERE ?1 IS NULL OR f.id IS NOT NULL
             ORDER BY f.ordinal,n.name COLLATE classic_ru,n.key"}
-            else {"SELECT item,item FROM analysis_filter_items WHERE id=?1 ORDER BY ordinal"};
+            else {"SELECT item,item,0 FROM analysis_filter_items WHERE id=?1 ORDER BY ordinal"};
         let mut names=tx.prepare(members).map_err(err)?;
-        let mut names=names.query([if works {scope.names.as_deref()} else {Some(scope.organizations.as_str())}]).map_err(err)?;
+        let filter = [if works {scope.names.as_deref()} else {Some(scope.organizations.as_str())}];
+        let mut names = names.query(rusqlite::params_from_iter(if hierarchy { &filter[..0] } else { &filter }))
+            .map_err(err)?;
         let mut points=tx.prepare(&format!("SELECT coalesce(s.qty,0.0),CASE WHEN s.member IS NULL THEN 0.0 ELSE s.money END,
             CASE WHEN ?3 THEN b.missing ELSE coalesce(m.missing,0) END,s.known_amount,b.periods,s.paired_count
             FROM trend_buckets b LEFT JOIN trend_series s ON s.member=?2 AND s.label=b.label
@@ -200,7 +237,10 @@ impl Analytics<'_> {
                 csv_record(w,&line)?;
             }
             while let Some(row)=names.next().map_err(err)? {
-                let key:String=row.get(0).map_err(err)?;let name:String=row.get(1).map_err(err)?;
+                let key: String = row.get(0).map_err(err)?;
+                let label: String = row.get(1).map_err(err)?;
+                let depth: usize = row.get(2).map_err(err)?;
+                let name = if depth == 0 { label } else { format!("{}↳ {}", "  ".repeat(depth), label) };
                 let mut values=Vec::with_capacity(labels.len());
                 let mut rows=points.query(params![hide,key,works]).map_err(err)?;
                 while let Some(r)=rows.next().map_err(err)? {

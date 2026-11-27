@@ -40,3 +40,18 @@ test('overview totals explicitly keep all works while the separate detail work s
  assert.deepEqual(calls[0][1].slice(7),[null,null]);assert.deepEqual(calls[1][1].slice(5),[null,null]);
  assert.deepEqual(scope.selectedNames,['Группа']);
 });
+
+test('selection displays unique work counts and keeps only the highest selected rows', () => {
+ const window={};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,"../analysis-summary.js"),"utf8"),{window});
+ const {topLevelWorkRows,workSelectionText}=window.analysisSummary;
+ const rows=[
+  {key:'group:r',kind:'group'},
+  {key:'group:c',kind:'group',ancestor_keys:['group:r']},
+  {key:'work:w',kind:'work',ancestor_keys:['group:r','group:c']},
+  {key:'work:u',kind:'work'}
+ ];
+ assert.deepEqual(Array.from(topLevelWorkRows(rows),row=>row.key),['group:r','work:u']);
+ assert.deepEqual(Array.from(topLevelWorkRows(rows.slice(1)),row=>row.key),['group:c','work:u']);
+ assert.equal(workSelectionText({selected:5,total:10}),'Выбрано 5 из 10 работ');
+});

@@ -32,10 +32,11 @@ impl Storage {
                 .map_err(err)?;
         let tx = conn.transaction().map_err(err)?;
         read_model::check_revision(&tx, revision)?;
+        let period_index = read_model::ReportPeriodIndex::detect(&tx)?;
         // Read the covering header index. Check lengths before parsing dates or
         // returning text so corrupt legacy metadata cannot inflate the response.
         let (first_year, last_year, invalid): (Option<i32>, Option<i32>, bool) = tx.query_row(
-            "SELECT MIN(CASE WHEN octet_length(period_start)=10 THEN CAST(substr(period_start,1,4) AS INTEGER) END),
+            &period_index.sql("SELECT MIN(CASE WHEN octet_length(period_start)=10 THEN CAST(substr(period_start,1,4) AS INTEGER) END),
                     MAX(CASE WHEN octet_length(period_start)=10 THEN CAST(substr(period_start,1,4) AS INTEGER) END),
                     COALESCE(MAX(CASE
                       WHEN typeof(period_start) <> 'text' OR octet_length(period_start) <> 10 THEN 1
@@ -45,7 +46,7 @@ impl Storage {
                         OR substr(period_start,1,4) = '0000'
                         OR date(period_start,'+0 days') IS NOT period_start THEN 1
                       ELSE 0 END),0)
-             FROM reports INDEXED BY reports_by_period",
+             FROM reports INDEXED BY reports_by_period"),
             [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         ).map_err(err)?;
         if invalid {

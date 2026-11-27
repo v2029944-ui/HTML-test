@@ -30,6 +30,22 @@ function fixture(overrides={}){
  const file=path.join(__dirname,'../reference-results.js');if(fs.existsSync(file))vm.runInNewContext(fs.readFileSync(file,'utf8'),{window,document,Intl,Number,Date,Set,Map,Promise,setTimeout,clearTimeout,console,Blob,TextEncoder,AbortController,URL:{createObjectURL:blob=>{downloads.push(blob);return 'blob:test';},revokeObjectURL(){}}});
  return {window,document,api,scope,s1,s2,calls,exports,notices,downloads,full,total};
 }
+test('an empty database offers import while a database with reports keeps the regular summary',async()=>{
+ const f=fixture(),card=new Node('section');card.id='summaryEmpty';card.hidden=true;
+ const action=new Node('button','Импортировать Excel');action.id='summaryImport';card.append(action);f.s1.append(card);
+ let opened=null;f.window.referenceDesktop.openPanel=(panel,opener)=>opened=[panel,opener];
+ f.window.unifiedUI={snapshot:{revision:f.scope.revision,reports:0}};
+ f.window.referenceResults.init();
+ await f.window.referenceResults.refresh(f.scope);
+ assert.equal(card.hidden,false);
+ assert.equal(f.calls.length,0);
+ await action.click();
+ assert.deepEqual(opened,['upload',action]);
+ f.window.unifiedUI.snapshot.reports=3;
+ await f.window.referenceResults.refresh(f.scope);
+ assert.equal(card.hidden,true);
+ assert.equal(f.calls.length,1);
+});
 test('summary presents observed partial totals for all selected organizations',async()=>{
  const f=fixture();assert.ok(f.window.referenceResults,'SQL reference results controller must be present');
  const incomplete={...f.full,complete:false,missing:1,single_missing:{org:'B',start:'2024-01-02'},total:{count:null,amount:null,average:null},available_total:{count:7,amount:70,average:10}};

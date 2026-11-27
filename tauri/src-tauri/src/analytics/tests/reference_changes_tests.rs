@@ -155,7 +155,7 @@ fn new_and_gone_use_observed_reports_without_classifying_missing_intervals_as_ze
     ]);
     let mut q = request(revision);
     q.organizations = vec!["A".into(), "B".into(), "D".into()];
-    q.base_to = "2024-01-02".into();
+    q.to = q.from.clone();
     q.min_count = 100.;
     q.min_amount = 100.;
     for (metric, started, stopped) in [("amount",10.,20.), ("count",1.,2.)] {
@@ -166,7 +166,7 @@ fn new_and_gone_use_observed_reports_without_classifying_missing_intervals_as_ze
         ] {
             q.kind = kind.into();
             let data = store.reference_changes(&q).unwrap();
-            assert!(data.comparable.is_empty());
+            assert_eq!(data.comparable, ["A"]);
             assert_eq!((data.counts.new,data.counts.gone,data.total), (1,1,1), "{metric}/{kind}");
             let found = &data.rows[0];
             assert_eq!((found.name.as_str(),found.org.as_str()), (name,"A"));
@@ -687,4 +687,43 @@ fn new_and_gone_use_the_known_side_of_partially_priced_work() {
     let page = store.reference_changes(&q).unwrap();
     assert_eq!(page.rows[0].name, "Only baseline");
     assert_eq!((page.rows[0].before, page.rows[0].after, page.rows[0].delta), (Some(15.), Some(0.), Some(-15.)));
+}
+
+#[test]
+fn incomplete_intervals_do_not_certify_new_or_gone_works() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let revision = prepare(&store, vec![
+        report("before", "2024-01-01", json!([row("A", "Old", 2., 20.)])),
+        report("after", "2024-01-10", json!([row("A", "New", 3., 30.)])),
+    ]);
+    let mut q = request(revision);
+    q.organizations = vec!["A".into()];
+    q.base_from = "2024-01-01".into();
+    q.base_to = "2024-01-02".into();
+    q.from = "2024-01-10".into();
+    q.to = "2024-01-11".into();
+    let page = store.reference_changes(&q).unwrap();
+    assert_eq!((page.counts.new, page.counts.gone), (0, 0));
+    let new = page.rows.iter().find(|r| r.name == "New").unwrap();
+    let old = page.rows.iter().find(|r| r.name == "Old").unwrap();
+    assert_eq!((new.before, new.after, new.delta), (None, Some(30.), None));
+    assert_eq!((old.before, old.after, old.delta), (Some(20.), None, None));
+
+    let csv = dir.path().join("partial.csv");
+    store.reference_changes_csv(&q, &csv).unwrap();
+    let csv = fs::read_to_string(csv).unwrap();
+    assert!(csv.contains(r#""New";"A";"";"30";"";"""#), "{csv}");
+    let mut printed = Vec::new();
+    store.reference_changes_print(&q, std::sync::Arc::new(AtomicBool::new(false)), |rows| {
+        printed.extend(rows);
+        Ok(())
+    }).unwrap();
+    let printed_new = printed.iter().find(|r| r.name == "New").unwrap();
+    assert_eq!((printed_new.before, printed_new.after, printed_new.delta), (None, Some(30.), None));
+
+    q.base_to = q.base_from.clone();
+    q.to = q.from.clone();
+    let complete = store.reference_changes(&q).unwrap();
+    assert_eq!((complete.counts.new, complete.counts.gone), (1, 1));
 }

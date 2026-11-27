@@ -79,11 +79,14 @@
         chartButtons();
       };
       group.prepend(line);
+      // Store the requested mode before the SQL renderer handles the click.
       for (const button of group.querySelectorAll('[data-chart]')) button.addEventListener('click', () => {
         if (active === 'chartPanel') { chartMode = button.dataset.chart; chartButtons(); }
-      });
+      }, {capture: true});
     }
-    const single = singlePeriodChart || window.referenceFilters?.scope?.overviewMode === 'single';
+    const scope = window.referenceFilters?.scope;
+    const oneObservation = scope?.overviewMode === 'single' && (scope.source !== 'daily' || scope.from === scope.to);
+    const single = singlePeriodChart || oneObservation;
     const line = group.querySelector('[data-reference-line]');
     line.hidden = single;
     line.disabled = single;
@@ -237,14 +240,13 @@
     advanced.open = analytic;
     $('analyticsDetails').hidden = true;
     $('changeDetails').hidden = true;
-    for (const id of ['usualPanel', 'regularityPanel']) {
-      $(id).open = id === key;
-    }
     if (analytic) {
       const mode = $('workViewMode');
       mode.value = key === 'structurePanel' ? 'composition' : 'trend';
       mode.dispatchEvent(new Event('change'));
       if (key === 'comparison') window.unifiedExtended.openComparison();
+      if (key === 'usualPanel') window.unifiedExtended.openPatterns('usual');
+      if (key === 'regularityPanel') window.unifiedExtended.openPatterns('regularity');
     }
   }
 
@@ -256,7 +258,7 @@
       previousChart = null;
     }
     delete $('refNative').dataset.panel;
-    for (const id of ['advancedAnalytics','usualPanel','regularityPanel']) $(id).open = false;
+    $('advancedAnalytics').open = false;
     $('analyticsDetails').hidden = true;
     $('changeDetails').hidden = true;
     const mode = $('workViewMode');

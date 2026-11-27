@@ -125,6 +125,14 @@ fn export_patterns(
         headers(w, &["Поиск", &opts.search])?;
         headers(w, &["Фильтр признака", &opts.status])?;
         let usual = table.section == "usual";
+        if let Some(window) = table.window {
+            if usual || opts.baseline.is_none() {
+                headers(w, &["Запрошено исторических периодов", &window.to_string()])?;
+            }
+            if !usual {
+                headers(w, &["Порог отсутствия, периодов", &window.to_string()])?;
+            }
+        }
         if usual {
             let observed_windows = previous.to_string();
             headers(w, &["Исторических окон с отчётами", &observed_windows])?;
@@ -565,7 +573,7 @@ fn ordered_organization_totals(
 ) -> Result<Vec<OrganizationSummary>, String> {
     let mut stmt = tx.prepare(
         "SELECT f.item,(SELECT count(*) FROM an_missing m WHERE m.slot=1 AND m.org=f.item),
-                coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END,CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN MIN(v.source_work) END
+                coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.paired_count) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END,CASE WHEN COUNT(v.source_work)=COUNT(v.paired_count) AND MIN(v.source_work)=MAX(v.source_work) THEN MIN(v.source_work) END
          FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item
          WHERE f.id=?1 GROUP BY f.ordinal,f.item ORDER BY f.ordinal"
     ).map_err(err)?;
@@ -620,6 +628,8 @@ fn visit_all_organization_works(
             key: name.get(0).map_err(err)?,
             name: name.get(1).map_err(err)?,
             kind: name.get(2).map_err(err)?,
+            ancestor_keys: Vec::new(),
+            has_children: false,
         };
         let mut values = amounts.query(params![s.organizations, entry.key]).map_err(err)?;
         let mut rows = Vec::with_capacity(organizations.len());
@@ -733,18 +743,23 @@ fn write_organizations(
     if s.names.is_none() {
         visit_all_organization_works(tx, s, &organizations, None, |item| emit(&item.entry.name, &item.rows))?;
     } else {
-        let mut names = tx.prepare(
+        let hierarchy = super::workspace::tree_indexed(tx)?;
+        let mut names = tx.prepare(if hierarchy {
+            "SELECT name,kind FROM an_scope_selections ORDER BY ordinal"
+        } else {
             "SELECT f.item, CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END
              FROM analysis_filter_items f LEFT JOIN analysis_group_names g ON g.name=f.item
              WHERE f.id=?1 ORDER BY f.ordinal"
-        ).map_err(err)?;
-        let mut names = names.query([&s.names]).map_err(err)?;
+        }).map_err(err)?;
+        let filter = [&s.names];
+        let mut names = names.query(rusqlite::params_from_iter(if hierarchy { &filter[..0] } else { &filter }))
+            .map_err(err)?;
         tx.execute(
             "CREATE INDEX an_values_name_org ON an_values(slot,name,org)",
             [],
         )
         .map_err(err)?;
-        let mut amounts=tx.prepare("SELECT f.ordinal,coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END,CASE WHEN COUNT(v.source_work)=COUNT(v.key) AND MIN(v.source_work)=MAX(v.source_work) THEN MIN(v.source_work) END FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.name=?2 WHERE f.id=?1 GROUP BY f.ordinal ORDER BY f.ordinal").map_err(err)?;
+        let mut amounts=tx.prepare("SELECT f.ordinal,coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.paired_count) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END,CASE WHEN COUNT(v.source_work)=COUNT(v.paired_count) AND MIN(v.source_work)=MAX(v.source_work) THEN MIN(v.source_work) END FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item AND v.name=?2 WHERE f.id=?1 GROUP BY f.ordinal ORDER BY f.ordinal").map_err(err)?;
         while let Some(row) = names.next().map_err(err)? {
             let name: String = row.get(0).map_err(err)?;
             let mut cells = Vec::with_capacity(orgs.len());

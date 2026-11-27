@@ -639,3 +639,28 @@ fn range_organization_limits_and_missing_manifests_are_enforced() {
         )
         .is_err());
 }
+
+#[test]
+fn coverage_reads_version_two_database_without_period_index() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let conn = store.connect().unwrap();
+    add(
+        &conn, "day", "day", "2024-01-01", "2024-01-01", Some(true),
+        &["A"], &[(2., 10.)], false,
+    );
+    conn.execute_batch("DROP INDEX reports_by_period").unwrap();
+    let revision = store.revision().unwrap();
+    let calendar = store.report_calendar(revision, 2024).unwrap();
+    assert_eq!(serde_json::to_value(calendar).unwrap()["days"][0]["dayReports"], 1);
+    let coverage = page(&store, "2024-01-01", "2024-01-01", &["A", "B"]);
+    assert_eq!(coverage.rows[0].cells[0].count, Some(2.));
+    assert_eq!(coverage.rows[0].cells[0].amount, Some(10.));
+    assert!(!coverage.rows[1].cells[0].available);
+    let reports = store
+        .quality_matrix_reports(revision, "day", "2024-01-01", Some("A"), None, 20)
+        .unwrap();
+    assert_eq!(reports.total_rows, 1);
+    assert_eq!(reports.rows[0].id, "day");
+    assert_eq!(store.revision().unwrap(), revision);
+}

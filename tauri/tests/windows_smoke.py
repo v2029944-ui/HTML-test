@@ -407,15 +407,18 @@ def check_runtime(page):
       const {theme,palette,design,uiSize}=document.documentElement.dataset;
       return [theme,palette,design,uiSize].join('/')==='dark/paper/compact/large';
     }''')
+    check_caption_colors(page)
     check_palette_contrast(page)
     page.locator('#appearanceTheme').select_option('system')
     page.locator('#appearancePreset').select_option('minimal')
     page.locator('#appearanceSize').select_option('standard')
-    navigate(page,'dashboard')
-    back=page.locator('#backBtn')
-    back.focus();back.press('Escape')
-    expect(page.locator('#toolsPage')).not_to_be_visible()
-    expect(page.locator('#refAnalytics')).to_be_focused()
+    page.locator('#sharedHeader .main-nav button').first.click()
+    navigate(page,'chartPanel')
+    expect(page.locator('#backBtn')).to_be_hidden()
+    analytics=page.locator('#toolsPage .tool-tabs [data-section="chartPanel"]')
+    analytics.focus();analytics.press('Escape')
+    expect(page.locator('#toolsPage')).to_be_visible()
+    expect(analytics).to_be_focused()
     navigate(page,'dashboard')
     fold=common_filters(page)
     select=fold.locator('#referenceSource')
@@ -429,12 +432,29 @@ def check_runtime(page):
     assert not page.locator('#categoryFilter').evaluate('el => el.open')
 
 
+def check_caption_colors(page):
+    if sys.getwindowsversion().build < 22000:
+        return
+    for theme, palette in (('light', 'neon'), ('dark', 'paper')):
+        page.locator('#appearanceTheme').select_option(theme)
+        page.locator('#appearancePalette').select_option(palette)
+        expect(page.locator('#refRoot')).to_have_attribute('data-palette', palette)
+        fill = page.locator('#sharedHeader .app-header').evaluate(
+            "node => getComputedStyle(node).getPropertyValue('--window-caption-background').trim()")
+        assert re.fullmatch(r'#[0-9a-f]{6}', fill, re.IGNORECASE), fill
+        background = list(bytes.fromhex(fill[1:]))
+        assert page.evaluate("""args => window.__TAURI__.core.invoke('set_window_caption', args)""",
+                             {'background': background, 'dark': theme == 'dark'}) is True
+
+
 def check_palette_contrast(page):
     pairs = [('--text', '--surface', 4.5), ('--muted', '--subtle', 4.5),
              ('--on-accent', '--accent-fill', 4.5), ('--on-accent', '--accent-hover', 4.5),
              ('--axis', '--surface', 3), ('--selected-border', '--selected', 3)]
     pairs.extend((f'--plot-{index}', '--surface', 3) for index in range(8))
-    names = sorted({name for foreground, background, _ in pairs for name in (foreground, background)})
+    themed_pairs = [('--field-border', '--field-bg', 3), ('--warning', '--subtle', 4.5),
+                    ('--text', '--selected', 4.5), ('--focus', '--surface', 3)]
+    names = sorted({name for foreground, background, _ in pairs + themed_pairs for name in (foreground, background)})
 
     def luminance(color):
         assert re.fullmatch(r'#[0-9a-f]{6}', color, re.IGNORECASE), color
@@ -450,7 +470,8 @@ def check_palette_contrast(page):
               const style = getComputedStyle(document.documentElement);
               return Object.fromEntries(names.map(name => [name, style.getPropertyValue(name).trim()]));
             }''', names)
-            for foreground, background, minimum in pairs:
+            checked_pairs = pairs if palette == 'corporate' else pairs + themed_pairs
+            for foreground, background, minimum in checked_pairs:
                 low, high = sorted([luminance(colors[foreground]), luminance(colors[background])])
                 ratio = (high + 0.05) / (low + 0.05)
                 assert ratio >= minimum, (palette, theme, foreground, background, ratio, minimum)
@@ -1052,6 +1073,13 @@ def check_partial_amount_charts(page, temporary, output):
 
     navigate(page,'comparison')
     wait_for_text(page,'#comparisonCoverage','базового и анализируемого периодов',90_000)
+    # Isolate amount so the graph assertions do not depend on the default KPI selection.
+    metric_picker=page.locator('#comparisonMetrics details')
+    metric_picker.locator('summary').click()
+    metric_picker.locator('input[value="amount"]').check()
+    for other in metric_picker.locator('input:not([value="amount"]):checked').all():
+        other.uncheck()
+    metric_picker.locator('summary').click()
     comparison=page.locator('#comparisonTable table').first
     expect(comparison).to_be_visible(timeout=90_000)
     expect(comparison).to_contain_text('Значение сейчас')
@@ -1065,14 +1093,18 @@ def check_partial_amount_charts(page, temporary, output):
         page.evaluate('work => window.referenceFilters.setWorks(false,[[work.key,work]])',work)
         page.locator('#refComparisonModes [data-value="organizations"]').click()
         trends=page.locator('#comparisonDynamicsPlots')
-        expect(trends.locator('h3')).to_have_count(1)
-        expect(trends.locator('h3')).to_contain_text('Сумма')
-        expect(trends.locator('.chart-legend span')).to_have_text([first,second])
-        expect(trends.locator('svg polyline.chart-series')).to_have_count(2)
+        plot = trends.locator(':scope > .metric-plot')
+        expect(plot).to_have_count(1)
+        expect(trends.locator(':scope > h3')).to_contain_text('Сумма')
+        table = trends.locator('.comparison-dynamics-table')
+        expect(table.get_by_role('heading', name='Значения по периодам · Сумма', exact=True)).to_be_visible()
+        expect(table.get_by_role('table')).to_be_visible()
+        expect(plot.locator('.chart-legend span')).to_have_text([first,second])
+        expect(plot.locator('svg polyline.chart-series')).to_have_count(2)
         for name,amount in [(first,20),(second,30)]:
-            expect(trends.locator(f'svg circle[data-chart-tooltip*="{name}"][data-chart-tooltip*="01.01.2018: {fmt(amount)}"]')).to_be_visible()
-        expect(trends.locator('svg circle[data-chart-tooltip*="03.01.2018"]')).to_have_count(0)
-        expect(trends.locator('.chart-period-notices summary')).to_be_visible()
+            expect(plot.locator(f'svg circle[data-chart-tooltip*="{name}"][data-chart-tooltip*="01.01.2018: {fmt(amount)}"]')).to_be_visible()
+        expect(plot.locator('svg circle[data-chart-tooltip*="03.01.2018"]')).to_have_count(0)
+        expect(plot.locator('.chart-period-notices summary')).to_be_visible()
         expect(comparison).to_contain_text(work['name'])
         trends.screenshot(path=str(output/'windows-sql-department-range-comparison.png'))
     finally:

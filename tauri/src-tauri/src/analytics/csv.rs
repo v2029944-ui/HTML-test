@@ -257,7 +257,7 @@ fn export_changes_table(
 pub(super) fn write_changes_rows(tx: &Connection, q: &ChangeQuery, w: &mut impl Write) -> Result<(), String> {
     let metrics = ["count", "amount", "average"];
     changes_csv_header(w, &metrics)?;
-    let mut stmt=tx.prepare("SELECT start,base,org,key,name,kind,bc,ba,cc,ca FROM temp.an_changes ORDER BY start,org,key").map_err(err)?;
+    let mut stmt=tx.prepare("SELECT start,base,org,key,name,kind,bc,ba,cc,ca,base_observed,current_observed FROM temp.an_changes ORDER BY start,org,key").map_err(err)?;
     let mut rows = stmt.query([]).map_err(err)?;
     while let Some(r) = rows.next().map_err(err)? {
         change_csv(w, &change_value(r, q)?, &metrics)?;

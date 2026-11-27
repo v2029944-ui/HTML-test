@@ -1,6 +1,6 @@
 //! Original UI management operations backed by revision-checked SQLite domains.
 use crate::storage::{
-    ManagementReceipt, UnifiedCatalogReceipt, UnifiedManagementPage, UnifiedSettingsReview,
+    GroupTreeEdit, ManagementReceipt, UnifiedCatalogReceipt, UnifiedManagementPage, UnifiedSettingsReview,
 };
 use tauri::AppHandle;
 
@@ -75,6 +75,47 @@ pub async fn unified_group_save(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[derive(serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum GroupTreeAction {
+    Create { id: String, name: String, parent: Option<String> },
+    Move { group: String, parent: Option<String> },
+    Delete { group: String, delete_descendants: bool, confirmed: bool, backup: Option<String> },
+}
+
+#[tauri::command]
+pub async fn unified_group_tree_edit(
+    app: AppHandle,
+    revision: i64,
+    action: GroupTreeAction,
+    workspace_token: Option<String>,
+) -> Result<ManagementReceipt, String> {
+    fn required(value: String) -> Result<i64, String> {
+        group_handle(Some(value))?.ok_or_else(|| "Выберите группу.".into())
+    }
+    let (edit, backup) = match action {
+        GroupTreeAction::Create { id, name, parent } => (GroupTreeEdit::Create {
+            id, name, parent: group_handle(parent)?,
+        }, None),
+        GroupTreeAction::Move { group, parent } => (GroupTreeEdit::Move {
+            group: required(group)?, parent: group_handle(parent)?,
+        }, None),
+        GroupTreeAction::Delete { group, delete_descendants, confirmed, backup } => (GroupTreeEdit::Delete {
+            group: required(group)?, delete_descendants, confirmed,
+        }, backup),
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::native_shared_runtime::execute(
+            &app, workspace_token.as_deref(), crate::storage::shared_runtime::Access::Write,
+            |store| store.unified_group_tree_edit_with_backup(
+                revision, edit, backup.as_deref().map(std::path::Path::new),
+            ),
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -159,6 +200,7 @@ pub async fn unified_groups_import(
     source: String,
     hash: String,
     confirmed: bool,
+    backup: Option<String>,
     workspace_token: Option<String>,
 ) -> Result<ManagementReceipt, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -167,11 +209,12 @@ pub async fn unified_groups_import(
             workspace_token.as_deref(),
             crate::storage::shared_runtime::Access::Write,
             |routed_storage| {
-                routed_storage.unified_groups_import(
+                routed_storage.unified_groups_import_with_backup(
                     revision,
                     std::path::Path::new(&source),
                     &hash,
                     confirmed,
+                    backup.as_deref().map(std::path::Path::new),
                 )
             },
         )

@@ -92,8 +92,8 @@ test('SQL failure clears prior rendered rows and snapshot invalidates in-flight 
  pending=deferred();fx.nodes.get('changesMode').dispatch('change');fx.snapshot();pending.resolve(page('Hidden stale'));await settle();assert.doesNotMatch(fx.nodes.get('changesResults').textContent,/Hidden stale/);
 });
 test('regularity search/status go to SQL and empty selection does not become all work',async()=>{
- const calls=[];const fx=fixture({unifiedPatternPage:async(...args)=>{calls.push(args);return {rows:[],next:null,total_rows:0,used:1,expected:2,previous_used:0,current_complete:false};}});fx.publish();fx.nodes.get('regularityPanel').open=true;fx.nodes.get('regularitySearch').value='Дальняя';fx.nodes.get('regularityStatus').value='rare';fx.nodes.get('regularityPanel').dispatch('toggle');await settle();assert.equal(calls.length,1);assert.equal(calls[0][3].search,'Дальняя');assert.equal(calls[0][3].status,'rare');
- fx.publish({selectedNames:[],selectedKeys:[],allNames:false});fx.nodes.get('regularityPanel').dispatch('toggle');await settle();assert.equal(calls.length,1);assert.match(fx.nodes.get('regularityResults').textContent,/Отметьте/);
+ const calls=[];const fx=fixture({unifiedPatternPage:async(...args)=>{calls.push(args);return {rows:[],next:null,total_rows:0,used:1,expected:2,previous_used:0,current_complete:false};}});fx.publish();fx.nodes.get('regularitySearch').value='Дальняя';fx.nodes.get('regularityStatus').value='rare';fx.window.unifiedExtended.openPatterns('regularity');await settle();assert.equal(calls.length,1);assert.equal(calls[0][3].search,'Дальняя');assert.equal(calls[0][3].status,'rare');
+ fx.publish({selectedNames:[],selectedKeys:[],allNames:false});fx.window.unifiedExtended.openPatterns('regularity');await settle();assert.equal(calls.length,1);assert.match(fx.nodes.get('regularityResults').textContent,/Отметьте/);
 });
 test('comparison uses bounded SQL rows and preserves unavailable values',async()=>{
  const calls=[];const total={complete:true,periods:1,missing:0,total:{count:5,amount:10,average:2}};
@@ -116,7 +116,7 @@ test('daily week/month/year usual-level drilldowns retain the expanded final day
  for(const [kind,from,to,baseline]of [['week','2024-01-08','2024-01-14','2023-12-11'],['month','2024-02-01','2024-02-29','2023-10-01'],['year','2024-01-01','2024-12-31','2020-01-01']]){
   const calls=[],measure={base:1,current:2,delta:1,percent:100,status:'high'};
   const f=fixture({unifiedPatternPage:async()=>({rows:[{key:'work:Work',name:'Work',kind:'work',count:measure,amount:measure,average:measure}],next:null,total_rows:1,used:4,expected:4,previous_used:4,current_complete:true,baseline_from:baseline,baseline_to:from,current_from:from,current_to:from}),nativeWorkTimeline:async(...args)=>{calls.push(args);return {granularity:kind,points:[]};}});
-  f.UI.range=(type,start,end,source)=>({type:'day',displayType:type,source,from,to});f.publish({displayType:kind,source:'daily',type:'day',from,to});f.nodes.get('usualPeriod').value=from;f.nodes.get('usualPanel').open=true;f.nodes.get('usualPanel').dispatch('toggle');await settle();
+  f.UI.range=(type,start,end,source)=>({type:'day',displayType:type,source,from,to});f.publish({displayType:kind,source:'daily',type:'day',from,to});f.nodes.get('usualPeriod').value=from;f.window.unifiedExtended.openPatterns('usual');await settle();
   const table=f.tables.find(table=>table.root==='usualResults');assert.ok(table,kind);table.rows[0][0].dispatch('click');await settle();assert.equal(calls.length,1,kind);assert.equal(calls[0][2],baseline,kind);assert.equal(calls[0][3],to,kind);assert.equal(calls[0][8],kind);
  }
 });
@@ -219,12 +219,14 @@ test('missing report pairs are reported separately with formatted dates',async()
  const p=page('Missing');
  p.summary.totals.missing_pairs=2;
  p.summary.totals.partial_pairs=3;
+ p.summary.rows_with_missing_amount=1;
  p.missing_examples=[{org:'A',missing_base:true,base_start:'2024-01-01',missing_current:false}];
  const f=fixture({unifiedChangesPage:async()=>p});f.publish();f.view('changes');await settle();
  const message=f.nodes.get('changesWarnings').textContent;
  assert.match(message,/Пар без отчётов за один или оба периода: 2/);
  assert.match(message,/не включены в сопоставление/);
- assert.match(message,/Пар по доступным отчётам: 3/);
+ assert.match(message,/Пар с неполным покрытием отчётами: 3/);
+ assert.match(message,/Строк сравнения с незаполненной суммой: 1/);
  assert.match(message,/01\.01\.2024/);
 });
 
@@ -342,6 +344,25 @@ test('reference comparison uses exact shared intervals and preserves selected or
  f.window.referenceDetail.active='storage';await assert.rejects(exportView.export(),/изменились/);assert.equal(exports.length,1);
 });
 
+test('switching from settings recalculates frequency when the shared scope changes before dashboard activation',async()=>{
+ const calls=[];
+ const f=fixture({unifiedPatternPage:async(req,mode)=>{
+  calls.push([req.query.from,mode]);
+  return {rows:[],total_rows:0,used:1,expected:1,previous_used:1,baseline_from:req.query.from,baseline_to:req.query.from,current_complete:true};
+ }});
+ f.publish();
+ f.view('storage');
+ f.window.referenceDetail={active:'regularityPanel'};
+ f.nodes.get('advancedAnalytics').open=true;
+ const first=f.window.unifiedExtended.openPatterns('regularity');
+ f.publish({from:'2024-01-02',to:'2024-01-02'});
+ f.view('dashboard');
+ await first;
+ await settle();
+ assert.deepEqual(calls,[['2024-01-01','regularity'],['2024-01-02','regularity']]);
+ assert.match(f.nodes.get('regularityCoverage').textContent,/Периодов с отчётами/);
+});
+
 test('reference regularity retains incomplete organizations and matches the chosen monthly unit',async()=>{
  const calls=[];
  const f=fixture({
@@ -350,7 +371,7 @@ test('reference regularity retains incomplete organizations and matches the chos
  });
  f.window.referenceDetail={active:'regularityPanel'};
  f.publish({from:'2024-02-01',to:'2024-02-29',displayType:'month',baseFrom:'2023-02-01',baseTo:'2023-02-28'});
- f.nodes.get('regularityPanel').open=true;f.nodes.get('regularityPanel').dispatch('toggle');await settle();
+ f.window.unifiedExtended.openPatterns('regularity');await settle();
  assert.equal(calls.length,1);
  assert.equal(calls[0][0].displayType,'month');
  assert.deepEqual({...calls[0][3].baseline},{from:'2023-02-01',to:'2023-02-28'});
@@ -528,7 +549,7 @@ test('usual level captions expand calendar keys into the full sampled dates',asy
  ]){
   const f=fixture({unifiedPatternPage:async()=>({rows:[],total_rows:0,used:4,expected:4,previous_used:4,current_complete:true,baseline_from:first,baseline_to:last,current_from:from,current_to:from})});
   f.UI.range=()=>({type:source==='daily'?'day':kind,displayType:kind,source,from,to});f.publish({displayType:kind,source,type:source==='daily'?'day':kind,from,to});
-  f.nodes.get('usualPeriod').value=from;f.nodes.get('usualPanel').open=true;f.nodes.get('usualPanel').dispatch('toggle');await settle();
+  f.nodes.get('usualPeriod').value=from;f.window.unifiedExtended.openPatterns('usual');await settle();
   const caption=f.tables.find(t=>t.root==='usualResults').caption;
   assert.ok(caption.includes(baseEnd)&&caption.endsWith(currentEnd),caption);
  }
@@ -650,7 +671,7 @@ test('contribution detail respects the selected work scope used by its parent co
  assert.match(f.nodes.get('contributionCheck').textContent,/все работы/);
 });
 
-test('department comparison loads a line chart automatically only for a range',async()=>{
+test('department comparison shows a period table for both single periods and selected ranges',async()=>{
  let trendReads=0;
  const values=[{org:'A',complete:true,missing:0,total:{count:5,amount:10,average:2}}];
  const f=fixture({
@@ -666,12 +687,13 @@ test('department comparison loads a line chart automatically only for a range',a
  await f.window.unifiedExtended.openComparison();await settle();
  assert.equal(trendReads,0);
  const chart=f.nodes.get('comparisonDynamics');
- assert.equal(chart.hidden,true);
+ assert.equal(chart.hidden,false);
+ assert.ok(f.tables.some(t=>t.options?.title==='Значения по периодам · Сумма'));
  f.publish({overviewMode:'range'});
  await f.window.unifiedExtended.openComparison();
  assert.equal(trendReads,1);
  assert.equal(chart.hidden,false);
- assert.match(f.nodes.get('comparisonDynamicsPlots').textContent,/один период/);
+ assert.match(f.nodes.get('comparisonDynamicsPlots').textContent,/10/);
 });
 
 test('switching comparison type clears the previous results before SQL completes',async()=>{
@@ -758,6 +780,11 @@ test('department comparison graphs one selected metric, preserving zero and miss
  assert.equal(trend[4].data[1].get('B').amount,3);
  assert.match(trend[4].pointNotice(0,['A','B','C']),/B, C/);
  assert.equal(trend[4].pointNotice(0,['A']),'');
+ const timeline=f.tables.find(t=>t.options?.title==='Значения по периодам · Сумма');
+ assert.ok(timeline,f.nodes.get('comparisonDynamicsPlots').textContent);
+ assert.deepEqual(Array.from(timeline.headers),['Период','A','B','C','Неполные данные']);
+ assert.deepEqual(Array.from(timeline.options.csvRows[0]).slice(1,4),[0,null,null]);
+ assert.deepEqual(Array.from(timeline.options.csvRows[1]).slice(1,4),[9,3,null]);
 });
 
 test('deviations explain missing reports and insufficient historical windows',async()=>{
@@ -767,7 +794,7 @@ test('deviations explain missing reports and insufficient historical windows',as
  })});
  f.window.referenceDetail={active:'usualPanel'};
  f.publish({baseFrom:'2023-12-30',baseTo:'2023-12-31'});
- f.nodes.get('usualPanel').open=true;f.nodes.get('usualPanel').dispatch('toggle');await settle();
+ f.window.unifiedExtended.openPatterns('usual');await settle();
  const message=f.nodes.get('usualCoverage').textContent;
  assert.match(message,/Исторических окон с отчётами: 1 из 4/);
  assert.match(message,/Пропуски могут влиять на отклонение/);

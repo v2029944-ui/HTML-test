@@ -42,8 +42,8 @@ class DesktopTablePager(unittest.TestCase):
             referenceChanges:async r=>{
               reads.push([r.page,r.search]);
               if(window.readDelay) await new Promise(resolve=>setTimeout(resolve,window.readDelay));
-              const total=r.search?1:91,rows=Array.from({length:Math.min(12,total-12*r.page)},(_,i)=>({
-                name:r.search||'Работа '+(12*r.page+i+1),org:'A',before:1,after:2,delta:1,percent:100}));
+              const total=r.search?1:357,rows=Array.from({length:Math.min(50,total-50*r.page)},(_,i)=>({
+                name:r.search||'Работа '+(50*r.page+i+1),org:'A',before:1,after:2,delta:1,percent:100}));
               return {rows,total,searched:total,significant:total,comparable:['A'],counts:{up:total,down:0,gone:0,new:0}};
             }
           };
@@ -55,25 +55,25 @@ class DesktopTablePager(unittest.TestCase):
             organizations:['A'],metric:'amount',source:'daily',displayType:'day'});await referenceResults.setScreen('s2');}""")
         nav=p.locator('[data-sql-pager="reference-changes"]')
         rows=p.locator('#s2 .changes-table tbody tr')
-        expect(rows).to_have_count(12)
+        expect(rows).to_have_count(50)
         p.locator('#reportShell .filter-fold > summary').click()
         choose=nav.locator('[data-page-action=choose]')
         choose.scroll_into_view_if_needed()
         before=choose.bounding_box()['y']
         choose.click();nav.locator('[data-page-number="8"]').click()
-        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 85–91 из 91')
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 351–357 из 357')
         expect(rows).to_have_count(7)
-        expect(rows.last).to_contain_text('Работа 91')
+        expect(rows.last).to_contain_text('Работа 357')
         self.assertEqual(p.evaluate('reads.map(r=>r[0])'),[0,7])
         expect(choose).to_be_focused()
         self.assertAlmostEqual(before,choose.bounding_box()['y'],delta=2)
         expect(nav.locator('[data-page-action=next]')).to_be_disabled()
         nav.locator('[data-page-action=previous]').click()
-        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 73–84 из 91')
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 301–350 из 357')
         p.evaluate('window.readDelay=100')
         previous=nav.locator('[data-page-action=previous]')
         previous.focus();previous.press('Enter')
-        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 61–72 из 91')
+        expect(nav.locator('[data-page-range]')).to_have_text('Позиции 251–300 из 357')
         expect(previous).to_be_focused()
         category=p.locator('#s2 .kpi').first
         category.focus();category.press('Enter')
@@ -160,16 +160,23 @@ class DesktopTablePager(unittest.TestCase):
         choose.click();numbers=nav.locator('[data-page-number]')
         expect(numbers).to_have_count(200)
         first, second = numbers.nth(0).bounding_box(), numbers.nth(1).bounding_box()
-        self.assertAlmostEqual(first['x'], second['x'], delta=1)
+        self.assertAlmostEqual(first['y'], second['y'], delta=1)
         self.assertAlmostEqual(first['width'], second['width'], delta=1)
-        self.assertGreaterEqual(second['y'], first['y'] + first['height'])
-        nav.locator('[data-page-number="7"]').click()
+        self.assertGreaterEqual(second['x'], first['x'] + first['width'])
+        numbers.nth(0).focus()
+        self.page.keyboard.press('ArrowRight')
+        expect(numbers.nth(1)).to_be_focused()
+        self.page.keyboard.press('ArrowDown')
+        expect(nav.locator('[data-page-number="7"]')).to_be_focused()
+        self.page.keyboard.press('Enter')
         expect(nav.locator('[data-page-range]')).to_have_text('Позиции 7–7 из 200')
         choose.click();choices=nav.locator('.sql-page-choices')
         self.assertTrue(choices.evaluate('e=>e.scrollHeight>e.clientHeight && e.scrollWidth<=e.clientWidth+1'))
         menu=nav.locator('[popover]').bounding_box()
         self.assertGreaterEqual(menu['x'],0)
         self.assertLessEqual(menu['x']+menu['width'],381)
+        self.assertLessEqual(menu['width'],241)
+        self.assertLessEqual(menu['height'],205)
         choices.hover();p.mouse.wheel(0,4000)
         nav.locator('[data-page-number="198"]').click()
         expect(choose).to_be_focused()

@@ -150,11 +150,19 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
     def panel(target):
         expect(page.locator('#toolsPage')).to_be_visible(timeout=TIMEOUT)
         expect(page.locator('#' + target)).to_be_visible(timeout=TIMEOUT)
-        expect(page.locator('#backBtn')).to_be_visible()
+        back = page.locator('#backBtn')
+        if target in ('chartPanel','structurePanel','comparison','usualPanel','regularityPanel'):
+            expect(back).to_be_hidden()
+        else:
+            expect(back).to_be_visible()
 
     def close_panel(trigger):
         page.locator('#backBtn').click()
-        expect(page.locator('#toolsPage')).not_to_be_visible(timeout=TIMEOUT)
+        if page.locator('#s1').is_visible():
+            expect(page.locator('#toolsPage')).to_be_visible(timeout=TIMEOUT)
+            expect(page.locator('#backBtn')).to_be_hidden()
+        else:
+            expect(page.locator('#toolsPage')).not_to_be_visible(timeout=TIMEOUT)
         focused(trigger)
 
     def export_available(selector, has_rows, name):
@@ -317,7 +325,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         expect(page.locator('#reportShell')).to_be_visible(timeout=TIMEOUT)
         expect(page.locator('#s1')).to_be_visible(timeout=TIMEOUT)
         expect(page.locator('#s2')).not_to_be_visible()
-        expect(page.locator('#toolsPage')).not_to_be_visible()
+        panel('chartPanel')
         assert page.evaluate('window.unifiedUI.snapshot.reports > 0') is bool(has_reports)
         assert 'Демоданные' not in page.locator('#sharedHeader').inner_text()
         # The installed route uses the existing native document, never an iframe importer.
@@ -369,12 +377,14 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                 if not page.locator('#groupAuditPanel').evaluate('(node) => node.open'):
                     page.locator('#groupAuditPanel > summary').click()
                 if page.evaluate('Boolean(window.unifiedUI.scope)'):
-                    # A completed pager avoids reading the previous range's coverage
-                    # while the newly opened audit is still loading.
-                    expect(page.locator('[data-sql-pager="groupAuditResults"] [data-page-range]')).to_be_visible(timeout=TIMEOUT)
-                    expect(page.locator('#groupAuditCoverage')).to_contain_text('Найдено:', timeout=TIMEOUT)
-                    audit_total = int(page.locator('#groupAuditCoverage').inner_text()
-                                      .split('Найдено:', 1)[1].split('·', 1)[0].strip())
+                    coverage = page.locator('#groupAuditCoverage')
+                    expect(coverage).to_contain_text('Найдено:', timeout=TIMEOUT)
+                    audit_total = int(coverage.inner_text().split('Найдено:', 1)[1].split('·', 1)[0].strip())
+                    pager = page.locator('[data-sql-pager="groupAuditResults"] [data-page-range]')
+                    if audit_total:
+                        expect(pager).to_be_visible(timeout=TIMEOUT)
+                    else:
+                        expect(pager).to_have_count(0)
                     export_available('#groupAuditExportCsv', audit_total > 0, '04-group-audit-csv-availability')
                 else:
                     expect(page.locator('#groupAuditCoverage')).to_have_text(
@@ -435,7 +445,12 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
 
         # Tabs must switch actual native sections, not another application route.
         analytics = page.locator('#refAnalytics')
-        analytics.click()
+        if has_reports:
+            analytics.click()
+        else:
+            expect(analytics).to_be_hidden()
+            expect(page.locator('#toolsPage')).to_be_visible()
+            page.locator('#toolsPage .tool-tabs [data-section="chartPanel"]').click()
         panel('chartPanel')
         sections = [('Состав работ', 'structurePanel'), ('Сравнение', 'comparison'),
                     ('Отклонения', 'usualPanel'), ('Частота', 'regularityPanel'),
@@ -599,16 +614,24 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
             # Closing/reopening a result disclosure reruns SQL and replaces its
             # table. Check heading controls before exercising that lifecycle.
             check_disclosures(page.locator('#toolsPage'), '08-analytics-disclosures')
-        close_panel(analytics)
-        analytics.click()
+        if has_reports:
+            analytics.click()
+            focused(page.locator('#toolsTitle'))
+        else:
+            chart_tab = page.locator('#toolsPage .tool-tabs [data-section="chartPanel"]')
+            chart_tab.focus()
+            focused(chart_tab)
         panel('chartPanel')
-        analytics.click()
-        expect(page.locator('#toolsPage')).not_to_be_visible()
-        focused(analytics)
+        page.keyboard.press('Escape')
+        panel('chartPanel')
 
         settings = page.locator('#refSettings')
         settings.click()
         panel('storage')
+        expect(page.get_by_role('heading', name='Настройки', level=1)).to_be_focused()
+        expect(page.locator('#reportShell')).to_be_hidden()
+        expect(page.locator('#s1')).to_be_hidden()
+        expect(page.locator('#backBtn')).to_have_text('Вернуться к анализу')
         page.locator('#appearanceTheme').select_option('light')
         page.locator('#appearanceSize').select_option('xlarge')
         update_notes = page.locator('#appUpdateWhatsNew')
@@ -636,7 +659,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         panel('storage')
         page.locator('#appearanceTheme').focus()
         page.keyboard.press('Escape')
-        expect(page.locator('#toolsPage')).not_to_be_visible()
+        panel('chartPanel')
         focused(settings)
 
         if has_reports:
@@ -672,7 +695,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         settings.click()
         panel('storage')
         settings.click()
-        expect(page.locator('#toolsPage')).not_to_be_visible()
+        panel('chartPanel')
         focused(settings)
 
         # Shared date/unit and picker dialogs are tested from the actual toolbar.
@@ -801,6 +824,14 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
 
         if has_reports:
             check_filter_placement(page, record)
+            page.evaluate('window.referenceFilters.openFilters()')
+            works = page.locator('#reportShell [data-pick="works"]')
+            works.click()
+            search = page.get_by_role('searchbox', name='Найти работу')
+            expect(search).to_be_focused()
+            expect(search).to_have_css('outline-offset', '-2px')
+            page.locator('#sheet').get_by_role('button', name='Закрыть', exact=True).click()
+            focused(works)
 
         # Layout checks include classic Windows scrollbars (clientWidth, not innerWidth).
         for width, height in [(1440, 1000), (768, 1024), (390, 844), (320, 568)]:

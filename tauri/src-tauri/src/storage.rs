@@ -11,6 +11,9 @@ use std::{
     time::UNIX_EPOCH,
 };
 
+#[path = "management/work_group_hierarchy.rs"]
+mod work_group_hierarchy;
+
 #[path = "management/management.rs"]
 mod management;
 pub use management::*;
@@ -361,7 +364,7 @@ fn validate_data(data: &Value) -> Result<(), String> {
 
 // Increment when persisted schema definitions change. Connection-local settings
 // belong outside initialization: ready WAL readers must never acquire a writer.
-const STORAGE_SCHEMA_VERSION: i64 = 2;
+const STORAGE_SCHEMA_VERSION: i64 = 3;
 fn new_connection(path: &Path) -> Result<Connection, String> {
     let mut conn = Connection::open(path).map_err(err)?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).map_err(err)?;
@@ -396,6 +399,10 @@ fn new_connection(path: &Path) -> Result<Connection, String> {
         read_model::initialize(&tx)?;
         metric_reports::initialize(&tx)?;
         analytics::initialize(&tx)?;
+        if version == 2 {
+            // The previous marker does not certify the new hierarchy indexes.
+            tx.execute("DELETE FROM analysis_settings", []).map_err(err)?;
+        }
         management::initialize(&tx)?;
         import_apply::initialize(&tx)?;
         tx.pragma_update(None, "user_version", STORAGE_SCHEMA_VERSION).map_err(err)?;

@@ -185,6 +185,7 @@ def _check_detail_table_csv_parity(page, scratch, scope, evidence):
         observed[name] = values
 
     page.locator('#refAnalytics').click()
+    page.locator('#toolsPage .tool-tabs [data-section="chartPanel"]').click()
     expect(page.locator('#refNative')).to_have_attribute('data-panel', 'chartPanel')
     try:
         page.locator('#chartBreakdown').select_option('organizations')
@@ -242,8 +243,8 @@ def _check_detail_table_csv_parity(page, scratch, scope, evidence):
         compare('Частота / периоды с активностью', data[1:6], exported[1:6], [1, 100, 1, 100, 0])
         evidence['detailTableCsvParity'] = observed
     finally:
-        page.locator('#backBtn').click()
-    expect(page.locator('#refAnalytics')).to_be_focused()
+        page.locator('#toolsPage .tool-tabs [data-section="chartPanel"]').click()
+    expect(page.locator('#toolsPage .tool-tabs [data-section="chartPanel"]')).to_be_focused()
 
 
 def select_filter_period(container, unit, mode):
@@ -289,7 +290,7 @@ def check_partial_comparison_details(page, organizations):
         expect(cells).to_have_count(7, timeout=TIMEOUT)
         assert [_number(v.removesuffix(' п. п.')) for v in cells.all_text_contents()[1:]] == [20, 20, 100, 100, 100, 0]
     finally:
-        page.locator('#backBtn').click()
+        page.locator('#toolsPage .tool-tabs [data-section="chartPanel"]').click()
 
 
 def choose_calendar_date(page, trigger, value):
