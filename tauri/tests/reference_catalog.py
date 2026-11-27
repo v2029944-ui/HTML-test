@@ -59,7 +59,11 @@ def check_reference_catalog(page, confirmations, output):
             expect(feedback).not_to_be_visible()
             trigger.press('Enter')
             expect(rows.first.get_by_role('button', name='Изменить', exact=True)).to_be_visible()
-            expect(rows.first.get_by_role('button', name='Удалить', exact=True)).to_be_visible()
+            delete = rows.first.get_by_role('button', name='Удалить', exact=True)
+            expect(delete).to_be_visible()
+            # A visible menu below the last row may still be clipped by the
+            # workspace panel. Check the actual pointer target without writing.
+            delete.click(trial=True)
             geometry = panel.evaluate('''node=>{
               const rect=n=>n.getBoundingClientRect(), list=node.querySelector('#catalogList');
               const controls=node.querySelector('#catalogControls'), row=list.querySelector('.catalog-row');

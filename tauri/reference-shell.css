@@ -1143,8 +1143,8 @@ body:has(#refRoot)>footer {display:none}
 #groupCatalog .catalog-menu {position:relative}
 #groupCatalog .catalog-menu > summary {display:inline-grid;place-items:center;min-width:32px;min-height:28px;cursor:pointer;list-style:none;border:1px solid var(--border);border-radius:var(--radius-control)}
 #groupCatalog .catalog-menu[open] {z-index:3}
-#groupCatalog .catalog-row-actions {position:absolute;right:0;top:100%;z-index:1;display:grid;min-width:max-content;padding:4px;background:var(--ui-surface);border:1px solid var(--border);border-radius:var(--radius-control)}
-#groupCatalog .catalog-row-actions .button {margin:0;min-height:32px}
+#groupCatalog .catalog-row-actions {display:grid;gap:3px;max-width:100%;padding:2px;background:var(--ui-surface);border:1px solid var(--border);border-radius:var(--radius-control)}
+#groupCatalog .catalog-row-actions .button {min-width:0;margin:0;min-height:32px;padding:3px;overflow-wrap:anywhere}
 @media(max-width:700px) {
  #groupCatalog .catalog-form {grid-template-columns:minmax(0,1fr)}
  #groupCatalog .catalog-actions {flex-wrap:wrap}
@@ -1405,7 +1405,8 @@ body:has(#refRoot)>footer {display:none}
 #groupAuditPanel .catalog-menu {position:relative}
 #groupAuditPanel .catalog-menu > summary {min-width:32px;min-height:28px;display:inline-grid;place-items:center;cursor:pointer;list-style:none;border:1px solid var(--border);border-radius:var(--radius-control)}
 #groupAuditPanel .catalog-menu[open] {z-index:3}
-#groupAuditPanel .catalog-menu > :is(button,.group-member) {position:absolute;right:0;top:100%;width:max-content;background:var(--ui-surface);margin:0;padding:4px}
+#groupAuditPanel .catalog-menu > :is(button,.group-member) {display:block;max-width:100%;min-width:0;margin:0;padding:2px}
+#groupAuditPanel .catalog-menu .button {min-width:0;max-width:100%;padding:3px;overflow-wrap:anywhere}
 #groupAuditPanel .audit-tools {display:grid;gap:6px;margin:8px 0}
 #groupAuditPanel .audit-tools [aria-pressed=true] {border-color:var(--focus);font-weight:700}
 #groupWorkspace .button.secondary,
