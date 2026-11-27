@@ -74,7 +74,7 @@
 <div class="title-row"><div>
 <h1 style="margin:0 0 4px;font-size:30px">Анализ выполненных работ</h1>
 <p class="report-range"></p>
-</div><div class="summary-actions"><button class="btn">Печать / PDF</button></div></div>
+</div><div class="summary-actions" hidden><button class="btn" hidden data-print-report>Печать / PDF</button></div></div>
 <section class="card summary-empty" id="summaryEmpty" aria-labelledby="summaryEmptyTitle" hidden>
 <h2 id="summaryEmptyTitle">Отчёты ещё не загружены</h2>
 <p>Добавьте отчёты Excel, чтобы увидеть итоги и изменения.</p>
@@ -100,7 +100,7 @@
 
 <section class="result-grid" style="display:grid;grid-template-columns:1.5fr 1fr;gap:16px">
 <div class="card data-card" style="padding:20px 8px 12px">
-<div class="card-heading" style="display:flex;justify-content:space-between;align-items:center;padding:0 12px 8px"><h2 style="margin:0;font-size:18px">Подразделения</h2><button class="btn ghost" style="min-height:36px">Скачать CSV</button></div>
+<div class="card-heading" style="display:flex;justify-content:space-between;align-items:center;padding:0 12px 8px"><h2 style="margin:0;font-size:18px">Подразделения</h2><button hidden class="btn ghost" style="min-height:36px">Скачать CSV</button></div>
 <div class="table-viewport"><table aria-label="Распределение по подразделениям">
 <thead><tr><th>Подразделение</th><th>Сумма</th><th>Количество / объём</th><th style="width:150px">Доля суммы</th><th>Средняя сумма на единицу</th></tr></thead>
 <tbody></tbody></table></div>
@@ -155,7 +155,7 @@
 <div aria-label="Таблица изменений, доступна горизонтальная прокрутка" class="table-viewport" role="region" tabindex="0"><table aria-label="Изменения по работам и подразделениям" class="changes-table">
 <thead><tr><th scope="col">Работа</th><th scope="col">Подразделение</th><th scope="col">Было</th><th scope="col">Стало</th><th scope="col">Изменение</th><th scope="col">%</th></tr></thead>
 <tbody></tbody></table></div><div class="table-empty" hidden=""></div>
-<div class="table-footer" style="display:flex;justify-content:space-between;align-items:center;padding:12px 12px 4px"><span class="pager-footer" style="font-size:13px"></span><div style="display:flex;gap:8px"><button class="btn" data-export-changes="">Скачать CSV</button><button class="btn">Печать / PDF</button></div></div>
+<div class="table-footer" style="display:flex;justify-content:space-between;align-items:center;padding:12px 12px 4px"><span class="pager-footer" style="font-size:13px"></span><div hidden style="display:flex;gap:8px"><button class="btn" data-export-changes="">Скачать CSV</button><button class="btn" hidden data-print-report>Печать / PDF</button></div></div>
 </section>
 </main>
 </div>

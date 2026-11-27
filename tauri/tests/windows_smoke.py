@@ -2047,7 +2047,7 @@ def run():
                 ready(page,366)
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
                 check_reference_data_file_dialogs(page,confirmations,output)
-                report['checks'].append('Populated summary CSV cancellation and read-only backup verification preserve data; retained restore IPC copies without overwrite and schedules/cancels only the synthetic backup')
+                report['checks'].append('Summary CSV action is hidden and read-only backup verification preserves data; retained restore IPC copies without overwrite and schedules/cancels only the synthetic backup')
             with independent('Read-only management confirmations'), installed_page() as (page,_,pid):
                 ready(page,366)
                 confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))

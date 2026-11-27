@@ -206,7 +206,7 @@
 .screen main,.screen>.tools-column {width:100%;max-width:var(--max)!important;margin:0 auto;padding:28px var(--gutter) 36px!important}
 .screen main {gap:16px!important}
 .screen>.tools-column {padding-block:0!important}
-.screen .app-header {--window-caption-background:#151b22;min-height:64px;display:flex;flex-wrap:nowrap!important;align-items:center;gap:clamp(16px,2.2vw,38px)!important;padding:0 max(var(--gutter),calc((100% - var(--max))/2 + var(--gutter)))!important;background:var(--window-caption-background)!important;border-bottom:1px solid #2c3641}
+.screen .app-header {--window-caption-background:#151b22;min-height:46px;display:flex;flex-wrap:nowrap!important;align-items:center;gap:clamp(16px,2.2vw,38px)!important;padding:0 max(var(--gutter),calc((100% - var(--max))/2 + var(--gutter)))!important;background:var(--window-caption-background)!important;border-bottom:1px solid #2c3641}
 .screen .brand {display:inline-flex;align-items:center;gap:11px;white-space:nowrap;flex:none;font-weight:750;letter-spacing:-.03em}
 .brand-mark {display:grid;place-items:center;width:32px;height:32px;background:var(--ui-accent);color:#1b1b18;border-radius:8px;flex:none}
 .screen .app-header nav {display:flex;flex:1;align-self:stretch;align-items:stretch;gap:16px;min-width:0!important}
@@ -302,7 +302,7 @@
 @media(max-width:800px) {
  .screen main {padding:20px var(--gutter) 28px!important}
  .screen .result-grid {grid-template-columns:minmax(0,1fr)!important}
- .screen .app-header {display:grid!important;grid-template-columns:1fr auto;gap:0 10px!important;min-height:0;padding:8px var(--gutter) 0!important}
+ .screen .app-header {display:grid!important;grid-template-columns:1fr auto;gap:0 10px!important;min-height:0;padding:4px var(--gutter) 0!important}
  .screen .app-header nav {grid-column:1/-1;grid-row:2;gap:18px;min-width:0!important;order:initial;overflow:auto}
  .screen .app-header nav button {min-height:38px}
  .screen .head-tools {justify-content:flex-end}
@@ -898,7 +898,9 @@
 
 
 #sharedHeader,#reportShell {width:100%;max-width:none;zoom:1}
-#reportShell {--filter-sidebar-min-width:208px;--filter-sidebar-max-width:272px;--filter-sidebar-gap:12px;position:sticky;top:0;z-index:8;overflow:visible;overflow-anchor:none;background:var(--ui-bg)}
+@media screen {#sharedHeader {position:sticky;top:0;z-index:10}}
+
+#reportShell {--filter-sidebar-min-width:208px;--filter-sidebar-max-width:272px;--filter-sidebar-gap:12px;position:sticky;top:var(--app-header-height,46px);z-index:8;overflow:visible;overflow-anchor:none;background:var(--ui-bg)}
 #reportShell>.report-filter {margin:0 auto;width:min(calc(100% - 2 * var(--gutter)),calc(var(--max) - 2 * var(--gutter)));border:1px solid var(--ui-line);border-radius:9px}
 #reportShell .filter-fold > summary {position:sticky;top:0;z-index:1;background:var(--ui-surface);border-radius:inherit}
 #reportShell .filter-fold:not([open]) > summary {background:transparent;border-radius:8px}
@@ -963,7 +965,7 @@
 #refRoot {min-height:100vh;min-width:0}
 #refRoot *,#refRoot *::before,#refRoot *::after {box-sizing:border-box}
 #refRoot [hidden],#refRoot[data-settings-page] :is(#reportShell,#s1,#s2) {display:none!important}
-#refRoot[data-settings-page] #toolsPage > header {position:sticky;inset-block-start:0;z-index:8}
+#refRoot[data-settings-page] #toolsPage > header {position:sticky;inset-block-start:var(--app-header-viewport-height,46px);z-index:8}
 #sheet[open] {display:flex;flex-direction:column;overflow:hidden}
 #sheet #dialogBody {min-height:0;overflow:auto;overscroll-behavior:contain}
 #sheet form {display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:8px;flex:none}
@@ -993,7 +995,7 @@ body:has(#refRoot)>footer {display:none}
  /* The side panel uses the free margin outside the centered report. Its
     sticky anchor occupies no vertical space in the report flow. */
  #refRoot[data-filter-sidebar] #reportShell {
-  --filter-at-side:1;top:0;height:0;width:var(--filter-sidebar-width);
+  --filter-at-side:1;top:var(--app-header-height,46px);height:0;width:var(--filter-sidebar-width);
   margin-inline:var(--filter-sidebar-gap) auto;
  }
  #refRoot[data-filter-sidebar] #reportShell>.report-filter {

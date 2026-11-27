@@ -85,7 +85,7 @@ const originalCsv=O.tableCsvButton;
 // Original makeTable calls this binding. Native exports capture the whole SQL query.
 tableCsvButton=function(root,title,metric,caption,headers,rows,context,unit){
  if(context&&typeof context.export==='function'){
-  const button=el('button','Скачать CSV','button secondary');button.type='button';
+  const button=el('button','Скачать CSV','button secondary');button.hidden=true;button.type='button';
   button.addEventListener('click',async()=>{button.disabled=true;try{await context.export();}catch(error){O.notice(error.message||String(error),true);}finally{button.disabled=false;}});root.append(button);return;
  }
  const allRows=context?.allRows===true;
@@ -93,7 +93,7 @@ tableCsvButton=function(root,title,metric,caption,headers,rows,context,unit){
   allRows?context.metadata:Array.isArray(context)?context:null,unit);
 };
 function addTablePrint(host,title,caption,headers,rows,isCurrent){
- const button=el('button','Печать текущей страницы','button secondary');button.type='button';
+ const button=el('button','Печать текущей страницы','button secondary');button.hidden=true;button.type='button';
  button.addEventListener('click',()=>{
   if(!isCurrent())return;
   const report=$('printReport'),table=el('table'),head=el('thead'),header=el('tr'),body=el('tbody');

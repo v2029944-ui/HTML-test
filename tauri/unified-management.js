@@ -464,7 +464,7 @@ function init(){
     U.notice('Результаты проверки групп сохранены в CSV.');
    })();
    if(save.isConnected&&valid(expected)&&ticket===audit.ticket)save.focus();
-  });save.id='groupAuditExportCsv';audit.actions.append(save);
+  });save.hidden=true;save.id='groupAuditExportCsv';audit.actions.append(save);
  }const coverage=result.coverage;$('groupAuditCoverage').textContent='Найдено: '+result.total+(coverage?' · '+(coverage.complete?'Полные данные':'Неполные данные')+' · Периодов: '+coverage.periods+' · Пропусков подразделение–период: '+coverage.missing+'. Пропуски не считаются нулём.':'');};
  function auditRequest(){
   const range=U.range(U.scope.displayType,$('groupAuditFrom').value,$('groupAuditTo').value,U.scope.source);

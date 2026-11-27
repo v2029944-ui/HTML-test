@@ -337,7 +337,7 @@ function treeWorkLabel(row,depth,render){
  return label;
 }
 function printWorkTree(section,interval){
- const button=UI.el('button','Печать текущей страницы','button secondary');
+ const button=UI.el('button','Печать текущей страницы','button secondary');button.hidden=true;
  button.type='button';
  button.addEventListener('click',()=>{
   const root=UI.el('section'),table=section.querySelector('table').cloneNode(true);

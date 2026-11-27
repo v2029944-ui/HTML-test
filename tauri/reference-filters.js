@@ -411,8 +411,11 @@ function sourceChanged(){
 function atSide(){
  return getComputedStyle(panel).getPropertyValue('--filter-at-side').trim()==='1';
 }
+function headerBottom(){
+ return document.getElementById('sharedHeader').getBoundingClientRect().bottom;
+}
 function keepFilterSpace(){
- if(atSide() || panel.hasAttribute('data-floating') || window.scrollY===0 || panel.getBoundingClientRect().top>0.5)return;
+ if(atSide() || panel.hasAttribute('data-floating') || window.scrollY===0 || panel.getBoundingClientRect().top>headerBottom()+0.5)return;
  panel.style.setProperty('--filter-slot', panel.offsetHeight+'px');
  panel.setAttribute('data-floating','');
 }
@@ -473,10 +476,13 @@ function initPlacement(){
   catch{UI.notice('Расположение фильтра изменено на этот сеанс. Сохранить настройку на устройстве не удалось.');}
  };
  summary.addEventListener('click',keepFilterSpace);
- window.addEventListener('scroll',()=>{if(atSide())fitSidebar();},{passive:true});
- const headerObserver=new IntersectionObserver(([entry])=>{if(entry.isIntersecting)releaseSpace();});
- headerObserver.observe(header);
+ window.addEventListener('scroll',()=>{
+  if(window.scrollY===0)releaseSpace();
+  if(atSide())fitSidebar();
+ },{passive:true});
  const sizeObserver=new ResizeObserver(()=>{
+  root.style.setProperty('--app-header-height',header.offsetHeight+'px');
+  root.style.setProperty('--app-header-viewport-height',header.getBoundingClientRect().height+'px');
   syncSidebar();
   // viewport units and DOMRect use window coordinates; panel height is in its own CSS pixels.
   panel.style.setProperty('--filter-zoom',panel.currentCSSZoom || Number(getComputedStyle(panel).zoom) || 1);

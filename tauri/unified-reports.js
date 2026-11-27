@@ -475,7 +475,7 @@ function init(){
      }catch(error){UI.notice?.('Не удалось сохранить CSV: '+String(error.message||error),true);}
      finally{save.disabled=false;if(save.isConnected&&current())save.focus();}
     });
-    save.id='qualityExportCsv';qualityActions.append(save);
+    save.hidden=true;save.id='qualityExportCsv';qualityActions.append(save);
    }
    const pageLabel=$('qualityPage');pageLabel.textContent='';
    window.sqlRowScroll.attach($('qualityTable'),{index:Math.floor(offset/LIMIT),size:LIMIT,count:result.issues.length,total:result.total,footer:pageLabel.parentElement,label:'Страницы замечаний к Excel',go:i=>{

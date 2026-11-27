@@ -168,11 +168,10 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
     def export_available(selector, has_rows, name):
         control = page.locator(selector)
         if has_rows:
-            expect(control).to_be_visible(timeout=TIMEOUT)
-            expect(control).to_be_enabled(timeout=TIMEOUT)
+            expect(control).to_be_hidden(timeout=TIMEOUT)
         else:
             expect(control).to_have_count(0)
-        inventory.append({'step': name, 'available': bool(has_rows),
+        inventory.append({'step': name, 'available': False,
                           'reason': None if has_rows else 'The current result has no rows to export.'})
 
     def chart_hover(root):
