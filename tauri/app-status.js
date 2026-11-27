@@ -64,10 +64,32 @@
     activity.append(dismiss);
   }
   const main=$('sqlMain')||document.querySelector?.('main');
-  let showTimer=null,readVisible=false;
-  function renderActivity(detail){
-    const reads=Number(detail?.reads)||0,saves=Number(detail?.saves)||0;
-    const busy=reads>0||saves>0;
+  const reportLoads={
+    chartPanel:['chartsContainer','Обновляем график…'],
+    comparison:['comparisonTable','Сравниваем периоды и подразделения…'],
+    structurePanel:['structureResults','Рассчитываем состав работ…'],
+    usualPanel:['usualResults','Рассчитываем отклонения…'],
+    regularityPanel:['regularityResults','Рассчитываем частоту…'],
+    changes:['changesResults','Загружаем историю соседних периодов…']
+  };
+  const isBusy=id=>$(id)?.getAttribute?.('aria-busy')==='true';
+  const activePanel=()=>$('refNative')?.dataset?.panel;
+  function reportActivity(){
+    const panel=activePanel();
+    if(panel){
+      const entry=reportLoads[panel];
+      if(!entry||!isBusy(entry[0]))return '';
+      if(panel==='chartPanel'&&window.unifiedUI?.state?.chart==='table')return 'Обновляем таблицу значений…';
+      return entry[1];
+    }
+    if($('s2')?.hidden===false&&isBusy('s2'))return 'Рассчитываем изменения…';
+    return $('s1')?.hidden===false&&isBusy('s1')?'Обновляем сводку…':'';
+  }
+  let showTimer=null,readVisible=false,operations=window.tauriOperations;
+  function renderActivity(){
+    const reads=Number(operations?.reads)||0,saves=Number(operations?.saves)||0;
+    const report=reportActivity();
+    const busy=reads>0||saves>0||Boolean(report);
     if(busy && !wasBusy)activityOpener=document.activeElement;
     if(!busy){activityDismissed=false;activityOpener=null;}
     wasBusy=busy;
@@ -77,11 +99,18 @@
     }
     if(activity)activity.hidden=!busy||activityDismissed||(!saves&&!readVisible);
     if(main)main.setAttribute('aria-busy',String(busy));
-    if(activityText)activityText.textContent=saves>0
-      ?'Сохранение данных…':reads>0?'Загрузка отчётов и расчёт показателей…':'';
+    const message=saves>0?'Сохранение данных…':report||(reads>0?'Загрузка данных…':'');
+    if(activityText&&activityText.textContent!==message)activityText.textContent=message;
   }
-  renderActivity(window.tauriOperations);
-  window.addEventListener?.('tauri-operation-change',event=>renderActivity(event.detail));
+  if(typeof MutationObserver==='function'){
+    const observer=new MutationObserver(renderActivity);
+    for(const id of ['s1','s2','refNative',...Object.values(reportLoads).map(([id])=>id)]){
+      const node=$(id);
+      if(node)observer.observe(node,{attributes:true,attributeFilter:['hidden','aria-busy','data-panel']});
+    }
+  }
+  renderActivity();
+  window.addEventListener?.('tauri-operation-change',event=>{operations=event.detail;renderActivity();});
   if(version){
     version.textContent='Определяем версию…';
     const unavailable=()=>{version.textContent='Версия недоступна';};

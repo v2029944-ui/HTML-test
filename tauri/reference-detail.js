@@ -237,14 +237,13 @@
     advanced.open = analytic;
     $('analyticsDetails').hidden = true;
     $('changeDetails').hidden = true;
-    for (const id of ['usualPanel', 'regularityPanel']) {
-      $(id).open = id === key;
-    }
     if (analytic) {
       const mode = $('workViewMode');
       mode.value = key === 'structurePanel' ? 'composition' : 'trend';
       mode.dispatchEvent(new Event('change'));
       if (key === 'comparison') window.unifiedExtended.openComparison();
+      if (key === 'usualPanel') window.unifiedExtended.openPatterns('usual');
+      if (key === 'regularityPanel') window.unifiedExtended.openPatterns('regularity');
     }
   }
 
@@ -256,7 +255,7 @@
       previousChart = null;
     }
     delete $('refNative').dataset.panel;
-    for (const id of ['advancedAnalytics','usualPanel','regularityPanel']) $(id).open = false;
+    $('advancedAnalytics').open = false;
     $('analyticsDetails').hidden = true;
     $('changeDetails').hidden = true;
     const mode = $('workViewMode');

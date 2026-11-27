@@ -23,6 +23,7 @@
   padding:.5rem .75rem;
   border-radius:var(--radius-control);
 }
+.desktop-notices > #appActivity {border:1px solid var(--selected-border)}
 .desktop-notices .status-dismiss {pointer-events:auto}
 #flash:not([hidden]) {
   display:flex;

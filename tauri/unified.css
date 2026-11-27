@@ -16,8 +16,10 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
 #reportPeriods .calendar-source-organizations{margin:0 0 8px;padding-inline-start:1.25em}
 .period-pair input{width:100%;min-width:0;background:var(--surface);color:var(--text);border:1px solid var(--field-border);padding:9px 12px;border-radius:var(--radius-control)}
 .unified-load-status{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0;font-size:13px;color:var(--muted)}
-:is(.unified-pager,.change-pagination){display:inline-flex;gap:0;align-items:stretch;border:1px solid var(--field-border);border-radius:var(--radius-control);overflow:hidden;max-width:100%;margin:8px 0}
-:is(.unified-pager,.change-pagination) button{border:0;border-radius:0;min-height:38px}:is(.unified-pager,.change-pagination) span{display:flex;align-items:center;padding:6px 10px;border-inline:1px solid var(--border);font-size:13px}
+:is(.unified-pager,.change-pagination){display:inline-flex;gap:.3em;align-items:center;max-width:100%;margin:8px 0}
+:is(#refRoot,#nativeContent) :is(.unified-pager,.change-pagination)>button{min-height:var(--sql-page-button-size);min-width:var(--sql-page-button-size);padding:2px 6px;border-radius:5px;font-size:13px}
+:is(.unified-pager,.change-pagination)>span{display:flex;align-items:center;padding-inline:.2em;font-size:13px}
+.change-pagination:has(>.sql-pager){display:block;border:0;overflow:visible;margin:0}
 .app-version{font-variant-numeric:tabular-nums;font-size:12px;color:var(--muted)}
 .wide-sheet-summary{display:block;width:100%;min-width:0;max-width:100%;margin-top:var(--field-gap);padding:10px 12px;border:1px solid var(--field-border);border-radius:var(--radius-control);background:var(--field-bg);color:var(--text);font-family:var(--font-body);font-size:var(--control-size);overflow-wrap:anywhere;resize:vertical}
 .wide-sheet-summary[hidden]{display:none}
@@ -89,7 +91,7 @@ label input:is([type=date],[type=week],[type=month],[type=number]){min-width:0;m
 
 /* Bounded coverage matrix pagination: no whole-history fetch. */
 .coverage-matrix-pager{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:7px 0 12px}
-.coverage-matrix-pager button{min-height:34px}
+.coverage-matrix-pager > button {min-height:34px}
 
 .coverage-warning{background:var(--warning-bg,var(--panel));color:var(--text)}
 .coverage-cell-action{font:inherit;color:inherit;background:none;border:0;cursor:pointer;max-width:230px;padding:7px;text-align:center}

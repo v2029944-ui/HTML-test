@@ -12,9 +12,9 @@
   // Keep the legacy route keys for transitions, but do not duplicate the
   // main summary and adjacent-history tools among the five detail tabs.
   const analyticsTabs = ['chartPanel','structurePanel','comparison','usualPanel','regularityPanel'];
-  let active = 's1', panel = '', panelOpener = null, dialogOpener = null;
+  let active = 's1', panel = '', analyticsTab = 'chartPanel', panelOpener = null, dialogOpener = null;
   let panelChange = 0;
-  let returnPanel = null;
+  let returnPanel = null, settingsReturn = null;
   function button(text, action) {
     const result = document.createElement('button');
     result.type = 'button';
@@ -44,12 +44,33 @@
   }
 
   function disclosures() {
-    byId('refAnalytics').setAttribute('aria-expanded', String(Boolean(panel) && !management.includes(panel)));
-    byId('refSettings').setAttribute('aria-expanded', String(panel === 'storage'));
+    byId('refSettings').setAttribute('aria-expanded', String(Boolean(settingsReturn)));
+    const nav = byId('sharedHeader').querySelectorAll('.main-nav button');
+    for (const [index, tab] of nav.entries()) {
+      if (!settingsReturn && active === ['s1','s2'][index]) tab.setAttribute('aria-current', 'page');
+      else tab.removeAttribute('aria-current');
+    }
   }
 
   function closePanel(restoreFocus = true) {
-    if (!panel) return;
+    if (settingsReturn) {
+      const previous = settingsReturn;
+      settingsReturn = null;
+      delete byId('refRoot').dataset.settingsPage;
+      if (restoreFocus) {
+        if (previous.panel) openPanel(previous.panel, null, false);
+        else closePanel(false);
+        returnPanel = previous.returnPanel;
+        panelOpener = previous.panelOpener;
+        if (previous.opener?.isConnected) previous.opener.focus({preventScroll:true});
+        const change = panelChange;
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (change === panelChange) window.scrollTo(0, previous.scrollY);
+        }));
+        return;
+      }
+    }
+    if (!panel || (restoreFocus && analyticsTabs.includes(panel))) return;
     if (restoreFocus && returnPanel) {
       const previous = returnPanel;
       returnPanel = null;
@@ -58,7 +79,13 @@
       return;
     }
     returnPanel = null;
+    if (restoreFocus && active === 's1') {
+      openPanel(analyticsTab, null, false);
+      if (panelOpener?.isConnected) panelOpener.focus({preventScroll:true});
+      return;
+    }
     window.referenceDetail.hide();
+    ++panelChange;
     panel = '';
     byId('toolsPage').hidden = true;
     byId('toolsPage').style.removeProperty('min-block-size');
@@ -67,17 +94,26 @@
     if (restoreFocus && panelOpener?.isConnected) panelOpener.focus({preventScroll: true});
   }
 
-  function openPanel(key, opener) {
+  function openPanel(key, opener, moveFocus = true) {
     if (!Object.hasOwn(sections, key)) return;
     const tools = byId('toolsPage'), nav = tools.querySelector('.tool-tabs');
     const change = ++panelChange;
     if (byId('sheet').open) byId('sheet').close();
-    if (opener) {
+    const openingSettings = key === 'storage' && !settingsReturn;
+    if (openingSettings) {
+      settingsReturn = {panel, returnPanel, panelOpener, opener:opener || byId('refSettings'), scrollY:window.scrollY};
+      byId('refRoot').dataset.settingsPage = 'true';
+      returnPanel = null;
+    } else if (opener && !settingsReturn) {
       returnPanel = panel && tools.contains(opener) ? {key: panel, opener} : null;
       if (!returnPanel) panelOpener = opener;
       if (!window.referenceFilters.atSide()) window.referenceFilters.closeFilters();
     }
     panel = key;
+    if (analyticsTabs.includes(key)) analyticsTab = key;
+    const back = byId('backBtn');
+    back.hidden = analyticsTabs.includes(key);
+    back.textContent = settingsReturn && !management.includes(settingsReturn.panel) ? 'Вернуться к анализу' : 'Назад';
     tools.hidden = false;
     byId('refNative').dataset.panel = key;
     const manage = management.includes(key);
@@ -91,14 +127,24 @@
     }
     for (const tab of nav.children) tab.setAttribute('aria-pressed', String(tab.dataset.section === key));
     nav.hidden = key === 'changes' || key === 'overviewPanel';
-    byId('toolsTitle').textContent = manage ? 'Управление' : key === 'changes' ? 'История соседних периодов' : key === 'overviewPanel' ? 'Сводка' : 'Подробная аналитика';
+    const title = byId('toolsTitle');
+    if (settingsReturn) {
+      title.setAttribute('role', 'heading');
+      title.setAttribute('aria-level', '1');
+    } else {
+      title.removeAttribute('role');
+      title.removeAttribute('aria-level');
+    }
+    title.textContent = settingsReturn ? sections[key] : manage ? 'Управление' : key === 'changes' ? 'История соседних периодов' : key === 'overviewPanel' ? 'Сводка' : 'Подробная аналитика';
     window.unifiedUI.activate(manage || key === 'changes' ? key : 'dashboard');
     window.referenceDetail.show(key);
     if (!manage) window.referenceFilters.syncDetails();
     disclosures();
-    const focus = opener ? byId('toolsTitle') : (nav.querySelector('[aria-pressed=true]') || byId('toolsTitle'));
-    focus.focus({preventScroll:true});
-    if (opener) {
+    const focus = (opener || openingSettings) ? title : (nav.querySelector('[aria-pressed=true]') || title);
+    if (moveFocus) focus.focus({preventScroll:true});
+    if (openingSettings) {
+      window.scrollTo(0, 0);
+    } else if (opener && !settingsReturn) {
       // Collapsing filters changes the sticky offset in ResizeObserver. Scroll
       // after that layout rather than retaining the expanded filter height.
       requestAnimationFrame(() => requestAnimationFrame(() => {
@@ -109,16 +155,13 @@
 
   function navigate(id) {
     if (id !== 's1' && id !== 's2') return;
-    closePanel(false);
+    if (settingsReturn || id === 's2') closePanel(false);
     active = id;
     byId('s1').hidden = id !== 's1';
     byId('s2').hidden = id !== 's2';
-    const nav = byId('sharedHeader').querySelectorAll('.main-nav button');
-    for (const [index, tab] of nav.entries()) {
-      if (id === ['s1','s2'][index]) tab.setAttribute('aria-current', 'page');
-      else tab.removeAttribute('aria-current');
-    }
+    disclosures();
     window.referenceResults.setScreen(active);
+    if (id === 's1' && !analyticsTabs.includes(panel)) openPanel(analyticsTab, null, false);
     window.scrollTo(0, 0);
   }
 
@@ -147,10 +190,16 @@
     header.querySelectorAll('.main-nav button').forEach((tab, i) =>
       tab.addEventListener('click', () => navigate(i ? 's2' : 's1')));
     byId('refImport').addEventListener('click', event => openPanel('upload', event.currentTarget));
-    byId('refSettings').addEventListener('click', event => panel === 'storage' ? closePanel() : openPanel('storage', event.currentTarget));
+    byId('refSettings').addEventListener('click', event => settingsReturn ? closePanel() : openPanel('storage', event.currentTarget));
     byId('referenceAdjacentHistory')?.addEventListener('click', event => openPanel('changes', event.currentTarget));
-    byId('refAnalytics').addEventListener('click', event =>
-      panel && !management.includes(panel) ? closePanel() : openPanel('chartPanel', event.currentTarget));
+    byId('refAnalytics').addEventListener('click', event => {
+      if (!analyticsTabs.includes(panel)) {
+        openPanel(analyticsTab, event.currentTarget);
+      } else {
+        byId('toolsTitle').focus({preventScroll:true});
+        tools.scrollIntoView({block:'start'});
+      }
+    });
     byId('backBtn').addEventListener('click', () => closePanel());
     root.addEventListener('keydown', event => {
       // Let the browser dismiss only the active select picker.
@@ -159,12 +208,12 @@
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog:modal')) return;
       const disclosure = event.target.closest?.('details[open]');
-      if (disclosure && root.contains(disclosure) && !disclosure.matches('#advancedAnalytics,#usualPanel,#regularityPanel')) {
+      if (disclosure && root.contains(disclosure) && disclosure.id !== 'advancedAnalytics') {
         if (disclosure.matches('.filter-fold')) window.referenceFilters.closeFilters();
         else disclosure.open = false;
         disclosure.querySelector(':scope > summary')?.focus({preventScroll:true});
         event.preventDefault();
-      } else if (panel && tools.contains(event.target)) {
+      } else if (panel && !analyticsTabs.includes(panel) && tools.contains(event.target)) {
         closePanel();
         event.preventDefault();
       }

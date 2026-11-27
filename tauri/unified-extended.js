@@ -256,6 +256,7 @@ function comparisonLayout(){const organizations=value('comparisonMode')==='organ
  $('periodComparisonSingle').hidden=ranges;$('periodComparisonRanges').hidden=!ranges;$('comparisonPeriodLabel').hidden=orgRange;$('comparisonRangeGroup').hidden=!orgRange;
 }
 function addBoundedPager(root,state,rows,run,total){
+ if(total===0){window.sqlRowScroll?.reset(root);return;}
  const index=state.index,mine=state.ticket,revision=UI.revision,pages=Math.max(1,Math.ceil(total/50));
  const go=i=>{if(current(state,mine,revision)&&Number.isSafeInteger(i)&&i>=0&&i<pages&&i!==index)return run(i);return false;};
  if(window.sqlRowScroll?.attach(root,{index,size:50,total,count:rows.length,label:'Сравнение работ',direct:true,go}))return;
@@ -649,7 +650,13 @@ function resetScope(next){if(!next){scope=null;clearExtended();return;}scope=cop
  checkboxList('changesOrganizations',orgNames.map(o=>[o,o]),changeOrganizations,()=>changes());
  const oldBase=value('comparisonBaseOrg');$('comparisonBaseOrg').replaceChildren(...scope.organizations.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));if(scope.organizations.includes(oldBase))$('comparisonBaseOrg').value=oldBase;
  if(!customComparisonMetrics)comparisonMetrics=new Set(metrics());checkboxList('comparisonMetrics',Object.entries(titles),comparisonMetrics,()=>{customComparisonMetrics=true;comparison();});
- updatePeriodOverrides();if(activeView==='changes')changes();if(activeView==='dashboard'&&$('advancedAnalytics').open){comparison();if(compositionVisible())structure();if($('usualPanel').open)patterns('usual');if($('regularityPanel').open)patterns('regularity');}
+ updatePeriodOverrides();
+ if(activeView==='changes')changes();
+ if($('advancedAnalytics').open){
+  if(activeView==='dashboard'){comparison();if(compositionVisible())structure();}
+  if(referencePanel('usualPanel'))patterns('usual');
+  if(referencePanel('regularityPanel'))patterns('regularity');
+ }
 }
 function bind(ids,event,handler){for(const id of ids)$(id)?.addEventListener(event,handler);}
 
@@ -690,7 +697,10 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
  for(const name of ['changes','contribution','usual','regularity']){const run=name==='changes'?changes:name==='contribution'?contributions:index=>patterns(name,index);$(name+'Prev').addEventListener('click',()=>{const state=slot(name);if(state.index>0)return run(state.index-1);});$(name+'Next').addEventListener('click',()=>{const state=slot(name);if((state.index+1)*RESULTS_PAGE_SIZE<(state.page?.total_rows||0))return run(state.index+1);});}
  bind(['comparisonMode','periodComparisonScope','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonScope','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','comparisonBaseOrg'],'change',()=>{invalidate('comparison');invalidate('contribution');comparison();});
  bind(['structureBase','structureCurrent','structureMetric','structureLimit','structureScope'],'change',structure);bind(['usualPeriod','usualWindow'],'change',()=>patterns('usual'));bind(['usualPercent'],'input',()=>schedule('usual',()=>patterns('usual')));bind(['regularityGap','regularityStatus'],'change',()=>patterns('regularity'));bind(['regularitySearch'],'input',()=>schedule('regularity',()=>patterns('regularity')));
- for(const [id,run] of [['advancedAnalytics',()=>{comparison();if(!window.referenceDetail?.active&&compositionVisible())structure();}],['usualPanel',()=>patterns('usual')],['regularityPanel',()=>patterns('regularity')]])$(id).addEventListener('toggle',()=>{if($(id).open&&scope)run();});
+ $('advancedAnalytics').addEventListener('toggle',()=>{
+  if(!$('advancedAnalytics').open||!scope)return;
+  comparison();if(!window.referenceDetail?.active&&compositionVisible())structure();
+ });
  $('closeAnalyticsDetails').addEventListener('click',()=>closeHistory('analytics'));$('closeChangeDetails').addEventListener('click',()=>closeHistory('change'));
  $('overviewShowComparison').addEventListener('click',()=>{
   $('comparisonMode').value='periods';
@@ -704,5 +714,5 @@ function leaveDetail(){
  for(const key of ['analyticsHistory','comparison','contribution','structure','usual','regularity'])if(channels.has(key))invalidate(key);
  historyTriggers.delete('analytics');$('analyticsDetails').hidden=true;
 }
-window.unifiedExtended=Object.freeze({init,openComparison:comparison,leaveDetail});
+window.unifiedExtended=Object.freeze({init,openComparison:comparison,openPatterns:mode=>scope&&patterns(mode),leaveDetail});
 })();

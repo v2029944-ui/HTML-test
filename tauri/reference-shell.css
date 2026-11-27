@@ -145,6 +145,7 @@
 #sheet .filter-list-dialog{display:grid;gap:12px}
 #sheet .filter-list-dialog p{margin:0}
 #sheet .filter-list-dialog>input{width:100%;box-sizing:border-box;min-height:39px}
+#sheet .filter-list-dialog>input:focus{outline:2px solid var(--focus,var(--ui-accent));outline-offset:-2px}
 #sheet .filter-checkboxes{border-block:1px solid #3b4654;max-height:min(45dvh,360px);overflow:auto;overscroll-behavior:contain;padding:3px 0}
 #sheet .filter-checkboxes label{display:flex;gap:10px;align-items:center;min-height:34px;box-sizing:border-box;margin:0;padding:5px 8px;border-radius:5px}
 #sheet .filter-checkboxes label:hover{background:#26313d}
@@ -260,7 +261,6 @@
 :is(#s1,#sharedHeader,#reportShell) .insight-card>button {font-size:13px;min-height:35px;padding-inline:12px}
 .screen .kind-grid .kpi {padding:14px 16px;display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-height:110px}
 .screen .kpi [data-count] {font-size:28px!important;line-height:1.15;margin:0!important}
-#s2 .kpi[aria-pressed=true] {border-color:#c79e3b;background:#2c291f;box-shadow:inset 0 0 0 1px #776336}
 .screen .kpi>div:first-child {font-size:14px!important;color:var(--ui-text)!important}
 .screen .kpi>div:last-child {line-height:1.3}
 .screen .leaders .card {padding:15px 17px!important}
@@ -744,7 +744,7 @@
     line-height:1.25;
   }
   #s2 .kind-grid {grid-auto-rows:1fr}
-  #s2 .kind-grid .kpi {justify-content:center}
+  #s2 .kind-grid .kpi {justify-content:flex-start}
   #s2 .table-tools .sel {box-sizing:border-box;height:36px;min-height:36px;padding-block:0}
   #toolsPage header button, #sheet .navigation button, #sheet .quality-switch button,
   #sheet .filter-list-actions button, #sheet .filter-apply, #sheet form button {
@@ -882,12 +882,10 @@
 }
 #s2 .changes-table td:nth-child(-n+2), #s2 .position-heading>span {color:inherit}
 #s2 .kind-grid .kpi::after {display:none}
-#s2 .kind-grid .kpi[aria-pressed=true] {background:#302c20;border-color:#dbba5a;box-shadow:inset 0 0 0 1px #c9a541}
-#s2 .changes-heading {display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0}
+#s2 .changes-heading {display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0}
+#s2 .change-metric-context {margin:0;color:var(--ui-muted);font-size:.875rem;line-height:1.35}
+#s2 .change-metric-context strong {color:var(--ui-text);font-weight:600}
 #s2 .excluded-orgs {padding:3px 7px;border:1px solid #75633b;background:#29261f;color:#e6cf8a;border-radius:5px;font-size:12px;line-height:1.25}
-#s2 .table-tools .change-metrics {display:inline-flex;width:max-content;max-width:100%;border:1px solid #445264;border-radius:8px;box-sizing:border-box;height:36px;background:#151b22}
-#s2 .change-metrics button {display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:0;min-height:0;height:100%;white-space:nowrap;background:transparent;border:0;border-radius:6px;padding:0 10px;font-family:inherit;font-weight:600;font-size:13px;line-height:1.25;color:#bdc9d7;cursor:pointer}
-#s2 .change-metrics button[aria-pressed=true] {background:var(--ui-accent);color:var(--ui-accent-ink)}
 #s2 .match-note {display:flex;gap:6px 10px;align-items:center;flex-wrap:wrap}
 #s2 .match-note button {display:inline-flex;align-items:center;justify-content:center;min-height:28px;padding:2px 9px;margin:0}
 #s2 .changes-table td.mobile-position {text-align:left!important}
@@ -903,6 +901,7 @@
 #reportShell {--filter-sidebar-min-width:208px;--filter-sidebar-max-width:272px;--filter-sidebar-gap:12px;position:sticky;top:0;z-index:8;overflow:visible;overflow-anchor:none;background:var(--ui-bg)}
 #reportShell>.report-filter {margin:0 auto;width:min(calc(100% - 2 * var(--gutter)),calc(var(--max) - 2 * var(--gutter)));border:1px solid var(--ui-line);border-radius:9px}
 #reportShell .filter-fold > summary {position:sticky;top:0;z-index:1;background:var(--ui-surface);border-radius:inherit}
+#reportShell .filter-fold:not([open]) > summary {background:transparent;border-radius:8px}
 #reportShell .filter-fold summary {min-height:42px;padding-block:9px}
 #reportShell .filter-summary {display:inline;font-size:12px;line-height:1.3}
 #reportShell .report-filter :is(.filter-periods,.filter-options) {align-items:stretch}
@@ -926,13 +925,17 @@
 #s1 {--detail-spacing:16px}
 #s1 main {padding-bottom:var(--detail-spacing)!important}
 #s1 .summary-bottom-actions {margin:0}
+#s1 .summary-empty {padding:clamp(16px,3vw,28px)}
+#s1 .summary-empty p {color:var(--muted)}
+#s1:has(.summary-empty:not([hidden])) :is(.metrics-grid,.quality-notice,.result-grid,.summary-actions) {display:none!important}
+
 #s1 main:has(.summary-bottom-actions) {row-gap:var(--detail-spacing)!important}
 #toolsPage,.screen .changes-card h2 {scroll-margin-top:calc(var(--sticky-filter-height,48px) + 8px)}
 #sharedHeader .main-nav button[aria-current=page]{border-bottom-color:transparent}
 @media(min-width:1050px) {
- #reportShell .filter-content {grid-template-rows:auto auto auto auto;row-gap:5px}
+ #reportShell .filter-content {grid-template-rows:repeat(5,auto);row-gap:5px}
  #reportShell .report-filter :is(.filter-periods,.filter-options) {align-self:stretch}
- #reportShell .report-dates {grid-row:2 / span 3;grid-template-rows:subgrid}
+ #reportShell .report-dates {grid-row:2 / span 4;grid-template-rows:subgrid}
  #reportShell .filter-shortcuts {display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:subgrid;grid-row:2 / span 3;align-self:stretch;row-gap:5px}
  #reportShell .preset-fields {grid-row:2;align-self:start}
  #reportShell .filter-shortcuts .filter-reset {grid-row:3}
@@ -959,7 +962,8 @@
 
 #refRoot {min-height:100vh;min-width:0}
 #refRoot *,#refRoot *::before,#refRoot *::after {box-sizing:border-box}
-#refRoot [hidden] {display:none!important}
+#refRoot [hidden],#refRoot[data-settings-page] :is(#reportShell,#s1,#s2) {display:none!important}
+#refRoot[data-settings-page] #toolsPage > header {position:sticky;inset-block-start:0;z-index:8}
 #sheet[open] {display:flex;flex-direction:column;overflow:hidden}
 #sheet #dialogBody {min-height:0;overflow:auto;overscroll-behavior:contain}
 #sheet form {display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:8px;flex:none}
@@ -979,6 +983,18 @@ body:has(#refRoot)>footer {display:none}
  max-height:calc(min(46dvh, 100dvh - 64px) / var(--filter-zoom,1));
  overflow:auto;overscroll-behavior:contain;scroll-padding-block:8px;
 }
+@media screen and (max-height:700px) {
+ #refRoot:not([data-filter-sidebar]) #reportShell:not([data-floating]) .filter-content {
+  max-height:none;overflow:visible;
+ }
+ #refRoot:not([data-filter-sidebar]) #reportShell[data-floating] .filter-content {
+  overflow-y:scroll;scrollbar-gutter:stable;scrollbar-color:var(--scroll-thumb) var(--subtle);
+ }
+}
+@media screen and (max-width:920px) {
+ #refRoot[data-ui-size="xlarge"] #reportShell .report-dates {grid-template-columns:minmax(0,1fr);max-width:none}
+}
+#refRoot[data-ui-size="xlarge"] #reportShell .filter-periods > .lbl:has([data-compare]) {grid-column:1/-1}
 @media screen {
  /* The side panel uses the free margin outside the centered report. Its
     sticky anchor occupies no vertical space in the report flow. */
@@ -1038,7 +1054,8 @@ body:has(#refRoot)>footer {display:none}
 #reportShell .report-dates .date-group-title {color:var(--text,#e8edf4)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader,#toolsPage,#sheet,.period-calendar) {color:var(--text);background:var(--bg)}
 #refRoot[data-theme="light"] :is(.app-header,.tools-column header) {background:var(--surface)!important;border-color:var(--border)}
-#refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader) :is(.card,.kpi,.sel,.btn,.filter-picker,.filter-shift,.chip,.change-metrics button,.filter-threshold,.filter-reset) {color:var(--text);border-color:var(--field-border);background:var(--surface)}
+#refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader) :is(.card,.kpi,.sel,.btn,.filter-picker,.filter-shift,.chip,.filter-threshold,.filter-reset) {color:var(--text);border-color:var(--field-border);background:var(--surface)}
+#refRoot #s2 .kind-grid .kpi[aria-pressed=true] {background:var(--selected);border-color:var(--accent)}
 #refRoot[data-theme="light"] #reportShell .filter-summary {color:var(--muted)}
 #refRoot[data-theme="light"] :is(#s1,#s2) .report-range a[href="#reportShell"] {color:var(--accent)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) :is(.app-header nav button[aria-current="page"],.app-header nav button:hover,.analytics-trigger,.edit-dates-link) {color:var(--accent)}
@@ -1053,8 +1070,13 @@ body:has(#refRoot)>footer {display:none}
 #refRoot:is([data-ui-size="large"],[data-ui-size="xlarge"]) #toolsPage header :is(.tool-tabs button,#backBtn) {
   font-size:var(--ui-button-font);min-height:var(--ui-control-height);
 }
-#refRoot[data-ui-size="large"] :is(#sharedHeader,#reportShell,#s1,#s2) {zoom:1.12}
-#refRoot[data-ui-size="xlarge"] :is(#sharedHeader,#reportShell,#s1,#s2) {zoom:1.25}
+#refRoot[data-ui-size="large"] {--reference-screen-zoom:1.12}
+#refRoot[data-ui-size="xlarge"] {--reference-screen-zoom:1.25}
+#refRoot:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(#sharedHeader,#reportShell,#s1,#s2) {zoom:var(--reference-screen-zoom)}
+/* Keep the same compact pager in the zoomed report and unzoomed SQL tabs. */
+#refRoot:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(#s1,#s2) .sql-pager {
+ zoom:calc(1 / var(--reference-screen-zoom));
+}
 @media screen {
   html[data-ui-size="80"] {--desktop-ui-scale:.8}
   html[data-ui-size="90"] {--desktop-ui-scale:.9}

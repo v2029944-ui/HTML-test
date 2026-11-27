@@ -77,3 +77,12 @@ test('reference table row hover uses readable light-palette colors without chang
   }
   assert.ok(css.includes(':is(#s1,#s2,#sharedHeader,#reportShell) .table-viewport tbody tr:hover {background:#202833}'));
 });
+
+test('deviation and frequency analytics are permanent tab content with optional help', () => {
+  for (const [id,heading] of [['usualPanel','usualHeading'],['regularityPanel','regularityHeading']]) {
+    assert.ok(html.includes('<section class="panel" id="'+id+'" aria-labelledby="'+heading+'">'));
+    const start = html.indexOf('id="'+id+'"');
+    const help = html.indexOf('<details class="quick-help"><summary>', start);
+    assert.ok(help > start && help < html.indexOf('</section>', start));
+  }
+});
