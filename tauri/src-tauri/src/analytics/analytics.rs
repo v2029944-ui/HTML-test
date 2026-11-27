@@ -1,6 +1,6 @@
 //! Bounded analysis API; no GUI commands. See storage-core/ANALYTICS.md.
 use super::csv_export::{csv_record, export, Cell};
-use super::read_model::{check_metadata_bounds, check_revision};
+use super::read_model::{check_metadata_bounds, check_revision, ReportPeriodIndex};
 use super::*;
 use chrono::{Datelike, Duration, Months};
 use rusqlite::OptionalExtension;
