@@ -664,6 +664,7 @@ def check_saved_organization_name(page, confirmations, tmp, output):
     save = page.locator('#saveOrganizations')
     status = page.locator('#organizationSaveStatus')
     before = api(page,'nativeSettingsBootstrap')
+    before_contents = backup_contents(confirmations.database)
     original = fields.first.input_value()
     name = original + ' · проверка сохранения'
     expect(save).to_be_disabled()
@@ -683,7 +684,8 @@ def check_saved_organization_name(page, confirmations, tmp, output):
     with tempfile.TemporaryDirectory(dir=tmp) as directory:
         backup = picker.save_rename_backup(hwnd, owner, Path(directory), output/'native-file-rename-backup.png')
         expect(status).to_have_text('Названия сохранены',timeout=90_000)
-        assert backup.is_file()
+        assert backup.is_file(), ('Expected backup file', backup.name, 'found', [p.name for p in Path(directory).iterdir()])
+        assert backup_contents(backup) == before_contents, 'Backup differs from pre-rename SQLite data'
         assert api(page,'nativeRestorePreview',str(backup))['reportCount'] == before['reports']
     navigate(page,'databases')
     navigate(page,'storage')
