@@ -985,9 +985,6 @@ body:has(#refRoot)>footer {display:none}
  overflow:auto;overscroll-behavior:contain;scroll-padding-block:8px;
 }
 @media screen and (max-height:700px) {
- #refRoot:not([data-filter-sidebar]) #reportShell:not([data-floating]):has(.filter-fold[open]) {
-  position:relative;top:auto;
- }
  #refRoot:not([data-filter-sidebar]) #reportShell:not([data-floating]) .filter-content {
   max-height:none;overflow:visible;
  }

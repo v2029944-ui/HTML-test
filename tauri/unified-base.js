@@ -75,10 +75,19 @@ function tableHelp(section,table,headers,help){
  });
 }
 function table(root,metric,caption,headers,rows,options={}){
- if(!options.headerHelp?.some(Boolean))return O.makeTable(root,metric,caption,headers,rows,options);
- O.makeTable(root,metric,caption,headers,rows,{...options,headerHelp:[]});
- const section=root.lastElementChild;
- tableHelp(section,section.querySelector('table'),headers,options.headerHelp);
+ const showHelp=options.headerHelp?.some(Boolean);
+ O.makeTable(root,metric,caption,headers,rows,showHelp?{...options,headerHelp:[]}:options);
+ const section=root.lastElementChild,table=section.querySelector('table');
+ if(caption&&headers.length){
+  table.caption.classList.add('sql-caption-source');
+  const period=el('td',caption);
+  period.colSpan=headers.length;
+  const row=el('tr',null,'sql-table-period');
+  row.setAttribute('aria-hidden','true');
+  row.append(period);
+  table.tHead.append(row);
+ }
+ if(showHelp)tableHelp(section,table,headers,options.headerHelp);
 }
 const originalCsv=O.tableCsvButton;
 // Original makeTable calls this binding. Native exports capture the whole SQL query.
