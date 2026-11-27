@@ -8,6 +8,7 @@ use std::{
     io::{BufReader, BufWriter, Read, Write},
     sync::{atomic::AtomicBool, Arc},
 };
+const MAX_GROUP_WORKS: usize = 10_000;
 const SESSION_MAGIC: &str = "analiz-management-v1\n";
 fn batch(n: usize) -> Result<(), String> {
     if (1..=500).contains(&n) {
@@ -200,7 +201,7 @@ impl Storage {
     }
 
     pub fn unified_save_group(&self, revision:i64, handle:Option<i64>, id:&str, name:&str, works:&[String]) -> Result<ManagementReceipt,String> {
-        if name.trim().is_empty() || name.len()>1024 || id.len()>128 || works.len()>5000 { return Err("Введите название и выберите не более 5000 работ.".into()); }
+        if name.trim().is_empty() || name.len()>1024 || id.len()>128 || works.len()>MAX_GROUP_WORKS { return Err(format!("Введите название и выберите не более {MAX_GROUP_WORKS} работ.")); }
         for work in works { if work.trim().is_empty() || work.len()>4096 { return Err("Некорректное название работы.".into()); } }
         let mut editor = self.management_begin_settings(revision,256*1024*1024,Arc::new(ManagementJob::new()))?;
         editor.unified_save_group(handle,id,name,works)?;

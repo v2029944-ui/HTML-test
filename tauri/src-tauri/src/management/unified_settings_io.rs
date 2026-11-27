@@ -1,6 +1,6 @@
 //! File-based settings transfers. Reports never enter these documents or IPC.
 use super::*;
-use crate::storage::work_group_hierarchy::{validate_group_parents, GroupParent, GROUP_PARENTS_FIELD};
+use crate::storage::work_group_hierarchy::{validate_group_parents, GroupParent, GROUP_PARENTS_FIELD, MAX_GROUPS};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 
@@ -104,9 +104,9 @@ fn group_ids(c: &Connection, list: i64) -> Result<HashMap<String, i64>, String> 
     let mut stmt = c.prepare(
         "SELECT id.value,g.handle FROM management_nodes g
          LEFT JOIN management_nodes id ON id.parent=g.handle AND id.field='id' AND id.kind='string'
-         WHERE g.parent=?1 AND g.kind='object' LIMIT 10001",
+         WHERE g.parent=?1 AND g.kind='object' LIMIT ?2",
     ).map_err(err)?;
-    let mut rows = stmt.query([list]).map_err(err)?;
+    let mut rows = stmt.query(params![list,(MAX_GROUPS + 1) as i64]).map_err(err)?;
     let mut ids = HashMap::new();
     while let Some(row) = rows.next().map_err(err)? {
         let id = row.get::<_, Option<String>>(0).map_err(err)?
@@ -114,8 +114,8 @@ fn group_ids(c: &Connection, list: i64) -> Result<HashMap<String, i64>, String> 
         if id.trim().is_empty() || ids.insert(id, row.get(1).map_err(err)?).is_some() {
             return Err("Перед созданием дерева исправьте пустые и повторяющиеся идентификаторы групп.".into());
         }
-        if ids.len() > 10_000 {
-            return Err("Дерево может содержать не более 10 000 групп.".into());
+        if ids.len() > MAX_GROUPS {
+            return Err(format!("Дерево может содержать не более {MAX_GROUPS} групп."));
         }
     }
     Ok(ids)
@@ -549,21 +549,27 @@ impl Storage {
         })
     }
 }
+const GROUP_FILE_MIB: usize = 64;
+const MAX_IMPORTED_WORKS: usize = 200_000;
+
 fn read_groups(source: &Path) -> Result<(GroupsDocument, String), String> {
     let file = fs::File::open(source).map_err(err)?;
     if !file.metadata().map_err(err)?.is_file() {
         return Err("Выберите обычный файл JSON.".into());
     }
     let mut bytes = Vec::new();
-    file.take(40 * 1024 * 1024 + 1)
+    file.take((GROUP_FILE_MIB * 1024 * 1024 + 1) as u64)
         .read_to_end(&mut bytes)
         .map_err(err)?;
-    if bytes.len() > 40 * 1024 * 1024 {
-        return Err("Файл JSON больше 40 МБ.".into());
+    if bytes.len() > GROUP_FILE_MIB * 1024 * 1024 {
+        return Err(format!("Файл JSON больше {GROUP_FILE_MIB} МиБ."));
     }
     let mut doc: GroupsDocument = serde_json::from_slice(&bytes).map_err(err)?;
-    if doc.format != "work-groups" || !matches!(doc.version, 1 | 2) || doc.groups.len() > 10000 {
-        return Err("Неверный формат групп или более 10000 групп.".into());
+    if doc.format != "work-groups" || !matches!(doc.version, 1 | 2) {
+        return Err("Неверный формат групп.".into());
+    }
+    if doc.groups.len() > MAX_GROUPS {
+        return Err(format!("Допускается до {MAX_GROUPS} групп и подгрупп суммарно."));
     }
     let mut names = HashSet::new();
     let mut works = HashSet::new();
@@ -573,9 +579,11 @@ fn read_groups(source: &Path) -> Result<(GroupsDocument, String), String> {
             || group.name.len() > 1024
             || group.id.len() > 128
             || !names.insert(unified_normalized(&group.name))
-            || group.works.len() > 5000
         {
             return Err("Некорректная группа в JSON.".into());
+        }
+        if group.works.len() > MAX_GROUP_WORKS {
+            return Err(format!("В группе допускается до {MAX_GROUP_WORKS} работ."));
         }
         let mut local = HashSet::new();
         group.works = group
@@ -586,10 +594,13 @@ fn read_groups(source: &Path) -> Result<(GroupsDocument, String), String> {
             .collect();
         for work in &group.works {
             count += 1;
-            if count > 100000 || work.trim().is_empty() || work.len() > 4096 || !works.insert(work)
+            if count > MAX_IMPORTED_WORKS {
+                return Err(format!("В файле допускается до {MAX_IMPORTED_WORKS} работ."));
+            }
+            if work.trim().is_empty() || work.len() > 4096 || !works.insert(work)
             {
                 return Err(
-                    "Работа повторяется в группах, пуста или превышен лимит 100000 работ.".into(),
+                    "Работа повторяется в группах, пуста или название длиннее 4096 байт.".into(),
                 );
             }
         }
@@ -756,6 +767,34 @@ mod group_tree_file_tests {
     }
 
     #[test]
+    fn import_accepts_group_limit_and_rejects_one_more() {
+        assert!(review(MAX_GROUPS, "[]").is_ok());
+        assert!(review(MAX_GROUPS + 1, "[]").is_err());
+    }
+
+    #[test]
+    fn import_checks_per_group_and_total_work_limits() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let mut groups = Vec::new();
+        for start in (0..MAX_IMPORTED_WORKS).step_by(MAX_GROUP_WORKS) {
+            let works: Vec<_> = (start..(start + MAX_GROUP_WORKS).min(MAX_IMPORTED_WORKS))
+                .map(|i| i.to_string()).collect();
+            groups.push(serde_json::json!({"name":start.to_string(),"works":works}));
+        }
+        let check = |groups: &[Value]| {
+            let document = serde_json::json!({"format":"work-groups","version":1,"groups":groups});
+            fs::write(file.path(), document.to_string()).unwrap();
+            read_groups(file.path()).map(|_| ())
+        };
+        assert!(check(&groups).is_ok());
+        groups.push(serde_json::json!({"name":"Extra","works":["extra"]}));
+        assert!(check(&groups).unwrap_err().contains("200000"));
+        groups.truncate(1);
+        groups[0]["works"].as_array_mut().unwrap().push(serde_json::json!("extra"));
+        assert!(check(&groups).unwrap_err().contains("10000"));
+    }
+
+    #[test]
     fn tree_group_file_accepts_multiple_levels_and_forward_references() {
         assert!(review(5, r#"[{"child":"0","parent":"1"},{"child":"1","parent":"2"},
             {"child":"2","parent":"3"},{"child":"3","parent":"4"}]"#).is_ok());
@@ -876,10 +915,10 @@ mod group_tree_file_tests {
         ] {
             assert!(review(3, links).is_err(), "{links}");
         }
-        let parents: Vec<_> = (0..32).map(|i| serde_json::json!({
+        let parents: Vec<_> = (0..64).map(|i| serde_json::json!({
             "child":i.to_string(),"parent":(i+1).to_string()
         })).collect();
-        assert!(review(32, &serde_json::json!(parents[..31]).to_string()).is_ok());
-        assert!(review(33, &serde_json::json!(parents).to_string()).is_err());
+        assert!(review(64, &serde_json::json!(parents[..63]).to_string()).is_ok());
+        assert!(review(65, &serde_json::json!(parents).to_string()).is_err());
     }
 }
