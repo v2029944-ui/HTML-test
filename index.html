@@ -728,7 +728,9 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 @media(max-width:580px){.changes-filters,.change-toolbar{grid-template-columns:1fr}.change-pagination{gap:8px}.changes-table td:first-child{min-width:220px}}
 
 .appearance-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:18px 0}.appearance-grid>label{min-width:0}
-.appearance-preview{padding:16px;border:1px dashed var(--field-border);border-radius:var(--radius-panel);background:var(--subtle)}.appearance-preview>strong{font-size:13px}.appearance-preview p{margin-bottom:0}
+.appearance-preview{padding:16px;border:1px dashed var(--field-border);border-radius:var(--radius-panel);background:var(--subtle)}.appearance-preview .preview-table{width:100%;min-width:0;margin:10px 0;table-layout:fixed}.preview-table :is(th,td){white-space:normal;overflow-wrap:anywhere}.preview-table :last-child:is(th,td){width:35%;text-align:right}.preview-table tbody tr{background:var(--selected)}
+.preview-examples{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.preview-examples .button{cursor:default}.preview-chart{height:2em;display:inline-flex;align-items:end;gap:4px}.preview-chart i{width:1em;height:50%;background:var(--plot-0)}.preview-chart i:nth-child(2){height:100%;background:var(--plot-1)}.preview-chart i:nth-child(3){height:70%;background:var(--plot-2)}
+.appearance-preview>strong{font-size:13px}.appearance-preview p{margin-bottom:0}
 :root[data-design="compact"]{font-size:14px}
 :root[data-design="compact"] .container{padding-top:16px}
 :root[data-design="compact"] .panel{padding:16px;margin-bottom:14px}
@@ -874,7 +876,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
 }
 @media(max-width:400px){.kpis{grid-template-columns:minmax(0,1fr)}.kpi:last-child:nth-child(odd){grid-column:auto}}
 
-.appearance-categories{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:18px 0}.appearance-category{display:flex;flex-direction:column;min-width:0;margin:0;padding:16px;border:1px solid var(--border);border-radius:var(--radius-panel)}.appearance-category>legend{padding:0 7px;font-size:15px;font-weight:700;color:var(--text)}.appearance-category>.appearance-grid{grid-template-columns:1fr;margin:auto 0 0}.appearance-category>.appearance-grid>label{display:block}
+.appearance-categories{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:18px 0}.appearance-category{display:flex;flex-direction:column;min-width:0;margin:0;padding:16px;border:1px solid var(--border);border-radius:var(--radius-panel)}.appearance-category>legend{padding:0 7px;font-size:15px;font-weight:700;color:var(--text)}.appearance-category>.appearance-grid{grid-template-columns:minmax(0,1fr);align-content:start;margin:0}.appearance-category>.appearance-grid>label{display:block}
 @media(max-width:740px){.appearance-categories{grid-template-columns:1fr}.appearance-category{padding:12px}.appearance-category>legend{font-size:16px}}
 
 /* Обзор для руководителя: простая сводка поверх существующей аналитики. */
@@ -1792,11 +1794,13 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
             <div class="appearance-grid"><label>Масштаб текста и элементов<select id="appearanceSize"><option value="standard">Стандартный (100%)</option><option value="large">Крупный (около 115%)</option><option value="xlarge">Очень крупный (около 130%)</option></select></label></div>
           </fieldset>
         </div>
-        <div class="appearance-preview"><strong>Предпросмотр оформления</strong><p id="appearanceDescription" class="muted small" role="status" aria-live="polite"></p></div>
+        <div class="appearance-preview"><strong>Предпросмотр оформления</strong><table class="preview-table"><thead><tr><th>Наименование работы</th><th>Количество</th></tr></thead><tbody><tr><td>Техническое обслуживание инженерных систем здания</td><td>24</td></tr></tbody></table>
+          <div class="preview-examples"><span class="button primary">Рассчитать</span><span class="preview-chart" role="img" aria-label="Пример графика в цветах палитры"><i></i><i></i><i></i></span></div>
+          <p id="appearanceDescription" class="muted small" role="status" aria-live="polite"></p></div>
       </section>
       <div class="panel">
-        <h2>Настройки подразделений</h2><p class="muted">Укажите названия точно так, как они записаны в строках итогов Excel.</p>
-        <div id="organizationFields" class="org-grid"></div><button class="button primary" id="saveOrganizations">Сохранить названия</button>
+        <h2>Настройки подразделений</h2><p class="muted">При импорте строки итогов Excel определяют границы подразделений. Укажите четыре разных названия, совпадающих с названиями в этих строках.</p>
+        <div id="organizationFields" class="org-grid"></div><button class="button primary" id="saveOrganizations" disabled>Сохранить названия</button> <span id="organizationSaveStatus" class="small" role="status"></span>
       </div>
       <div class="panel"><h2>Резервная копия</h2><p class="muted">Резервная копия сохраняет отчёты, группы и названия подразделений. Она нужна для переноса на другое устройство и защиты от очистки данных браузера.</p>
         <p id="storageModeInfo" class="muted small" role="status" aria-live="polite"></p>
@@ -4995,7 +4999,13 @@ function renderOrganizations() {
     const label=elem('label','Подразделение '+(i+1)),input=elem('input');
     input.value=name;input.dataset.org=i;label.append(input);root.append(label);
   });
+  organizationDraftChanged();
   renderAnalysisFilters();
+}
+function organizationDraftChanged(){
+  const changed=[...$('organizationFields').querySelectorAll('input')].some((input,i)=>input.value.trim()!==state.settings.orgNames[i]);
+  $('saveOrganizations').disabled=!changed;
+  $('organizationSaveStatus').textContent=changed?'Есть несохранённые изменения':'';
 }
 async function saveOrganizations() {
   const names=[...$('organizationFields').querySelectorAll('input')].map(x=>x.value.trim());
@@ -5009,7 +5019,7 @@ async function saveOrganizations() {
     catalog:(state.settings.catalog||[]).map(x=>({...x,organization:names[old.indexOf(x.organization)]||x.organization}))};
   await storeAllData(renamed,nextSettings);
   state.selectedOrganizations=new Set(old.filter(x=>state.selectedOrganizations.has(x)).map(x=>names[old.indexOf(x)]));
-  renderAll();notice('Названия подразделений сохранены.');
+  renderAll();$('organizationSaveStatus').textContent='Названия сохранены';notice('Названия подразделений сохранены.');
 }
 function downloadJson(name,obj) {
   const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob);
@@ -5870,6 +5880,7 @@ function wire() {
   });
   $('saveGroup').addEventListener('click',async()=>{try{await saveGroup();}catch(err){notice(err.message,true);}});
   $('resetGroup').addEventListener('click',resetGroup);
+  $('organizationFields').addEventListener('input',organizationDraftChanged);
   $('saveOrganizations').addEventListener('click',async()=>{try{await saveOrganizations();}catch(err){notice(err.message,true);}});
   $('exportGroups').addEventListener('click',()=>downloadJson('groups.json',{format:'work-groups',version:1,groups:state.settings.groups}));
   $('importGroups').addEventListener('change',async e=>{try{await importGroupFile(e.target.files?.[0]);}catch(err){notice(err.message,true);}e.target.value='';});

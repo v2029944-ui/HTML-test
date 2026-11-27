@@ -168,11 +168,12 @@ function buildUnified(source){
  html=html.replace('Выбрано: <span id="categoryCount"', '<span id="categoryCount"');
 
  // Extend the shared preference only in the installed application.
- const compactSizes=['80','90'];
- script+=`\nUI_SIZES.unshift(...${JSON.stringify(compactSizes)});\n`;
- const sizeSelect='<select id="appearanceSize">';
- if(!html.includes(sizeSelect))throw Error('Missing desktop scale selector');
- html=html.replace(sizeSelect,sizeSelect+compactSizes.map(size=>`<option value="${size}">${size}%</option>`).join(''));
+ const desktopSizes=['80','90','standard','110','125','150'];
+ script=script.replace("const UI_SIZES=['standard','large','xlarge'];", 'const UI_SIZES='+JSON.stringify(desktopSizes)+';')
+  .replace("function uiSizePreference(value){","function uiSizePreference(value){if(value==='large')return '110';if(value==='xlarge')return '125';");
+ const sizeSelect=/<select id="appearanceSize">[\s\S]*?<\/select>/;
+ if(!sizeSelect.test(html))throw Error('Missing desktop scale selector');
+ html=html.replace(sizeSelect,'<select id="appearanceSize">'+desktopSizes.map(size=>'<option value="'+size+'">'+(size==='standard'?'100':size)+'%</option>').join('')+'</select>');
  const importFields=/<label>Формат Excel<select id="importFormat">[\s\S]*?<\/label>\s*<label>Тип отчётов<select id="importType">[\s\S]*?<\/label>/;
  if(!importFields.test(html))throw Error('Original Excel period and layout fields changed');
  html=html.replace(importFields,`<label>Период отчёта<select id="importType"><option value="day">День</option><option value="week" selected>Неделя</option><option value="month">Месяц</option></select></label>
@@ -310,8 +311,14 @@ function buildUnified(source){
  }
 
  html=html.replace('</head>','<meta name="analiz-unified-sql" content="true"><link rel="stylesheet" href="tauri-app-status.css"><link rel="stylesheet" href="tauri-unified.css"><link rel="stylesheet" href="tauri-sql-row-scroll.css"><script src="tauri-shared-workspace.js"></script><script src="tauri-bridge.js"></script></head>');
+ // Derive option samples from the same theme tokens as the analytical charts.
+ const paletteCss=Array.from(source.matchAll(/:root\[data-palette="([^"]+)"\]\[data-theme="([^"]+)"\]\{([^}]+)\}/g),([,palette,theme,tokens])=>{
+  const colors=[0,1,2].map(i=>'--sample-'+i+':'+tokens.match(new RegExp('--plot-'+i+':(#[0-9a-f]+);','i'))[1]);
+  return 'html[data-theme="'+theme+'"] .palette-colors[data-sample="'+palette+'"]{'+colors.join(';')+'}';
+ }).join('\n');
+ html=html.replace('</head>','<style>'+paletteCss+'</style></head>');
  const filterSetting='<label class="placement-setting"><span id="filterPlacementLabel">Закреплять фильтр слева</span>'+
-  '<input type="checkbox" role="switch" id="appearanceFilterPlacement" aria-labelledby="filterPlacementLabel" aria-describedby="filterPlacementHint">'+
+  '<input type="checkbox" role="switch" id="appearanceFilterPlacement" aria-labelledby="filterPlacementLabel" aria-describedby="filterPlacementHint"><span class="placement-value" aria-hidden="true"><span>Выкл</span><span>Вкл</span></span>'+
   '<small class="muted" id="filterPlacementHint">В узком окне фильтр остаётся сверху.</small></label>';
  const designLabel='<label>Дизайн<select id="appearanceDesign">';
  if(!html.includes(designLabel))throw Error('Missing desktop appearance settings');

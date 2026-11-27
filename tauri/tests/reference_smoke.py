@@ -632,7 +632,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         expect(page.locator('#s1')).to_be_hidden()
         expect(page.locator('#backBtn')).to_have_text('Вернуться в раздел «Динамика»')
         page.locator('input[name="appearanceThemeChoice"][value="light"]').check()
-        page.locator('input[name="appearanceSizeChoice"][value="xlarge"]').check()
+        page.locator('input[name="appearanceSizeChoice"][value="125"]').check()
         update_notes = page.locator('#appUpdateWhatsNew')
         available_notes = bool(update_notes.count() and update_notes.is_visible() and update_notes.is_enabled())
         inventory.append({'step': '09-update-notes-availability', 'available': available_notes,

@@ -245,6 +245,19 @@ test('clear dialog shows the selected personal database and actual whole-databas
  assert.equal(m.writes.length,0);assert.equal(m.nodes.clearReports.focused,true);
  await confirmClear(m);assert.deepEqual(m.writes,[['clear',7]]);assert.deepEqual(m.pickers,[]);
 });
+test('organization form tracks edits, reverting, a failed write and a successful retry',async()=>{
+ const m=mount();m.snapshot(7);
+ const fields=m.nodes.organizationFields,save=m.nodes.saveOrganizations,status=m.nodes.organizationSaveStatus;
+ const edit=value=>{fields.querySelectorAll('input')[0].value=value;fields.fire('input');};
+ assert.equal(save.disabled,true);edit('АА');assert.equal(save.disabled,false);assert.equal(status.textContent,'Есть несохранённые изменения');
+ edit('А');assert.equal(save.disabled,true);assert.equal(status.textContent,'');
+ edit('АА');m.setBackup('/org-backup.sqlite3');
+ m.api.unifiedRenameOrganizations=async()=>{throw Error('Нет доступа');};
+ await save.fire();assert.equal(fields.querySelectorAll('input')[0].value,'АА');assert.equal(save.disabled,false);
+ m.api.unifiedRenameOrganizations=async(_revision,names)=>{m.UI.state.settings.orgNames=names;};
+ await save.fire();assert.equal(status.textContent,'Названия сохранены');assert.equal(save.disabled,true);
+ m.views.storage();assert.equal(fields.querySelectorAll('input')[0].value,'АА');assert.equal(save.disabled,true);
+});
 test('organization rename validates exactly four names and backs up before native mutation',async()=>{const m=mount();m.snapshot(7);const inputs=m.nodes.organizationFields.querySelectorAll('input');inputs[0].value='Б';await m.nodes.saveOrganizations.fire();assert.equal(m.writes.length,0);assert.equal(m.messages.at(-1)[1],true);inputs[0].value='АА';m.setBackup('/org-backup.sqlite3');await m.nodes.saveOrganizations.fire();assert.deepEqual(JSON.parse(JSON.stringify(m.writes)),[['org',7,['АА','Б','В','Г'],'/org-backup.sqlite3']]);assert.equal(m.UI.state.reports.length,0);});
 test('group file import is previewed and hash-confirmed; cancelled picker and denial never write',async()=>{const m=mount();m.snapshot(7);await m.nodes.importGroups.fire();assert.equal(m.writes.length,0);m.setSource('/groups.json');m.setConfirm(false);await m.nodes.importGroups.fire();assert.equal(m.writes.length,0);m.setConfirm(true);await m.nodes.importGroups.fire();assert.deepEqual(m.writes,[['import',7,'/groups.json','hash',true]]);});
 
@@ -325,7 +338,7 @@ test('all management destructive confirmations await native false promises',asyn
   if(name==='delete catalog'){m.setHandler((r,kind)=>({rows:kind==='catalog'?[{handle:'c1',name:'Service',organization:'А'}]:[],total:kind==='catalog'?1:0}));m.nodes.groupCatalog.open=true;await m.nodes.groupCatalog.fire('toggle');await tick();action=actionByText(m.nodes.groupCatalog,'Удалить');}
   if(name==='import groups')action=m.nodes.importGroups;
   if(name==='import catalog')action=m.nodes.catalogFile;
-  if(name==='rename organizations')action=m.nodes.saveOrganizations;
+  if(name==='rename organizations'){m.nodes.organizationFields.querySelectorAll('input')[0].value='Новое название';action=m.nodes.saveOrganizations;}
   const answer=deferred();m.setConfirm(answer.promise);const pending=action.fire();await tick();assert.equal(m.questions.length,1,name);assert.equal(m.writes.length,0,name+' wrote before answer');assert.equal(m.pickers.length,0,name+' opened destination before answer');answer.resolve(false);await pending;assert.equal(m.writes.length,0,name+' ignored denial');assert.equal(m.pickers.length,0,name+' opened destination after denial');
  }
 });

@@ -7,6 +7,7 @@ function init(){
  const U=window.unifiedUI,{api,$,el}=U,LIMIT=50;
  let revision=null,busy=false,active=false,editing=null,selected=new Set(),editTicket=0,workMode='edit';
  const controls=new Set(),pages=new Set();
+ let organizationDirty=false;
  const valid=r=>Number.isSafeInteger(r)&&r===revision&&r===U.revision;
  async function confirmAction(expected,message){const accepted=await window.confirm(message);if(!valid(expected))throw Error('База изменилась. Повторите действие.');return accepted===true;}
  function requestGroupName(anchor,group,create=false){
@@ -29,7 +30,7 @@ function init(){
  }
  const fail=e=>U.notice(window.analizUserError?window.analizUserError(e):(e?.message||String(e)),true);
  function button(text,run){const n=el('button',text,'button secondary');n.type='button';n.addEventListener('click',run);controls.add(n);return n;}
- function lock(){for(const n of controls){if(n.isConnected===false){controls.delete(n);continue;}n.disabled=busy||revision===null;}for(const p of pages){p.prev.disabled=busy||revision===null||p.loading||!p.offset;p.next.disabled=busy||revision===null||p.loading||p.offset+LIMIT>=p.total;}updateRemovalControls();}
+ function lock(){for(const n of controls){if(n.isConnected===false){controls.delete(n);continue;}n.disabled=busy||revision===null;}for(const p of pages){p.prev.disabled=busy||revision===null||p.loading||!p.offset;p.next.disabled=busy||revision===null||p.loading||p.offset+LIMIT>=p.total;}updateRemovalControls();$('saveOrganizations').disabled=busy||revision===null||!organizationDirty;}
  function bind(id,run,event='click'){const n=$(id);if(!n)return;controls.add(n);n.addEventListener(event,run);}
  function guard(run){return async()=>{if(busy||!valid(revision))return;busy=true;lock();try{await run(revision);}catch(e){fail(e);}finally{busy=false;lock();}};}
  async function mutate(expected,run,message){if(!valid(expected))throw Error('База изменилась. Обновите данные.');const result=await run();resetEditor(false);revision=null;for(const p of pages)clear(p);try{await U.refresh();}catch(e){U.notice(message+' Не удалось обновить рабочую область. '+(e?.message||String(e)),true);return result;}U.notice(message+((result?.cleanup_warning||result?.cleanup_error)?' Не удалось удалить временные данные редактора.':''));return result;}
@@ -460,8 +461,35 @@ function init(){
  file('importGroups',async expected=>{const source=await api.chooseGroupsImport();if(!source)return;const review=await api.unifiedGroupsPreview(expected,source);if(!valid(expected))throw Error('База изменилась. Повторите импорт.');const question='Заменить текущие группы? Групп: '+review.groups+', работ: '+review.works+'.'+(review.requires_backup?' Сначала будет создана проверенная копия SQLite.':'');if(!await confirmAction(expected,question))return;let backup;if(review.requires_backup){backup=await api.chooseSqliteBackupPath('analiz-before-group-import.sqlite3');if(!backup)return;}await mutate(expected,()=>review.requires_backup?api.unifiedGroupsImport(expected,source,review.hash,true,backup):api.unifiedGroupsImport(expected,source,review.hash,true),'Группы импортированы.');});
  bind('exportGroups',guard(async expected=>{const destination=await api.chooseGroupsExport();if(!destination)return;if(!valid(expected))throw Error('База изменилась. Повторите экспорт.');await api.unifiedGroupsExport(expected,destination);U.notice('Группы сохранены.');}));
  file('catalogFile',async expected=>{const source=await api.chooseXlsx();if(!source)return;const review=await api.unifiedCatalogPreview(expected,source);if(!valid(expected))throw Error('База изменилась. Повторите импорт.');if(!await confirmAction(expected,'Добавить услуги из Excel? Найдено: '+review.catalog+'.'))return;await mutate(expected,()=>api.unifiedCatalogApply(expected,source,review.hash,true),'Справочник добавлен.');});
- function organizationFields(){const root=$('organizationFields');root.replaceChildren();orgInput.replaceChildren();const none=el('option','Без подразделения');none.value='';orgInput.append(none);for(const [i,name] of U.state.settings.orgNames.entries()){const label=el('label','Подразделение '+(i+1)),input=el('input');input.value=name;input.dataset.org=i;label.append(input);root.append(label);const option=el('option',name);option.value=name;orgInput.append(option);}}
- bind('saveOrganizations',guard(async expected=>{const names=Array.from($('organizationFields').querySelectorAll('input'),n=>n.value.trim());const normalize=s=>s.toLowerCase().replace(/[.,;:]+$/,'').replace(/\s+/g,' ');if(names.length!==4||names.some(n=>!n)||new Set(names.map(normalize)).size!==4)throw Error('Нужны четыре непустых разных названия подразделений.');if(!await confirmAction(expected,'Изменить названия подразделений во всех отчётах и справочнике? Сначала будет создана резервная копия SQLite.'))return;const destination=await api.chooseSqliteBackupPath('analiz-before-rename.sqlite3');if(!destination)return;await mutate(expected,()=>api.unifiedRenameOrganizations(expected,names,destination),'Названия сохранены. Резервная копия создана.');}));
+ function organizationDraftChanged(){
+  const inputs=$('organizationFields').querySelectorAll('input');
+  organizationDirty=Array.from(inputs).some((input,i)=>input.value.trim()!==U.state.settings.orgNames[i]);
+  $('organizationSaveStatus').textContent=organizationDirty?'Есть несохранённые изменения':'';
+  lock();
+ }
+ $('organizationFields').addEventListener('input',organizationDraftChanged);
+ function organizationFields(){
+  const root=$('organizationFields');root.replaceChildren();orgInput.replaceChildren();
+  const none=el('option','Без подразделения');none.value='';orgInput.append(none);
+  for(const [i,name] of U.state.settings.orgNames.entries()){
+   const label=el('label','Подразделение '+(i+1)),input=el('input');
+   input.value=name;input.dataset.org=i;label.append(input);root.append(label);
+   controls.add(input);
+   const option=el('option',name);option.value=name;orgInput.append(option);
+  }
+  organizationDraftChanged();
+ }
+ bind('saveOrganizations',guard(async expected=>{
+  const names=Array.from($('organizationFields').querySelectorAll('input'),n=>n.value.trim());
+  if(names.every((name,i)=>name===U.state.settings.orgNames[i]))return;
+  const normalize=s=>s.toLowerCase().replace(/[.,;:]+$/,'').replace(/\s+/g,' ');
+  if(names.length!==4||names.some(n=>!n)||new Set(names.map(normalize)).size!==4)throw Error('Нужны четыре непустых разных названия подразделений.');
+  if(!await confirmAction(expected,'Изменить названия подразделений во всех отчётах и справочнике? Сначала будет создана резервная копия SQLite.'))return;
+  const destination=await api.chooseSqliteBackupPath('analiz-before-rename.sqlite3');
+  if(!destination)return;
+  await mutate(expected,()=>api.unifiedRenameOrganizations(expected,names,destination),'Названия сохранены. Резервная копия создана.');
+  $('organizationSaveStatus').textContent='Названия сохранены';
+ }));
  const clearReports=$('clearReports');
  function confirmClearReports(workspace,reports){
   const dialog=el('dialog'),heading=el('h2','Удалить все импортированные отчёты?');

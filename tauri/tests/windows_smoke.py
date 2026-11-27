@@ -386,12 +386,32 @@ def check_runtime(page):
     navigate(page,'storage')
     expect(page.locator('#onlineUpdates #appVersion')).to_have_text('Версия '+expected_version)
     page.locator('input[name="appearanceSizeChoice"][value="standard"]').check()
+    placement = page.locator('#appearanceFilterPlacement')
+    original_placement = placement.is_checked()
+    placement.click()
+    expect(page.locator('.placement-value span:visible')).to_have_text('Выкл' if original_placement else 'Вкл')
+    placement.focus()
+    page.keyboard.press('Space')
+    assert placement.is_checked() == original_placement
+    palette = page.locator('#appearancePalette')
+    if page.evaluate("CSS.supports('appearance','base-select')"):
+        original_palette = palette.input_value()
+        palette.select_option('minimal')
+        palette.focus()
+        page.keyboard.press('Enter')
+        page.keyboard.press('ArrowDown')
+        page.keyboard.press('Enter')
+        expect(palette).to_have_value('neon')
+        colors = palette.locator('selectedcontent .palette-colors i').evaluate_all(
+            'nodes => nodes.map(el => getComputedStyle(el).backgroundColor)')
+        assert len(colors) == len(set(colors)) == 3
+        palette.select_option(original_palette)
     targets = page.locator('#refSettings, #checkAppUpdate')
     assert targets.count() == 2
     heights = 'nodes => nodes.map(node => node.getBoundingClientRect().height)'
     standard = targets.evaluate_all(heights)
     assert min(standard) > 0
-    for percent in (90, 80):
+    for percent in (80, 90, 110, 125, 150):
         page.locator(f'input[name="appearanceSizeChoice"][value="{percent}"]').check()
         expect(page.locator('#refRoot')).to_have_attribute('data-ui-size', str(percent))
         assert page.evaluate("localStorage.getItem('work-reports-ui-size-v1')") == str(percent)
@@ -401,10 +421,10 @@ def check_runtime(page):
     page.locator('input[name="appearanceThemeChoice"][value="dark"]').check()
     page.locator('#appearancePalette').select_option('paper')
     page.locator('#appearanceDesign').select_option('compact')
-    page.locator('input[name="appearanceSizeChoice"][value="large"]').check()
+    page.locator('input[name="appearanceSizeChoice"][value="110"]').check()
     assert page.evaluate('''() => {
       const {theme,palette,design,uiSize}=document.documentElement.dataset;
-      return [theme,palette,design,uiSize].join('/')==='dark/paper/compact/large';
+      return [theme,palette,design,uiSize].join('/')==='dark/paper/compact/110';
     }''')
     check_caption_colors(page)
     check_palette_contrast(page)
