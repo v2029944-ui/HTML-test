@@ -61,6 +61,8 @@ test('summary presents observed partial totals for all selected organizations',a
  await f.s1.querySelector('.metric-sample').click();const cells=f.document.querySelectorAll('.sample-values tbody tr');
  assert.deepEqual(cells.map(row=>row.children.map(c=>c.textContent)),[['Сумма','100,00','70,00'],['Количество','10,000','7,000']]);
  incomplete.missing=2;await f.window.referenceResults.refresh(f.scope);assert.doesNotMatch(f.s1.querySelector('.quality-notice').textContent,/02\.01\.2024/);
+ delete incomplete.missing;await f.window.referenceResults.refresh(f.scope);
+ assert.match(f.s1.querySelector('.quality-counters').textContent,/Пропусков: —/);
 });
 test('summary cards and leaders compare available reports when every organization has gaps',async()=>{
  const f=fixture();
@@ -87,7 +89,8 @@ test('summary keeps quantities and reports unavailable amounts in complete perio
  f.window.referenceResults.init();
  await f.window.referenceResults.refresh({...f.scope,metric:'count'});
  assert.deepEqual(f.s1.querySelectorAll('.metric-value').map(n=>n.textContent),['—','17,000','Нет сопоставимых строк']);
- assert.match(f.s1.querySelector('.quality-notice').textContent,/сумма не указана.*Количество учтено/);
+ assert.match(f.s1.querySelector('.quality-counters').textContent,/Есть строки без суммы/);
+ assert.match(f.s1.querySelector('.quality-details').textContent,/сумма не указана.*Количество учтено/);
  await f.s1.querySelector('.metric-sample').click();
  assert.match(f.document.querySelector('#sheet').textContent,/A: полные отчёты за оба интервала/);
 });
@@ -283,7 +286,8 @@ test('failed changes reads distinguish unknown counts from zero and clear the ol
  results.init();await results.refresh(f.scope);await results.setScreen('s2');
  const chip=f.s2.querySelector('.excluded-orgs'),search=f.s2.querySelector('input');
  assert.equal(chip.hidden,true);
- assert.match(f.s2.querySelector('.quality-notice').textContent,/изменения по доступным отчётам.*Полные отчёты у 1 из 2 подразделений/);
+ assert.match(f.s2.querySelector('.quality-counters').textContent,/полные подразделения: 1 из 2/);
+ assert.match(f.s2.querySelector('.quality-details').textContent,/изменения по доступным отчётам/);
  assert.deepEqual(f.s2.querySelectorAll('[data-count]').map(n=>n.textContent),['▲ 1','▼ 0','0','0']);
  await f.s2.querySelectorAll('.kpi')[2].click();f.s2.querySelector('[data-sort]').value='percent';
  let calls=0;f.api.referenceChanges=async()=>{calls++;throw Error('read rejected');};
@@ -332,7 +336,13 @@ test('summary and changes print historical quality counts once, separately from 
  await f.window.referenceResults.refresh(f.scope);
  for(const [id,screen] of [['s1',f.s1],['s2',f.s2]]){
   await f.window.referenceResults.setScreen(id);
-  const banner=screen.querySelector('.quality-notice span').textContent;
+  const counters=screen.querySelector('.quality-counters'),info=screen.querySelector('.quality-info'),details=screen.querySelector('.quality-details');
+  assert.match(counters.textContent,/Пропусков: 0.*Есть замечания/);
+  assert.doesNotMatch(counters.textContent,/За всю историю|Пропуск —/);
+  assert.equal(details.hidden,true);assert.equal(info.getAttribute('aria-controls'),details.id);
+  await info.click();assert.equal(details.hidden,false);assert.equal(info.getAttribute('aria-expanded'),'true');
+  const banner=details.textContent;
+  await info.click();assert.equal(details.hidden,true);
   assert.match(banner,/За всю историю отчётов этого типа: ошибочных отчётов по всем подразделениям — 1/);
   await screen.querySelectorAll('button').find(node=>node.textContent.includes('Печать')).click();
   const paragraphs=printed.at(-1);

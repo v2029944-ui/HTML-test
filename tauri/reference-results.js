@@ -103,17 +103,29 @@ function notice(root,s,comparable,summary){
  const shareNotice=root==='#s1'&&current?.amount_missing_rows&&observed(current)?.amount>0?' Доли рассчитаны по заполненным суммам.':'';
  const gap=current?.missing===1&&baseline?.missing===0?current.single_missing:baseline?.missing===1&&current?.missing===0?baseline.single_missing:null;
  const detail=excluded.length===1&&gap?.org===excluded[0]&&date(gap.start)!=='—'?' · '+date(gap.start)+': нет пригодного отчёта':'';
- if(excluded.length||current?.complete===false||baseline?.complete===false){
-  const missing=(current?.missing??0)+(baseline?.missing??0);
-  const coverage=current?.available_reports===0||baseline?.available_reports===0
-   ?comparisonStatus(0,s.organizations.length,summary)
-   :root==='#s2'?'В таблице показаны изменения по доступным отчётам. Полные отчёты у '+comparable.length+' из '+s.organizations.length+' подразделений.':comparisonStatus(comparable.length,s.organizations.length,summary);
-  n.hidden=false;
-  span.textContent=(root==='#s1'&&current?.available_reports>0&&current.complete===false?'Итоги частичные. ':'')+coverage+(missing>0?' Пропусков: '+missing+' (подразделение × период).':'')+(detail?' '+excluded[0]+detail+'.':'')+(warnings?' '+warnings:'')+amountNotice+shareNotice+' Пропуски не считаются нулём. Наличие отчётов не подтверждает полноту источника.';
-  return;
- }
- n.hidden=!excluded.length&&current?.complete===true&&!warnings&&!missingAmount;
- span.textContent=comparisonStatus(comparable.length,s.organizations.length,summary)+(warnings?' '+warnings:'')+amountNotice+shareNotice+' Пропуски не считаются нулём. Наличие отчётов не подтверждает полноту источника.';
+ const partial=excluded.length>0||current?.complete===false||baseline?.complete===false;
+ n.hidden=!partial&&current?.complete===true&&baseline?.complete===true&&!warnings&&!missingAmount;
+ if(n.hidden){span.replaceChildren();return;}
+ const knownMissing=[baseline,current].every(period=>Number.isSafeInteger(period?.missing)&&period.missing>=0);
+ const missing=knownMissing?baseline.missing+current.missing:'—';
+ const absent=baseline?.available_reports===0||current?.available_reports===0;
+ const partialCurrent=root==='#s1'&&current?.available_reports>0&&current.complete===false;
+ const coverage=absent?(partialCurrent?'Итоги частичные. ':'')+comparisonStatus(0,s.organizations.length,summary):
+  partialCurrent?'Итоги частичные':partial?'Неполное сравнение':summary?'Оба интервала покрыты':'Полнота уточняется';
+ const details=el('span',null,'quality-details');details.id=root.slice(1)+'QualityDetails';details.hidden=true;
+ const explanation=partial&&!absent?(root==='#s1'?'Сравнение по доступным отчётам. ':'В таблице показаны изменения по доступным отчётам. '):'';
+ details.textContent=explanation+'Пропуск — сочетание «подразделение × период» без пригодного отчёта. Пропуски не считаются нулём. Наличие отчётов не подтверждает полноту источника.'+
+  (detail?' '+excluded[0]+detail+'.':'')+(warnings?' '+warnings:'')+amountNotice+shareNotice;
+ const info=button('ⓘ',()=>{
+  details.hidden=!details.hidden;info.setAttribute('aria-expanded',String(!details.hidden));
+ },'quality-info');
+ info.setAttribute('aria-expanded','false');info.setAttribute('aria-controls',details.id);info.setAttribute('aria-label','Подробности о полноте и замечаниях отчётов');
+ const counters=el('span',null,'quality-counters');
+ counters.append(el('span',coverage+' · полные подразделения: '+comparable.length+' из '+s.organizations.length),
+  el('span','Пропусков: '+missing));
+ const issues=[warnings?'Есть замечания':'',missingAmount?'Есть строки без суммы':''].filter(Boolean);
+ if(issues.length)counters.append(el('span',issues.join(' · ')));
+ counters.append(info);span.replaceChildren(counters,details);
 }
 function appendTableRow(body,values){
  const tr=el('tr');

@@ -1418,3 +1418,7 @@ body:has(#refRoot)>footer {display:none}
 #refRoot[data-settings-page] #refNative :is(.catalog-table,.audit-table) th {top:calc(var(--app-header-viewport-height,0px) + var(--management-header-height,0px))}
 
 #refNative .audit-table .audit-group-link {min-height:0;padding:0;border:0;background:transparent;color:inherit;font:inherit;text-align:start;text-decoration:underline;text-underline-offset:.18em}
+
+:is(#s1,#s2) .quality-counters {display:flex;align-items:center;flex-wrap:wrap;gap:3px 12px}
+:is(#s1,#s2) .quality-details:not([hidden]) {display:block;margin-block-start:6px}
+:is(#s1,#s2) .quality-info {min-height:28px;min-width:28px;padding:0;border:1px solid currentColor;border-radius:50%;color:inherit;background:transparent;font:inherit;cursor:pointer}

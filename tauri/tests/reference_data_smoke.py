@@ -637,14 +637,24 @@ def check_reference_data(page, output):
                 '2024-12-31', '2025-01-01', '2023-12-31', '2024-01-01'), current
             summary(20, 2)
             reason = 'Сравнение по доступным отчётам'
-            expect(page.locator('#s1 .quality-notice')).to_contain_text(reason)
+            expect(page.locator('#s1 .quality-counters')).to_contain_text('Пропусков: 8')
+            info = page.locator('#s1 .quality-info')
+            detail = page.locator('#s1 .quality-details')
+            expect(detail).not_to_be_visible()
+            info.focus()
+            info.press('Enter')
+            expect(detail).to_be_visible()
+            expect(detail).to_contain_text(reason)
+            info.press('Space')
+            expect(detail).not_to_be_visible()
+            expect(info).to_be_focused()
             expect(page.locator('#s1 .metric-delta').first).to_contain_text('Без изменений')
             frame = print_view('#s1', comparable=0, scenario='partial')
             assert all(text in frame['context'] for text in (
                 reason, 'База: пропусков отчётов — 4', 'Анализ: пропусков отчётов — 4')), frame
             assert [_number(n) for n in frame['comparison'][0][1:5]] == [20, 20, 0, 0], frame
             csv_export('referenceSummaryCsv', scratch / 'partial-summary.csv', coverage='partial')
-            assert all([_number(v) for v in row.locator('td').all_text_contents()[1:]] == [5, .5, 25, 10]
+            assert all([_number(v) for v in row.locator('td').all_text_contents()[1:]] == [5, .5, 25, 10, None]
                        for row in page.locator('#s1 table tbody tr').all())
             check_partial_comparison_details(page, organizations)
             navigate('Анализ изменений')
