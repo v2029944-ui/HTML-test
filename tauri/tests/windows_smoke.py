@@ -436,7 +436,9 @@ def check_palette_contrast(page):
              ('--on-accent', '--accent-fill', 4.5), ('--on-accent', '--accent-hover', 4.5),
              ('--axis', '--surface', 3), ('--selected-border', '--selected', 3)]
     pairs.extend((f'--plot-{index}', '--surface', 3) for index in range(8))
-    names = sorted({name for foreground, background, _ in pairs for name in (foreground, background)})
+    themed_pairs = [('--field-border', '--field-bg', 3), ('--warning', '--subtle', 4.5),
+                    ('--text', '--selected', 4.5), ('--focus', '--surface', 3)]
+    names = sorted({name for foreground, background, _ in pairs + themed_pairs for name in (foreground, background)})
 
     def luminance(color):
         assert re.fullmatch(r'#[0-9a-f]{6}', color, re.IGNORECASE), color
@@ -452,7 +454,8 @@ def check_palette_contrast(page):
               const style = getComputedStyle(document.documentElement);
               return Object.fromEntries(names.map(name => [name, style.getPropertyValue(name).trim()]));
             }''', names)
-            for foreground, background, minimum in pairs:
+            checked_pairs = pairs if palette == 'corporate' else pairs + themed_pairs
+            for foreground, background, minimum in checked_pairs:
                 low, high = sorted([luminance(colors[foreground]), luminance(colors[background])])
                 ratio = (high + 0.05) / (low + 0.05)
                 assert ratio >= minimum, (palette, theme, foreground, background, ratio, minimum)
