@@ -412,6 +412,18 @@ def check_runtime(page):
             'nodes => nodes.map(el => getComputedStyle(el).backgroundColor)')
         assert len(colors) == len(set(colors)) == 3
         palette.select_option(original_palette)
+    preset = page.locator('#appearancePreset')
+    design = page.locator('#appearanceDesign')
+    saved_theme = page.locator('#appearanceTheme').input_value()
+    preset.select_option('paper')
+    expect(palette).to_have_value('paper')
+    expect(design).to_have_value('paper')
+    expect(page.locator('#appearanceDescription')).to_contain_text('Терракотовый и оливковый')
+    design.select_option('compact')
+    expect(preset).to_have_value('custom')
+    design.select_option('paper')
+    expect(preset).to_have_value('paper')
+    expect(page.locator('#appearanceTheme')).to_have_value(saved_theme)
     targets = page.locator('#refSettings, #checkAppUpdate')
     assert targets.count() == 2
     heights = 'nodes => nodes.map(node => node.getBoundingClientRect().height)'
