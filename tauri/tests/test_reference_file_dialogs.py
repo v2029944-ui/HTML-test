@@ -359,6 +359,22 @@ class BackupOpenControlsTests(unittest.TestCase):
         self.assertEqual([call.args[1] for call in self.dialog.message.call_args_list],
                          [0x000C, 0x000D, 0x00F5])
 
+    def test_save_uses_the_filename_host_and_its_direct_edit_and_verified_idok(self):
+        self.facts['inventory'] = [
+            dict(pid=41, enabled=True, offscreen=False, automationId=key, handle=hwnd)
+            for key, hwnd in [('FileNameControlHost',104),('1001',103),('1001',107),('1',102)]
+        ]
+        self.dialog.native.window_class.side_effect = {104:'ComboBox',103:'Edit',102:'Button',107:'ToolbarWindow32',106:'Edit'}.get
+        self.dialog.user32.GetDlgCtrlID.side_effect = {104:0,103:1001,102:1,106:1001,107:1001}.get
+        self.assertEqual(self.dialog.rename_save_controls(101,self.facts),(103,102))
+        self.dialog.user32.GetParent.side_effect = lambda hwnd: 105
+        with self.assertRaises(AssertionError):
+            self.dialog.rename_save_controls(101,self.facts)
+        self.dialog.user32.GetParent.side_effect = lambda hwnd: 104
+        self.facts['inventory'].append(dict(self.facts['inventory'][1],handle=106))
+        with self.assertRaises(AssertionError):
+            self.dialog.rename_save_controls(101,self.facts)
+
     def test_rename_save_targets_only_a_new_file_in_the_empty_test_directory(self):
         self.dialog.verify_window = Mock()
         self.dialog.native.window_class.side_effect = lambda hwnd: '#32770'

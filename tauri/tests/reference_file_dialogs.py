@@ -258,12 +258,35 @@ class OwnedFileDialogs:
         assert self.native.process(edit) == self.native.pid and self.user32.IsChild(hwnd, edit), facts
         assert self.user32.GetDlgCtrlID(edit) == 1148 and self.native.window_class(edit).lower() == 'edit', facts
         assert self.user32.IsWindowVisible(edit) and self.user32.IsWindowEnabled(edit), facts
+        return edit, self.verified_idok(hwnd, facts)
+
+    def rename_save_controls(self, hwnd, facts):
+        # The Save dialog exposes its visible ComboBox as FileNameControlHost
+        # and its filename Edit as 1001. The address bar is a different tree.
+        def handle(automation_id, native_class, control_id, parent=None):
+            matches = [n['handle'] for n in facts['inventory']
+                       if n['automationId'] == automation_id and n['pid'] == self.native.pid
+                       and n['handle'] and n['enabled'] and not n['offscreen']]
+            matches = [target for target in matches if self.native.process(target) == self.native.pid
+                       and self.user32.IsChild(hwnd, target) and self.native.window_class(target).lower() == native_class
+                       and self.user32.GetDlgCtrlID(target) == control_id and self.user32.IsWindowVisible(target)
+                       and self.user32.IsWindowEnabled(target) and (parent is None or self.user32.GetParent(target) == parent)]
+            assert len(matches) == 1, ('Ambiguous Save control: '+automation_id, facts)
+            return matches[0]
+
+        host = handle('FileNameControlHost', 'combobox', 0)
+        edit = handle('1001', 'edit', 1001, parent=host)
+        save = self.verified_idok(hwnd, facts)
+        assert handle('1', 'button', 1) == save, facts
+        return edit, save
+
+    def verified_idok(self, hwnd, facts):
         opened = self.user32.GetDlgItem(hwnd, 1)
         assert opened and self.native.process(opened) == self.native.pid, facts
         assert self.user32.IsChild(hwnd, opened) and self.user32.GetDlgCtrlID(opened) == 1, facts
         assert self.native.window_class(opened).lower() == 'button', facts
         assert self.user32.IsWindowVisible(opened) and self.user32.IsWindowEnabled(opened), facts
-        return edit, opened
+        return opened
 
     def escape(self, hwnd):
         # Send a real key only while Windows itself reports focus inside this
@@ -387,16 +410,17 @@ class OwnedFileDialogs:
 
     def _select_verified_path(self, hwnd, owner, title, source, screenshot, action):
         facts, _ = self.inspect(hwnd, title, screenshot)
-        edit, opened = self.backup_open_controls(hwnd, facts)
+        controls = self.rename_save_controls if action == 'save-rename-backup' else self.backup_open_controls
+        edit, opened = controls(hwnd, facts)
         text = ctypes.create_unicode_buffer(str(source))
         assert self.message(edit, 0x000C, 0, ctypes.addressof(text)), 'WM_SETTEXT refused the selected file path'
         readback = ctypes.create_unicode_buffer(len(str(source)) + 2)
         self.message(edit, 0x000D, len(readback), ctypes.addressof(readback))  # WM_GETTEXT, cross-process
         assert readback.value == str(source), 'Verified file-name edit did not retain the selected file path'
         self.verify_window(hwnd, owner, title)
-        assert self.backup_open_controls(hwnd, facts) == (edit, opened)
+        assert controls(hwnd, facts) == (edit, opened)
         self.message(opened, 0x00F5)  # BM_CLICK only on the verified file dialog’s IDOK
-        fact = {'action': action, 'controlId': 1, 'fileNameControlId': 1148,
+        fact = {'action': action, 'controlId': 1, 'fileNameControlId': self.user32.GetDlgCtrlID(edit),
                 'fileNameClass': 'Edit', 'delivery': 'WM_SETTEXT + BM_CLICK verified IDOK'}
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
