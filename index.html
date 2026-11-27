@@ -1760,8 +1760,8 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         <summary>Проверка справочника и групп</summary>
         <p class="muted small">Все уникальные названия из отчётов, справочника и существующих групп. Тип периода и подразделения для проверки выполнений задаются в аналитике. Они не ограничивают общий список названий или правила группировки.</p>
         <div class="extended-filters">
-          <div class="period-pair group-audit-dates"><label>С периода<select id="groupAuditFrom"></select></label><label>До периода<select id="groupAuditTo"></select></label></div>
-          <label>Показать<select id="groupAuditMode"><option value="all">Все названия</option><option value="ungrouped">Без группы</option><option value="unused">Группы без выполнений</option></select></label>
+          <fieldset class="group-audit-dates"><legend>Период проверки выполнений</legend><div class="period-pair"><label>С периода<select id="groupAuditFrom"></select></label><label>До периода<select id="groupAuditTo"></select></label></div><span class="muted small" id="groupAuditScope"></span></fieldset>
+          <label>Отбор названий<select id="groupAuditMode"><option value="all">Все названия</option><option value="ungrouped">Без группы</option><option value="unused">Группы без выполнений</option></select></label>
           <label>Поиск по всем названиям<input id="groupAuditSearch" type="search" placeholder="Услуга или группа"></label>
         </div>
         <div id="groupAuditCoverage" role="status" aria-live="polite"></div><div id="groupAuditResults"></div>
@@ -4095,6 +4095,7 @@ function workGroupSelect(work,groupId){
 function renderGroupAudit(index=analyticsIndex()){
   if(!$('groupAuditPanel').open)return;
   const root=$('groupAuditResults');root.replaceChildren();const orgs=[...state.selectedOrganizations],from=$('groupAuditFrom').value,to=$('groupAuditTo').value;
+  $('groupAuditScope').textContent=periodTitle(index.type)+' · '+orgs.join(', ');
   const result=analyzeGroupAudit(index,state.settings.groups,distinctWorks(),{from,to,organizations:orgs});
   analysisCoverage($('groupAuditCoverage'),index,orgs,(result.periods?'Период: '+displayDay(from)+' — '+displayDay(periodEnd(to,index.type))+'. ':'Выберите корректный диапазон. ')+
     'Без группы: '+result.works.filter(x=>!x.group).length+'. '+(result.complete?'Отчёты полные.':'Есть пропуски: отсутствие группы во всех выбранных периодах не подтверждено.'),[...new Set(result.missing.map(x=>x.period.start))]);

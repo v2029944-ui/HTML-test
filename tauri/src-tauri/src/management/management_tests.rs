@@ -1167,3 +1167,86 @@ fn deleting_selected_tree_nodes_keeps_surviving_descendants_linked() {
     assert_eq!(cleared["settings"]["workGroupTreeParents"], json!([]));
     assert_eq!(cleared["reports"], original["reports"]);
 }
+
+#[test]
+fn bulk_assignment_is_atomic_and_moves_each_exact_name_once() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut original = management_data();
+    original["settings"]["groups"][1]["works"] = json!(["Ёлка", "Елка", "Ёлка,", "Ёлка"]);
+    let rev = management_setup(&store, &original);
+    let groups = store.management_group_page(rev, "", None, 50).unwrap();
+    let target = Some(groups[2].handle);
+    let works = ["Ёлка".to_owned(), "Ёлка,".to_owned(), "Ёлка".to_owned()];
+
+    store.connect().unwrap().execute_batch(
+        "CREATE TRIGGER reject_assignment BEFORE INSERT ON kv WHEN NEW.name='settings'
+         BEGIN SELECT RAISE(ABORT,'assignment rejected'); END;",
+    ).unwrap();
+    assert!(store.unified_assign_works(rev, &works, target).unwrap_err().contains("assignment rejected"));
+    assert_eq!(store.revision().unwrap(), rev);
+    assert_eq!(store.load().unwrap(), original);
+    store.connect().unwrap().execute_batch("DROP TRIGGER reject_assignment").unwrap();
+
+    assert!(store.unified_assign_works(rev, &["Ёлка".into(), " ".into()], target).is_err());
+    assert!(store.unified_assign_works(rev, &works, Some(i64::MAX)).is_err());
+    assert_eq!(store.load().unwrap(), original);
+    assert_eq!(store.revision().unwrap(), rev);
+    let receipt = store.unified_assign_works(rev, &works, target).unwrap();
+    assert!(receipt.revision > rev);
+    assert_eq!(store.revision().unwrap(), receipt.revision);
+    let mut expected = original;
+    expected["settings"]["groups"][1]["works"] = json!(["Елка"]);
+    expected["settings"]["groups"][2]["works"] = json!(["Shared", "group only", "Ёлка", "Ёлка,"]);
+    assert_eq!(store.load().unwrap(), expected);
+    assert!(store.unified_assign_works(rev, &works, None).is_err());
+    assert_eq!(store.revision().unwrap(), receipt.revision);
+    assert_eq!(store.load().unwrap(), expected);
+}
+
+#[test]
+fn catalog_services_page_by_exact_name_and_expand_to_individual_handles() {
+    use std::collections::BTreeSet;
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut catalog: Vec<Value> = (0..50).map(|n| json!({
+        "work":format!("Услуга {n:02}"), "organization":"АВТО"
+    })).collect();
+    let raw_names = ["Ёлка", "Е\u{308}лка", "Ёлка,", "ёлка"];
+    for name in raw_names {
+        catalog.push(json!({"work":name, "organization":"АВТО"}));
+    }
+    for org in ["СМУ16", "ЦЕНТР", "Склад", "Участок"] {
+        catalog.push(json!({"work":"Ёлка", "organization":org}));
+    }
+    let mut data = management_data();
+    data["settings"]["catalog"] = json!(catalog);
+    let rev = management_setup(&store, &data);
+    let first = store.unified_management_page(rev, "catalog_services", "", None, 0, 50).unwrap();
+    let last = store.unified_management_page(rev, "catalog_services", "", None, 50, 50).unwrap();
+    assert_eq!((first.total, first.rows.len(), last.total, last.rows.len()), (54, 50, 54, 4));
+    let rows: Vec<_> = first.rows.iter().chain(&last.rows).collect();
+    assert_eq!(rows.iter().map(|row| &row.name).collect::<BTreeSet<_>>().len(), 54);
+    for name in raw_names {
+        let row = rows.iter().find(|row| row.name == name).unwrap();
+        let count = if name == "Ёлка" { 5 } else { 1 };
+        assert_eq!(row.members, Some(count));
+        assert_eq!(row.variants.len(), count.min(4) as usize);
+        let representative = row.handle.as_deref().unwrap().parse::<i64>().unwrap();
+        let variants = store.unified_management_page(rev, "catalog_variants", "", Some(representative), 0, 50).unwrap();
+        assert_eq!(variants.total, count);
+        assert_eq!(variants.rows.len(), count as usize);
+        assert!(variants.rows.iter().all(|v| v.name == name));
+        let ids: BTreeSet<_> = variants.rows.iter().map(|v| v.handle.as_deref().unwrap()).collect();
+        assert_eq!(ids.len(), variants.rows.len());
+        assert!(ids.contains(row.handle.as_deref().unwrap()));
+        for preview in &row.variants {
+            assert!(variants.rows.iter().any(|v| v.handle.as_deref() == Some(preview.handle.as_str())
+                && v.organization == preview.organization));
+        }
+        if name == "Ёлка" {
+            let orgs: BTreeSet<_> = variants.rows.iter().map(|v| v.organization.as_deref().unwrap()).collect();
+            assert_eq!(orgs, BTreeSet::from(["АВТО", "СМУ16", "ЦЕНТР", "Склад", "Участок"]));
+        }
+    }
+}

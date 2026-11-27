@@ -183,6 +183,7 @@
     unifiedManagementPage:(revision,kind,query='',group=null,offset=0,limit=50)=>tracked('unified_management_page',{revision,kind,query,group,offset,limit},'reads'),
     unifiedGroupSave:(revision,handle,id,name,works)=>tracked('unified_group_save',{revision,handle,id,name,works},'saves'),
     unifiedGroupTreeEdit:(revision,action)=>tracked('unified_group_tree_edit',{revision,action},'saves'),
+    unifiedWorksAssign:(revision,works,group)=>tracked('unified_works_assign',{revision,works,group},'saves'),
     unifiedWorkAssign:(revision,work,group)=>tracked('unified_work_assign',{revision,work,group},'saves'),
     unifiedGroupsPreview:(revision,source)=>tracked('unified_groups_preview',{revision,source},'reads'),
     unifiedGroupsImport:(revision,source,hash,confirmed,backup)=>tracked('unified_groups_import',{revision,source,hash,confirmed,...(backup?{backup}:{})},'saves'),

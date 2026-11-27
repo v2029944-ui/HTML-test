@@ -857,3 +857,87 @@ fn configurable_pattern_history_uses_calendar_windows_and_bounds_requests() {
         assert!(store.unified_pattern_page_at_page(revision, &scope, &q, None, "usual", invalid, &frequency, 0).is_err());
     }
 }
+
+#[test]
+fn group_audit_facets_count_before_paging_and_export_the_same_intersection() {
+    let (root, store, _, _) = fixture_with_works(2);
+    let mut data = store.load().unwrap();
+    for report in data["reports"].as_array_mut().unwrap() {
+        report["rows"][0]["count"] = json!(0);
+        report["rows"][0]["amount"] = Value::Null;
+    }
+    data["settings"]["workGroupTreeParents"] = json!([{"child":"grp", "parent":"parent"}]);
+    data["settings"]["groups"] = json!([
+        {"id":"grp", "name":"Группа", "works":["Работа 00", "Работа доп. 00"]},
+        {"id":"parent", "name":"Родитель", "works":[]}
+    ]);
+    data["settings"]["catalog"] = json!((0..55).map(|n| json!({
+        "work": format!("Работа доп. {n:02}"), "organization":"A"
+    })).collect::<Vec<_>>());
+    store.save(data).unwrap();
+    let rev = store.revision().unwrap();
+    for id in ["d0", "d1"] {
+        store.analysis_index_report(id, rev).unwrap();
+    }
+    store.analysis_index_settings(rev).unwrap();
+    store.management_index_settings(rev, &ManagementJob::new()).unwrap();
+    let org = store.analysis_filter_create(rev, "organizations").unwrap();
+    store.analysis_filter_append(rev, &org, &["A".into()]).unwrap();
+    store.analysis_filter_seal(rev, &org).unwrap();
+    let scope = AnalysisScope { report_type:"day".into(), organizations:org, names:None };
+    let mut query = RangeQuery { from:"2024-01-01".into(), to:"2024-01-03".into() };
+    let observed = store.unified_group_audit_page(rev, &scope, &query, "all:active", "Работа 00", 0, 50).unwrap();
+    assert_eq!(observed.total, 1, "An observed row may have zero count and unknown amount");
+    assert_eq!(observed.rows[0].active, Some(true));
+    let unused = store.unified_group_audit_page(rev, &scope, &query, "unused", "", 0, 50).unwrap();
+    assert_eq!(unused.total, 0, "The parent inherits the observed work from its child");
+    let mode = "ungrouped:unknown";
+    let first = store.unified_group_audit_page(rev, &scope, &query, mode, "работа", 0, 50).unwrap();
+    let tail = store.unified_group_audit_page(rev, &scope, &query, mode, "работа", 50, 50).unwrap();
+    assert_eq!((first.rows.len(), tail.rows.len()), (50, 4));
+    for page in [&first, &tail] {
+        let c = &page.counts;
+        assert_eq!((page.total, c.all, c.ungrouped, c.active, c.inactive, c.unknown),
+                   (54, 55, 54, 1, 0, 54));
+        assert!(page.rows.iter().all(|r| r.group.is_none() && r.active.is_none()));
+    }
+    let names: Vec<_> = first.rows.iter().chain(&tail.rows).map(|r| r.name.clone()).collect();
+    let expected: Vec<_> = (1..55).map(|n| format!("Работа доп. {n:02}")).collect();
+    assert_eq!(names, expected);
+
+    let target = root.path().join("facet.csv");
+    store.unified_group_audit_csv(rev, &scope, &query, mode, "работа", &target).unwrap();
+    let csv = std::fs::read_to_string(target).unwrap();
+    assert_eq!(csv.lines().count(), expected.len() + 1);
+    for (line, name) in csv.lines().skip(1).zip(expected) {
+        assert!(line.contains(&name) && line.contains("Недостаточно данных"), "{line}");
+    }
+    query.to = "2024-01-02".into();
+    let known = store.unified_group_audit_page(rev, &scope, &query, "all:inactive", "работа", 0, 50).unwrap();
+    let c = &known.counts;
+    assert_eq!((known.total, c.all, c.ungrouped, c.active, c.inactive, c.unknown),
+               (55, 57, 54, 2, 55, 0));
+    assert!(known.rows.iter().all(|r| r.active == Some(false)));
+    let empty = store.unified_group_audit_page(rev, &scope, &query, mode, "работа", 0, 50).unwrap();
+    assert_eq!(empty.total, 0);
+    assert!(empty.rows.is_empty());
+
+    let target = store.management_group_page(rev, "", None, 50).unwrap()[0].handle;
+    let works = ["Работа доп. 01".into(), "Работа доп. 54".into()];
+    let next = store.unified_assign_works(rev, &works, Some(target)).unwrap().revision;
+    for id in ["d0", "d1"] {
+        store.analysis_index_report(id, next).unwrap();
+    }
+    store.analysis_index_settings(next).unwrap();
+    let org = store.analysis_filter_create(next, "organizations").unwrap();
+    store.analysis_filter_append(next, &org, &["A".into()]).unwrap();
+    store.analysis_filter_seal(next, &org).unwrap();
+    let scope = AnalysisScope { organizations:org, ..scope };
+    let updated = store.unified_group_audit_page(next, &scope, &query, "ungrouped:inactive", "работа", 50, 50).unwrap();
+    assert_eq!((updated.total, updated.counts.ungrouped, updated.rows.len()), (52, 52, 2));
+    for name in works {
+        let moved = store.unified_group_audit_page(next, &scope, &query, "all:inactive", &name, 0, 50).unwrap();
+        assert_eq!(moved.total, 1);
+        assert_eq!(moved.rows[0].group_name.as_deref(), Some("Группа"));
+    }
+}

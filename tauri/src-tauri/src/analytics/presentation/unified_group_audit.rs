@@ -10,7 +10,16 @@ pub struct UnifiedGroupAuditRow {
     pub active: Option<bool>,
 }
 #[derive(Serialize)]
+pub struct AuditCounts {
+    pub all: i64,
+    pub ungrouped: i64,
+    pub active: i64,
+    pub inactive: i64,
+    pub unknown: i64,
+}
+#[derive(Serialize)]
 pub struct UnifiedGroupAuditPage {
+    pub counts: AuditCounts,
     pub rows: Vec<UnifiedGroupAuditRow>,
     pub total: i64,
     pub coverage: RangeSummary,
@@ -30,8 +39,8 @@ impl Analytics<'_> {
             return Err("Invalid group audit query".into());
         }
         let mut rows=Vec::new();
-        let (total,coverage)=self.visit_group_audit(revision,scope,query,mode,search,offset,limit as i64,|row|{rows.push(row);Ok(())})?;
-        Ok(UnifiedGroupAuditPage{rows,total,coverage})
+        let (total,coverage,counts)=self.visit_group_audit(revision,scope,query,mode,search,offset,limit as i64,|row|{rows.push(row);Ok(())})?;
+        Ok(UnifiedGroupAuditPage{rows,total,coverage,counts})
     }
 
     pub(super) fn unified_group_audit_csv(&self,revision:i64,scope:&AnalysisScope,query:&RangeQuery,mode:&str,search:&str,destination:&Path)->Result<(),String>{
@@ -46,7 +55,9 @@ impl Analytics<'_> {
         })
     }
 
-    fn visit_group_audit(&self,revision:i64,scope:&AnalysisScope,query:&RangeQuery,mode:&str,search:&str,offset:i64,limit:i64,mut visit:impl FnMut(UnifiedGroupAuditRow)->Result<(),String>)->Result<(i64,RangeSummary),String>{
+    fn visit_group_audit(&self,revision:i64,scope:&AnalysisScope,query:&RangeQuery,mode:&str,search:&str,offset:i64,limit:i64,mut visit:impl FnMut(UnifiedGroupAuditRow)->Result<(),String>)->Result<(i64,RangeSummary,AuditCounts),String>{
+        let (mode, activity) = mode.split_once(':').unwrap_or((mode, "any"));
+        if !matches!(activity, "any" | "active" | "inactive" | "unknown") || (mode == "unused" && activity != "any") { return Err("Invalid audit activity".into()); }
         if !matches!(mode,"all"|"ungrouped"|"unused")||search.len()>512 {return Err("Invalid group audit query".into());}
         // This audit always considers all works, independently of the chart's
         // name selection. Organization/range validation remains the same.
@@ -106,10 +117,25 @@ impl Analytics<'_> {
                 (SELECT g.handle FROM management_members m JOIN management_groups g ON g.handle=m.group_handle WHERE m.work=w.work ORDER BY g.ordinal,g.handle LIMIT 1) group_handle,
                 (SELECT g.name FROM management_members m JOIN management_groups g ON g.handle=m.group_handle WHERE m.work=w.work ORDER BY g.ordinal,g.handle LIMIT 1) group_name,
                 0 members,
-                EXISTS(SELECT 1 FROM an_valid v JOIN an_periods p ON p.slot=1 AND p.start=v.start JOIN report_rows r ON r.report_id=v.report_id AND r.organization=v.org WHERE r.work=w.work AND (r.count<>0 OR r.amount<>0)) observed
+                EXISTS(SELECT 1 FROM an_valid v JOIN an_periods p ON p.slot=1 AND p.start=v.start JOIN report_rows r ON r.report_id=v.report_id AND r.organization=v.org WHERE r.work=w.work AND (r.count<>0 OR r.amount IS NULL OR r.amount<>0)) observed
               FROM works w;").map_err(err)?;
-            tx.execute("DELETE FROM audit_rows WHERE (?1='ungrouped' AND group_handle IS NOT NULL) OR (instr(classic_normalized(name),?2)=0 AND NOT (?3 AND instr(classic_normalized(coalesce(group_name,'Без группы')),?2)>0))",params![mode,term,extras]).map_err(err)?;
+            tx.execute("DELETE FROM audit_rows WHERE instr(classic_normalized(name),?1)=0 AND NOT (?2 AND instr(classic_normalized(coalesce(group_name,'Без группы')),?1)>0)",params![term,extras]).map_err(err)?;
         }
+        let ungrouped = mode == "ungrouped";
+        // Both facets see every matching name before pagination. The activity
+        // counts include the group filter; the group count includes activity.
+        let status = "CASE WHEN observed THEN 'active' WHEN ?2 THEN 'inactive' ELSE 'unknown' END";
+        let counts = tx.query_row(&format!("SELECT
+            COUNT(*) FILTER (WHERE NOT ?1 OR group_handle IS NULL),
+            COUNT(*) FILTER (WHERE group_handle IS NULL AND (?3='any' OR {status}=?3)),
+            COUNT(*) FILTER (WHERE (NOT ?1 OR group_handle IS NULL) AND observed),
+            COUNT(*) FILTER (WHERE (NOT ?1 OR group_handle IS NULL) AND NOT observed AND ?2),
+            COUNT(*) FILTER (WHERE (NOT ?1 OR group_handle IS NULL) AND NOT observed AND NOT ?2)
+            FROM audit_rows"), params![ungrouped,coverage.complete,activity], |r| Ok(AuditCounts {
+                all:r.get(0)?, ungrouped:r.get(1)?, active:r.get(2)?, inactive:r.get(3)?, unknown:r.get(4)?,
+            })).map_err(err)?;
+        tx.execute(&format!("DELETE FROM audit_rows WHERE (?1 AND group_handle IS NOT NULL)
+            OR (?3<>'any' AND {status}<>?3)"),params![ungrouped,coverage.complete,activity]).map_err(err)?;
         let total = count_sql(&tx, "SELECT count(*) FROM audit_rows")?;
         let mut stmt=tx.prepare("SELECT name,key,group_handle,group_name,members,observed FROM audit_rows ORDER BY (instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key,group_handle LIMIT ?2 OFFSET ?3").map_err(err)?;
         let rows = stmt
@@ -132,7 +158,7 @@ impl Analytics<'_> {
             })
             .map_err(err)?;
         for result in rows {visit(result.map_err(err)?)?;}
-        Ok((total,coverage))
+        Ok((total,coverage,counts))
     }
 }
 

@@ -1131,16 +1131,24 @@ body:has(#refRoot)>footer {display:none}
 #groupCatalog .catalog-feedback[data-kind="error"] {color:var(--negative)}
 #groupCatalog .catalog-feedback[data-kind="success"] {color:var(--positive)}
 #groupCatalog .catalog-feedback[data-kind="warning"] {color:var(--warning)}
-#groupCatalog .catalog-row {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:8px 10px;margin:0;border:0;border-bottom:1px solid var(--border);border-radius:0}
-#groupCatalog .catalog-entry {display:grid;gap:3px;min-width:0}
-#groupCatalog .catalog-name {font-size:13px;overflow-wrap:anywhere}
-#groupCatalog .catalog-organization {font-size:11px;color:var(--muted);overflow-wrap:anywhere}
-#groupCatalog .catalog-row-actions .button {width:auto;min-height:34px;padding:6px 8px;margin:0;font-size:12px;white-space:nowrap}
+#groupCatalog .catalog-form[hidden],#groupCatalog #catalogAdd[hidden] {display:none}
+#groupCatalog .catalog-form > strong {grid-column:1/-1}
+#groupCatalog #catalogAdd {justify-self:start}
+#groupCatalog .catalog-table {width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
+#groupCatalog .catalog-table :is(th,td) {padding:2px 6px;text-align:left;overflow-wrap:anywhere;border-bottom:1px solid var(--border);font-size:13px}
+#groupCatalog .catalog-table th {position:sticky;top:var(--app-header-viewport-height,0px);z-index:2;background:var(--ui-surface)}
+#groupCatalog .catalog-table th:nth-child(2) {width:24%}
+#groupCatalog .catalog-table th:last-child {width:6em}
+#groupCatalog .catalog-variant {display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:2px 0}
+#groupCatalog .catalog-menu {position:relative}
+#groupCatalog .catalog-menu > summary {display:inline-grid;place-items:center;min-width:32px;min-height:28px;cursor:pointer;list-style:none;border:1px solid var(--border);border-radius:var(--radius-control)}
+#groupCatalog .catalog-menu[open] {z-index:3}
+#groupCatalog .catalog-row-actions {position:absolute;right:0;top:100%;z-index:1;display:grid;min-width:max-content;padding:4px;background:var(--ui-surface);border:1px solid var(--border);border-radius:var(--radius-control)}
+#groupCatalog .catalog-row-actions .button {margin:0;min-height:32px}
 @media(max-width:700px) {
  #groupCatalog .catalog-form {grid-template-columns:minmax(0,1fr)}
  #groupCatalog .catalog-actions {flex-wrap:wrap}
  #groupCatalog .catalog-actions .button {flex:1;min-width:0}
- #groupCatalog .catalog-row {gap:8px;padding-inline:0}
 }
 
 /* Group members and work pages use the vertical scroll of the workspace. */
@@ -1384,3 +1392,27 @@ body:has(#refRoot)>footer {display:none}
 #s1 .data-card tfoot td {font-weight:700;border-top:1px solid var(--border)}
 #s1 .leader-directions {display:flex;gap:4px}
 #s1 .leader-directions [aria-pressed="true"] {background:var(--selected-bg);border-color:var(--selected-border);color:var(--text)}
+#groupAuditPanel .group-audit-dates {min-width:0;margin:0;padding:0;border:0}
+#groupAuditPanel .audit-table {width:100%;table-layout:fixed;border-spacing:0}
+#groupAuditPanel .audit-table :is(td,th) {text-align:left;border-bottom:1px solid var(--border);overflow-wrap:anywhere;font-size:13px;padding:3px 5px}
+#groupAuditPanel .audit-table th {position:sticky;top:var(--app-header-viewport-height,0px);z-index:2;background:var(--ui-surface)}
+#groupAuditPanel .audit-table th:first-child {width:36%}
+#groupAuditPanel .audit-table th:last-child {width:6em}
+#groupAuditPanel .audit-table label {display:flex;align-items:center;gap:.5rem}
+#groupAuditPanel .audit-table input {flex:none}
+#groupAuditPanel .audit-table [data-activity=active] {color:var(--positive)}
+#groupAuditPanel .audit-table [data-activity=unknown] {color:var(--warning)}
+#groupAuditPanel .catalog-menu {position:relative}
+#groupAuditPanel .catalog-menu > summary {min-width:32px;min-height:28px;display:inline-grid;place-items:center;cursor:pointer;list-style:none;border:1px solid var(--border);border-radius:var(--radius-control)}
+#groupAuditPanel .catalog-menu[open] {z-index:3}
+#groupAuditPanel .catalog-menu > :is(button,.group-member) {position:absolute;right:0;top:100%;width:max-content;background:var(--ui-surface);margin:0;padding:4px}
+#groupAuditPanel .audit-tools {display:grid;gap:6px;margin:8px 0}
+#groupAuditPanel .audit-tools [aria-pressed=true] {border-color:var(--focus);font-weight:700}
+#groupWorkspace .button.secondary,
+#groupWorkspace:has(#groupEditor[open],#catalogForm:not([hidden])) #createGroup,
+#groupWorkspace:has(#catalogForm:not([hidden])) #saveGroup {background:var(--surface);color:var(--text);border-color:var(--field-border)}
+#groupWorkspace .button.secondary:hover:not(:disabled) {background:var(--hover)}
+#groupWorkspace [draggable=true] {cursor:grab}
+#groupWorkspace [draggable=true]:active {cursor:grabbing}
+
+#refRoot[data-settings-page] #refNative :is(.catalog-table,.audit-table) th {top:calc(var(--app-header-viewport-height,0px) + var(--management-header-height,0px))}

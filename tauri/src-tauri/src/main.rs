@@ -1890,6 +1890,7 @@ fn main() {
             unified_group_save,
             unified_group_tree_edit,
             unified_work_assign,
+            unified_works_assign,
             unified_groups_preview,
             unified_groups_import,
             unified_groups_export,
