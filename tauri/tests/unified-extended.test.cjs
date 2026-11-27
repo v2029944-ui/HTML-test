@@ -219,12 +219,14 @@ test('missing report pairs are reported separately with formatted dates',async()
  const p=page('Missing');
  p.summary.totals.missing_pairs=2;
  p.summary.totals.partial_pairs=3;
+ p.summary.rows_with_missing_amount=1;
  p.missing_examples=[{org:'A',missing_base:true,base_start:'2024-01-01',missing_current:false}];
  const f=fixture({unifiedChangesPage:async()=>p});f.publish();f.view('changes');await settle();
  const message=f.nodes.get('changesWarnings').textContent;
  assert.match(message,/Пар без отчётов за один или оба периода: 2/);
  assert.match(message,/не включены в сопоставление/);
- assert.match(message,/Пар по доступным отчётам: 3/);
+ assert.match(message,/Пар с неполным покрытием отчётами: 3/);
+ assert.match(message,/Строк сравнения с незаполненной суммой: 1/);
  assert.match(message,/01\.01\.2024/);
 });
 

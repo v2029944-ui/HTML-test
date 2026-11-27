@@ -50,6 +50,7 @@ pub struct ComparisonDashboard {
     pub divisions: Vec<DivisionPeriodChange>,
     pub top_amount: Vec<ComparisonValue>,
     pub top_count: Vec<ComparisonValue>,
+    pub top_average: Vec<ComparisonValue>,
 }
 
 pub(super) fn comparison(
@@ -141,9 +142,13 @@ fn observed_comparison_value(
     }
     value.amount = base.amount.zip(current.amount)
         .map(|(b, a)| measure(b, a, q.min_amount, q.percent)).transpose()?;
-    if row.get::<_, Option<bool>>(11).map_err(err)?.unwrap_or(false) {
-        value.average = average_change(base.average, current.average, q.percent)?;
-    }
+    let same_work = row.get::<_, Option<bool>>(11).map_err(err)?.unwrap_or(false);
+    value.average = match comparable_averages(&base, &current, same_work) {
+        Some((before, after)) => average_change(Some(before), Some(after), q.percent)?,
+        None => AverageChange {
+            base: base.average, current: current.average, delta: None, percent: None, flags: None,
+        },
+    };
     value.observed_before = Some(base);
     value.observed_after = Some(current);
     Ok(value)
@@ -241,6 +246,7 @@ impl Analytics<'_> {
         drop(stmt);
         let mut top_amount=Vec::new();
         let mut top_count=Vec::new();
+        let mut top_average=Vec::new();
         if summary.before.available_reports > 0 && summary.after.available_reports > 0 {
             for metric in ["amount","count"] {
                 let sql = format!("SELECT {COMPARISON_COLUMNS} FROM temp.an_comparison
@@ -258,8 +264,29 @@ impl Analytics<'_> {
                     else {top_count.push(item);}
                 }
             }
+            let sql = format!("WITH averages AS (
+                SELECT {COMPARISON_COLUMNS},
+                       CASE WHEN ba IS NOT NULL AND bc>0 THEN ba/bc
+                            WHEN ba IS NULL AND b_paired>0 THEN b_known/b_paired END AS before_average,
+                       CASE WHEN ca IS NOT NULL AND cc>0 THEN ca/cc
+                            WHEN ca IS NULL AND a_paired>0 THEN a_known/a_paired END AS after_average
+                FROM temp.an_comparison
+            )
+            SELECT {COMPARISON_COLUMNS} FROM averages
+            WHERE ((ba IS NOT NULL AND ca IS NOT NULL) OR same_source_work)
+              AND before_average<>after_average
+            ORDER BY abs(after_average-before_average) DESC,key LIMIT 12");
+            let mut ranking = tx.prepare(&sql).map_err(err)?;
+            let mut rows = ranking.query([]).map_err(err)?;
+            while let Some(row) = rows.next().map_err(err)? {
+                let mut item = observed_comparison_value(row, q, true, true)?;
+                if !(before_complete && after_complete) {
+                    item.status = None;
+                }
+                top_average.push(item);
+            }
         }
-        Ok(ComparisonDashboard{summary,divisions,top_amount,top_count})
+        Ok(ComparisonDashboard { summary, divisions, top_amount, top_count, top_average })
     }
     pub(super) fn analysis_comparison_window(&self,expected:i64,s:&AnalysisScope,q:&ComparisonQuery,org:Option<&str>,page_index:usize,size:usize)->Result<SqlPage<ComparisonValue>,String> {
         let limit=cap(size)?;

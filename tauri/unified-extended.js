@@ -186,9 +186,9 @@ async function changes(index=0,paging=false){
   const missingAmount=result.summary.rows_with_missing_amount??0;
   if(missingAmount||diagnostic?.missing_pairs||diagnostic?.partial_pairs||diagnostic?.invalid_reports||diagnostic?.duplicate_issues||diagnostic?.overlap_issues||diagnostic?.import_warning_pairs){
    const problems=[];
-   if(missingAmount>0)problems.push('Есть строки без суммы. Сравнение суммы учитывает заполненные ячейки, а среднее — сопоставимые количества из тех же строк.');
+   if(missingAmount>0)problems.push('Строк сравнения с незаполненной суммой: '+missingAmount+'. Сумма и среднее учитывают заполненные ячейки.');
    if(diagnostic.missing_pairs>0)problems.push('Пар без отчётов за один или оба периода: '+diagnostic.missing_pairs+' (не включены в сопоставление).');
-   if(diagnostic.partial_pairs>0)problems.push('Пар по доступным отчётам: '+diagnostic.partial_pairs+' (есть пропуски).');
+   if(diagnostic.partial_pairs>0)problems.push('Пар с неполным покрытием отчётами: '+diagnostic.partial_pairs+'.');
    if(diagnostic.import_warning_pairs>0)problems.push('Пар с замечаниями импорта: '+diagnostic.import_warning_pairs+' (проверьте источник; замечание не означает автоматического исключения).');
    if(diagnostic.invalid_reports>0)problems.push('Некорректных отчётов: '+diagnostic.invalid_reports+'.');
    if(diagnostic.duplicate_issues>0)problems.push('Повторных отчётов: '+diagnostic.duplicate_issues+'.');

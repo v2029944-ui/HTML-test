@@ -184,12 +184,13 @@ pub(super) fn prepare_changes(
     }
     calendar.prepare_change_facts(c, s, q)?;
     c.execute_batch("CREATE TEMP TABLE an_currents(start TEXT PRIMARY KEY,base TEXT) WITHOUT ROWID;
-        CREATE TEMP TABLE an_pairs(start TEXT,base TEXT,org TEXT,base_id TEXT,current_id TEXT,warned INTEGER,partial INTEGER,PRIMARY KEY(start,org)) WITHOUT ROWID;
+        CREATE TEMP TABLE an_pairs(start TEXT,base TEXT,org TEXT,base_id TEXT,current_id TEXT,warned INTEGER,partial INTEGER,base_complete INTEGER,current_complete INTEGER,PRIMARY KEY(start,org)) WITHOUT ROWID;
         CREATE TEMP TABLE an_period_values(start TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,known_amount REAL,paired_count REAL,source_work TEXT,PRIMARY KEY(start,org,key)) WITHOUT ROWID;
-        CREATE TEMP TABLE an_changes(start TEXT,base TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL,b_known REAL,a_known REAL,b_paired REAL,a_paired REAL,same_source_work INTEGER,PRIMARY KEY(start,org,key)) WITHOUT ROWID;").map_err(err)?;
+        CREATE TEMP TABLE an_changes(start TEXT,base TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL,b_known REAL,a_known REAL,b_paired REAL,a_paired REAL,same_source_work INTEGER,base_observed INTEGER,current_observed INTEGER,PRIMARY KEY(start,org,key)) WITHOUT ROWID;").map_err(err)?;
     calendar.fill_change_periods(c, q.method == "previous")?;
     c.execute("INSERT INTO an_pairs SELECT p.start,p.base,f.item,b.label,v.label,coalesce(b.warned,0) OR coalesce(v.warned,0),
-        b.label IS NOT NULL AND v.label IS NOT NULL AND (NOT b.complete OR NOT v.complete)
+        b.label IS NOT NULL AND v.label IS NOT NULL AND (NOT b.complete OR NOT v.complete),
+        coalesce(b.complete,0),coalesce(v.complete,0)
         FROM an_currents p CROSS JOIN analysis_filter_items f LEFT JOIN adv_coverage b ON b.label=p.base AND b.org=f.item
         LEFT JOIN adv_coverage v ON v.label=p.start AND v.org=f.item WHERE f.id=?1",[&s.organizations]).map_err(err)?;
     c.execute_batch("INSERT INTO an_period_values SELECT label,org,key,name,kind,count,amount,known_amount,paired_count,source_work FROM adv_facts WHERE label IN (SELECT start FROM an_currents UNION SELECT base FROM an_currents)").map_err(err)?;
@@ -212,7 +213,7 @@ impl Analytics<'_> {
         let summary = changes_summary(&tx, q)?;
         let mut stmt = tx
             .prepare(
-                "SELECT start,base,org,key,name,kind,bc,ba,cc,ca FROM an_changes
+                "SELECT start,base,org,key,name,kind,bc,ba,cc,ca,base_observed,current_observed FROM an_changes
             WHERE ?1 IS NULL OR (start,org,key)>(?1,?2,?3) ORDER BY start,org,key LIMIT 51",
             )
             .map_err(err)?;

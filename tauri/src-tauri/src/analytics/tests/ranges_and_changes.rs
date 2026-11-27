@@ -720,6 +720,7 @@ fn unpriced_work_does_not_block_an_average_of_comparable_priced_rows() {
     };
     let dashboard = store.analysis_comparison_dashboard(revision, &mixed, &comparison).unwrap();
     assert_eq!(dashboard.summary.average.delta, Some(1000.));
+    assert_eq!(serde_json::to_value(&dashboard).unwrap()["top_average"][0]["average"]["delta"], 1000.);
     let page = store.analysis_comparison_window(revision, &mixed, &comparison, None, 0, 50).unwrap();
     assert_eq!(page.rows[0].average.delta, Some(1000.));
 
@@ -734,6 +735,11 @@ fn unpriced_work_does_not_block_an_average_of_comparable_priced_rows() {
     let page = store.unified_changes_page(revision, &mixed, &changes, None, &options, None).unwrap();
     assert_eq!(page.rows.len(), 1);
     assert_eq!(page.rows[0].average.delta, Some(1000.));
+    let serialized = serde_json::to_value(&page).unwrap();
+    assert_eq!(serialized["summary"]["top_average"]["average"]["delta"], 1000.);
+    assert_eq!(serialized["summary"]["rows_with_missing_amount"], 1);
+    assert_eq!(serialized["summary"]["totals"]["missing_pairs"], 1);
+    assert_eq!(serialized["summary"]["totals"]["partial_pairs"], 0);
 
     let timeline = store.analysis_timeline(revision, &all, &both).unwrap();
     assert_eq!(timeline.points[0].available_total.average, Some(2000.));
