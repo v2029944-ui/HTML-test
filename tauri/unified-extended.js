@@ -422,7 +422,7 @@ async function departmentComparison(task,index){
    if(org===baseOrg)return [n];
    const partial=Number.isFinite(observed(row)?.partial_average_quantity)||Number.isFinite(observed(base)?.partial_average_quantity);
    const sameWork=row?.average_source_work!=null&&row.average_source_work===base?.average_source_work;
-   const baseValue=metric==='average'&&partial&&!sameWork?null:comparable(base);
+   const baseValue=values!==organizations&&metric==='average'&&partial&&!sameWork?null:comparable(base);
    return [n,...rawDifference(n,baseValue)];
   };
   const make=(label,values)=>[label,...s.organizations.flatMap(org=>cells(org,values).map((n,i)=>i===0?fmt(n,metric):i===1?delta(n,metric):percent(n)))];

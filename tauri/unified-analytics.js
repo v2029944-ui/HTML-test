@@ -73,7 +73,7 @@ function layout(){const single=value('overviewMode')==='single';$('overviewSingl
  document.querySelectorAll('[data-chart]').forEach(button=>button.classList.toggle('active',button.dataset.chart===state.chart));
 }
 function filters(){O.renderMultiFilter('orgFilter',(UI.snapshot?.org_names||[]).map(n=>[n,n]),state.selectedOrganizations,()=>window.referenceDetail?.active==='overviewPanel'
- ?window.referenceFilters.setOrganizations(orgs()):calculate());O.renderMultiFilter('metric',[['amount','Сумма'],['count','Количество / объём']],state.selectedMetrics,()=>{if(printCapture?.revision===UI.revision)drawOverview(printCapture.result,printCapture.organizations,printCapture.scope,printCapture.before);publish();renderCharts();});O.renderMultiFilter('chartMetrics',[['amount','Сумма'],['count','Количество / объём'],['average','Сумма / количество (объём)']],state.chartMetrics,()=>renderCharts());}
+ ?window.referenceFilters.setOrganizations(orgs()):calculate());O.renderMultiFilter('metric',[['amount','Сумма'],['count','Количество / объём']],state.selectedMetrics,()=>{if(printCapture?.revision===UI.revision)drawOverview(printCapture.result,printCapture.organizations,printCapture.scope,printCapture.before);publish();renderCharts();});O.renderMultiFilter('chartMetrics',[['amount','Сумма'],['count','Количество / объём'],['average','Средняя сумма на единицу']],state.chartMetrics,()=>renderCharts());}
 function publish(){if(!scope)return;scope={...scope,organizations:orgs(),allNames,selectedNames:allNames?[]:[...selectedRows.values()].map(r=>r.name),selectedKeys:allNames?[]:[...selectedRows.keys()],nameRows:[...selectedRows.values()]};state.selectedCategories=new Set(scope.selectedNames);UI.publishScope(scope);}
 function selectionCount(){
  state.selectedCategories=new Set([...selectedRows.values()].map(r=>r.name));
@@ -185,7 +185,7 @@ function drawOverview(result,organizations,s,before){
  for(const id of overviewResults)clear(id);
  const summary=result.summary,current=summary.after,previous=summary.before,root=$('overviewKpis'),insights=$('overviewInsights');
  $('overviewPeriodText').textContent=sourceRangeLabel(s)+' · '+s.organizations.join(', ');$('printSummary').disabled=!current.periods;
- for(const [metric,label] of [['amount','Сумма выполненных работ'],['count','Количество / объём'],['average','Сумма / количество (объём)']]){
+ for(const [metric,label] of [['amount','Сумма выполненных работ'],['count','Количество / объём'],['average','Средняя сумма на единицу']]){
   const card=UI.el('div',null,'kpi'),shown=observed(current)?.[metric],now=overviewValue(current,metric),old=overviewBase(summary,metric);
   const comparable=Number.isFinite(now)&&Number.isFinite(old);
   card.append(UI.el('span',label),UI.el('strong',fmt(shown,metric)),UI.el('small',!comparable&&incomplete(current)&&Number.isFinite(shown)?'Частичное значение':overviewDifference(now,old,metric),comparable?changeClass(changeValue(now-old,metric).direction):''));root.append(card);
@@ -467,7 +467,7 @@ function print(){const captured=printCapture;if(!captured||captured.revision!==U
  const current=captured.summary.after;
  const averageNotice=window.analysisSummary.averageNote(current);
  if(averageNotice)root.append(UI.el('p',averageNotice));
- if(!current.complete&&current.available_reports>0)add('Частичный итог по доступным отчётам',['Исходных отчётов','Сумма','Количество / объём','Сумма / количество (объём)'],[[String(current.available_reports),fmt(current.available_total.amount,'amount'),fmt(current.available_total.count,'count'),fmt(current.available_total.average,'average')]]);
+ if(!current.complete&&current.available_reports>0)add('Частичный итог по доступным отчётам',['Исходных отчётов','Сумма','Количество / объём','Средняя сумма на единицу'],[[String(current.available_reports),fmt(current.available_total.amount,'amount'),fmt(current.available_total.count,'count'),fmt(current.available_total.average,'average')]]);
  if(current.invalid_reports||current.duplicate_issues||current.overlap_issues||current.import_warning_reports)root.append(UI.el('p','В исходных отчётах есть замечания. Некорректных: '+current.invalid_reports+', дубликатов: '+current.duplicate_issues+', перекрытий: '+current.overlap_issues+', с замечаниями импорта: '+current.import_warning_reports+'. Суммы относятся к распознанной детализации; перед использованием проверьте контроль качества данных.'));
  add('По подразделениям',['Подразделение','Сумма','Количество / объём'],captured.organizations.map(org=>[org.org,fmt(observed(org)?.amount,'amount'),fmt(observed(org)?.count,'count')]));
  for(const metric of ['amount','count']){const entries=(captured.result['top_'+metric]||[]).filter(row=>Number.isFinite(row[metric]?.delta)&&row[metric].delta!==0).slice(0,5);if(entries.length)add('Крупнейшие изменения: '+titles[metric],['Услуга или группа','Было','Стало','Изменение'],entries.map(row=>[window.analysisSummary.itemLabel(row),fmt(row[metric].base,metric),fmt(row[metric].current,metric),changeValue(row[metric].delta,metric).value]));}

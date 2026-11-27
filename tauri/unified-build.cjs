@@ -18,7 +18,7 @@ function buildUnified(source){
  // must not describe a fractional quantity/volume as a count of completed jobs.
  const metricMarker="function metricTitle(metric){return {count:'Количество',amount:'Сумма',average:'Средняя сумма на одну работу'}[metric]||metric;}";
  if(!script.includes(metricMarker))throw Error('Original quantity labels changed');
- script=script.replace(metricMarker,"function metricTitle(metric){return {count:'Количество / объём',amount:'Сумма',average:'Сумма / количество (объём)'}[metric]||metric;}");
+ script=script.replace(metricMarker,"function metricTitle(metric){return {count:'Количество / объём',amount:'Сумма',average:'Средняя сумма на единицу'}[metric]||metric;}");
  // The original renderer predates calendar-year rollups. Adapt only generated
  // presentation helpers; the independent browser source remains unchanged.
  const rankingColor="fill.style.setProperty('--rank-color',seriesColor(row.name));";
@@ -184,7 +184,7 @@ function buildUnified(source){
  const metricMarkup="<details id=\"additionalMetrics\" class=\"panel group-section\"><summary>Другие показатели — трудозатраты и план / факт</summary>\n<p class=\"muted small\">Независимые виды отчётов со своими полями и единицами измерения. Их показатели не прибавляются к суммам выполненных работ.</p>\n<div class=\"metric-controls\">\n<label>Вид отчёта<select id=\"metricKindSelect\"></select></label>\n<label>С<input id=\"metricKindFrom\" type=\"date\"></label>\n<label>По<input id=\"metricKindTo\" type=\"date\"></label>\n<button type=\"button\" id=\"metricKindCalculate\" class=\"button secondary\">Рассчитать</button></div>\n<p id=\"metricKindCount\" class=\"muted small\">Пустые даты при расчёте означают всю историю.</p>\n<div id=\"metricKindTotals\" class=\"metric-results\"></div>\n<div class=\"metric-controls\">\n<label>Шаблон XLSX<select id=\"metricXlsxProfile\"></select></label>\n<button type=\"button\" id=\"metricKindChooseXlsx\" class=\"button secondary\">Импорт XLSX</button>\n<button type=\"button\" id=\"metricKindChoose\" class=\"button secondary\">Импорт JSON</button>\n<button type=\"button\" id=\"metricKindApply\" class=\"button primary\" disabled>Подтвердить импорт</button></div>\n<p class=\"muted small\">Для XLSX сначала укажите обе даты и шаблон. Перед записью проверьте значения: импорт не заменяет существующие отчёты. Лимит XLSX — 30 МиБ, JSON — 8 МиБ, не более 10 000 строк в отчёте.</p>\n<p id=\"metricKindFile\" class=\"muted small\">Файл ещё не выбран.</p>\n<div id=\"metricKindPreview\" class=\"metric-results\"></div>\n<p id=\"metricKindStatus\" class=\"status muted\" role=\"status\" aria-live=\"polite\">Загрузка видов отчётов…</p></details>";
  if(!html.includes('<section id="upload" class="view">'))throw Error('Original Excel upload panel changed');
  html=html.replace('<section id="upload" class="view">','<section id="upload" class="view">'+metricMarkup);
- html=html.replaceAll('Средняя сумма на работу','Сумма / количество (объём)')
+ html=html.replaceAll('Средняя сумма на работу','Средняя сумма на единицу')
   .replace('10, 20, 10 и 20 работ','10, 20, 10 и 20 единиц количества / объёма')
   .replace('всё количество работ в этих периодах','суммарное количество / объём в этих периодах')
   .replace('средняя сумма рассчитана отдельно','отношение суммы к количеству / объёму рассчитано отдельно');

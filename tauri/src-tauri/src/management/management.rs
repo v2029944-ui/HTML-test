@@ -8,6 +8,7 @@ use std::{
     io::{BufReader, BufWriter, Read, Write},
     sync::{atomic::AtomicBool, Arc},
 };
+const MAX_GROUP_WORKS: usize = 10_000;
 const SESSION_MAGIC: &str = "analiz-management-v1\n";
 fn batch(n: usize) -> Result<(), String> {
     if (1..=500).contains(&n) {
@@ -192,15 +193,25 @@ impl Storage {
             _ => return Err("Неизвестная страница настроек.".into()),
         };
         let children = if kind == "group_tree" { "children" } else { "NULL" };
-        let total:i64 = tx.query_row(&format!("SELECT COUNT(*) FROM ({table}) WHERE instr(unified_normalized(name),?1)>0"), [&term], |r| r.get(0)).map_err(err)?;
-        let grouped:i64 = if kind == "works" { tx.query_row(&format!("SELECT COUNT(*) FROM ({table}) WHERE instr(unified_normalized(name),?1)>0 AND group_handle IS NOT NULL"), [&term], |r| r.get(0)).map_err(err)? } else { 0 };
-        let mut stmt = tx.prepare(&format!("SELECT handle,id,name,organization,members,group_handle,{children} FROM ({table}) WHERE instr(unified_normalized(name),?1)>0 ORDER BY CASE WHEN substr(unified_normalized(name),1,length(?1))=?1 THEN 0 ELSE 1 END,name COLLATE unified_ru,name,handle LIMIT ?2 OFFSET ?3")).map_err(err)?;
+        let (filter, prefix_order) = if term.is_empty() {
+            ("", "")
+        } else {
+            ("WHERE instr(unified_normalized(name),?1)>0",
+             "CASE WHEN substr(unified_normalized(name),1,length(?1))=?1 THEN 0 ELSE 1 END,")
+        };
+        let grouped_count = if kind == "works" { "COUNT(group_handle)" } else { "0" };
+        let counts_sql = format!("SELECT COUNT(*),{grouped_count} FROM ({table}) {filter}");
+        let search_param = (!term.is_empty()).then_some(&term);
+        let (total, grouped): (i64, i64) = tx.query_row(
+            &counts_sql, rusqlite::params_from_iter(search_param), |row| Ok((row.get(0)?, row.get(1)?))
+        ).map_err(err)?;
+        let mut stmt = tx.prepare(&format!("SELECT handle,id,name,organization,members,group_handle,{children} FROM ({table}) {filter} ORDER BY {prefix_order}name COLLATE unified_ru,name,handle LIMIT ?2 OFFSET ?3")).map_err(err)?;
         let rows = stmt.query_map(params![term,limit as i64,offset], |r| Ok(UnifiedManagementRow { handle:r.get(0)?, id:r.get(1)?, name:r.get(2)?, organization:r.get(3)?, members:r.get(4)?, group:r.get(5)?, children:r.get(6)? })).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
         Ok(UnifiedManagementPage { rows,total,grouped,ungrouped:total-grouped,hierarchy:link_root.is_some() })
     }
 
     pub fn unified_save_group(&self, revision:i64, handle:Option<i64>, id:&str, name:&str, works:&[String]) -> Result<ManagementReceipt,String> {
-        if name.trim().is_empty() || name.len()>1024 || id.len()>128 || works.len()>5000 { return Err("Введите название и выберите не более 5000 работ.".into()); }
+        if name.trim().is_empty() || name.len()>1024 || id.len()>128 || works.len()>MAX_GROUP_WORKS { return Err(format!("Введите название и выберите не более {MAX_GROUP_WORKS} работ.")); }
         for work in works { if work.trim().is_empty() || work.len()>4096 { return Err("Некорректное название работы.".into()); } }
         let mut editor = self.management_begin_settings(revision,256*1024*1024,Arc::new(ManagementJob::new()))?;
         editor.unified_save_group(handle,id,name,works)?;
@@ -239,9 +250,6 @@ impl Storage {
             if confirmed_count > total || (handles.is_none() && !clear) {
                 return Err("Список групп изменился. Повторите действие.".into());
             }
-            if clear && backup.is_none() {
-                return Err("Для очистки списка нужна проверенная резервная копия SQLite.".into());
-            }
             unified_settings_io::update_links_before_bulk_deletion(c, parent, handles, clear, &job)?;
             if let Some(handles) = handles {
                 for &handle in handles {
@@ -259,8 +267,7 @@ impl Storage {
             }
             Ok(clear)
         })?;
-        if clear {
-            let destination = backup.ok_or("Укажите путь для резервной копии.")?;
+        if let Some(destination) = backup.filter(|_| clear) {
             if self.backup_sqlite_verified(destination)? != revision {
                 return Err("База изменилась при создании копии. Повторите действие.".into());
             }

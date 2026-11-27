@@ -87,7 +87,7 @@
 <div class="card metric-card" style="padding:20px"><div class="metric-name">Количество / объём</div>
 <div class="num metric-value">—</div>
 <div class="num metric-delta"></div></div>
-<div class="card metric-card" style="padding:20px"><div class="metric-name">Сумма / количество (объём)</div>
+<div class="card metric-card" style="padding:20px"><div class="metric-name">Средняя сумма на единицу</div>
 <div class="num metric-value">—</div>
 <div class="num metric-delta"></div></div>
 </section><div class="quality-notice" role="status" style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-radius:12px;background:#33281a;border:1px solid #6b5326" hidden="">
@@ -102,13 +102,13 @@
 <div class="card data-card" style="padding:20px 8px 12px">
 <div class="card-heading" style="display:flex;justify-content:space-between;align-items:center;padding:0 12px 8px"><h2 style="margin:0;font-size:18px">Подразделения</h2><button class="btn ghost" style="min-height:36px">Скачать CSV</button></div>
 <div class="table-viewport"><table aria-label="Распределение по подразделениям">
-<thead><tr><th>Подразделение</th><th>Сумма</th><th>Количество / объём</th><th style="width:150px">Доля суммы</th><th>Сумма / количество (объём)</th></tr></thead>
+<thead><tr><th>Подразделение</th><th>Сумма</th><th>Количество / объём</th><th style="width:150px">Доля суммы</th><th>Средняя сумма на единицу</th></tr></thead>
 <tbody></tbody></table></div>
 </div>
 <div class="card insight-card" style="padding:20px;display:flex;flex-direction:column;gap:14px">
-<h2 style="margin:0;font-size:18px">Наибольшие изменения по работам</h2>
+<header><h2 style="margin:0;font-size:18px">Наибольшие изменения по работам</h2>
+<button class="btn">Все изменения</button></header>
 <div></div>
-<button class="btn" style="align-self:flex-start">Открыть полный анализ изменений</button>
 </div>
 </section>
 
@@ -128,7 +128,7 @@
 <button class="kpi"><div class="mut" style="font-size:13px;font-weight:600">Значительный рост</div><div class="num up" data-count="" style="font-size:36px;font-weight:700;margin:8px 0 4px">—</div><div class="mut" style="font-size:12px">работа × подразделение</div></button>
 <button class="kpi"><div class="mut" style="font-size:13px;font-weight:600">Значительное снижение</div><div class="num down" data-count="" style="font-size:36px;font-weight:700;margin:8px 0 4px">—</div><div class="mut" style="font-size:12px">работа × подразделение</div></button>
 <button class="kpi"><div class="mut" style="font-size:13px;font-weight:600">Новые работы</div><div class="num" data-count="" style="font-size:36px;font-weight:700;margin:8px 0 4px">—</div><div class="mut" style="font-size:12px">появились в этом периоде</div></button>
-<button class="kpi"><div class="mut" style="font-size:13px;font-weight:600">Без выполнений</div><div class="num" data-count="" style="font-size:36px;font-weight:700;margin:8px 0 4px">—</div><div class="mut" style="font-size:12px">были только в базовом периоде</div></button>
+<button class="kpi"><div class="mut" style="font-size:13px;font-weight:600">Только в базовом периоде</div><div class="num" data-count="" style="font-size:36px;font-weight:700;margin:8px 0 4px">—</div><div class="mut" style="font-size:12px">по доступным отчётам</div></button>
 </section><div class="quality-notice" role="status" style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-radius:12px;background:#33281a;border:1px solid #6b5326" hidden="">
 <svg aria-hidden="true" fill="none" height="20" stroke="#f5c542" stroke-width="2" viewBox="0 0 24 24" width="20"><path d="M12 3 2 21h20L12 3zM12 10v5M12 18v.5"></path></svg>
 <span style="flex:1;font-size:14px"></span>

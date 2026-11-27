@@ -114,9 +114,9 @@ test('generated original presentation uses quantity/volume terminology, standalo
  const {html,script}=require('../unified-build.cjs').buildUnified(original);
  const context={window:{}};vm.runInNewContext(script,context);
  assert.equal(context.window.unifiedOriginal.metricTitle('count'),'Количество / объём');
- assert.equal(context.window.unifiedOriginal.metricTitle('average'),'Сумма / количество (объём)');
+ assert.equal(context.window.unifiedOriginal.metricTitle('average'),'Средняя сумма на единицу');
  assert.doesNotMatch(html,/Средняя сумма на работу|10, 20, 10 и 20 работ/);
- assert.match(html,/Сумма \/ количество \(объём\)/);
+ assert.match(html,/Средняя сумма на единицу/);
  assert.match(original,/Средняя сумма на работу/);
 });
 

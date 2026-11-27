@@ -111,7 +111,7 @@ def _check_trend_exports(page, scratch, scope, evidence):
             data = [row for row in records[1:] if row and row[0] in scope['organizations']]
             assert len(data) == 12, records
             expected = {'Сумма': 145, 'Количество / объём': 14.5,
-                        'Сумма / количество (объём)': 10}
+                        'Средняя сумма на единицу': 10}
             assert {(row[0], row[1]) for row in data} == {
                 (org, metric) for org in scope['organizations'] for metric in expected}, records
             assert all(len(row) == 3 and _number(row[2]) == expected[row[1]]
@@ -145,7 +145,7 @@ def _check_detail_table_csv_parity(page, scratch, scope, evidence):
     }
     baseline = {'from': scope['baseFrom'], 'to': scope['baseTo']}
     metrics = {'amount': 'Сумма', 'count': 'Количество / объём',
-               'average': 'Сумма / количество (объём)'}
+               'average': 'Средняя сумма на единицу'}
     orgs = req['organizations']
     observed = {}
 
