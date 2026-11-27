@@ -238,10 +238,26 @@
     new MutationObserver(statusChanged).observe(currentStatus, {childList:true,subtree:true,attributes:true});
     statusChanged();
 
+    const forcedColors = window.matchMedia('(forced-colors: active)');
+    let captionKey;
     const syncAppearance = () => {
       for (const name of ['theme','palette','design','uiSize']) root.dataset[name] = document.documentElement.dataset[name];
+      // Read the final color token while the WebView animates its background.
+      const fill = getComputedStyle(header.querySelector('.app-header')).getPropertyValue('--window-caption-background').trim();
+      const rgb = /^#[0-9a-f]{6}$/i.test(fill) ? fill.slice(1).match(/../g).map(channel => parseInt(channel, 16)) : undefined;
+      const background = forcedColors.matches ? null : rgb;
+      if (background === undefined) return;
+      const dark = background !== null && root.dataset.theme === 'dark';
+      const key = JSON.stringify([background, dark]);
+      if (key === captionKey) return;
+      captionKey = key;
+      window.__TAURI__.core.invoke('set_window_caption', {background, dark}).catch(error => {
+        if (captionKey === key) captionKey = undefined;
+        console.warn('Не удалось применить цвет заголовка окна', error);
+      });
     };
     new MutationObserver(syncAppearance).observe(document.documentElement, {attributes:true,attributeFilter:['data-theme','data-palette','data-design','data-ui-size']});
+    forcedColors.addEventListener('change', syncAppearance);
     syncAppearance();
     window.referenceDetail.init();
     window.referenceResults.init();
