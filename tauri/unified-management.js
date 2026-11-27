@@ -453,7 +453,7 @@ function init(){
    for(let offset=0;;offset+=LIMIT){
     const ticket=groups.ticket+1;
     await load(groups,offset);
-    if(!valid(expected)||ticket!==groups.ticket||search.value!==name||!active)return;
+    if(!valid(expected)||ticket!==groups.ticket||search.value!==name||$('refNative')?.dataset.panel!=='groups')return;
     target=groupNode();
     if(target||offset+LIMIT>=groups.total)break;
    }
@@ -717,6 +717,12 @@ function init(){
   head.append(titles);table.append(head,body);audit.root.append(table);
   for(const row of result.rows){
    const line=el('tr'),name=el('td'),group=el('td',unused?String(row.members):(row.group_name||'Без группы'));
+   if(!unused&&row.group&&row.group_name){
+    const open=button(row.group_name,()=>openAuditGroup(row,expected));
+    open.className='audit-group-link';
+    open.setAttribute('aria-label','Открыть группу «'+row.group_name+'»');
+    group.replaceChildren(open);
+   }
    const state=row.active===true?'active':row.active===false?'inactive':'unknown';
    const status=el('td',activityNames[state]);status.dataset.activity=state;
    const actions=el('td'),menu=el('details',null,'catalog-menu'),trigger=el('summary','⋯');
