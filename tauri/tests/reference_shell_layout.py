@@ -86,9 +86,10 @@ def check_filter_placement(page, record):
         expect(settings).to_be_visible()
         expect(sidebar).to_be_hidden()
         if scale is not None:
-            size.focus()
-            size.select_option(scale)
-            expect(size).to_be_focused()
+            choice = page.locator(f'input[name="appearanceSizeChoice"][value="{scale}"]')
+            choice.focus()
+            choice.check()
+            expect(choice).to_be_focused()
             expect(page.locator('#refRoot')).to_have_attribute('data-ui-size',scale)
         if mode is not None:
             placement.set_checked(mode == "side")

@@ -385,33 +385,32 @@ def check_runtime(page):
     wait_for_text(page,'#appVersion','Версия '+expected_version)
     navigate(page,'storage')
     expect(page.locator('#onlineUpdates #appVersion')).to_have_text('Версия '+expected_version)
-    scale = page.locator('#appearanceSize')
-    scale.select_option('standard')
+    page.locator('input[name="appearanceSizeChoice"][value="standard"]').check()
     targets = page.locator('#refSettings, #checkAppUpdate')
     assert targets.count() == 2
     heights = 'nodes => nodes.map(node => node.getBoundingClientRect().height)'
     standard = targets.evaluate_all(heights)
     assert min(standard) > 0
     for percent in (90, 80):
-        scale.select_option(str(percent))
+        page.locator(f'input[name="appearanceSizeChoice"][value="{percent}"]').check()
         expect(page.locator('#refRoot')).to_have_attribute('data-ui-size', str(percent))
         assert page.evaluate("localStorage.getItem('work-reports-ui-size-v1')") == str(percent)
         for actual, baseline in zip(targets.evaluate_all(heights), standard):
             assert abs(actual - baseline * percent / 100) <= 1, (percent, actual, baseline)
-    scale.select_option('standard')
-    page.locator('#appearanceTheme').select_option('dark')
+    page.locator('input[name="appearanceSizeChoice"][value="standard"]').check()
+    page.locator('input[name="appearanceThemeChoice"][value="dark"]').check()
     page.locator('#appearancePalette').select_option('paper')
     page.locator('#appearanceDesign').select_option('compact')
-    page.locator('#appearanceSize').select_option('large')
+    page.locator('input[name="appearanceSizeChoice"][value="large"]').check()
     assert page.evaluate('''() => {
       const {theme,palette,design,uiSize}=document.documentElement.dataset;
       return [theme,palette,design,uiSize].join('/')==='dark/paper/compact/large';
     }''')
     check_caption_colors(page)
     check_palette_contrast(page)
-    page.locator('#appearanceTheme').select_option('system')
+    page.locator('input[name="appearanceThemeChoice"][value="system"]').check()
     page.locator('#appearancePreset').select_option('minimal')
-    page.locator('#appearanceSize').select_option('standard')
+    page.locator('input[name="appearanceSizeChoice"][value="standard"]').check()
     page.locator('#sharedHeader .main-nav button').first.click()
     navigate(page,'chartPanel')
     expect(page.locator('#backBtn')).to_be_hidden()
@@ -436,7 +435,7 @@ def check_caption_colors(page):
     if sys.getwindowsversion().build < 22000:
         return
     for theme, palette in (('light', 'neon'), ('dark', 'paper')):
-        page.locator('#appearanceTheme').select_option(theme)
+        page.locator(f'input[name="appearanceThemeChoice"][value="{theme}"]').check()
         page.locator('#appearancePalette').select_option(palette)
         expect(page.locator('#refRoot')).to_have_attribute('data-palette', palette)
         fill = page.locator('#sharedHeader .app-header').evaluate(
@@ -463,7 +462,7 @@ def check_palette_contrast(page):
         return sum(value * weight for value, weight in zip(linear, (0.2126, 0.7152, 0.0722)))
 
     for theme in ('light', 'dark'):
-        page.locator('#appearanceTheme').select_option(theme)
+        page.locator(f'input[name="appearanceThemeChoice"][value="{theme}"]').check()
         for palette in ('neon', 'glass', 'corporate', 'paper', 'industrial'):
             page.locator('#appearancePalette').select_option(palette)
             colors = page.evaluate('''names => {

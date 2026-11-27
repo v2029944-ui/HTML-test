@@ -23,6 +23,34 @@
     return result;
   }
 
+  function appearanceChoices(id, title, captions) {
+    const select = byId(id), field = document.createElement('fieldset');
+    const legend = document.createElement('legend');
+    legend.textContent = title;
+    field.className = 'appearance-choices';
+    field.append(legend);
+    const inputs = [];
+    for (const option of select.options) {
+      const label = document.createElement('label'), input = document.createElement('input');
+      input.type = 'radio';
+      input.name = id + 'Choice';
+      input.value = option.value;
+      const caption = document.createElement('span');
+      caption.textContent = captions[option.value] || option.textContent;
+      input.addEventListener('change', () => {
+        select.value = input.value;
+        select.dispatchEvent(new Event('change', {bubbles:true}));
+      });
+      label.append(input, caption);
+      field.append(label);
+      inputs.push(input);
+    }
+    const original = select.closest('label');
+    original.hidden = true;
+    original.after(field);
+    return () => { for (const input of inputs) input.checked = input.value === select.value; };
+  }
+
   function dialog(title, anchor) {
     const sheet = byId('sheet'), body = byId('dialogBody');
     const heading = document.createElement('h2');
@@ -238,9 +266,16 @@
     new MutationObserver(statusChanged).observe(currentStatus, {childList:true,subtree:true,attributes:true});
     statusChanged();
 
+    const syncTheme = appearanceChoices('appearanceTheme','Тема',{system:'Как в системе'});
+    const syncSize = appearanceChoices('appearanceSize','Масштаб интерфейса',{
+      '80':'80%', '90':'90%', standard:'100%', large:'≈115%', xlarge:'≈130%'
+    });
+    byId('appearancePalette').closest('label').classList.add('appearance-swatch-label');
     const forcedColors = window.matchMedia('(forced-colors: active)');
     let captionKey;
     const syncAppearance = () => {
+      syncTheme();
+      syncSize();
       for (const name of ['theme','palette','design','uiSize']) root.dataset[name] = document.documentElement.dataset[name];
       // Read the final color token while the WebView animates its background.
       const fill = getComputedStyle(header.querySelector('.app-header')).getPropertyValue('--window-caption-background').trim();
