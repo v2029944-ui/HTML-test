@@ -408,7 +408,7 @@ async function departmentComparison(task,index){
  if(organizations.some(org=>org.amount_missing_rows))warnings.push('Итоги, доли и разница по сумме рассчитаны по заполненным ячейкам. Покрытие может различаться.');
  sampleNote(coverage,reference?sample:null,warnings.join(' '),true);
  if(reference){$('comparisonBaseOrg').replaceChildren(...s.organizations.map(org=>{const option=UI.el('option',org);option.value=org;return option;}));$('comparisonBaseOrg').value=baseOrg;}
- $('comparisonHelp').textContent='Общий интервал для подразделений. Разница относительно '+baseOrg+'. При нулевой базе процент не рассчитывается. Чтобы сравнить одну работу, выберите её в фильтре «Работы» и оставьте одну отметку в «Показатели сравнения».';
+ $('comparisonHelp').textContent='Разница относительно '+baseOrg+'. При нулевой базе процент не рассчитывается. Для одной работы укажите «Работы» и «Показатели сравнения».';
  const unknown={count:null,amount:null,average:null};
  const byOrganization=new Map(organizations.map(row=>[row.org,row]));
  const totals=new Map(s.organizations.map(org=>[org,observed(byOrganization.get(org))??unknown]));
