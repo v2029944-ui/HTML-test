@@ -159,7 +159,7 @@
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog:modal')) return;
       const disclosure = event.target.closest?.('details[open]');
-      if (disclosure && root.contains(disclosure) && !disclosure.matches('#advancedAnalytics,#usualPanel,#regularityPanel')) {
+      if (disclosure && root.contains(disclosure) && disclosure.id !== 'advancedAnalytics') {
         if (disclosure.matches('.filter-fold')) window.referenceFilters.closeFilters();
         else disclosure.open = false;
         disclosure.querySelector(':scope > summary')?.focus({preventScroll:true});

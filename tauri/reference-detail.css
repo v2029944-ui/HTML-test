@@ -41,7 +41,7 @@
 #refNative .detail-date-scope {display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;color:var(--muted);margin:8px 0 14px}
 #refNative .detail-date-scope button {font:inherit;color:var(--accent);text-decoration:underline;background:transparent;border:none;cursor:pointer}
 #refNative[data-panel] .change-pagination {flex-wrap:wrap;align-items:center}
-#refNative[data-panel] .change-pagination :is(button,span) {padding:6px 10px}
+#refNative[data-panel] .change-pagination > :is(button,span) {padding:6px 10px}
 @media(max-width:640px) {
   #refNative[data-panel] .sectionbar {flex-wrap:wrap}
   #refNative[data-panel] .panel {padding:12px}

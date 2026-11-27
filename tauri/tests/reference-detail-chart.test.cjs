@@ -22,8 +22,8 @@ function fixture() {
   };
   const scopeLine = create('p');
   scopeLine.children = [create('span'), create('span')];
-  const chartPanel = get('chartPanel');
-  chartPanel.querySelector = selector => selector === ':scope > .detail-date-scope' ? scopeLine : null;
+  for (const id of ['chartPanel','usualPanel','regularityPanel'])
+    get(id).querySelector = selector => selector === ':scope > .detail-date-scope' ? scopeLine : null;
 
   const chartGroup = create('div');
   chartGroup.querySelector = selector =>
@@ -52,6 +52,7 @@ function fixture() {
   const state = {chart: 'line'};
   let onScope;
   const referenceFilters = {scope: {overviewMode: 'range'}};
+  const openedPatterns = [];
   const window = {
     unifiedUI: {
       state,
@@ -60,10 +61,10 @@ function fixture() {
     },
     referenceFilters,
     unifiedOriginal: {periodEnd: date => date},
-    unifiedExtended: {leaveDetail(){}},
+    unifiedExtended: {leaveDetail(){}, openPatterns(mode){openedPatterns.push(mode);}},
   };
   vm.runInNewContext(source, {window, document, Event: class Event {constructor(type){this.type=type;}}});
-  return {detail: window.referenceDetail, state, referenceFilters, chartGroup, getLine: () =>
+  return {detail: window.referenceDetail, openedPatterns, state, referenceFilters, chartGroup, getLine: () =>
     chartGroup.children.find(button => 'referenceLine' in button.dataset), changedScope: () => onScope()};
 }
 
@@ -92,4 +93,12 @@ test('single selection mode disables line before SQL data arrives', () => {
   f.changedScope();
   assert.equal(f.getLine().hidden, false);
   assert.equal(f.state.chart, 'line');
+});
+
+test('opening a pattern tab loads its data directly without a disclosure event', () => {
+  const f = fixture();
+  f.detail.show('usualPanel');
+  f.detail.show('regularityPanel');
+  f.detail.hide();
+  assert.deepEqual(f.openedPatterns, ['usual','regularity']);
 });

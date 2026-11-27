@@ -930,9 +930,9 @@
 #toolsPage,.screen .changes-card h2 {scroll-margin-top:calc(var(--sticky-filter-height,48px) + 8px)}
 #sharedHeader .main-nav button[aria-current=page]{border-bottom-color:transparent}
 @media(min-width:1050px) {
- #reportShell .filter-content {grid-template-rows:auto auto auto auto;row-gap:5px}
+ #reportShell .filter-content {grid-template-rows:repeat(5,auto);row-gap:5px}
  #reportShell .report-filter :is(.filter-periods,.filter-options) {align-self:stretch}
- #reportShell .report-dates {grid-row:2 / span 3;grid-template-rows:subgrid}
+ #reportShell .report-dates {grid-row:2 / span 4;grid-template-rows:subgrid}
  #reportShell .filter-shortcuts {display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:subgrid;grid-row:2 / span 3;align-self:stretch;row-gap:5px}
  #reportShell .preset-fields {grid-row:2;align-self:start}
  #reportShell .filter-shortcuts .filter-reset {grid-row:3}
@@ -1053,8 +1053,13 @@ body:has(#refRoot)>footer {display:none}
 #refRoot:is([data-ui-size="large"],[data-ui-size="xlarge"]) #toolsPage header :is(.tool-tabs button,#backBtn) {
   font-size:var(--ui-button-font);min-height:var(--ui-control-height);
 }
-#refRoot[data-ui-size="large"] :is(#sharedHeader,#reportShell,#s1,#s2) {zoom:1.12}
-#refRoot[data-ui-size="xlarge"] :is(#sharedHeader,#reportShell,#s1,#s2) {zoom:1.25}
+#refRoot[data-ui-size="large"] {--reference-screen-zoom:1.12}
+#refRoot[data-ui-size="xlarge"] {--reference-screen-zoom:1.25}
+#refRoot:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(#sharedHeader,#reportShell,#s1,#s2) {zoom:var(--reference-screen-zoom)}
+/* Keep the same compact pager in the zoomed report and unzoomed SQL tabs. */
+#refRoot:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(#s1,#s2) .sql-pager {
+ zoom:calc(1 / var(--reference-screen-zoom));
+}
 @media screen {
   html[data-ui-size="80"] {--desktop-ui-scale:.8}
   html[data-ui-size="90"] {--desktop-ui-scale:.9}

@@ -258,6 +258,21 @@ function buildUnified(source){
  const relocated=html.indexOf('<section class="panel" id="comparison"');
  html=html.slice(0,relocated)+'      '+structure+'\n      '+html.slice(relocated);
 
+ // The desktop route owns tab visibility. Keep only the inline help collapsible.
+ for(const [id,title,heading,next] of [
+  ['usualPanel','Отклонения от обычного уровня','usualHeading','<details class="panel" id="regularityPanel">'],
+  ['regularityPanel','Частота выполнения работ','regularityHeading','<section class="panel" id="analyticsDetails"']
+ ]){
+  const opening='<details class="panel" id="'+id+'">';
+  const start=html.indexOf(opening),end=html.indexOf(next,start),summary='<summary>'+title+'</summary>';
+  const markup=html.slice(start,end);
+  if(start<0||end<0||!markup.includes(summary)||!/<\/details>\s*$/.test(markup))throw Error('Canonical analytics tab changed: '+id);
+  const section=markup.replace(opening,'<section class="panel" id="'+id+'" aria-labelledby="'+heading+'">')
+   .replace(summary,'<h2 id="'+heading+'">'+title+'</h2>')
+   .replace(/<\/details>(\s*)$/,'</section>$1');
+  html=html.slice(0,start)+section+html.slice(end);
+ }
+
  html=html.replace('</head>','<meta name="analiz-unified-sql" content="true"><link rel="stylesheet" href="tauri-app-status.css"><link rel="stylesheet" href="tauri-unified.css"><link rel="stylesheet" href="tauri-sql-row-scroll.css"><script src="tauri-shared-workspace.js"></script><script src="tauri-bridge.js"></script></head>');
  const filterSetting='<label><span id="filterPlacementLabel">Расположение фильтра</span><select id="appearanceFilterPlacement" aria-labelledby="filterPlacementLabel" aria-describedby="filterPlacementHint">'+
   '<option value="top">Сверху</option><option value="side">Слева</option></select>'+
