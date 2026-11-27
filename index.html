@@ -5015,9 +5015,9 @@ function downloadJson(name,obj) {
   const blob=new Blob([JSON.stringify(obj,null,2)],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob);
   const link=elem('a');link.href=url;link.download=name;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
-async function readJsonFile(file) {
+async function readJsonFile(file,maxMiB=40) {
   if(!file) return null;
-  if(file.size>40*1024*1024)throw Error('Файл больше допустимого лимита 40 МБ');
+  if(file.size>maxMiB*1024*1024)throw Error('Файл больше допустимого лимита '+maxMiB+' МиБ');
   try{return JSON.parse(await file.text());}catch{throw Error('Не удалось прочитать JSON');}
 }
 function checkedGroups(groups) {
@@ -5031,7 +5031,7 @@ function checkedGroups(groups) {
   });
 }
 async function importGroupFile(file) {
-  const data=await readJsonFile(file);if(!data)return;
+  const data=await readJsonFile(file,64);if(!data)return;
   if(data.format!=='work-groups' || data.version!==1)throw Error('Неизвестный формат настроек групп');
   const groups=checkedGroups(data.groups);
   if(!await confirm('Заменить текущие группы импортированными ('+groups.length+')?'))return;
