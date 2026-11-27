@@ -107,9 +107,8 @@ def check_control_layout(page):
       const previousPeriod = document.querySelector('#reportShell [data-baseline-quick=prev]');
       if (visible(duration) && visible(previousPeriod) && rect(duration).bottom > rect(previousPeriod).top + tolerance)
         errors.push(['Предыдущий', 'baseline duration overlaps the quick action']);
-      const pageScale = {'80':.8,'90':.9}[document.documentElement.dataset.uiSize] ?? 1;
       for (const button of document.querySelectorAll('.sql-pager-controls button')) {
-        if (visible(button) && !close(rect(button).height, 28 * pageScale))
+        if (visible(button) && !close(rect(button).height, 28 * button.currentCSSZoom))
           errors.push([button.getAttribute('aria-label'), 'page button differs from compact size',rect(button).height]);
       }
       for (const range of document.querySelectorAll('.report-range')) {

@@ -373,6 +373,19 @@ class OwnedFileDialogs:
         assert self.native.window_class(hwnd) == '#32770'
         source = Path(source)
         assert source.is_absolute() and source.is_file() and source.suffix == suffix
+        return self._select_verified_path(hwnd, owner, title, source, screenshot, action)
+
+    def save_rename_backup(self, hwnd, owner, directory, screenshot):
+        title = 'Сохранить резервную копию SQLite'
+        self.verify_window(hwnd, owner, title)
+        assert self.native.window_class(hwnd) == '#32770'
+        # The caller creates a unique, empty directory for this single Save.
+        assert directory.is_absolute() and directory.is_dir() and not any(directory.iterdir())
+        path = directory / 'before-rename.sqlite3'
+        self._select_verified_path(hwnd, owner, title, path, screenshot, 'save-rename-backup')
+        return path
+
+    def _select_verified_path(self, hwnd, owner, title, source, screenshot, action):
         facts, _ = self.inspect(hwnd, title, screenshot)
         edit, opened = self.backup_open_controls(hwnd, facts)
         text = ctypes.create_unicode_buffer(str(source))
@@ -382,7 +395,7 @@ class OwnedFileDialogs:
         assert readback.value == str(source), 'Verified file-name edit did not retain the selected file path'
         self.verify_window(hwnd, owner, title)
         assert self.backup_open_controls(hwnd, facts) == (edit, opened)
-        self.message(opened, 0x00F5)  # BM_CLICK only on verified IDOK in the preview chooser
+        self.message(opened, 0x00F5)  # BM_CLICK only on the verified file dialog’s IDOK
         fact = {'action': action, 'controlId': 1, 'fileNameControlId': 1148,
                 'fileNameClass': 'Edit', 'delivery': 'WM_SETTEXT + BM_CLICK verified IDOK'}
         deadline = time.monotonic() + 10
@@ -390,7 +403,7 @@ class OwnedFileDialogs:
             if not self.user32.IsWindowVisible(hwnd) and self.user32.IsWindowEnabled(owner):
                 return fact
             time.sleep(.05)
-        raise AssertionError('Read-only file Open did not return')
+        raise AssertionError('File dialog did not return: ' + title)
 
     def dismiss(self, hwnd, owner, title, how, screenshot=None):
         assert self.native.process(hwnd) == self.native.pid and self.title(hwnd) == title

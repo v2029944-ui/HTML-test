@@ -393,7 +393,12 @@ def check_runtime(page):
     placement.focus()
     page.keyboard.press('Space')
     assert placement.is_checked() == original_placement
+    expect(placement).to_be_focused()
+    assert placement.evaluate("el => el.matches(':focus-visible') && getComputedStyle(el).outlineStyle !== 'none'")
     palette = page.locator('#appearancePalette')
+    palette.focus()
+    expect(placement).not_to_be_focused()
+    expect(page.locator('.placement-value span:visible')).to_have_text('Вкл' if original_placement else 'Выкл')
     if page.evaluate("CSS.supports('appearance','base-select')"):
         original_palette = palette.input_value()
         palette.select_option('minimal')
@@ -402,6 +407,7 @@ def check_runtime(page):
         page.keyboard.press('ArrowDown')
         page.keyboard.press('Enter')
         expect(palette).to_have_value('neon')
+        expect(palette).to_be_focused()
         colors = palette.locator('selectedcontent .palette-colors i').evaluate_all(
             'nodes => nodes.map(el => getComputedStyle(el).backgroundColor)')
         assert len(colors) == len(set(colors)) == 3
@@ -637,6 +643,41 @@ def clear_report_confirmation(page, confirmations, count, *, accept=False, draft
             assert confirmations.revision() == revision
             if drafts:
                 assert drafts() == before
+
+
+def check_saved_organization_name(page, confirmations, tmp, output):
+    """Exercise the final rename on the disposable personal database."""
+    navigate(page,'storage')
+    fields = page.locator('#organizationFields input')
+    save = page.locator('#saveOrganizations')
+    status = page.locator('#organizationSaveStatus')
+    before = api(page,'nativeSettingsBootstrap')
+    original = fields.first.input_value()
+    name = original + ' · проверка сохранения'
+    expect(save).to_be_disabled()
+    fields.first.fill(name)
+    expect(status).to_have_text('Есть несохранённые изменения')
+    fields.first.fill(original)
+    expect(save).to_be_disabled()
+    expect(status).to_be_empty()
+    fields.first.fill(name)
+    save.click()
+    prompt = ('Изменить названия подразделений во всех отчётах и справочнике? '
+              'Сначала будет создана резервная копия SQLite.')
+    dialog, owner = confirmations.find_dialog(prompt)
+    confirmations.answer(dialog, owner, prompt, 1)
+    picker = OwnedFileDialogs(confirmations)
+    hwnd, owner = picker.find('Сохранить резервную копию SQLite')
+    with tempfile.TemporaryDirectory(dir=tmp) as directory:
+        backup = picker.save_rename_backup(hwnd, owner, Path(directory), output/'native-file-rename-backup.png')
+        expect(status).to_have_text('Названия сохранены',timeout=90_000)
+        assert backup.is_file()
+        assert api(page,'nativeRestorePreview',str(backup))['reportCount'] == before['reports']
+    navigate(page,'databases')
+    navigate(page,'storage')
+    expect(fields.first).to_have_value(name)
+    expect(save).to_be_disabled()
+    assert api(page,'nativeSettingsBootstrap')['org_names'] == [name, *before['org_names'][1:]]
 
 
 def check_cancelled_management_confirmations(page, confirmations):
@@ -2175,6 +2216,11 @@ def run():
                 ready(page,0)
                 check_print_all_changes(page,tmp,output,pid,api,quality_evidence_xlsx,open_daily_overview)
                 report['checks'].append('Both native print previews contained all 13 filtered SQLite rows in order')
+            with installed_page() as (page,_,pid):
+                wait_for_app_state(page,'Boolean(window.unifiedUI?.snapshot)','Department name test')
+                confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
+                check_saved_organization_name(page,confirmations,tmp,output)
+                report['checks'].append('Department name draft reverts, saves with a verified SQLite backup, and remains changed after reopening settings')
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     if independent_failures:
         raise ExceptionGroup('Installed WebView2 walkthroughs failed',independent_failures)
