@@ -842,8 +842,9 @@ mod tests {
         let share = exchange_folder();
         super::super::shared_runtime::tests::verify_nested_group_edits_between_clients(share.path());
 
-        let generation = head(share.path()).unwrap();
-        let mut snapshot = open_regular(&path(share.path(), generation)).unwrap();
+        let shared = directory(share.path()).unwrap();
+        let generation = head(&shared).unwrap();
+        let mut snapshot = open_regular(&path(&shared, generation)).unwrap();
         let (digest, reset) = snapshot_header(&mut snapshot, generation).unwrap();
         let mut wire = NamedTempFile::new().unwrap();
         assert_eq!(transfer_snapshot(&mut snapshot, wire.as_file_mut(), reset).unwrap(), digest);
