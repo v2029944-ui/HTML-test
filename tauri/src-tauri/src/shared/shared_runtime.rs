@@ -717,4 +717,4 @@ impl Storage {
 
 #[cfg(test)]
 #[path = "shared_runtime_tests.rs"]
-mod tests;
+pub(in crate::storage) mod tests;

@@ -2,12 +2,12 @@
 // SQLite returns metadata pages and bounded aggregates, never report JSON.
 (function(){
 'use strict';
-const {observed,incomplete}=window.analysisSummary;
+const {observed,incomplete,topLevelWorkRows,workSelectionText}=window.analysisSummary;
 const partialChartNote=' Частичные значения рассчитаны по доступным отчётам и заполненным суммам. Пропуски не считаются нулём.';
 const UI=window.unifiedUI,O=window.unifiedOriginal,api=UI.api,$=UI.$;
 const titles=window.analysisSummary.titles;
 let initialized=false,scope=null,ticket=0,nameTicket=0,selectionTicket=0,chartTicket=0,selectionReady=false,allNames=false,totalNames=0;
-let displayedOverviewScope=null,displayedChart=null,lastReferenceMetric=null;
+let displayedOverviewScope=null,displayedChart=null,lastReferenceMetric=null,workTotal=null,workCountTicket=0;
 const overviewResults=['overviewKpis','overviewInsights','overviewOrganizations','overviewAlerts'];
 const chartResults=['chartsContainer','dataTable','chartOrgTotals'];
 let selectedRows=new Map(),namePage=null,nameIndex=0,seriesIndex=0,printCapture=null,lastRevision=null,searchTimer=null;
@@ -75,7 +75,17 @@ function layout(){const single=value('overviewMode')==='single';$('overviewSingl
 function filters(){O.renderMultiFilter('orgFilter',(UI.snapshot?.org_names||[]).map(n=>[n,n]),state.selectedOrganizations,()=>window.referenceDetail?.active==='overviewPanel'
  ?window.referenceFilters.setOrganizations(orgs()):calculate());O.renderMultiFilter('metric',[['amount','Сумма'],['count','Количество / объём']],state.selectedMetrics,()=>{if(printCapture?.revision===UI.revision)drawOverview(printCapture.result,printCapture.organizations,printCapture.scope,printCapture.before);publish();renderCharts();});O.renderMultiFilter('chartMetrics',[['amount','Сумма'],['count','Количество / объём'],['average','Сумма / количество (объём)']],state.chartMetrics,()=>renderCharts());}
 function publish(){if(!scope)return;scope={...scope,organizations:orgs(),allNames,selectedNames:allNames?[]:[...selectedRows.values()].map(r=>r.name),selectedKeys:allNames?[]:[...selectedRows.keys()],nameRows:[...selectedRows.values()]};state.selectedCategories=new Set(scope.selectedNames);UI.publishScope(scope);}
-function selectionCount(){state.selectedCategories=new Set([...selectedRows.values()].map(r=>r.name));$('categoryCount').textContent=allNames?'Все работы и группы':selectedRows.size+' из '+totalNames;}
+function selectionCount(){
+ state.selectedCategories=new Set([...selectedRows.values()].map(r=>r.name));
+ const label=$('categoryCount'),mine=++workCountTicket,revision=UI.revision;
+ if(workTotal===null){label.textContent=allNames?'Все работы и группы':'Выбрано '+selectedRows.size+' из '+totalNames;return;}
+ const format=selected=>workSelectionText({selected,total:workTotal});
+ if(allNames||!selectedRows.size){label.textContent=format(allNames?workTotal:0);return;}
+ label.textContent='Подсчёт работ…';
+ api.unifiedSelectedNameOptions(revision,[...selectedRows.keys()]).then(page=>{
+  if(mine===workCountTicket&&revision===UI.revision)label.textContent=workSelectionText(page.work_counts);
+ }).catch(()=>{if(mine===workCountTicket&&revision===UI.revision)label.textContent='Не удалось подсчитать работы';});
+}
 function changeWorks(refreshNames=false){
  ++selectionTicket;selectionReady=true;seriesIndex=0;selectionCount();
  publish();
@@ -91,7 +101,7 @@ function pager(root,index,run,options){
 }
 async function names(index=0,paging=false){
  if(!Number.isSafeInteger(UI.revision))return;const mine=++nameTicket,revision=UI.revision;clear('categories','Загрузка названий…',!paging);
- try{const page=await api.unifiedNameOptionsAtPage(revision,value('categorySearch'),index,50);if(mine!==nameTicket||revision!==UI.revision)return;namePage=page;nameIndex=index;if(!value('categorySearch'))totalNames=page.total_rows;
+ try{const page=await api.unifiedNameOptionsAtPage(revision,value('categorySearch'),index,50);if(mine!==nameTicket||revision!==UI.revision)return;namePage=page;nameIndex=index;workTotal=page.work_counts?.total??null;if(!value('categorySearch'))totalNames=page.total_rows;
   clear('categories','',false);const root=$('categories');
   for(const row of page.rows){const label=UI.el('label',null,'category-row'),box=UI.el('input');box.type='checkbox';box.checked=allNames||selectedRows.has(row.key);box.disabled=allNames;box.addEventListener('change',()=>{if(box.checked){if(selectedRows.size>=50){box.checked=false;UI.notice('Можно отметить до 50 отдельных работ. «Выбрать все» включает все работы без ограничения.',true);return;}selectedRows.set(row.key,row);}else selectedRows.delete(row.key);void changeWorks();});
    const caption=UI.el('span',window.analysisSummary.itemLabel(row),row.kind==='group'?'work-group-option':null);
@@ -108,7 +118,14 @@ async function top(eager=false){
  try{const result=await api.nativeAnalysisRanking(s.revision,s.type,s.from,s.to,s.organizations,null,chosenMetrics()[0]||'amount','selectable',null,null);if(!current())return null;
   if(!result.complete&&!result.rows.length){if(!eager)UI.notice('Нет данных для рейтинга за выбранный диапазон.',true);return false;}
   if(!eager&&!result.complete)UI.notice('Рейтинг рассчитан по доступным отчётам. В выбранном диапазоне есть пропуски.',true);
-  selectedRows=new Map(result.rows.slice(0,8).map(row=>[row.key,{key:row.key,name:row.name,kind:row.kind}]));allNames=false;selectionReady=true;selectionCount();return true;
+  let rows=result.rows.slice(0,8);
+  if(workTotal!==null&&rows.length){
+   const options=await api.unifiedSelectedNameOptions(s.revision,rows.map(row=>row.key));
+   if(!current())return null;
+   const metadata=new Map(options.rows.map(row=>[row.key,row]));
+   rows=rows.flatMap(row=>metadata.has(row.key)?[metadata.get(row.key)]:[]);
+  }
+  selectedRows=new Map(rows.map(row=>[row.key,row]));allNames=false;selectionReady=true;selectionCount();return true;
  }catch(error){if(!current())return null;if(!eager)UI.notice(errorText(error),true);return false;}
 }
 function changeValue(delta,metric){return window.analysisSummary.displayedChange(delta,metric,fmt);}
@@ -252,6 +269,93 @@ function chartExport(scope,isCurrent,table,metrics){
   await api.referenceTrendCsv(req,options,path);
  }};
 }
+async function readWorkSeries(s,rows,current){
+ const series=[];
+ for(let i=0;i<rows.length&&current();i+=4){
+  series.push(...await Promise.all(rows.slice(i,i+4).map(row=>api.nativeWorkTimeline(
+   s.revision,s.type,s.from,s.to,s.organizations,null,row.key,null,s.source==='daily'?s.displayType:null,s.selectedNames))));
+ }
+ return series;
+}
+function validateWorkSeries(series,totals){
+ if(series.some(item=>item.granularity!==totals.granularity||item.points.length!==totals.points.length||
+  item.points.some((point,i)=>point.start!==totals.points[i].start)))throw Error('Несовпадающие границы SQL-серий. Повторите расчёт.');
+}
+function treeWorkLabel(row,depth,render){
+ if(!row.has_children&&!depth)return row.name;
+ const label=UI.el(row.has_children?'button':'span',row.name,row.has_children?'text-button work-group-option chart-group-toggle':'chart-group-label');
+ label.style.setProperty('--chart-tree-indent',Math.min(depth,8)*0.85+'rem');
+ label.dataset.workName=row.name;
+ if(!row.has_children)return label;
+ label.type='button';
+ label.setAttribute('aria-expanded','false');
+ let expanded=false,ticket=0,rows=[];
+ function clearRows(){for(const tr of rows){tr.firstElementChild?.firstElementChild?.clearTree?.();tr.remove();}rows=[];}
+ function collapse(){
+  expanded=false;ticket++;label.setAttribute('aria-expanded','false');clearRows();
+ }
+ async function open(index,restoreFocus){
+  expanded=true;label.setAttribute('aria-expanded','true');clearRows();
+  const mine=++ticket,anchor=label.closest('tr');
+  const current=()=>mine===ticket&&expanded&&label.isConnected&&render.current();
+  function append(tr){
+   tr.classList.add('chart-group-child');tr.dataset.treeDepth=String(depth+1);
+   (rows.at(-1)||anchor).after(tr);rows.push(tr);
+  }
+  function status(text){
+   const tr=UI.el('tr'),cell=UI.el('td',text,'muted small chart-group-status');
+   cell.colSpan=render.columns;tr.append(cell);append(tr);return cell;
+  }
+  status('Загрузка работ и подгрупп…');
+  try{
+   const page=await api.unifiedGroupChildrenAtPage(render.scope.revision,row.key,index);
+   if(!current())return;
+   const series=await readWorkSeries(render.scope,page.rows,current);
+   if(!current())return;
+   validateWorkSeries(series,render.totals);clearRows();
+   for(const [i,entry] of page.rows.entries()){
+    const tr=UI.el('tr'),first=UI.el('td');
+    const child=treeWorkLabel(entry,depth+1,render);
+    if(typeof child==='string')first.textContent=child;else first.append(child);
+    tr.append(first,...render.indices.map(p=>UI.el('td',fmt(observed(series[i].points[p])?.[render.metric],render.metric))));
+    append(tr);
+   }
+   if(!page.rows.length)status('В группе нет работ или подгрупп.');
+   if(page.total_rows>50){
+    const controls=status(''),host=UI.el('span');
+    controls.append(host);
+    const pager=window.sqlRowScroll.attach(host,{
+     index,size:50,total:page.total_rows,count:page.rows.length,controlsOnly:true,footer:controls,
+     label:'Страницы группы '+row.name,go:next=>open(next,true)
+    });
+    if(restoreFocus)(pager?.querySelector('[data-page-action=choose]')||label).focus({preventScroll:true});
+   }
+  }catch(error){if(current()){clearRows();status('Не удалось открыть группу. '+errorText(error));if(restoreFocus)label.focus({preventScroll:true});}}
+ }
+ label.addEventListener('click',()=>{if(expanded)collapse();else void open(0);});
+ label.clearTree=collapse;
+ return label;
+}
+function printWorkTree(section,interval){
+ const button=UI.el('button','Печать текущей страницы','button secondary');
+ button.type='button';
+ button.addEventListener('click',()=>{
+  const root=UI.el('section'),table=section.querySelector('table').cloneNode(true);
+  table.querySelectorAll('td.chart-group-status').forEach(cell=>cell.parentElement.remove());
+  table.querySelectorAll('button[data-work-name]').forEach(toggle=>{
+   const label=UI.el('span',toggle.dataset.workName,'chart-group-label');
+   label.style.setProperty('--chart-tree-indent',toggle.style.getPropertyValue('--chart-tree-indent'));
+   toggle.replaceWith(label);
+  });
+  root.id='referencePrintDocument';
+  root.append(UI.el('h1','Динамика работ · '+section.querySelector('h3').textContent),
+   UI.el('p','Период '+interval+'. Текущая страница и раскрытые группы.'),table);
+  document.body.append(root);
+  document.body.dataset.referencePrint='document';
+  try{window.print();}finally{root.remove();delete document.body.dataset.referencePrint;}
+ });
+ section.append(button);
+}
 async function renderCharts(index=seriesIndex,paging=false){
  const mine=++chartTicket;
  layout();
@@ -269,14 +373,16 @@ async function renderCharts(index=seriesIndex,paging=false){
  };
  try{if(value('chartBreakdown')==='organizations'){await departmentCharts(s,isCurrent);if(isCurrent())commitView();return;}
   if(!allNames&&!selectedRows.size)throw Error('Выберите хотя бы одну работу или группу.');
-  const pageSize=state.chart==='table'?50:8;let rows,next=null,localOffset=0,seriesTotal=selectedRows.size;
-  if(allNames){const page=await api.unifiedNameOptionsAtPage(revision,'',index,pageSize,true);if(!isCurrent())return;rows=page.rows;next=page.next;seriesTotal=page.total_rows;}
-  else {localOffset=index*pageSize;rows=[...selectedRows.values()].slice(localOffset,localOffset+pageSize);next=localOffset+pageSize<selectedRows.size?localOffset+pageSize:null;}
+  const pageSize=state.chart==='table'?50:8;let rows,seriesTotal;
+  if(allNames){const page=await api.unifiedNameOptionsAtPage(revision,'',index,pageSize,true);if(!isCurrent())return;rows=page.rows;seriesTotal=page.total_rows;}
+  else {const roots=topLevelWorkRows([...selectedRows.values()]),offset=index*pageSize;seriesTotal=roots.length;rows=roots.slice(offset,offset+pageSize);}
   if(!rows.length){commitView();clear('chartsContainer','Нет работ для графика.');clear('dataTable','Нет работ для таблицы.');clear('chartOrgTotals');return;}
-  const [totals,...series]=await Promise.all([api.nativeAnalysisTimeline(revision,s.type,s.from,s.to,s.organizations,null,s.source==='daily'?s.displayType:null,s.selectedNames),...rows.slice(0,4).map(row=>api.nativeWorkTimeline(revision,s.type,s.from,s.to,s.organizations,null,row.key,null,s.source==='daily'?s.displayType:null,s.selectedNames))]);
+  const [totals,series]=await Promise.all([
+   api.nativeAnalysisTimeline(revision,s.type,s.from,s.to,s.organizations,null,s.source==='daily'?s.displayType:null,s.selectedNames),
+   readWorkSeries(s,rows,isCurrent)
+  ]);
   if(!isCurrent())return;
-  for(let i=4;i<rows.length;i+=4){const batch=await Promise.all(rows.slice(i,i+4).map(row=>api.nativeWorkTimeline(revision,s.type,s.from,s.to,s.organizations,null,row.key,null,s.source==='daily'?s.displayType:null,s.selectedNames)));if(!isCurrent())return;series.push(...batch);}
-  if(series.some(item=>item.granularity!==totals.granularity||item.points.length!==totals.points.length||item.points.some((p,i)=>p.start!==totals.points[i].start)))throw Error('Несовпадающие границы SQL-серий. Повторите расчёт.');
+  validateWorkSeries(series,totals);
   const nonzeroWorkBuckets=new Set(totals.zero_buckets_with_nonzero_works);
   const buckets=reportBuckets(totals),hide=$('hideEmptyPeriods').checked;
   const hiddenZero=p=>confirmedZero(p)&&!nonzeroWorkBuckets.has(p.start);
@@ -284,14 +390,17 @@ async function renderCharts(index=seriesIndex,paging=false){
   const periods=descriptors(points,totals.granularity,s);
   const hiddenPeriods=hide?descriptors(totals.points.filter(hiddenZero),totals.granularity,s):[];
   window.referenceDetail?.setChartPeriodCount?.(points.length);
-  const data=points.map(p=>{if(p.missing>0&&!Number.isFinite(observed(p)?.count))return null;const index=totals.points.indexOf(p);return new Map(rows.map((row,j)=>[row.key,observed(series[j].points[index])]));});
+  const indices=points.map(p=>totals.points.indexOf(p));
+  const data=points.map((p,i)=>{if(p.missing>0&&!Number.isFinite(observed(p)?.count))return null;return new Map(rows.map((row,j)=>[row.key,observed(series[j].points[indices[i]])]));});
   const root=state.chart==='table'?$('dataTable'):$('chartsContainer');
   for(const id of chartResults)clear(id,'',$(id)!==root);
   const filteredAll=totals.points.length>0&&!points.length;
   if(filteredAll)clear(state.chart==='table'?'dataTable':'chartsContainer',allPeriodsHidden,false);
   for(const metric of chosenMetrics())if(state.chart==='table'){
    const raw=[['Итого по выбранным работам',...points.map(p=>observed(p)?.[metric]??null)],...rows.map(row=>[row.name,...data.map(map=>map?.get(row.key)?.[metric]??null)])];
-   UI.table($('dataTable'),metric,chartInterval(s)+(metric==='average'?' · прочерк означает неполные данные или неположительное количество.':' · прочерк означает неполные данные.'),['Работа / группа',...periods.map(O.displayPeriod)],raw.map(row=>[row[0],...row.slice(1).map(n=>fmt(n,metric))]),{csvRows:raw,csvContext:chartExport(s,isCurrent,'works',[metric])});
+   const detail={scope:s,metric,totals,indices,columns:periods.length+1,current:isCurrent};
+   UI.table($('dataTable'),metric,chartInterval(s)+(metric==='average'?' · прочерк означает неполные данные или неположительное количество.':' · прочерк означает неполные данные.'),['Работа / группа',...periods.map(O.displayPeriod)],raw.map((row,i)=>[i?treeWorkLabel(rows[i-1],0,detail):row[0],...row.slice(1).map(n=>fmt(n,metric))]),{csvRows:raw,csvContext:chartExport(s,isCurrent,'works',[metric])});
+   if(rows.some(row=>row.has_children))printWorkTree($('dataTable').lastElementChild,chartInterval(s));
   }else if(!filteredAll)UI.drawChart(periods,new Set(s.organizations),metric,plotSection($('chartsContainer'),metric,titles[metric]+' · '+chartInterval(s)),{chart:state.chart,orientation:orientation(),hiddenPeriods,categories:rows.map(r=>r.key),data,label:key=>rows.find(r=>r.key===key).name,pointNotice:i=>incomplete(points[i])?(points[i].missing?'Неполные данные: пропусков '+points[i].missing:'В некоторых строках сумма не указана.'):''});
   commitView();seriesIndex=index;pager(root,index,i=>{seriesIndex=i;return renderCharts(i,true);},{size:pageSize,total:seriesTotal,count:rows.length,label:'Работы на графике',current:isCurrent});
   $('chartHelp').textContent='Выбрано подразделений: '+s.organizations.length+' из '+UI.snapshot.org_names.length+'. Данные сгруппированы '+({day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам',period:'по выбранным периодам'}[totals.granularity]||'по периодам')+'.'+(points.some(incomplete)?partialChartNote:' Пропуски не считаются нулём.');
@@ -341,7 +450,7 @@ async function departmentCharts(base,isCurrent){
 }
 async function configure(snapshot){
  if(!snapshot){ticket++;nameTicket++;invalidateScope();clear('overviewAlerts','Подготовка данных…');clear('categories');return;}
- const mine=++ticket,revision=snapshot.revision;invalidateScope();
+ const mine=++ticket,revision=snapshot.revision;workTotal=null;++workCountTicket;invalidateScope();
  if(lastRevision!==null&&lastRevision!==revision){selectionReady=false;allNames=false;selectedRows.clear();}lastRevision=revision;
  filters();const kind=value('periodType')||'week',source=value('unifiedSource')||'daily';
  if(kind==='year'&&source!=='daily'){$('unifiedSource').value='daily';UI.notice('Для календарного года используются дневные отчёты.');}

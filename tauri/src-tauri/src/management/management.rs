@@ -71,6 +71,8 @@ pub struct ManagementBootstrap {
     pub revision: i64,
     pub org_names: Vec<String>,
     pub groups: i64,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub work_group_hierarchy: bool,
     pub memberships: i64,
     pub catalog: i64,
     pub reports: i64,
@@ -113,6 +115,8 @@ pub struct UnifiedManagementRow {
     pub organization: Option<String>,
     pub members: Option<i64>,
     pub group: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub children: Option<i64>,
 }
 #[derive(Debug, Serialize)]
 pub struct UnifiedManagementPage {
@@ -120,6 +124,8 @@ pub struct UnifiedManagementPage {
     pub total: i64,
     pub grouped: i64,
     pub ungrouped: i64,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub hierarchy: bool,
 }
 
 fn unified_normalized(input: &str) -> String {
@@ -139,8 +145,40 @@ impl Storage {
         let collator = icu_collator::Collator::try_new(&locale, Default::default()).map_err(err)?;
         c.create_collation("unified_ru", move |a,b| collator.compare(a,b)).map_err(err)?;
         let tx = settings_snapshot(&mut c, revision)?;
+        let term = unified_normalized(query);
+        let link_root = if kind == "group_tree" { unified_settings_io::group_parents_node(&tx)? } else { None };
         let table = match kind {
             "groups" => "SELECT CAST(handle AS TEXT) handle,id,name,NULL organization,members,NULL group_handle FROM management_groups".to_string(),
+            "group_tree" => {
+                let link_root = link_root.map_or_else(|| "NULL".to_owned(), |handle| handle.to_string());
+                let condition = if let Some(parent) = group {
+                    if !tx.query_row("SELECT EXISTS(SELECT 1 FROM management_groups WHERE handle=?1)",
+                        [parent], |row| row.get::<_, bool>(0)).map_err(err)?
+                    {
+                        return Err("Родительская группа не найдена.".into());
+                    }
+                    format!("WHERE l.parent_handle={parent}")
+                } else if term.is_empty() {
+                    "WHERE l.parent_handle IS NULL".into()
+                } else {
+                    String::new()
+                };
+                format!(
+                    "WITH links AS (
+                         SELECT a.handle child_handle,b.handle parent_handle
+                         FROM management_nodes item
+                         JOIN management_nodes child ON child.parent=item.handle AND child.field='child'
+                         JOIN management_nodes parent ON parent.parent=item.handle AND parent.field='parent'
+                         JOIN management_groups a ON a.id=child.value
+                         JOIN management_groups b ON b.id=parent.value
+                         WHERE item.parent={link_root}
+                     )
+                     SELECT CAST(g.handle AS TEXT) handle,g.id,g.name,NULL organization,g.members,
+                            CAST(l.parent_handle AS TEXT) group_handle,
+                            (SELECT COUNT(*) FROM links c WHERE c.parent_handle=g.handle) children
+                     FROM management_groups g LEFT JOIN links l ON l.child_handle=g.handle {condition}"
+                )
+            }
             "members" => {
                 let handle = group.filter(|h| *h > 0).ok_or("Выберите группу.")?;
                 if !tx.query_row("SELECT EXISTS(SELECT 1 FROM management_groups WHERE handle=?1)", [handle], |r| r.get::<_, bool>(0)).map_err(err)? { return Err("Группа не найдена.".into()); }
@@ -153,16 +191,16 @@ impl Storage {
             },
             _ => return Err("Неизвестная страница настроек.".into()),
         };
-        let term = unified_normalized(query);
+        let children = if kind == "group_tree" { "children" } else { "NULL" };
         let total:i64 = tx.query_row(&format!("SELECT COUNT(*) FROM ({table}) WHERE instr(unified_normalized(name),?1)>0"), [&term], |r| r.get(0)).map_err(err)?;
         let grouped:i64 = if kind == "works" { tx.query_row(&format!("SELECT COUNT(*) FROM ({table}) WHERE instr(unified_normalized(name),?1)>0 AND group_handle IS NOT NULL"), [&term], |r| r.get(0)).map_err(err)? } else { 0 };
-        let mut stmt = tx.prepare(&format!("SELECT handle,id,name,organization,members,group_handle FROM ({table}) WHERE instr(unified_normalized(name),?1)>0 ORDER BY CASE WHEN substr(unified_normalized(name),1,length(?1))=?1 THEN 0 ELSE 1 END,name COLLATE unified_ru,name,handle LIMIT ?2 OFFSET ?3")).map_err(err)?;
-        let rows = stmt.query_map(params![term,limit as i64,offset], |r| Ok(UnifiedManagementRow { handle:r.get(0)?, id:r.get(1)?, name:r.get(2)?, organization:r.get(3)?, members:r.get(4)?, group:r.get(5)? })).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
-        Ok(UnifiedManagementPage { rows,total,grouped,ungrouped:total-grouped })
+        let mut stmt = tx.prepare(&format!("SELECT handle,id,name,organization,members,group_handle,{children} FROM ({table}) WHERE instr(unified_normalized(name),?1)>0 ORDER BY CASE WHEN substr(unified_normalized(name),1,length(?1))=?1 THEN 0 ELSE 1 END,name COLLATE unified_ru,name,handle LIMIT ?2 OFFSET ?3")).map_err(err)?;
+        let rows = stmt.query_map(params![term,limit as i64,offset], |r| Ok(UnifiedManagementRow { handle:r.get(0)?, id:r.get(1)?, name:r.get(2)?, organization:r.get(3)?, members:r.get(4)?, group:r.get(5)?, children:r.get(6)? })).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+        Ok(UnifiedManagementPage { rows,total,grouped,ungrouped:total-grouped,hierarchy:link_root.is_some() })
     }
 
     pub fn unified_save_group(&self, revision:i64, handle:Option<i64>, id:&str, name:&str, works:&[String]) -> Result<ManagementReceipt,String> {
-        if name.trim().is_empty() || name.len()>1024 || id.len()>128 || works.is_empty() || works.len()>5000 { return Err("Введите название и выберите от 1 до 5000 работ.".into()); }
+        if name.trim().is_empty() || name.len()>1024 || id.len()>128 || works.len()>5000 { return Err("Введите название и выберите не более 5000 работ.".into()); }
         for work in works { if work.trim().is_empty() || work.len()>4096 { return Err("Некорректное название работы.".into()); } }
         let mut editor = self.management_begin_settings(revision,256*1024*1024,Arc::new(ManagementJob::new()))?;
         editor.unified_save_group(handle,id,name,works)?;
@@ -190,6 +228,7 @@ impl Storage {
         let mut editor = self.management_begin_settings(
             revision, 256 * 1024 * 1024, Arc::new(ManagementJob::new()),
         )?;
+        let job = editor.job.clone();
         let clear = editor.mutate(|c| {
             let parent = settings(c)?.1;
             let total: usize = c.query_row(
@@ -203,6 +242,7 @@ impl Storage {
             if clear && backup.is_none() {
                 return Err("Для очистки списка нужна проверенная резервная копия SQLite.".into());
             }
+            unified_settings_io::update_links_before_bulk_deletion(c, parent, handles, clear, &job)?;
             if let Some(handles) = handles {
                 for &handle in handles {
                     belongs(c, handle, parent, "object")?;
@@ -244,7 +284,36 @@ fn unified_remove_work(c:&Connection, work:&str) -> Result<(),String> {
     c.execute("DELETE FROM management_nodes WHERE kind='string' AND value=?1 AND parent IN (SELECT w.handle FROM management_nodes w JOIN management_nodes g ON w.parent=g.handle WHERE w.field='works' AND w.kind='array' AND g.parent=?2)", params![work,settings(c)?.1]).map_err(err)?;
     Ok(())
 }
+fn check_group_name(c: &Connection, groups: i64, except: Option<i64>, name: &str) -> Result<(), String> {
+    let normalized = unified_normalized(name);
+    let mut stmt = c.prepare(
+        "SELECT g.handle,n.value FROM management_nodes g
+         JOIN management_nodes n ON n.parent=g.handle AND n.field='name' WHERE g.parent=?1",
+    ).map_err(err)?;
+    let mut names = stmt.query([groups]).map_err(err)?;
+    while let Some(row) = names.next().map_err(err)? {
+        if Some(row.get::<_, i64>(0).map_err(err)?) != except
+            && unified_normalized(&row.get::<_, String>(1).map_err(err)?) == normalized {
+            return Err("Группа с таким названием уже существует.".into());
+        }
+    }
+    Ok(())
+}
+
+fn check_tree_group_id(c: &Connection, groups: i64, id: &str) -> Result<(), String> {
+    if unified_settings_io::group_parents_node(c)?.is_some()
+        && c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM management_nodes g JOIN management_nodes n
+             ON n.parent=g.handle AND n.field='id' WHERE g.parent=?1 AND n.value=?2)",
+            params![groups, id], |row| row.get::<_, bool>(0),
+        ).map_err(err)? {
+        return Err("Идентификатор группы уже существует.".into());
+    }
+    Ok(())
+}
+
 fn unified_remove_empty_groups(c:&Connection, except:Option<i64>) -> Result<(),String> {
+    if unified_settings_io::group_parents_node(c)?.is_some() { return Ok(()); }
     loop {
         let id:Option<i64>=c.query_row("SELECT g.handle FROM management_nodes g JOIN unified_touched_groups touched ON touched.handle=g.handle JOIN management_nodes w ON w.parent=g.handle AND w.field='works' WHERE g.parent=?1 AND (?2 IS NULL OR g.handle<>?2) AND NOT EXISTS(SELECT 1 FROM management_nodes n WHERE n.parent=w.handle) LIMIT 1",params![settings(c)?.1,except],|r|r.get(0)).optional().map_err(err)?;
         match id { Some(id)=>remove_node(c,id)?, None=>return Ok(()) }
@@ -264,16 +333,10 @@ impl SettingsEditor {
     fn unified_save_group(&mut self, handle:Option<i64>, id:&str, name:&str, works:&[String]) -> Result<(),String> {
         self.mutate(|c| {
             let parent=settings(c)?.1;
-            let normalized=unified_normalized(name);
-            let mut stmt=c.prepare("SELECT g.handle,n.value FROM management_nodes g JOIN management_nodes n ON n.parent=g.handle AND n.field='name' WHERE g.parent=?1").map_err(err)?;
-            let mut names=stmt.query([parent]).map_err(err)?;
-            while let Some(row)=names.next().map_err(err)? {
-                let h:i64=row.get(0).map_err(err)?;
-                if Some(h)!=handle && unified_normalized(&row.get::<_,String>(1).map_err(err)?)==normalized { return Err("Группа с таким названием уже существует.".into()); }
-            }
-            drop(names);drop(stmt);
+            check_group_name(c, parent, handle, name)?;
             let target=if let Some(h)=handle { belongs(c,h,parent,"object")?;scalar(c,h,"name",ManagementScalar::String(name.into()))?;h } else {
                 if id.trim().is_empty() { return Err("Недопустимый идентификатор группы.".into()); }
+                check_tree_group_id(c, parent, id)?;
                 let h=add(c,parent,None,"object",None)?;
                 scalar(c,h,"id",ManagementScalar::String(id.into()))?;
                 scalar(c,h,"name",ManagementScalar::String(name.into()))?;
@@ -646,7 +709,7 @@ impl Storage {
         if org_names.len() > 100 {
             return Err("Organization metadata exceeds bound".into());
         }
-        Ok(ManagementBootstrap{revision:rev,org_names,groups:count(&tx,"management_groups")?,memberships:count(&tx,"management_members")?,catalog:count(&tx,"management_catalog")?,reports:count(&tx,"reports")?,indexed_reports:tx.query_row("SELECT COUNT(*) FROM reports r JOIN management_report_meta m ON m.report_id=r.id JOIN report_row_index i ON i.report_id=r.id",[],|r|r.get(0)).map_err(err)?})
+        Ok(ManagementBootstrap{revision:rev,org_names,groups:count(&tx,"management_groups")?,work_group_hierarchy:unified_settings_io::group_parents_node(&tx)?.is_some(),memberships:count(&tx,"management_members")?,catalog:count(&tx,"management_catalog")?,reports:count(&tx,"reports")?,indexed_reports:tx.query_row("SELECT COUNT(*) FROM reports r JOIN management_report_meta m ON m.report_id=r.id JOIN report_row_index i ON i.report_id=r.id",[],|r|r.get(0)).map_err(err)?})
     }
     pub fn management_group_page(
         &self,
@@ -943,7 +1006,7 @@ impl SettingsEditor {
         self.job.cancel()
     }
     pub fn set_scalar(&mut self, name: &str, value: ManagementScalar) -> Result<(), String> {
-        if matches!(name, "orgNames" | "groups" | "catalog") {
+        if matches!(name, "orgNames" | "groups" | "catalog" | work_group_hierarchy::GROUP_PARENTS_FIELD) {
             return Err(
                 "Organization rename and container replacement require dedicated domain operations"
                     .into(),
@@ -956,6 +1019,10 @@ impl SettingsEditor {
         label(name)?;
         self.mutate(|c| {
             let groups = settings(c)?.1;
+            if unified_settings_io::group_parents_node(c)?.is_some() {
+                check_group_name(c, groups, None, name)?;
+                check_tree_group_id(c, groups, id)?;
+            }
             let group = add(c, groups, None, "object", None)?;
             scalar(c, group, "id", ManagementScalar::String(id.into()))?;
             scalar(c, group, "name", ManagementScalar::String(name.into()))?;
@@ -966,12 +1033,19 @@ impl SettingsEditor {
     pub fn rename_group(&mut self, group: i64, name: &str) -> Result<(), String> {
         label(name)?;
         self.mutate(|c| {
-            belongs(c, group, settings(c)?.1, "object")?;
+            let groups = settings(c)?.1;
+            belongs(c, group, groups, "object")?;
+            if unified_settings_io::group_parents_node(c)?.is_some() {
+                check_group_name(c, groups, Some(group), name)?;
+            }
             scalar(c, group, "name", ManagementScalar::String(name.into()))
         })
     }
     pub fn delete_group(&mut self, group: i64) -> Result<(), String> {
         self.mutate(|c| {
+            if unified_settings_io::group_parents_node(c)?.is_some() {
+                return Err("Выберите, что сделать с подгруппами.".into());
+            }
             belongs(c, group, settings(c)?.1, "object")?;
             remove_node(c, group)
         })
@@ -983,8 +1057,18 @@ impl SettingsEditor {
         }
         self.mutate(|c| {
             let parent = works_node(c, group)?;
-            for w in works {
-                add(c, parent, None, "string", Some(w))?;
+            let hierarchy = unified_settings_io::group_parents_node(c)?.is_some();
+            for work in works {
+                if hierarchy && c.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM management_nodes g
+                     JOIN management_nodes w ON w.parent=g.handle AND w.field='works'
+                     JOIN management_nodes n ON n.parent=w.handle AND n.kind='string'
+                     WHERE g.parent=?1 AND n.value=?2)",
+                    params![settings(c)?.1, work], |row| row.get::<_, bool>(0),
+                ).map_err(err)? {
+                    return Err("Работа уже входит в группу.".into());
+                }
+                add(c, parent, None, "string", Some(work))?;
             }
             Ok(())
         })
@@ -1344,7 +1428,7 @@ fn check_delete_integrity(conn: &Connection) -> Result<(), String> {
 mod reports;
 #[path = "unified_settings_io.rs"]
 mod unified_settings_io;
-pub use unified_settings_io::{UnifiedSettingsReview,UnifiedCatalogReceipt};
+pub use unified_settings_io::{GroupTreeEdit,UnifiedSettingsReview,UnifiedCatalogReceipt};
 pub(super) use unified_settings_io::PreparedCatalogSettings;
 #[path = "unified_data_admin.rs"]
 mod unified_data_admin;

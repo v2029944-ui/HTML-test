@@ -80,7 +80,13 @@ pub(super) fn comparison(
         "AND ?1 IS NULL"
     };
     c.execute(&format!("INSERT INTO temp.an_comparison WITH b AS (SELECT * FROM {table} WHERE slot=1 {predicate}),a AS (SELECT * FROM {table} WHERE slot=2 {predicate}),keys AS (SELECT key FROM b UNION SELECT key FROM a) SELECT keys.key,COALESCE(b.name,a.name),COALESCE(b.kind,a.kind),COALESCE(b.count,0),CASE WHEN b.key IS NULL THEN 0 ELSE b.amount END,COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END,b.known_amount,a.known_amount,CASE WHEN b.source_work IS NOT NULL THEN b.paired_count END,CASE WHEN a.source_work IS NOT NULL THEN a.paired_count END,b.source_work IS NOT NULL AND b.source_work=a.source_work FROM keys LEFT JOIN b USING(key) LEFT JOIN a USING(key)"),[org]).map_err(err)?;
-    c.execute("INSERT INTO temp.an_comparison SELECT 'absent:'||f.item,f.item,'work',0,0,0,0,NULL,NULL,NULL,NULL,0 FROM analysis_filter_items f WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM temp.an_comparison a WHERE a.name=f.item)",[&s.names]).map_err(err)?;
+    if super::workspace::tree_indexed(c)? {
+        c.execute_batch("INSERT INTO temp.an_comparison
+            SELECT s.key,s.name,s.kind,0,0,0,0,NULL,NULL,NULL,NULL,0 FROM an_scope_selections s
+            WHERE NOT EXISTS(SELECT 1 FROM an_comparison a WHERE a.key=s.key)").map_err(err)?;
+    } else {
+        c.execute("INSERT INTO temp.an_comparison SELECT 'absent:'||f.item,f.item,'work',0,0,0,0,NULL,NULL,NULL,NULL,0 FROM analysis_filter_items f WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM temp.an_comparison a WHERE a.name=f.item)",[&s.names]).map_err(err)?;
+    }
     Ok((complete(c, 1, org)?, complete(c, 2, org)?))
 }
 pub(super) fn comparison_value(

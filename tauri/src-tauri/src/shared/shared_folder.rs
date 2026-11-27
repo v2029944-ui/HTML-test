@@ -14,6 +14,9 @@ const EXT: &str = ".snapshot";
 const MAGIC: &[u8; 8] = b"ANALIZ02";
 const RESET_MAGIC: &[u8; 8] = b"ANALIZR2";
 const PENDING: &str = "pending.snapshot";
+// Clients without support for tree settings reject this additional table.
+const TREE_FORMAT_TABLE: &str = "work_group_tree_v2";
+const TREE_FORMAT_COLUMNS: &str = "marker INTEGER";
 
 #[path = "shared_folder_retention.rs"]
 pub(super) mod retention;
@@ -315,11 +318,26 @@ fn attach_wire(conn: &Connection, wire: &Path, read_only: bool) -> Result<(), St
     Ok(())
 }
 
+fn wire_has_group_tree(conn: &Connection) -> Result<bool, String> {
+    let path = format!("$.{}", super::work_group_hierarchy::GROUP_PARENTS_FIELD);
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM wire.kv WHERE name='settings'
+         AND json_type(CAST(json AS TEXT),?1) IS NOT NULL)",
+        [path], |row| row.get(0),
+    ).map_err(err)
+}
+
 fn wire_schema(conn: &Connection) -> Result<(), String> {
     let count: i64 = conn
         .query_row("SELECT count(*) FROM wire.sqlite_schema", [], |r| r.get(0))
         .map_err(err)?;
-    if count != TABLES.len() as i64 {
+    let expected_tree = format!("CREATE TABLE {TREE_FORMAT_TABLE}({TREE_FORMAT_COLUMNS})");
+    let tree_marker: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM wire.sqlite_schema
+         WHERE type='table' AND name=?1 AND tbl_name=?1 AND sql=?2)",
+        rusqlite::params![TREE_FORMAT_TABLE, expected_tree], |row| row.get(0),
+    ).map_err(err)?;
+    if count != TABLES.len() as i64 + i64::from(tree_marker) {
         return Err("Недопустимая структура общей базы.".into());
     }
     for &(name, columns) in TABLES {
@@ -351,6 +369,15 @@ fn wire_schema(conn: &Connection) -> Result<(), String> {
     if invalid {
         return Err("Общая копия содержит недопустимые параметры компьютера или версии.".into());
     }
+    if tree_marker != wire_has_group_tree(conn)? {
+        return Err("Формат общей копии не соответствует настройкам дерева групп.".into());
+    }
+    if tree_marker && conn.query_row(
+        &format!("SELECT EXISTS(SELECT 1 FROM wire.{TREE_FORMAT_TABLE})"), [],
+        |row| row.get::<_, bool>(0),
+    ).map_err(err)? {
+        return Err("Недопустимые данные в метке формата дерева групп.".into());
+    }
     Ok(())
 }
 
@@ -373,6 +400,10 @@ fn export_wire(storage: &Storage, wire: &Path) -> Result<(), String> {
             _ => format!("SELECT {columns} FROM main.{name}"),
         };
         tx.execute_batch(&format!("INSERT INTO wire.{name}({columns}) {projection}"))
+            .map_err(err)?;
+    }
+    if wire_has_group_tree(&tx)? {
+        tx.execute_batch(&format!("CREATE TABLE wire.{TREE_FORMAT_TABLE}({TREE_FORMAT_COLUMNS})"))
             .map_err(err)?;
     }
     tx.commit().map_err(err)?;
@@ -804,6 +835,26 @@ mod tests {
             Some(parent) => tempfile::tempdir_in(parent).unwrap(),
             None => tempfile::tempdir().unwrap(),
         }
+    }
+
+    #[test]
+    fn nested_group_edits_sync_between_clients_without_changing_reports() {
+        let share = exchange_folder();
+        super::super::shared_runtime::tests::verify_nested_group_edits_between_clients(share.path());
+
+        let generation = head(share.path()).unwrap();
+        let mut snapshot = open_regular(&path(share.path(), generation)).unwrap();
+        let (digest, reset) = snapshot_header(&mut snapshot, generation).unwrap();
+        let mut wire = NamedTempFile::new().unwrap();
+        assert_eq!(transfer_snapshot(&mut snapshot, wire.as_file_mut(), reset).unwrap(), digest);
+        let wire = wire.into_temp_path();
+        let conn = Connection::open_in_memory().unwrap();
+        attach_wire(&conn, &wire, true).unwrap();
+        wire_schema(&conn).unwrap();
+        // Old readers require exactly TABLES.len() objects. An explicit format
+        // marker makes tree snapshots fail closed in those clients.
+        let objects: usize = conn.query_row("SELECT count(*) FROM wire.sqlite_schema", [], |row| row.get(0)).unwrap();
+        assert_eq!(objects, TABLES.len() + 1);
     }
 
     #[test]

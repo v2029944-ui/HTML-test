@@ -165,8 +165,8 @@ impl Calendar {
         c.execute("INSERT INTO adv_facts SELECT v.label,v.org,coalesce(g.key,'work:'||x.work),coalesce(g.name,x.work),
             CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount),max(x.count<>0 OR x.amount IS NULL OR x.amount<>0),
             SUM(x.count) FILTER (WHERE x.amount IS NOT NULL),CASE WHEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL)=MAX(x.work) FILTER (WHERE x.amount IS NOT NULL) THEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL) END
-            FROM adv_reports v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work
-            WHERE (?1 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=coalesce(g.name,x.work)))
+            FROM adv_reports v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN an_scope_groups g ON g.work=x.work
+            WHERE (?1 IS NULL OR COALESCE(g.selected, EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=coalesce(g.name,x.work))))
             GROUP BY v.label,v.org,coalesce(g.key,'work:'||x.work)",[&s.names]).map_err(err)?;
         validate_numbers(c, "SELECT count,known_amount FROM adv_facts")
     }
@@ -633,8 +633,14 @@ impl Analytics<'_> {
           CREATE TEMP TABLE adv_keys(key TEXT PRIMARY KEY,name TEXT,kind TEXT) WITHOUT ROWID;
           INSERT INTO adv_keys SELECT key,name,kind FROM adv_facts GROUP BY key;").map_err(err)?;
         tx.execute("INSERT INTO adv_complete SELECT label FROM adv_coverage WHERE complete GROUP BY label HAVING count(*)=(SELECT count(*) FROM analysis_filter_items WHERE id=?1)",[&s.organizations]).map_err(err)?;
-        tx.execute("INSERT INTO adv_keys SELECT coalesce(g.key,'work:'||f.item),f.item,CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END FROM analysis_filter_items f
+        if super::workspace::tree_indexed(&tx)? {
+            tx.execute_batch("INSERT INTO adv_keys
+                SELECT s.key,s.name,s.kind FROM an_scope_selections s
+                WHERE NOT EXISTS(SELECT 1 FROM adv_keys k WHERE k.key=s.key)").map_err(err)?;
+        } else {
+            tx.execute("INSERT INTO adv_keys SELECT coalesce(g.key,'work:'||f.item),f.item,CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END FROM analysis_filter_items f
             LEFT JOIN analysis_group_names g ON g.name=f.item WHERE f.id=?1 AND NOT EXISTS(SELECT 1 FROM adv_keys k WHERE k.name=f.item)",[&s.names]).map_err(err)?;
+        }
         let usual = mode == "usual";
         let available = options.is_some();
         // Unified calculations accept any valid report in a period.
@@ -700,7 +706,7 @@ impl Analytics<'_> {
                 tx.execute("INSERT INTO adv_baseline_active
                     SELECT DISTINCT k.key,v.label FROM adv_reports v
                     JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
-                    LEFT JOIN analysis_groups g ON g.work=x.work
+                    LEFT JOIN an_scope_groups g ON g.work=x.work
                     JOIN adv_keys k ON k.key=coalesce(g.key,'work:'||x.work)
                     WHERE v.start BETWEEN ?1 AND ?2 AND (x.count<>0 OR x.amount IS NULL OR x.amount<>0)",
                     params![baseline_from.to_string(), baseline_to.to_string()]).map_err(err)?;
@@ -1026,7 +1032,7 @@ impl Analytics<'_> {
                 FROM an_periods p JOIN an_valid v ON v.start=p.start
                 JOIN analysis_filter_items f ON f.id=?1 AND f.item=v.org
                 JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
-                LEFT JOIN analysis_groups g ON g.work=x.work
+                LEFT JOIN an_scope_groups g ON g.work=x.work
                 JOIN an_comparison c ON c.key=coalesce(g.key,'work:'||x.work) GROUP BY c.key",
                 [&s.organizations],
             )

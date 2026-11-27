@@ -1865,6 +1865,7 @@ fn main() {
             unified_quality_csv,
             unified_management_page,
             unified_group_save,
+            unified_group_tree_edit,
             unified_work_assign,
             unified_groups_preview,
             unified_groups_import,

@@ -1091,6 +1091,7 @@ body:has(#refRoot)>footer {display:none}
 
 /* Group members and work pages use the vertical scroll of the workspace. */
 #groupWorkspace :is(.group-members,.works-list) {max-height:none;overflow:visible}
+#groupWorkspace .group-children {margin-inline-start:.35rem; padding-inline-start:.35rem; border-inline-start:1px solid var(--line)}
 #groupWorkspace .group-removal {align-items:center}
 #groupWorkspace .group-selection {margin-inline-start:.5rem; cursor:pointer}
 #groupWorkspace .group-result-counts {display:flex;flex-wrap:wrap;gap:0 1rem}
@@ -1213,3 +1214,12 @@ body:has(#refRoot)>footer {display:none}
 #s2 .changes-header-actions {display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end;min-width:0}
 #s2 .changes-header-actions .btn {white-space:normal;min-height:36px;max-width:100%}
 @media(max-width:680px){#s2 .changes-header-actions {width:100%;justify-content:flex-start}#s2 .changes-header-actions .btn {flex:1 1 auto}}
+
+.chart-group-toggle,.chart-group-label {
+  margin-inline-start:var(--chart-tree-indent,0);
+}
+.chart-group-toggle::after {
+  content:'▸';
+  margin-inline-start:.45em;
+}
+.chart-group-toggle[aria-expanded="true"]::after {content:'▾'}

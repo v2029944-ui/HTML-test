@@ -1,5 +1,6 @@
 //! Index publication and revision-bound analysis filters.
 use super::*;
+use crate::storage::work_group_hierarchy::{validate_group_parents, GroupParent, GROUP_PARENTS_FIELD};
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use std::io::{BufReader, Read};
 
@@ -10,6 +11,17 @@ pub(in crate::storage) fn initialize(c: &Connection) -> Result<(), String> {
  CREATE TABLE IF NOT EXISTS analysis_settings(singleton INTEGER PRIMARY KEY CHECK(singleton=1));
  CREATE TABLE IF NOT EXISTS analysis_group_names(name TEXT PRIMARY KEY,key TEXT) WITHOUT ROWID;
  CREATE TABLE IF NOT EXISTS analysis_groups(work TEXT PRIMARY KEY,key TEXT NOT NULL,name TEXT NOT NULL) WITHOUT ROWID;
+ CREATE TABLE IF NOT EXISTS analysis_group_nodes(key TEXT PRIMARY KEY,name TEXT NOT NULL,parent_key TEXT) WITHOUT ROWID;
+ CREATE INDEX IF NOT EXISTS analysis_group_nodes_by_parent ON analysis_group_nodes(parent_key);
+ CREATE INDEX IF NOT EXISTS analysis_group_works_by_key ON analysis_groups(key);
+ CREATE TABLE IF NOT EXISTS analysis_group_ancestors(descendant_key TEXT,ancestor_key TEXT,distance INTEGER NOT NULL,PRIMARY KEY(descendant_key,ancestor_key)) WITHOUT ROWID;
+ CREATE INDEX IF NOT EXISTS analysis_group_descendants ON analysis_group_ancestors(ancestor_key,descendant_key);
+ CREATE TRIGGER IF NOT EXISTS analysis_group_index_settings_insert AFTER INSERT ON kv WHEN NEW.name='settings' BEGIN
+ DELETE FROM analysis_group_nodes; DELETE FROM analysis_group_ancestors; END;
+ CREATE TRIGGER IF NOT EXISTS analysis_group_index_settings_update AFTER UPDATE ON kv WHEN OLD.name='settings' OR NEW.name='settings' BEGIN
+ DELETE FROM analysis_group_nodes; DELETE FROM analysis_group_ancestors; END;
+ CREATE TRIGGER IF NOT EXISTS analysis_group_index_settings_delete AFTER DELETE ON kv WHEN OLD.name='settings' BEGIN
+ DELETE FROM analysis_group_nodes; DELETE FROM analysis_group_ancestors; END;
  CREATE TABLE IF NOT EXISTS analysis_filters(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,kind TEXT NOT NULL,sealed INTEGER NOT NULL);
  CREATE TABLE IF NOT EXISTS analysis_filter_items(id TEXT NOT NULL,item TEXT NOT NULL,ordinal INTEGER NOT NULL,PRIMARY KEY(id,item)) WITHOUT ROWID;
  CREATE TRIGGER IF NOT EXISTS analysis_report_insert AFTER INSERT ON reports BEGIN
@@ -494,35 +506,81 @@ impl<'de> Visitor<'de> for Groups<'_> {
 }
 struct Settings<'a>(&'a Connection);
 impl<'de> DeserializeSeed<'de> for Settings<'_> {
-    type Value = ();
-    fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<(), D::Error> {
+    type Value = Option<Vec<GroupParent>>;
+    fn deserialize<D: serde::Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
         d.deserialize_map(self)
     }
 }
 
 impl<'de> Visitor<'de> for Settings<'_> {
-    type Value = ();
+    type Value = Option<Vec<GroupParent>>;
     fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.write_str("settings object")
     }
-    fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<(), A::Error> {
+    fn visit_map<A: MapAccess<'de>>(self, mut a: A) -> Result<Self::Value, A::Error> {
         let mut seen = false;
+        let mut parents = None;
         while let Some(k) = a.next_key::<String>()? {
-            if k == "groups" {
-                if seen {
-                    return Err(serde::de::Error::custom("Duplicate groups field"));
+            match k.as_str() {
+                "groups" => {
+                    if seen {
+                        return Err(serde::de::Error::custom("Duplicate groups field"));
+                    }
+                    seen = true;
+                    a.next_value_seed(Groups(self.0))?;
                 }
-                seen = true;
-                a.next_value_seed(Groups(self.0))?;
-            } else {
-                a.next_value::<IgnoredAny>()?;
+                GROUP_PARENTS_FIELD => {
+                    if parents.is_some() {
+                        return Err(serde::de::Error::custom("Duplicate work group hierarchy field"));
+                    }
+                    parents = Some(a.next_value::<Vec<GroupParent>>()?);
+                }
+                _ => { a.next_value::<IgnoredAny>()?; }
             }
         }
         if !seen {
             return Err(serde::de::Error::custom("Missing settings groups"));
         }
-        Ok(())
+        Ok(parents)
     }
+}
+
+fn publish_group_hierarchy(c: &Connection, parents: Option<Vec<GroupParent>>) -> Result<(), String> {
+    c.execute_batch("DELETE FROM analysis_group_nodes; DELETE FROM analysis_group_ancestors;").map_err(err)?;
+    let Some(parents) = parents else { return Ok(()); };
+    let mut ids = c.prepare("SELECT id FROM temp.an_descriptors LIMIT 10001").map_err(err)?;
+    let ids = ids.query_map([], |row| row.get::<_, String>(0)).map_err(err)?
+        .collect::<Result<Vec<_>,_>>().map_err(err)?;
+    if ids.len() > 10_000 || parents.len() > ids.len() {
+        return Err("Превышен лимит групп или связей дерева.".into());
+    }
+    validate_group_parents(ids.iter().map(String::as_str), &parents)?;
+    let conflicting_assignments: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM temp.an_members GROUP BY work HAVING COUNT(*) > 1)",
+        [], |row| row.get(0),
+    ).map_err(err)?;
+    if conflicting_assignments {
+        return Err("В дереве работа может входить только в одну группу напрямую.".into());
+    }
+    c.execute_batch(
+        "INSERT INTO analysis_group_nodes(key,name,parent_key)
+         SELECT 'group:'||id,name,NULL FROM temp.an_descriptors;",
+    ).map_err(err)?;
+    let mut link = c.prepare(
+        "UPDATE analysis_group_nodes SET parent_key='group:'||?2 WHERE key='group:'||?1",
+    ).map_err(err)?;
+    for parent in parents {
+        link.execute(params![parent.child,parent.parent]).map_err(err)?;
+    }
+    c.execute_batch(
+        "WITH RECURSIVE ancestors(descendant_key,ancestor_key,distance) AS (
+             SELECT key,key,0 FROM analysis_group_nodes
+             UNION ALL
+             SELECT a.descendant_key,n.parent_key,a.distance+1
+             FROM ancestors a JOIN analysis_group_nodes n ON n.key=a.ancestor_key
+             WHERE n.parent_key IS NOT NULL
+         ) INSERT INTO analysis_group_ancestors SELECT * FROM ancestors;",
+    ).map_err(err)
 }
 
 impl Storage {
@@ -628,13 +686,16 @@ impl Storage {
             })
             .optional()
             .map_err(err)?;
-        if let Some(rowid) = rowid {
+        let parents = if let Some(rowid) = rowid {
             parse(
                 tx.blob_open("main", "kv", "json", rowid, true)
                     .map_err(err)?,
                 Settings(&tx),
-            )?;
-        }
+            )?
+        } else {
+            None
+        };
+        publish_group_hierarchy(&tx, parents)?;
         let ambiguous:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM temp.an_descriptors GROUP BY id HAVING COUNT(DISTINCT name)>1)",[],|r|r.get(0)).map_err(err)?;
         if ambiguous {
             return Err(

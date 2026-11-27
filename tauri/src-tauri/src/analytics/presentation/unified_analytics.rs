@@ -41,6 +41,15 @@ pub struct UnifiedNameOption {
     pub key: String,
     pub name: String,
     pub kind: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ancestor_keys: Vec<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub has_children: bool,
+}
+#[derive(Serialize)]
+pub struct UnifiedWorkCounts {
+    pub selected: i64,
+    pub total: i64,
 }
 #[derive(Serialize)]
 pub struct UnifiedNameOptions {
@@ -48,6 +57,8 @@ pub struct UnifiedNameOptions {
     pub rows: Vec<UnifiedNameOption>,
     pub next: Option<String>,
     pub total_rows: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub work_counts: Option<UnifiedWorkCounts>,
 }
 #[derive(Serialize)]
 pub struct UnifiedPeriodOption {
@@ -242,22 +253,22 @@ impl Analytics<'_> {
         after: Option<&str>,
         limit: usize,
     ) -> Result<UnifiedNameOptions, String> {
-        self.name_options_window(revision, search, after, limit, None, None, false)
+        self.name_options_window(revision, search, after, limit, None, None, false, None)
     }
     pub(super) fn unified_name_options_at_page(&self, revision:i64, search:&str, page_index:usize, limit:usize) -> Result<UnifiedNameOptions,String> {
-        self.name_options_window(revision,search,None,limit,Some(page_index),None,false)
+        self.name_options_window(revision,search,None,limit,Some(page_index),None,false,None)
     }
     pub(super) fn unified_work_series_at_page(&self, revision:i64, page_index:usize, limit:usize) -> Result<UnifiedNameOptions,String> {
-        self.name_options_window(revision,"",None,limit,Some(page_index),None,true)
+        self.name_options_window(revision,"",None,limit,Some(page_index),None,true,None)
     }
     pub(super) fn unified_selected_name_options(&self, revision: i64, keys: &[String]) -> Result<UnifiedNameOptions, String> {
         if keys.len() > 50 || keys.iter().any(String::is_empty) {
             return Err("Invalid selected name keys".into());
         }
         for key in keys { key_bound(key)?; }
-        self.name_options_window(revision, "", None, 50, None, Some(keys), false)
+        self.name_options_window(revision, "", None, 50, None, Some(keys), false, None)
     }
-    fn name_options_window(&self, revision:i64, search:&str, after:Option<&str>, limit:usize, page_index:Option<usize>, selected_keys:Option<&[String]>, all_series:bool) -> Result<UnifiedNameOptions,String> {
+    fn name_options_window(&self, revision:i64, search:&str, after:Option<&str>, limit:usize, page_index:Option<usize>, selected_keys:Option<&[String]>, all_series:bool, parent:Option<&str>) -> Result<UnifiedNameOptions,String> {
         if !(1..=50).contains(&limit) || search.len() > 512 {
             return Err("Invalid name option query".into());
         }
@@ -277,11 +288,42 @@ impl Analytics<'_> {
         let fingerprint = format!(
             "{:x}",
             Sha256::digest(
-                serde_json::to_vec(&json!(["names", revision, search, limit, all_series])).map_err(err)?
+                serde_json::to_vec(&json!(["names", revision, search, limit, all_series, parent])).map_err(err)?
             )
         );
         let cursor_offset = page_offset(after, &fingerprint)?;
-        let has_omitted_names = create_name_catalog(&tx,all_series)?;
+        let hierarchy = super::workspace::tree_indexed(&tx)?;
+        let has_omitted_names = if let Some(parent) = parent {
+            key_bound(parent)?;
+            if !hierarchy || !tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM analysis_group_nodes WHERE key=?1)",
+                [parent], |row| row.get::<_, bool>(0),
+            ).map_err(err)? {
+                return Err("Group for this detail page is unavailable".into());
+            }
+            tx.execute("CREATE TEMP TABLE unified_names AS
+                SELECT key,name,'group' kind,name label FROM analysis_group_nodes WHERE parent_key=?1
+                UNION ALL SELECT 'work:'||work,work,'work',work FROM analysis_groups WHERE key=?1",
+                [parent]).map_err(err)?;
+            false
+        } else {
+            create_name_catalog(&tx,all_series)?
+        };
+        let work_counts = if hierarchy && !all_series && parent.is_none() {
+            let selected = serde_json::to_string(&selected_keys.unwrap_or_default()).map_err(err)?;
+            Some(tx.query_row("WITH selected AS (
+                SELECT n.key,n.kind FROM json_each(?1) f JOIN unified_names n ON n.key=f.value
+            ) SELECT COUNT(*) FILTER (WHERE EXISTS(
+                SELECT 1 FROM selected s WHERE s.key=w.key OR (s.kind='group' AND EXISTS(
+                    SELECT 1 FROM analysis_group_ancestors a
+                    WHERE a.descendant_key=w.parent_key AND a.ancestor_key=s.key
+                ))
+            )),COUNT(*) FROM an_tree_catalog w WHERE w.kind='work'", [selected],
+                |row| Ok(UnifiedWorkCounts { selected: row.get(0)?, total: row.get(1)? })
+            ).map_err(err)?)
+        } else {
+            None
+        };
         let term = normalized(search);
         tx.execute(
             "DELETE FROM unified_names WHERE instr(classic_normalized(name),?1)=0",
@@ -294,7 +336,19 @@ impl Analytics<'_> {
                 [serde_json::to_string(keys).map_err(err)?]).map_err(err)?;
         }
         let offset=match page_index {Some(index)=>crate::storage::direct_page_offset(index,limit,total_rows)?,None=>cursor_offset};
-        let mut stmt=tx.prepare("SELECT key,label,kind FROM unified_names ORDER BY (instr(classic_normalized(name),?1)<>1),name COLLATE classic_ru,key LIMIT ?2 OFFSET ?3").map_err(err)?;
+        let metadata = if hierarchy {
+            ", (SELECT json_group_array(a.ancestor_key) FROM analysis_group_ancestors a
+                WHERE a.descendant_key=CASE n.kind WHEN 'group' THEN n.key
+                    ELSE (SELECT key FROM analysis_groups WHERE work=n.name) END
+                    AND a.ancestor_key<>n.key),
+               (EXISTS(SELECT 1 FROM analysis_group_nodes child WHERE child.parent_key=n.key)
+                OR EXISTS(SELECT 1 FROM analysis_groups member WHERE member.key=n.key))
+             FROM unified_names n"
+        } else {
+            ", '[]', 0 FROM unified_names n"
+        };
+        let mut stmt=tx.prepare(&format!("SELECT n.key,n.label,n.kind {metadata}
+            ORDER BY (instr(classic_normalized(n.name),?1)<>1),n.name COLLATE classic_ru,n.key LIMIT ?2 OFFSET ?3")).map_err(err)?;
         let mut result = stmt
             .query(params![term, (limit + 1) as i64, offset])
             .map_err(err)?;
@@ -304,6 +358,8 @@ impl Analytics<'_> {
                 key: r.get(0).map_err(err)?,
                 name: r.get(1).map_err(err)?,
                 kind: r.get(2).map_err(err)?,
+                ancestor_keys: serde_json::from_str(&r.get::<_, String>(3).map_err(err)?).map_err(err)?,
+                has_children: r.get(4).map_err(err)?,
             })
         }
         let next = if rows.len() > limit {
@@ -317,6 +373,7 @@ impl Analytics<'_> {
             rows,
             next,
             total_rows,
+            work_counts,
         })
     }
     pub(super) fn unified_period_options(
@@ -573,6 +630,10 @@ impl Storage {
         limit: usize,
     ) -> Result<UnifiedNameOptions, String> {
         self.analysis().unified_name_options(revision, search, after, limit)
+    }
+
+    pub fn unified_group_children_at_page(&self, revision: i64, parent: &str, index: usize, limit: usize) -> Result<UnifiedNameOptions, String> {
+        self.analysis().name_options_window(revision, "", None, limit, Some(index), None, false, Some(parent))
     }
 
     pub fn unified_name_options_at_page(&self, revision:i64, search:&str, page_index:usize, limit:usize) -> Result<UnifiedNameOptions,String> {

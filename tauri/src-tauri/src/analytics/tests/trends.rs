@@ -473,3 +473,150 @@ fn imported_week_does_not_fill_a_missing_daily_report_or_duplicate_daily_totals(
     assert!(imported.complete);
     assert_eq!((imported.available_reports, imported.total.amount), (1, Some(95.)));
 }
+
+#[test]
+fn work_tree_timeline_rolls_up_descendant_works_once_and_can_open_an_individual_work() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Storage::new(dir.path().to_owned()).unwrap();
+    let reports = json!({"reports":[
+        {"id":"day-one","type":"day","start":"2024-02-28","end":"2024-02-28","organizations":["A"],
+         "rows":[
+          {"organization":"A","work":"Direct","count":2,"amount":20},
+          {"organization":"A","work":"Nested","count":3,"amount":45},
+          {"organization":"A","work":"Outside","count":9,"amount":900}]},
+        {"id":"day-two","type":"day","start":"2024-02-29","end":"2024-02-29","organizations":["A"],
+         "rows":[
+          {"organization":"A","work":"Direct","count":1,"amount":10},
+          {"organization":"A","work":"Nested","count":4,"amount":null}]}
+    ],"settings":{"orgNames":["A","B","C","D"],"catalog":[],
+        "groups":[{"id":"root","name":"Root","works":[]},{"id":"branch","name":"Branch","works":["Direct"]},
+            {"id":"leaf","name":"Leaf","works":["Nested"]}],
+        "workGroupTreeParents":[{"child":"branch","parent":"root"},{"child":"leaf","parent":"branch"}]
+    }});
+    let revision = prepare(&store, &reports);
+    let only_root = scope(&store, revision, "day", &["A"], Some(&["Root"]));
+    let range = query("2024-02-28", "2024-02-29");
+    let overlap = scope(&store, revision, "day", &["A"], Some(&["Root", "Leaf", "Nested"]));
+    for selected in [&only_root, &overlap] {
+        let summary = store.analysis_range_summary(revision, selected, &range).unwrap();
+        assert_eq!(summary.available_total.count, Some(10.));
+        assert_eq!(summary.available_total.amount, Some(75.));
+        let timeline = store.analysis_timeline(revision, selected, &range).unwrap();
+        assert_eq!(timeline.points[0].available_total.amount, Some(65.));
+        assert_eq!(timeline.points[1].available_total.amount, Some(10.));
+    }
+    let named_work = scope(&store, revision, "day", &["A"], Some(&["Nested"]));
+    let timeline = store.analysis_timeline(revision, &named_work, &range).unwrap();
+    assert_eq!(timeline.points[0].available_total.amount, Some(45.));
+
+    let catalog = store.unified_name_options_at_page(revision, "", 0, 50).unwrap();
+    assert!(catalog.rows.iter().any(|row| row.key == "work:Nested"));
+    let top_level = store.unified_work_series_at_page(revision, 0, 50).unwrap();
+    assert_eq!(top_level.rows.iter().map(|row| row.key.as_str()).collect::<Vec<_>>(),
+        ["work:Outside", "group:root"]);
+
+    let selection = store.unified_selected_name_options(revision,
+        &["group:root".into(), "group:leaf".into(), "work:Nested".into()]).unwrap();
+    let counts = selection.work_counts.unwrap();
+    assert_eq!((counts.selected, counts.total), (2, 3));
+    let raw = selection.rows.iter().find(|row| row.key == "work:Nested").unwrap();
+    assert_eq!(raw.ancestor_keys.len(), 3);
+    let children = store.unified_group_children_at_page(revision, "group:root", 0, 50).unwrap();
+    assert_eq!(children.total_rows, 1);
+    assert_eq!(children.rows[0].key, "group:branch");
+    assert!(children.rows[0].has_children);
+
+    let root = store.analysis_work_timeline(revision, &only_root, &range, None, "group:root").unwrap();
+    assert_eq!(root.points[0].available_total.count, Some(5.));
+    assert_eq!(root.points[0].available_total.amount, Some(65.));
+    assert_eq!(root.points[1].available_total.count, Some(5.));
+    assert_eq!(root.points[1].available_total.amount, Some(10.));
+    assert_eq!(root.points[1].total.average, None);
+    assert_eq!(root.points[1].available_total.average, Some(10.));
+    assert_eq!(root.points[1].available_total.partial_average_quantity, Some(1.));
+    let last_day = query("2024-02-29", "2024-02-29");
+    let summary = store.analysis_range_summary(revision, &overlap, &last_day).unwrap();
+    assert_eq!(summary.available_total.average, root.points[1].available_total.average);
+    assert_eq!((summary.report_rows, summary.priced_rows), (2, 1));
+
+    let leaf = store.analysis_work_timeline(revision, &only_root, &range, None, "group:leaf").unwrap();
+    assert_eq!(leaf.points[0].available_total.amount, Some(45.));
+    let nested = store.analysis_work_timeline(revision, &only_root, &range, None, "work:Nested").unwrap();
+    assert_eq!(nested.points[0].available_total.count, Some(3.));
+    assert_eq!(nested.points[0].available_total.amount, leaf.points[0].available_total.amount);
+    assert!(store.analysis_work_timeline(revision, &only_root, &range, None, "work:Outside").is_err());
+
+    let csv = dir.path().join("tree.csv");
+    let options = TrendCsvOptions { table: TrendTable::Works, metrics: vec![TrendMetric::Amount],
+        hide_empty: false, match_chart: true };
+    store.reference_trend_csv(revision, &overlap, &range, Some("day"), &options, &csv).unwrap();
+    let exported = fs::read_to_string(csv).unwrap();
+    let values = exported.lines().skip(1).take(6).collect::<Vec<_>>();
+    assert_eq!(values, [
+        r#""Итого по выбранным работам";"65";"10""#,
+        r#""Root";"65";"10""#,
+        r#""  ↳ Branch";"65";"10""#,
+        r#""    ↳ Direct";"20";"10""#,
+        r#""    ↳ Leaf";"45";"""#,
+        r#""      ↳ Nested";"45";"""#,
+    ]);
+    assert!(!exported.contains("Outside"));
+
+    let detail_csv = dir.path().join("tree-by-department.csv");
+    let detail = serde_json::from_value(json!({
+        "section":"organizations","metric":"amount","baseOrg":"A"
+    })).unwrap();
+    let change_query = ChangeQuery {
+        from: range.from.clone(), to: range.to.clone(), method: "range".into(),
+        percent: 0., min_count: 0., min_amount: 0.,
+    };
+    store.reference_detail_csv(revision, &overlap, &change_query, None, &detail, &detail_csv).unwrap();
+    let detail = fs::read_to_string(detail_csv).unwrap();
+    assert!(detail.contains(r#""Итого по выбранным работам";"75""#), "{detail}");
+    assert!(detail.contains(r#""Root (группа)";"75""#), "{detail}");
+    assert!(!detail.lines().any(|line| line.starts_with(r#""Leaf"#)
+        || line.starts_with(r#""Nested"#) || line.starts_with(r#""Outside"#)), "{detail}");
+
+    let only_leaf = scope(&store, revision, "day", &["A"], Some(&["Leaf"]));
+    assert!(store.analysis_work_timeline(revision, &only_leaf, &range, None, "group:root").is_err());
+}
+
+#[test]
+fn work_tree_exact_name_keeps_group_and_excludes_unrelated_namesake() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Storage::new(dir.path().to_owned()).unwrap();
+    let data = json!({"reports":[
+        {"id":"report","type":"day","start":"2024-02-29","end":"2024-02-29","organizations":["A"],
+         "rows":[
+            {"organization":"A","work":"Head","count":2,"amount":20},
+            {"organization":"A","work":"Other","count":5,"amount":50},
+            {"organization":"A","work":"Only","count":1,"amount":10},
+            {"organization":"A","work":"Solo","count":7,"amount":70}]}
+    ],"settings":{"orgNames":["A","B","C","D"],"catalog":[],"groups":[
+        {"id":"head","name":"Head","works":[]},
+        {"id":"child","name":"Child","works":["Head","Other"]},
+        {"id":"solo","name":"Solo","works":["Only"]}
+    ],"workGroupTreeParents":[{"child":"child","parent":"head"}]}});
+    let revision = prepare(&store, &data);
+    let catalog = store.unified_name_options_at_page(revision, "", 0, 50).unwrap();
+    assert!(catalog.has_omitted_names);
+    for (name, key) in [("Head", "group:head"), ("Solo", "group:solo")] {
+        let matches: Vec<_> = catalog.rows.iter().filter(|row| row.name == name)
+            .map(|row| row.key.as_str()).collect();
+        assert_eq!(matches, [key]);
+    }
+
+    let range = query("2024-02-29", "2024-02-29");
+    let head = scope(&store, revision, "day", &["A"], Some(&["Head"]));
+    let summary = store.analysis_range_summary(revision, &head, &range).unwrap();
+    assert_eq!(summary.available_total.amount, Some(70.));
+    let children = store.unified_group_children_at_page(revision, "group:child", 0, 50).unwrap();
+    assert!(children.rows.iter().any(|row| row.key == "work:Head"));
+    let work = store.analysis_work_timeline(revision, &head, &range, None, "work:Head").unwrap();
+    assert_eq!(work.points[0].available_total.amount, Some(20.));
+
+    let solo = scope(&store, revision, "day", &["A"], Some(&["Solo"]));
+    let summary = store.analysis_range_summary(revision, &solo, &range).unwrap();
+    assert_eq!(summary.available_total.amount, Some(10.));
+    assert!(store.analysis_work_timeline(revision, &solo, &range, None, "work:Solo").is_err());
+}

@@ -15,7 +15,8 @@ const duration=(lo,hi)=>{const n=size(lo,hi);return n+' '+({one:'день',few:'
 const today=()=>{const d=new Date();return C.dateAt(d.getFullYear(),d.getMonth(),d.getDate());};
 let initialized=false,scope=null,revision=null,snapshot=null,latestDay=null,lastTicket=0,latestType=null,userDates=false,syncFields=null;
 let workspaceKey=null;
-let orgs=new Set(),orgNames=[],allOrgs=true,allNames=true,nameRows=new Map(),nameCount=0,metric='amount';
+let orgs=new Set(),orgNames=[],allOrgs=true,allNames=true,nameRows=new Map(),nameCount=0,metric='amount',workCounts=null;
+let workCountTicket=0,workCountNotice='';
 let kind='week',source='daily',mode='range',rule='prev',custom=null,customEnd=null,from,to;
 let importedWeekday=1,boundsPending=false,boundsFailed=false,nameMetadata=null;
 const detailPanels=['chartPanel','structurePanel','comparison','usualPanel','regularityPanel','overviewPanel','changes'];
@@ -136,7 +137,10 @@ function paint(lo,hi){
  for(const opt of one('[data-compare]').options)opt.disabled=!allowRule(opt.value);
  one('[data-measure]').value=metric;one('#referenceSource').value=source;one('#referenceSource option[value=imported]').disabled=kind==='year';
  one('[data-pick=orgs]').textContent=orgs.size===1?[...orgs][0]:allOrgs&&orgs.size?'Все ('+orgs.size+')':'Выбрано '+orgs.size+' из '+orgNames.length;
- one('[data-pick=works]').textContent=allNames?'Все работы и группы':'Выбрано '+nameRows.size+' из '+nameCount;
+ const workFilter=one('[data-pick=works]');
+ workFilter.textContent=workCountNotice||(workCounts
+  ? window.analysisSummary.workSelectionText({selected:allNames?workCounts.total:workCounts.selected,total:workCounts.total})
+  : allNames?'Все работы и группы':'Выбрано '+nameRows.size+' из '+nameCount);
  one('.filter-summary').textContent=caption+', база '+interval(lo,hi)+(allOrgs?'':', подразделений '+orgs.size+' из '+orgNames.length);
  const note=one('.period-length-note');note.hidden=size(lo,hi)===size(from,to);note.textContent=note.hidden?'':'Интервалы разной длительности. Сравниваются итоги за каждый интервал.';
  many('.quick-actions button').forEach((b,i)=>{const p=quick(i);b.disabled=!p||!snapshot||boundsPending||boundsFailed;b.setAttribute('aria-pressed',String(Boolean(p&&source==='daily'&&p.kind===kind&&p.from===from&&p.to===to)));if(p)b.title=interval(p.from,p.to);else b.removeAttribute('title');});
@@ -184,7 +188,27 @@ function openImportedPeriod(range){
  }
  return boundsPending&&snapshot?readBounds(snapshot):publish();
 }
-function setWorks(everything,selection,appliedInOverview=false){allNames=everything;nameRows=new Map(selection);return publish(appliedInOverview);}
+function refreshWorkCount(){
+ const mine=++workCountTicket,opened=snapshot;
+ workCountNotice='';
+ if(!workCounts||allNames||!nameRows.size){
+  if(workCounts)workCounts={...workCounts,selected:allNames?workCounts.total:0};
+  return;
+ }
+ const label=one('[data-pick=works]'),keys=[...nameRows.keys()];
+ label.textContent=workCountNotice='Подсчёт работ…';
+ Promise.resolve().then(()=>UI.api.unifiedSelectedNameOptions(opened.revision,keys)).then(page=>{
+  if(mine!==workCountTicket||opened!==snapshot)return;
+  if(!page.work_counts)throw Error('Не удалось подсчитать работы');
+  workCounts=page.work_counts;
+  workCountNotice='';
+  label.textContent=window.analysisSummary.workSelectionText(workCounts);
+ }).catch(()=>{if(mine===workCountTicket&&opened===snapshot)label.textContent=workCountNotice='Не удалось подсчитать работы';});
+}
+function setWorks(everything,selection,appliedInOverview=false){
+ allNames=everything;nameRows=new Map(selection);refreshWorkCount();
+ return publish(appliedInOverview);
+}
 function setOrganizations(values){orgs=new Set(values.filter(x=>orgNames.includes(x)));allOrgs=orgs.size===orgNames.length;return publish();}
 function close(box){box.closest('dialog')?.close();}
 function listShell(title,anchor,described){
@@ -223,7 +247,17 @@ function chooseWorks(anchor){
  const opened=snapshot,selected=new Map(nameRows);
  let everything=allNames,rows=[],index=0,ticket=0,matchingTotal=0,hasUnselectable=false;
  const limit=50;
- const update=()=>{count.textContent=everything?'Выбраны все работы и группы':'Выбрано '+selected.size+' из '+nameCount;};
+ let countTicket=0;
+ const update=()=>{
+  const mine=++countTicket;
+  if(!workCounts){count.textContent=everything?'Выбраны все работы и группы':'Выбрано '+selected.size+' из '+nameCount;return;}
+  const format=window.analysisSummary.workSelectionText;
+  if(everything||!selected.size){count.textContent=format({selected:everything?workCounts.total:0,total:workCounts.total});return;}
+  count.textContent='Подсчёт работ…';
+  UI.api.unifiedSelectedNameOptions(opened.revision,[...selected.keys()]).then(page=>{
+   if(mine===countTicket&&box.isConnected&&opened===snapshot)count.textContent=format(page.work_counts);
+  }).catch(()=>{if(mine===countTicket&&box.isConnected&&opened===snapshot)count.textContent='Не удалось подсчитать работы';});
+ };
  const all=button('Выбрать все',()=>{
   if(!query.value.trim()){everything=true;selected.clear();}
   else if(!everything){const added=new Map(selected);for(const row of rows)added.set(row.key,row);if(added.size>limit){UI.notice('Можно выбрать до 50 отдельных работ или все работы.',true);return;}for(const row of rows)selected.set(row.key,row);}
@@ -239,7 +273,17 @@ function chooseWorks(anchor){
   if(hasUnselectable)list.append(make('p',everything
    ?'В общий итог входят также работы и группы с совпадающими или слишком длинными названиями. Для индивидуального выбора нажмите «Снять выбор».'
    :'Для индивидуального выбора доступны только работы и группы с уникальными названиями допустимой длины.'));
-  const explicitOnly=search||nameCount>limit||hasUnselectable;
+  const explicitOnly=search||nameCount>limit||hasUnselectable||Boolean(workCounts);
+  const checkboxes=[];
+  const updateCheckboxes=()=>{
+   for(const {row,input} of checkboxes){
+    const inherited=row.ancestor_keys?.some(key=>selected.has(key));
+    input.checked=everything||inherited||selected.has(row.key);
+    input.disabled=Boolean(inherited||(everything&&explicitOnly));
+    if(inherited)input.setAttribute('aria-description','Входит в выбранную группу');
+    else input.removeAttribute('aria-description');
+   }
+  };
   for(const row of rows){
    const group=row.kind==='group';
    const input=checkbox(list,row.name+(group?' (группа)':''),everything||selected.has(row.key),field=>{
@@ -248,10 +292,11 @@ function chooseWorks(anchor){
      everything=false;for(const item of rows)selected.set(item.key,item);
     }
     if(field.checked&&selected.size===limit&&!selected.has(row.key)){field.checked=false;UI.notice('Можно выбрать до 50 отдельных работ или все работы.',true);return;}
-    if(field.checked)selected.set(row.key,row);else selected.delete(row.key);update();
+    if(field.checked)selected.set(row.key,row);else selected.delete(row.key);updateCheckboxes();update();
    },group?'work-group-option':null);
-   if(everything&&explicitOnly)input.disabled=true;
+   checkboxes.push({row,input});
   }
+  updateCheckboxes();
   if(!rows.length)list.append(make('p',search?'Совпадений нет.':'Нет позиций для индивидуального выбора.'));
   window.sqlRowScroll.attach(list,{index,size:limit,count:rows.length,total:matchingTotal,footer:pages,label:'Страницы списка работ',go:i=>{
    if(!box.isConnected||opened!==snapshot)return false;
@@ -286,6 +331,7 @@ async function readBounds(snap){
   const [last,selected,names]=await Promise.all([daily,reportType==='day'?daily:UI.api.unifiedPeriodOptions(snap.revision,reportType,null,null,1),metadata]);
   if(mine!==lastTicket||UI.revision!==snap.revision)return;
   latestDay=last.max;latestType=selected.max;nameCount=names.total_rows;
+  workCounts=names.work_counts||null;workCountNotice='';
   if(selectedKeys.length){
    const available=new Map(names.rows.map(row=>[row.key,row]));
    // Preserve changes the user made while this metadata read was in flight.
@@ -293,6 +339,7 @@ async function readBounds(snap){
     if(available.has(key))nameRows.set(key,available.get(key));else nameRows.delete(key);
    }
   }
+  if(selection!==JSON.stringify(allNames?[]:[...nameRows.keys()]))refreshWorkCount();
   if(!userDates){
    if(source==='imported'&&kind==='week')importedWeekday=latestType?C.dateOf(latestType).getUTCDay():1;
    dates(latestType||today());
@@ -317,7 +364,7 @@ function setBoundsPending(busy){
  }
 }
 function configure(snap){
- ++lastTicket;nameMetadata=null;boundsFailed=false;
+ ++lastTicket;++workCountTicket;nameMetadata=null;workCounts=null;workCountNotice='';boundsFailed=false;
  if(!snap){snapshot=null;revision=null;scope=null;setBoundsPending(false);window.referenceResults.refresh(null);return;}
  // A new shared generation can keep the same catalog. A different database can
  // reuse a group key for unrelated work even when the numeric revisions match.
@@ -332,7 +379,7 @@ function configure(snap){
 function reset(){
  window.referenceResults.resetSelection?.();
  source='daily';kind='week';mode='range';rule='prev';metric='amount';custom=null;customEnd=null;userDates=false;
- allNames=true;nameRows.clear();orgs=new Set(orgNames);allOrgs=true;
+ allNames=true;nameRows.clear();refreshWorkCount();orgs=new Set(orgNames);allOrgs=true;
  dates(latestDay||today());return boundsPending&&snapshot?readBounds(snapshot):publish();
 }
 function setPeriodSelection(value){

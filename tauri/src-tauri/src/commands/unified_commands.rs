@@ -46,6 +46,7 @@ pub async fn unified_name_options(
     page_index: Option<usize>,
     selected_keys: Option<Vec<String>>,
     all_series: Option<bool>,
+    parent_key: Option<String>,
     workspace_token: Option<String>,
 ) -> Result<UnifiedNameOptions, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -55,6 +56,13 @@ pub async fn unified_name_options(
             crate::storage::shared_runtime::Access::Read,
             |routed_storage| {
                 let store = routed_storage;
+                if let Some(parent) = &parent_key {
+                    let index = page_index.ok_or("Group details require a page index")?;
+                    if !search.is_empty() || after.is_some() || selected_keys.is_some() || all_series == Some(true) {
+                        return Err("Group details cannot be combined with a name filter".into());
+                    }
+                    return store.unified_group_children_at_page(revision, parent, index, limit);
+                }
                 if all_series == Some(true) {
                     let index = page_index.ok_or("Work series requires a page index")?;
                     if !search.is_empty() || after.is_some() || selected_keys.is_some() {

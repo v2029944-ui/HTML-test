@@ -30,7 +30,7 @@ function mount(){
  const UI={api,$:id=>nodes[id],el:(tag,text,cls)=>Object.assign(new Node(tag,text),{className:cls}),revision:null,state:{reports:[],settings:{orgNames:['А','Б','В','Г']}},notice:(...x)=>messages.push(x),onSnapshot:fn=>snapshots.push(fn),onView:(view,fn)=>views[view]=fn,onScope:fn=>scopes.push(fn),setPeriodInput:(id,kind,date)=>{nodes[id].value=date;},range:(kind,from,to,source)=>({displayType:kind,from,to,source}),scope:{revision:7,displayType:'day',source:'daily',organizations:['А'],selectedNames:['Only selected'],from:'2024-01-01',to:'2024-01-31'},request:scope=>scope,refresh:async()=>snapshot(8)};
  const sharedWorkspace={state:{mode:'personal',workspace_token:'personal',available:true,pending:false}};
  const window={sharedWorkspace,sqlRowScroll:require('./scroll-window-fixture.cjs'),unifiedUI:UI,confirm:text=>{questions.push(text);return confirm;},prompt:(...args)=>{questions.push(args[0]);return prompt;},crypto:{randomUUID:()=> 'new-id'}};
- function snapshot(revision,reports=12){UI.revision=revision;UI.snapshot={revision,reports};for(const fn of snapshots)fn(UI.snapshot);}
+ function snapshot(revision,reports=12,work_group_hierarchy=false,groups){UI.revision=revision;UI.snapshot={revision,reports,work_group_hierarchy,groups};for(const fn of snapshots)fn(UI.snapshot);}
  vm.runInNewContext(fs.readFileSync(path.resolve(__dirname,'../unified-management.js'),'utf8'),{window,document:{body}});window.unifiedManagement.init();window.unifiedManagement.init();
  return {nodes,body,backupPanel,UI,sharedWorkspace,api,reads,writes,messages,questions,pickers,snapshot,views,scopes,setConfirm:v=>confirm=v,setPrompt:v=>prompt=v,setBackup:v=>backup=v,setSource:v=>source=v,setHandler:fn=>handler=fn};
 }
@@ -373,4 +373,81 @@ test('clear all counts the entire workspace and stops when backup selection is c
  m.setBackup('/before.sqlite3');
  await actionByText(m.body,'Очистить список групп').fire();
  assert.deepEqual(m.writes,[[7,null,1,'/before.sqlite3']]);
+});
+
+test('work group tree requests nested pages and offers explicit choices for descendants',async()=>{
+ const m=mount();
+ m.setHandler((revision,kind,query,parent,offset)=>{
+  const rows=kind==='group_tree'?(parent?[{handle:'child',id:'child-id',name:'Подгруппа',children:0,members:0,group:'root'}]:
+   [{handle:'root',id:'root-id',name:'Родитель',children:1,members:0}]):[];
+  return {rows,total:rows.length,hierarchy:true};
+ });
+ m.api.unifiedGroupTreeEdit=async(...args)=>{m.writes.push(JSON.parse(JSON.stringify(args)));return {revision:8};};
+ m.snapshot(7,12,true);m.views.groups();await tick();
+ const parent=m.nodes.groupList.children[0];
+ parent.open=true;await parent.fire('toggle');await tick();
+ assert.ok(m.reads.some(args=>args[1]==='group_tree'&&args[3]==='root'));
+ let pending=actionByText(parent,'Удалить группу').fire();
+ const dialog=m.body.querySelectorAll('dialog').find(d=>d.id==='groupTreeDeletion');
+ await actionByText(dialog,'Отмена').fire();await pending;
+ assert.equal(m.writes.length,0);
+ pending=actionByText(parent,'Удалить группу').fire();
+ const next=m.body.querySelectorAll('dialog').find(d=>d.id==='groupTreeDeletion');
+ await actionByText(next,'Перенести подгруппы на уровень выше').fire();await pending;
+ assert.deepEqual(m.writes,[[7,{kind:'delete',group:'root',delete_descendants:false,confirmed:true}]]);
+});
+
+test('tree bulk picking includes expanded children and uses the whole tree for clear-all',async()=>{
+ const m=mount(),root={handle:'r',id:'root',name:'Родитель',members:0,children:1};
+ const child={handle:'c',id:'child',name:'Подгруппа',members:0,children:0,group:'r'};
+ m.setHandler((revision,kind,query,parent,offset,limit)=>{
+  const all=kind==='group_tree'?(parent?[child]:[root]):kind==='groups'?[root,child]:[];
+  return {rows:all.slice(offset,offset+limit),total:all.length,hierarchy:kind==='group_tree'};
+ });
+ m.api.unifiedGroupsDelete=async(...args)=>{m.writes.push(JSON.parse(JSON.stringify(args)));return {revision:8};};
+ m.snapshot(7,12,true,2);m.views.groups();await tick();
+ const tools=m.nodes.groupList.parentNode;
+ await actionByText(tools,'Выбрать группы').fire();
+ await actionByText(tools,'Выбрать на странице').fire();
+ assert.match(tools.querySelectorAll('span').find(node=>node.role==='status').textContent,/групп: 1/);
+ const displayed=m.nodes.groupList.children[0];
+ displayed.open=true;await displayed.fire('toggle');await tick();
+ await actionByText(tools,'Выбрать на странице').fire();
+ assert.match(tools.querySelectorAll('span').find(node=>node.role==='status').textContent,/групп: 2/);
+ await actionByText(tools,'Снять выделение').fire();
+ await actionByText(tools,'Выбрать все группы (2)').fire();
+ m.setBackup('/before.sqlite3');
+ await actionByText(tools,'Удалить выбранные').fire();
+ assert.deepEqual(m.writes,[[7,['r','c'],2,'/before.sqlite3']]);
+});
+
+test('removing the sole root subtree requires a backup destination before IPC write',async()=>{
+ const m=mount(),root={handle:'r',id:'root',name:'Родитель',members:0,children:1};
+ m.setHandler((revision,kind,query,parent)=>({rows:kind==='group_tree'&&!parent?[root]:[],total:kind==='group_tree'&&!parent?1:0,hierarchy:true}));
+ m.api.unifiedGroupTreeEdit=async(...args)=>{m.writes.push(JSON.parse(JSON.stringify(args)));return {revision:8};};
+ m.snapshot(7,12,true,2);m.views.groups();await tick();
+ const remove=actionByText(m.nodes.groupList,'Удалить группу');
+ async function attempt(){
+  const pending=remove.fire();
+  await actionByText(m.body.querySelectorAll('dialog').at(-1),'Удалить группу и подгруппы').fire();
+  await pending;
+ }
+ await attempt();
+ assert.equal(m.writes.length,0);
+ assert.match(m.questions.at(-1),/будет создана проверенная резервная копия/i);
+ m.setBackup('/before.sqlite3');
+ await attempt();
+ assert.deepEqual(m.writes,[[7,{kind:'delete',group:'r',delete_descendants:true,confirmed:true,backup:'/before.sqlite3'}]]);
+});
+
+test('import replacement requires a chosen SQLite backup when the preview requests it', async()=>{
+ const m=mount();m.snapshot(7);m.setSource('/new-groups.json');
+ m.api.unifiedGroupsPreview=async()=>({hash:'hash',groups:3,works:5,requires_backup:true});
+ await m.nodes.importGroups.fire();
+ assert.match(m.questions.at(-1),/проверенная копия SQLite/);
+ assert.deepEqual(m.pickers,['backup']);
+ assert.equal(m.writes.length,0);
+ m.setBackup('/before.sqlite3');
+ await m.nodes.importGroups.fire();
+ assert.deepEqual(m.writes,[['import',7,'/new-groups.json','hash',true,'/before.sqlite3']]);
 });
