@@ -82,7 +82,6 @@
 #refNative #regularityResults .table th:first-child {width:29%}
 #refNative #regularityResults .table th:is(:nth-child(7),:nth-child(8)) {width:9%}
 #refNative #regularityResults .table th:last-child {width:15%}
-#refNative #regularityResults .table :is(th:first-child,tbody td:first-child) {text-align:start}
 #refNative #regularityResults .table tbody td:not(:first-child,:last-child) {white-space:nowrap}
 #refNative .calendar-day-heading h4 {scroll-margin-top:calc(var(--sticky-filter-height,48px) + 16px)}
 #refNative #overviewKpis > .kpi {display:grid;grid-row:span 3;grid-template-rows:subgrid;row-gap:4px;align-content:start}

@@ -377,12 +377,14 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                 if not page.locator('#groupAuditPanel').evaluate('(node) => node.open'):
                     page.locator('#groupAuditPanel > summary').click()
                 if page.evaluate('Boolean(window.unifiedUI.scope)'):
-                    # A completed pager avoids reading the previous range's coverage
-                    # while the newly opened audit is still loading.
-                    expect(page.locator('[data-sql-pager="groupAuditResults"] [data-page-range]')).to_be_visible(timeout=TIMEOUT)
-                    expect(page.locator('#groupAuditCoverage')).to_contain_text('Найдено:', timeout=TIMEOUT)
-                    audit_total = int(page.locator('#groupAuditCoverage').inner_text()
-                                      .split('Найдено:', 1)[1].split('·', 1)[0].strip())
+                    coverage = page.locator('#groupAuditCoverage')
+                    expect(coverage).to_contain_text('Найдено:', timeout=TIMEOUT)
+                    audit_total = int(coverage.inner_text().split('Найдено:', 1)[1].split('·', 1)[0].strip())
+                    pager = page.locator('[data-sql-pager="groupAuditResults"] [data-page-range]')
+                    if audit_total:
+                        expect(pager).to_be_visible(timeout=TIMEOUT)
+                    else:
+                        expect(pager).to_have_count(0)
                     export_available('#groupAuditExportCsv', audit_total > 0, '04-group-audit-csv-availability')
                 else:
                     expect(page.locator('#groupAuditCoverage')).to_have_text(
