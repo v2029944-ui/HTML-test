@@ -80,7 +80,7 @@ test('summary keeps quantities and reports unavailable amounts in complete perio
  f.api.nativeAnalysisOrganizations=async()=>[{org:'A',complete:true,missing:0,total}];
  f.window.referenceResults.init();
  await f.window.referenceResults.refresh({...f.scope,metric:'count'});
- assert.deepEqual(f.s1.querySelectorAll('.metric-value').map(n=>n.textContent),['—','17,000','—']);
+ assert.deepEqual(f.s1.querySelectorAll('.metric-value').map(n=>n.textContent),['—','17,000','Нет сопоставимых строк']);
  assert.match(f.s1.querySelector('.quality-notice').textContent,/сумма не указана.*Количество учтено/);
  await f.s1.querySelector('.metric-sample').click();
  assert.match(f.document.querySelector('#sheet').textContent,/A: полные отчёты за оба интервала/);
@@ -182,7 +182,7 @@ test('change table has one read-only metric and headings follow the active categ
  assert.equal(f.s2.querySelector('.changes-heading h2').textContent,'Значимые изменения');
  await f.s2.querySelectorAll('.kpi')[0].click();assert.equal(f.s2.querySelector('.changes-heading h2').textContent,'Рост');
  await f.s2.querySelectorAll('.kpi')[2].click();assert.equal(f.s2.querySelector('.changes-heading h2').textContent,'Новые работы');
- await f.s2.querySelectorAll('.kpi')[3].click();assert.equal(f.s2.querySelector('.changes-heading h2').textContent,'Без выполнений');
+ await f.s2.querySelectorAll('.kpi')[3].click();assert.equal(f.s2.querySelector('.changes-heading h2').textContent,'Только в базовом периоде');
  f.scope.metric='count';await f.window.referenceResults.refresh(f.scope);assert.equal(f.s2.querySelector('[data-current-change-metric]').textContent,'Количество / объём');
 });
 
@@ -358,6 +358,7 @@ test('missing baseline explains an unavailable comparison while preserving an ob
  f.window.referenceResults.init();
  await f.window.referenceResults.refresh(f.scope);
  await f.window.referenceResults.setScreen('s2');
+ assert.deepEqual(f.s2.querySelectorAll('[data-count]').map(n=>n.textContent),['—','—','—','—']);
  assert.equal(f.s1.querySelector('.metric-value').textContent,'0,00');
  for(const screen of [f.s1,f.s2]){
   const notice=screen.querySelector('.quality-notice').textContent;
@@ -389,6 +390,6 @@ test('summary displays shares of known amounts and average for covered values',a
  f.window.referenceResults.init();
  await f.window.referenceResults.refresh(f.scope);
  const rows=f.s1.querySelectorAll('tbody tr');
- assert.deepEqual(rows.map(row=>row.children.slice(3).map(cell=>cell.textContent)),[['60,0%','15,00'],['40,0%','—']]);
+ assert.deepEqual(rows.map(row=>row.children.slice(3).map(cell=>cell.textContent)),[['60,0%','15,00'],['40,0%','Нет сопоставимых строк']]);
  assert.match(f.s1.querySelector('.quality-notice').textContent,/Доли рассчитаны по заполненным суммам/);
 });

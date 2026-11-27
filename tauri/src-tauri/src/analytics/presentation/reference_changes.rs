@@ -257,24 +257,21 @@ fn comparison_csv_context(
         let reason=match (*before,*after) {(true,true)=>"полные отчёты за оба интервала",(false,false)=>"неполные базовый и анализируемый интервалы",(false,true)=>"неполный базовый интервал",(true,false)=>"неполный анализируемый интервал"};
         csv_record(writer,&[Text("Состав сравнения"),Text(org),Text(reason)])?;
     }
-    let observed = |slot| -> Result<(AnalysisTotals, Option<String>), String> {
-        let (count, amount, known_amount, paired_count, source_work) = c.query_row("SELECT coalesce(sum(count),0.0),
+    let observed = |slot| -> Result<AnalysisTotals, String> {
+        let (count, amount, known_amount, paired_count) = c.query_row("SELECT coalesce(sum(count),0.0),
             CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,
-            SUM(known_amount), CASE WHEN MIN(name) FILTER (WHERE paired_count IS NOT NULL)=MAX(name) FILTER (WHERE paired_count IS NOT NULL) THEN SUM(paired_count) END,
-            CASE WHEN MIN(name) FILTER (WHERE paired_count IS NOT NULL)=MAX(name) FILTER (WHERE paired_count IS NOT NULL) THEN MIN(name) FILTER (WHERE paired_count IS NOT NULL) END FROM ref_values WHERE slot=?1", [slot],
-            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).map_err(err)?;
-        let available = observed_reports(c, slot, None)?;
-        Ok((paired_observed_totals(count, amount, known_amount, paired_count, available)?, source_work))
+            SUM(known_amount), SUM(paired_count) FROM ref_values WHERE slot=?1", [slot],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).map_err(err)?;
+        paired_observed_totals(count, amount, known_amount, paired_count, observed_reports(c, slot, None)?)
     };
-    let (before, before_work) = observed(1)?;
-    let (after, after_work) = observed(2)?;
-    let same_work = before_work.as_ref().zip(after_work.as_ref()).is_some_and(|(b, a)| b == a);
-    let average_pair = comparable_averages(&before, &after, same_work);
+    let before = observed(1)?;
+    let after = observed(2)?;
+    let average_pair = before.average.zip(after.average);
     csv_record(writer,&[Text("Сравнение по доступным отчётам · все работы")])?;
     csv_record(writer,&[Text("Показатель"),Text("Было"),Text("Стало"),Text("Изменение"),Text("Изменение, %")])?;
     for (label,before,after,pair) in [("Сумма",before.amount,after.amount,before.amount.zip(after.amount)),
         ("Количество / объём",before.count,after.count,before.count.zip(after.count)),
-        ("Сумма / количество (объём)",before.average,after.average,average_pair)] {
+        ("Средняя сумма на единицу",before.average,after.average,average_pair)] {
         let change=pair.map(|(before,after)|measure(before,after,0.,0.)).transpose()?;
         csv_record(writer,&[Text(label),Number(before),Number(after),Number(change.as_ref().map(|value|value.delta)),Number(change.and_then(|value|value.percent))])?;
     }
@@ -414,10 +411,10 @@ impl Analytics<'_> {
             export(destination,|writer| {
                 comparison_csv_context(writer,&tx,q,scope,"Сводка доступных данных")?;
                 csv_record(writer,&[Cell::Text("Наблюдаемые итоги анализируемого интервала"),Cell::Text("Все выбранные подразделения"),Cell::Text("Доли от суммы заполненных ячеек")])?;
-                csv_record(writer,&[Cell::Text("Подразделение"),Cell::Text("Сумма"),Cell::Text("Количество / объём"),Cell::Text("Доля суммы, %"),Cell::Text("Сумма / количество (объём)"),Cell::Text("Состояние")])?;
+                csv_record(writer,&[Cell::Text("Подразделение"),Cell::Text("Сумма"),Cell::Text("Количество / объём"),Cell::Text("Доля суммы, %"),Cell::Text("Средняя сумма на единицу"),Cell::Text("Состояние")])?;
                 let mut statement=tx.prepare("WITH observed AS (
                     SELECT v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,CASE WHEN COUNT(x.row_index)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(x.row_index) THEN SUM(x.amount) END amount,SUM(x.amount) known_amount,
-                           CASE WHEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL)=MAX(x.work) FILTER (WHERE x.amount IS NOT NULL) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END paired_count
+                           SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) paired_count
                     FROM an_valid v JOIN an_periods p ON p.slot=2 AND p.start=v.start
                     LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY v.org)
                     SELECT f.item,coalesce(o.reports,0),o.count,o.amount,
