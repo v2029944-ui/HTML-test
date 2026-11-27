@@ -974,9 +974,6 @@
 body:has(#refRoot)>footer {display:none}
 /* The folded bar stays pinned. Opening it after scrolling must not change
    the height of the report above the current reading position. */
-#reportShell:has(.filter-fold[open]):not([data-floating]):not(:has(.filter-content:focus-within)) {
- top:calc(-1 * var(--filter-scroll-away,0px));
-}
 #reportShell[data-floating] {height:var(--filter-slot);pointer-events:none;background:transparent!important}
 #reportShell[data-floating]>.report-filter {position:absolute;inset:0 0 auto;pointer-events:auto}
 #reportShell .filter-content {
@@ -984,9 +981,6 @@ body:has(#refRoot)>footer {display:none}
  overflow:auto;overscroll-behavior:contain;scroll-padding-block:8px;
 }
 @media screen and (max-height:700px) {
- #refRoot:not([data-filter-sidebar]) #reportShell:not([data-floating]) .filter-content {
-  max-height:none;overflow:visible;
- }
  #refRoot:not([data-filter-sidebar]) #reportShell[data-floating] .filter-content {
   overflow-y:scroll;scrollbar-gutter:stable;scrollbar-color:var(--scroll-thumb) var(--subtle);
  }
@@ -1172,6 +1166,8 @@ body:has(#refRoot)>footer {display:none}
 #groupWorkspace .group-removal {align-items:center}
 #groupWorkspace .group-selection {margin-inline-start:.5rem; cursor:pointer}
 #groupWorkspace .group-result-counts {display:flex;flex-wrap:wrap;gap:0 1rem}
+#groupWorkspace .group-extra-actions:not([hidden]) {display:flex;flex-wrap:wrap;gap:6px;flex-basis:100%}
+
 #groupWorkspace .group-assign {justify-self:end;width:auto;min-height:34px;padding:6px 10px}
 #groupPickerDialog {
  width:min(28rem,calc(100vw - 2rem));max-height:calc(100vh - 2rem);
@@ -1301,4 +1297,8 @@ body:has(#refRoot)>footer {display:none}
 }
 .chart-group-toggle[aria-expanded="true"]::after {content:'▾'}
 
-#groupWorkspace .group-extra-actions:not([hidden]) {display:flex;flex-wrap:wrap;gap:6px;flex-basis:100%}
+#s1 .data-card table :is(th,td):nth-child(n+2),
+#s2 .changes-table :is(th,td):nth-child(n+3) {text-align:right!important;font-variant-numeric:tabular-nums}
+#s1 .data-card .bar {margin-inline-start:auto}
+#s1 .insight-card header {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+#s2 .leaders {align-self:flex-start;max-width:100%}

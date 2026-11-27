@@ -377,19 +377,16 @@ test('bulk selection spans search pages, and deletion confirms the active worksp
  assert.deepEqual(m.writes,[['groups',7,groups.slice(0,52).map(item=>item.handle),52,null]]);
 });
 
-test('clear all counts the entire workspace and stops when backup selection is cancelled', async()=>{
+test('clear all counts the entire workspace and skips the backup picker after confirmation', async()=>{
  const m=mount();
  m.api.unifiedGroupsDelete=async(...args)=>{m.writes.push(args);return {revision:8};};
  m.snapshot(7);m.views.groups();await tick();
  m.nodes.groupSearch.value='поиск';await m.nodes.groupSearch.fire('input');
  await actionByText(m.body,'Очистить список групп').fire();
- assert.equal(m.pickers.length,1);
- assert.equal(m.writes.length,0);
- assert.equal(m.questions.length,2);
- assert.match(m.questions[0],/Личная база.*Удаляемых групп: 1/s);
- m.setBackup('/before.sqlite3');
- await actionByText(m.body,'Очистить список групп').fire();
- assert.deepEqual(m.writes,[[7,null,1,'/before.sqlite3']]);
+ assert.equal(m.pickers.length,0);
+ assert.equal(m.questions.length,1);
+ assert.match(m.questions[0],/Личная база.*Очистить весь список групп.*Удаляемых групп: 1/s);
+ assert.deepEqual(m.writes,[[7,null,1,null]]);
 });
 
 test('work group tree requests nested pages and offers explicit choices for descendants',async()=>{
@@ -433,12 +430,11 @@ test('tree bulk picking includes expanded children and uses the whole tree for c
  assert.match(tools.querySelectorAll('span').find(node=>node.role==='status').textContent,/групп: 2/);
  await actionByText(tools,'Снять выделение').fire();
  await actionByText(tools,'Выбрать все группы (2)').fire();
- m.setBackup('/before.sqlite3');
  await actionByText(tools,'Удалить выбранные').fire();
- assert.deepEqual(m.writes,[[7,['r','c'],2,'/before.sqlite3']]);
+ assert.deepEqual(m.writes,[[7,['r','c'],2,null]]);
 });
 
-test('removing the sole root subtree requires a backup destination before IPC write',async()=>{
+test('removing the sole root subtree uses the confirmed choice without opening a backup picker',async()=>{
  const m=mount(),root={handle:'r',id:'root',name:'Родитель',members:0,children:1};
  m.setHandler((revision,kind,query,parent)=>({rows:kind==='group_tree'&&!parent?[root]:[],total:kind==='group_tree'&&!parent?1:0,hierarchy:true}));
  m.api.unifiedGroupTreeEdit=async(...args)=>{m.writes.push(JSON.parse(JSON.stringify(args)));return {revision:8};};
@@ -450,11 +446,8 @@ test('removing the sole root subtree requires a backup destination before IPC wr
   await pending;
  }
  await attempt();
- assert.equal(m.writes.length,0);
- assert.match(m.questions.at(-1),/будет создана проверенная резервная копия/i);
- m.setBackup('/before.sqlite3');
- await attempt();
- assert.deepEqual(m.writes,[[7,{kind:'delete',group:'r',delete_descendants:true,confirmed:true,backup:'/before.sqlite3'}]]);
+ assert.equal(m.pickers.length,0);
+ assert.deepEqual(m.writes,[[7,{kind:'delete',group:'r',delete_descendants:true,confirmed:true}]]);
 });
 
 test('import replacement requires a chosen SQLite backup when the preview requests it', async()=>{

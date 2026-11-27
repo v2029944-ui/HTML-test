@@ -175,7 +175,7 @@ test('quantity and average labels never claim fractional volume is a count of jo
  const f=fixture();await f.bootstrap();
  const kpis=f.nodes.get('overviewKpis').textContent;
  assert.match(kpis,/Количество \/ объём/);
- assert.match(kpis,/Сумма \/ количество \(объём\)/);
+ assert.match(kpis,/Средняя сумма на единицу/);
  assert.doesNotMatch(kpis,/Количество выполненных работ|Средняя сумма на работу/);
  assert.match(f.nodes.get('overviewInsights').textContent,/Дробное количество может означать объём/);
  f.nodes.get('printSummary').dispatch('click');
