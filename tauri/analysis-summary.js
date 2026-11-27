@@ -1,7 +1,7 @@
 /* Shared presentation and in-flight reads for the shell and the detailed overview. */
 (function () {
   'use strict';
-  const titles = Object.freeze({amount:'Сумма', count:'Количество / объём', average:'Сумма / количество (объём)'});
+  const titles = Object.freeze({amount:'Сумма', count:'Количество / объём', average:'Средняя сумма на единицу'});
   let current = null;
   function read(api, scope) {
     const {revision,type,source,displayType,from,to,baseFrom,baseTo,organizations} = scope;

@@ -54,7 +54,7 @@
 
 ```powershell
 npm install --prefix tauri
-node --test tauri/tests/*.test.cjs tests/*.cjs
+node --test tauri/tests/*.test.cjs tests/test_*.cjs
 npm --prefix tauri run prepare:frontend
 npm --prefix tauri run icons
 cargo test --manifest-path tauri/src-tauri/Cargo.toml

@@ -21,7 +21,7 @@ fn measure_label(m: &str) -> Result<&'static str, String> {
     match m {
         "count" => Ok("Количество / объём"),
         "amount" => Ok("Сумма"),
-        "average" => Ok("Сумма / количество (объём)"),
+        "average" => Ok("Средняя сумма на единицу"),
         _ => Err("Unknown metric".into()),
     }
 }
