@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 pub struct UnifiedQualityFilter {
     pub from: Option<String>, pub to: Option<String>, pub organization: Option<String>,
     pub kind: Option<String>, pub search: Option<String>, pub source: Option<String>,
-    pub report_type: Option<String>,
+    pub report_type: Option<String>, pub report_id: Option<String>,
 }
 #[derive(Debug, Serialize)]
 pub struct UnifiedQualityPage {
@@ -21,7 +21,7 @@ pub struct UnifiedQualityPage {
 #[derive(Debug, Serialize)]
 pub struct UnifiedCalendar { pub revision: i64, pub year: i32, pub days: Vec<Value> }
 fn checked_filter(f: &UnifiedQualityFilter) -> Result<(),String> {
-    for text in [&f.from,&f.to,&f.organization,&f.kind,&f.search,&f.source,&f.report_type].into_iter().flatten() {
+    for text in [&f.from,&f.to,&f.organization,&f.kind,&f.search,&f.source,&f.report_type,&f.report_id].into_iter().flatten() {
         if text.len()>1024 || text.contains('\0') { return Err("Invalid quality filter".into()); }
     }
     for date in [&f.from,&f.to].into_iter().flatten() {
@@ -130,8 +130,8 @@ impl Storage {
         };
         let mut cursor:Option<(String,String)>=None;
         loop {
-            let headers={let mut s=c.prepare("SELECT id,period_start,period_end,source_name FROM reports r WHERE (?1 IS NULL OR period_start>=?1) AND (?2 IS NULL OR period_start<=?2) AND (?3 IS NULL OR report_type=?3) AND (?4 IS NULL OR instr(lower(COALESCE(source_name,'')),lower(?4))>0) AND (?5 IS NULL OR period_start<?5 OR (period_start=?5 AND id>?6)) ORDER BY period_start DESC,id LIMIT 50").map_err(err)?;
-                let rows=s.query_map(params![filter.from,filter.to,filter.report_type,filter.source,cursor.as_ref().map(|x|&x.0),cursor.as_ref().map(|x|&x.1)],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,Option<String>>(3)?))).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?; rows};
+            let headers={let mut s=c.prepare("SELECT id,period_start,period_end,source_name FROM reports r WHERE (?1 IS NULL OR period_start>=?1) AND (?2 IS NULL OR period_start<=?2) AND (?3 IS NULL OR report_type=?3) AND (?4 IS NULL OR instr(lower(COALESCE(source_name,'')),lower(?4))>0) AND (?5 IS NULL OR period_start<?5 OR (period_start=?5 AND id>?6)) AND (?7 IS NULL OR r.id=?7) ORDER BY period_start DESC,id LIMIT 50").map_err(err)?;
+                let rows=s.query_map(params![filter.from,filter.to,filter.report_type,filter.source,cursor.as_ref().map(|x|&x.0),cursor.as_ref().map(|x|&x.1),filter.report_id],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,Option<String>>(3)?))).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?; rows};
             if headers.is_empty(){break;}
             for (id,start,end,source) in &headers {
                 let mut page_offset=0;
@@ -141,7 +141,7 @@ impl Storage {
                     if page_offset==0 && page["invalid_entries"].as_u64().unwrap_or(0)>0 {accept(json!({"kind":"invalid","reason":format!("Сохранены замечания неподдерживаемого формата: {}. Полнота не подтверждена.",page["invalid_entries"])}),id,start,end,source,page["source_anchor"].clone())?;}
                     let source_anchor=page["source_anchor"].as_str();
                     let source_first=if page_offset==0 {if let Some(anchor)=source_anchor {
-                        !c.query_row("SELECT EXISTS(SELECT 1 FROM reports r WHERE (r.id=?1 OR EXISTS(SELECT 1 FROM report_source_diagnostic_links l WHERE l.report_id=r.id AND l.anchor_id=?1)) AND (?2 IS NULL OR r.period_start>=?2) AND (?3 IS NULL OR r.period_start<=?3) AND (?4 IS NULL OR r.report_type=?4) AND (?5 IS NULL OR instr(lower(COALESCE(r.source_name,'')),lower(?5))>0) AND (r.period_start>?6 OR (r.period_start=?6 AND r.id<?7)))",params![anchor,filter.from,filter.to,filter.report_type,filter.source,start,id],|r|r.get::<_,bool>(0)).map_err(err)?
+                        filter.report_id.is_some() || !c.query_row("SELECT EXISTS(SELECT 1 FROM reports r WHERE (r.id=?1 OR EXISTS(SELECT 1 FROM report_source_diagnostic_links l WHERE l.report_id=r.id AND l.anchor_id=?1)) AND (?2 IS NULL OR r.period_start>=?2) AND (?3 IS NULL OR r.period_start<=?3) AND (?4 IS NULL OR r.report_type=?4) AND (?5 IS NULL OR instr(lower(COALESCE(r.source_name,'')),lower(?5))>0) AND (r.period_start>?6 OR (r.period_start=?6 AND r.id<?7)))",params![anchor,filter.from,filter.to,filter.report_type,filter.source,start,id],|r|r.get::<_,bool>(0)).map_err(err)?
                     }else{false}}else{false};
                     if source_first {
                         let mut source_offset=0;
@@ -159,12 +159,13 @@ impl Storage {
                 // when its partner falls outside the period/source filters.
                 // Partner metadata also makes global text search symmetric.
                 // Conflicts come from the same SQL organization index as analytics.
-                let mut conflicts=c.prepare("SELECT b.id,o.org,CASE WHEN a.period_start=b.period_start AND a.period_end=b.period_end THEN 'duplicate' ELSE 'overlap' END,b.source_name,b.period_start,b.period_end FROM reports a JOIN analysis_reports va ON va.report_id=a.id AND va.valid=1 JOIN analysis_orgs o ON o.report_id=a.id JOIN analysis_orgs p ON p.org=o.org JOIN reports b ON b.id=p.report_id AND b.report_type=a.report_type JOIN analysis_reports vb ON vb.report_id=b.id AND vb.valid=1 WHERE a.id=?1 AND a.id<>b.id AND a.period_start<=b.period_end AND a.period_end>=b.period_start AND (a.id<b.id OR NOT ((?2 IS NULL OR b.period_start>=?2) AND (?3 IS NULL OR b.period_start<=?3) AND (?4 IS NULL OR b.report_type=?4) AND (?5 IS NULL OR instr(lower(COALESCE(b.source_name,'')),lower(?5))>0))) ORDER BY b.id,o.org").map_err(err)?;
-                let mut rows=conflicts.query(params![id,filter.from,filter.to,filter.report_type,filter.source]).map_err(err)?;
+                let mut conflicts=c.prepare("SELECT b.id,o.org,CASE WHEN a.period_start=b.period_start AND a.period_end=b.period_end THEN 'duplicate' ELSE 'overlap' END,b.source_name,b.period_start,b.period_end FROM reports a JOIN analysis_reports va ON va.report_id=a.id AND va.valid=1 JOIN analysis_orgs o ON o.report_id=a.id JOIN analysis_orgs p ON p.org=o.org JOIN reports b ON b.id=p.report_id AND b.report_type=a.report_type JOIN analysis_reports vb ON vb.report_id=b.id AND vb.valid=1 WHERE a.id=?1 AND a.id<>b.id AND a.period_start<=b.period_end AND a.period_end>=b.period_start AND (?6 IS NOT NULL OR a.id<b.id OR NOT ((?2 IS NULL OR b.period_start>=?2) AND (?3 IS NULL OR b.period_start<=?3) AND (?4 IS NULL OR b.report_type=?4) AND (?5 IS NULL OR instr(lower(COALESCE(b.source_name,'')),lower(?5))>0))) ORDER BY b.id,o.org").map_err(err)?;
+                let mut rows=conflicts.query(params![id,filter.from,filter.to,filter.report_type,filter.source,filter.report_id]).map_err(err)?;
                 while let Some(row)=rows.next().map_err(err)? {let kind:String=row.get(2).map_err(err)?;accept(json!({"kind":kind,"organization":row.get::<_,String>(1).map_err(err)?,"other_report_id":row.get::<_,String>(0).map_err(err)?,"other_source_name":row.get::<_,Option<String>>(3).map_err(err)?,"other_period_start":row.get::<_,String>(4).map_err(err)?,"other_period_end":row.get::<_,String>(5).map_err(err)?,"reason":if kind=="duplicate"{"Повторный период"}else{"Пересечение периодов"}}),id,start,end,source,Value::Null)?;}
             }
             cursor=headers.last().map(|h|(h.1.clone(),h.0.clone()));
         }
+        if filter.report_id.is_some() {return read_model::check_revision(&c,revision);}
         // Infer gaps only inside one identifiable source/organization/type span.
         // Weekly and monthly totals are never expanded into daily observations.
         let mut gaps=c.prepare("WITH RECURSIVE spans(org,kind,source,first,last) AS (SELECT o.org,r.report_type,r.source_name,MIN(r.period_start),MAX(r.period_start) FROM reports r JOIN analysis_orgs o ON o.report_id=r.id JOIN analysis_reports a ON a.report_id=r.id AND a.valid=1 WHERE r.source_name IS NOT NULL AND r.source_name<>'' AND (?1 IS NULL OR r.report_type=?1) AND (?2 IS NULL OR instr(lower(r.source_name),lower(?2))>0) GROUP BY o.org,r.report_type,r.source_name), expected(org,kind,source,d,last) AS (SELECT org,kind,source,first,last FROM spans UNION ALL SELECT org,kind,source,date(d,CASE kind WHEN 'day' THEN '+1 day' WHEN 'week' THEN '+7 days' ELSE '+1 month' END),last FROM expected WHERE d<last) SELECT org,kind,source,d FROM expected e WHERE (?3 IS NULL OR d>=?3) AND (?4 IS NULL OR d<=?4) AND NOT EXISTS(SELECT 1 FROM reports r JOIN analysis_orgs o ON o.report_id=r.id WHERE o.org=e.org AND r.report_type=e.kind AND r.period_start=e.d AND r.source_name=e.source) ORDER BY d DESC,org,kind,source").map_err(err)?;
@@ -180,7 +181,7 @@ impl Storage {
 #[cfg(test)]
 mod tests {
  use super::*;
- #[test] fn quality_filters_are_global_and_bounded(){let d=tempfile::tempdir().unwrap();let s=Storage::new(d.path().into()).unwrap();let c=s.connect().unwrap();for n in 0..65 {let id=format!("r{n:03}");let doc=json!({"issues":[{"type":"invalid","reason":format!("needle {n}"),"organization":"A"}]});c.execute("INSERT INTO reports VALUES(?1,'day','2024-01-01','2024-01-01','file.xlsx',?2)",params![id,serde_json::to_vec(&doc).unwrap()]).unwrap();}let rev=s.revision().unwrap();let f=UnifiedQualityFilter{search:Some("needle 64".into()),..Default::default()};let p=s.unified_quality_page(rev,&f,0,50).unwrap();assert_eq!(p.total,1);assert_eq!(p.issues[0]["report_id"],"r064");assert!(s.unified_quality_page(rev-1,&f,0,50).is_err());assert!(s.unified_quality_page(rev,&f,0,51).is_err());}
+ #[test] fn quality_filters_are_global_and_bounded(){let d=tempfile::tempdir().unwrap();let s=Storage::new(d.path().into()).unwrap();let c=s.connect().unwrap();for n in 0..65 {let id=format!("r{n:03}");let doc=json!({"issues":[{"type":"invalid","reason":format!("needle {n}"),"organization":"A"}]});c.execute("INSERT INTO reports VALUES(?1,'day','2024-01-01','2024-01-01','file.xlsx',?2)",params![id,serde_json::to_vec(&doc).unwrap()]).unwrap();}let rev=s.revision().unwrap();let f=UnifiedQualityFilter{search:Some("needle 64".into()),..Default::default()};let p=s.unified_quality_page(rev,&f,0,50).unwrap();assert_eq!(p.total,1);assert_eq!(p.issues[0]["report_id"],"r064");let selected=UnifiedQualityFilter{report_id:Some("r020".into()),..Default::default()};let exact=s.unified_quality_page(rev,&selected,0,50).unwrap();assert_eq!(exact.total,1);assert_eq!(exact.issues[0]["report_id"],"r020");assert!(s.unified_quality_page(rev-1,&f,0,50).is_err());assert!(s.unified_quality_page(rev,&f,0,51).is_err());}
  #[test] fn calendar_presence_does_not_claim_completeness(){let d=tempfile::tempdir().unwrap();let s=Storage::new(d.path().into()).unwrap();let c=s.connect().unwrap();c.execute("INSERT INTO reports VALUES('a','day','2024-02-29','2024-02-29',NULL,x'FF')",[]).unwrap();let v=s.unified_calendar(s.revision().unwrap(),2024).unwrap();assert_eq!(v.days.len(),1);assert!(v.days[0]["complete"].is_null());}
  #[test]
  fn calendar_keeps_legacy_mismatch_and_invalid_source_separate() {

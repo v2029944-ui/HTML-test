@@ -60,26 +60,25 @@ function init(){
  let reportSummary=null,deleteReportsBusy=false;
  const deleteSelected=button('Удалить выбранные…',()=>deleteReports({kind:'selected',ids:[...selectedReportIds]}));
  const deletePeriod=button('Удалить за период…',chooseDeletionPeriod);
- const deleteAll=button('Удалить все отчёты…',()=>deleteReports(null));
- deleteSelected.id='unifiedDeleteSelectedReports';deletePeriod.id='unifiedDeletePeriodReports';deleteAll.id='unifiedDeleteAllReports';
+ deleteSelected.id='unifiedDeleteSelectedReports';deletePeriod.id='unifiedDeletePeriodReports';
+ for(const control of [deleteSelected,deletePeriod])control.className='button danger-button';
  deletePeriod.setAttribute('aria-haspopup','dialog');
  const selectionStatus=el('span','');selectionStatus.setAttribute('role','status');
  const hasBulkDeletion=Boolean(api.unifiedReportDeletionCount&&api.unifiedDeleteReports);
  if(hasBulkDeletion){
   const actions=el('div',undefined,'actions report-delete-actions');actions.setAttribute('role','group');actions.setAttribute('aria-label','Удаление отчётов');
-  actions.append(deleteSelected,deletePeriod);if(api.unifiedClearReports)actions.append(deleteAll);actions.append(selectionStatus);
+  actions.append(deleteSelected,deletePeriod);actions.append(selectionStatus);
   $('reports').before(actions);
  }
  function syncDeletionActions(){
   const unavailable=!workspaceReady()||!Number.isSafeInteger(UI.revision)||!reportSummary?.reports;
   deleteSelected.disabled=unavailable||!selectedReportIds.size;
   deletePeriod.disabled=unavailable||!window.referenceCalendar;
-  deleteAll.disabled=unavailable;
-  for(const control of [deleteSelected,deletePeriod,deleteAll]){
+  for(const control of [deleteSelected,deletePeriod]){
    control.setAttribute('aria-busy',String(deleteReportsBusy));
    control.setAttribute('aria-disabled',String(deleteReportsBusy||control.disabled));
   }
-  selectionStatus.textContent=selectedReportIds.size?'Выбрано: '+selectedReportIds.size:'';
+  selectionStatus.textContent=selectedReportIds.size?'Выбрано: '+selectedReportIds.size:'Выберите хотя бы один отчёт.';
  }
  function setReportsHost(host){
   if(listPanel.parentElement===host)return;
@@ -120,16 +119,16 @@ function init(){
   if(deleteReportsBusy||!Number.isSafeInteger(rev)||!current())return;
   deleteReportsBusy=true;syncDeletionActions();
   try{
-   const count=scope?await api.unifiedReportDeletionCount(rev,scope):reportSummary?.reports;
+   const count=await api.unifiedReportDeletionCount(rev,scope);
    if(!current())return;
    if(!Number.isSafeInteger(count)||count<0)throw Error('Не удалось определить число отчётов.');
    if(!count){UI.notice?.('За выбранный период отчётов нет.');return;}
    const quantity=count+' '+reportNoun(count),cal=window.referenceCalendar;
-   const target=!scope?'все '+quantity:scope.kind==='period'?quantity+' за период '+cal.stamp(scope.from)+' — '+cal.stamp(scope.to):quantity;
+   const target=scope.kind==='period'?quantity+' за период '+cal.stamp(scope.from)+' — '+cal.stamp(scope.to):quantity;
    const detail=scope?.kind==='period'?'\nБудут удалены отчёты, полностью входящие в выбранные даты.':'';
    if(await window.confirm('Удалить '+target+' из '+databaseScope().target+'?'+detail+'\nФайлы Excel сохранятся.')!==true)return;
    if(!current())throw Error('Данные изменились. Проверьте список отчётов заново.');
-   const receipt=scope?await api.unifiedDeleteReports(rev,scope,count):await api.unifiedClearReports(rev);
+   const receipt=await api.unifiedDeleteReports(rev,scope,count);
    reportSummary=null;selectedReportIds.clear();
    try{await UI.refresh();UI.notice?.('Удалено: '+receipt.deleted+' '+reportNoun(receipt.deleted)+'.');}
    catch(error){UI.notice?.('Отчёты удалены, но не удалось обновить список: '+String(error.message||error),true);}
@@ -151,29 +150,58 @@ function init(){
    else window.sqlRowScroll.reset(root);
   }catch(error){if(current()){window.sqlRowScroll.reset(root);root.replaceChildren(el(itemTag,'Не удалось прочитать подразделения: '+String(error.message||error)));}}
  }
- function qualityAction(report){return button('Контроль качества',()=>{
-  $('qualitySource').value='saved';syncQualityPeriods();$('qualityPeriod').value='all';setQualityDates(report.start,report.start);
-  $('qualitySearch').value='';$('qualityReportSource').value=report.source_name||'';qualityOffset=0;void openUploadView('quality');$('qualityHeading').scrollIntoView?.({block:'start',behavior:'smooth'});
- });}
- function reportCard(r,rev,{selectable=false,showOrganizations=false}={}){
-  const token=workspaceState()?.workspace_token,fromDatabases=selectable&&reportsInDatabases();
+ const fullDate=new Intl.DateTimeFormat('ru',{day:'numeric',month:'long',timeZone:'UTC'});
+ function periodText(start,end){
+  if(!validDate(start)||!validDate(end))return start+' — '+end;
+  const first=fullDate.format(new Date(start+'T00:00:00Z')),last=fullDate.format(new Date(end+'T00:00:00Z'));
+  const year=start.slice(0,4),endYear=end.slice(0,4);
+  if(start===end)return first+' '+year;
+  if(start.slice(0,7)===end.slice(0,7))return Number(start.slice(8))+'–'+last+' '+year;
+  return first+(year===endYear?'':' '+year)+' – '+last+' '+endYear;
+ }
+ let qualityReportId=null;
+ function qualityAction(report,title='Контроль качества'){
+  const action=button(title,async()=>{
+   if(reportsInDatabases()){
+    window.referenceDesktop?.openPanel('upload',action);
+    // activate() queues the default upload view before we select quality.
+    await Promise.resolve();
+   }
+   $('qualitySource').value='saved';syncQualityPeriods();
+   $('qualityPeriod').value='all';setQualityDates(report.start,report.start);
+   $('qualitySearch').value='';$('qualityOrg').value='all';$('qualityType').value='all';
+   $('qualityReportSource').value=report.source_name||'';qualityReportId=report.id;
+   clearReportFilter.textContent='Снять фильтр отчёта «'+periodText(report.start,report.end)+'»';
+   qualityOffset=0;void openUploadView('quality');$('qualityHeading').scrollIntoView?.({block:'start',behavior:'smooth'});
+  });
+  return action;
+ }
+ function reportCard(r,rev,{inTable=false,showOrganizations=false}={}){
+  const token=workspaceState()?.workspace_token,fromDatabases=inTable&&reportsInDatabases();
   const current=()=>UI.revision===rev&&workspaceReady()&&workspaceState()?.workspace_token===token&&
    (!fromDatabases||(reportsInDatabases()&&reportListActive()));
-  const card=el('section',undefined,'calendar-source');
-  card.append(el('strong',(kinds[r.report_type]||r.report_type)+' · '+r.start+' — '+r.end),el('p','Excel: '+(r.source_name||'источник не сохранён')),el('p','Строк: '+show(r.rows)+' · Сумма: '+UI.fmt(r.amount,'amount')+' · Замечаний: '+show(r.warnings)));
+  const card=inTable?el('tr'):el('section',undefined,'calendar-source');
+  const period=(kinds[r.report_type]||r.report_type)+' · '+(inTable?periodText(r.start,r.end):r.start+' — '+r.end);
+  if(inTable){card.dataset.start=r.start;card.dataset.end=r.end;}
+  const metadata=inTable?el('details'):card;
+  const periodTitle=el('strong',period);
+  if(inTable){const summary=el('summary');summary.append(periodTitle);metadata.append(summary);}
+  else metadata.append(periodTitle);
+  metadata.append(el('p','Excel: '+(r.source_name||'источник не сохранён')));
+  if(!inTable)metadata.append(el('p','Строк: '+show(r.rows)+' · Сумма: '+UI.fmt(r.amount,'amount')+' · Замечаний: '+show(r.warnings)));
   const actions=el('div',undefined,'report-card-actions');
   if(!fromDatabases)actions.append(qualityAction(r));
-  if(selectable){
-   const label=el('label',undefined,'report-selection-label'),check=el('input');check.type='checkbox';
+  if(inTable&&hasBulkDeletion){
+   const selectCell=el('td'),check=el('input');check.type='checkbox';
    check.checked=selectedReportIds.has(r.id);check.setAttribute('aria-label','Выбрать отчёт '+r.start+' — '+r.end+(r.source_name?' · '+r.source_name:''));
    check.addEventListener('change',()=>{
     if(deleteReportsBusy||!current()){check.checked=selectedReportIds.has(r.id);return;}
     if(!check.checked)selectedReportIds.delete(r.id);
     else if(selectedReportIds.size<selectionLimit)selectedReportIds.add(r.id);
-    else{check.checked=false;UI.notice?.('Можно выбрать до '+selectionLimit+' отчётов. Для большего числа используйте удаление за период или удаление всех отчётов.');}
+    else{check.checked=false;UI.notice?.('Можно выбрать до '+selectionLimit+' отчётов. Для большего числа используйте удаление за период или очистку в разделе «Базы данных».');}
     syncDeletionActions();
    });
-   label.append(check,el('span','Выбрать'));actions.prepend(label);
+   selectCell.append(check);card.append(selectCell);
   }
   if(showOrganizations){
    const list=el('ul',undefined,'calendar-source-organizations');
@@ -181,20 +209,47 @@ function init(){
    void reportOrgs(r.id,list,rev,0,'li');
   }else{
    const orgs=el('details'),list=el('p');orgs.append(el('summary','Подразделения ('+r.organizations+')'),list);
-   let loaded=false;orgs.addEventListener('toggle',()=>{if(orgs.open&&!loaded){loaded=true;void reportOrgs(r.id,list,rev);}});card.append(orgs);
+   let loaded=false;orgs.addEventListener('toggle',()=>{if(orgs.open&&!loaded){loaded=true;void reportOrgs(r.id,list,rev);}});metadata.append(orgs);
   }
-  card.append(actions);
+  if(!inTable)card.append(actions);
   if(api.nativeDeleteReport){let deleting=false;const action=button('Удалить отчёт',async()=>{
    if(deleting||!current())return;deleting=true;action.disabled=true;
    const destination=fromDatabases?' из '+databaseScope().target:'';
    try{if(await window.confirm('Удалить отчёт '+r.start+' — '+r.end+destination+'?')!==true)return;
     if(!current())throw Error('Данные изменились. Обновите список отчётов.');
+    const pageBefore=reportIndex,rowBefore=card.sectionRowIndex,host=listPanel.parentElement;
     await api.nativeDeleteReport(rev,r.id);
-     try{await UI.refresh();}catch(error){UI.notice?.('Отчёт удалён из SQLite, но не удалось обновить отображение: '+String(error.message||error)+'. Обновите данные.',true);}
+    try{
+     await UI.refresh();
+     if(inTable&&Number.isInteger(rowBefore)&&listPanel.parentElement===host&&reportListActive()&&workspaceState()?.workspace_token===token){
+      const count=UI.snapshot?.reports;
+      if(Number.isSafeInteger(count)){
+       await loadReports(Math.min(pageBefore,Math.max(0,Math.ceil(count/LIMIT)-1)));
+       if(listPanel.parentElement===host&&reportListActive()&&workspaceState()?.workspace_token===token){
+        const rows=$('reports').querySelectorAll('tbody tr');
+        const next=rows[Math.min(rowBefore,rows.length-1)]?.querySelector('summary')||uploaded.querySelector('summary');
+        next?.focus({preventScroll:true});next?.scrollIntoView({block:'nearest'});
+       }
+      }
+     }
+    }catch(error){UI.notice?.('Отчёт удалён из SQLite, но не удалось обновить отображение: '+String(error.message||error)+'. Обновите данные.',true);}
    }catch(error){UI.notice?.('Не удалось удалить отчёт: '+String(error.message||error),true);}finally{deleting=false;action.disabled=false;}
-  });actions.append(action);}
+  });action.className='button danger-button';actions.append(action);}
 
-  if(r.shared_source_artifact)card.append(el('p','В контроле качества доступны общие замечания по исходному файлу.','muted small'));
+  if(r.shared_source_artifact)metadata.append(el('p','В контроле качества доступны общие замечания по исходному файлу.','muted small'));
+  if(inTable){
+   const periodCell=el('td'),remarks=el('td',show(r.warnings)),menuCell=el('td');
+   periodCell.append(metadata);
+   if(r.warnings>0){
+    const word={one:'замечание',few:'замечания',many:'замечаний',other:'замечания'}[plural.select(r.warnings)];
+    const link=qualityAction(r,'⚠ '+r.warnings+' '+word);link.className='report-warning-link';remarks.replaceChildren(link);
+   }
+   if(actions.children.length){
+    const menu=el('details'),trigger=el('summary','⋯');
+    trigger.setAttribute('aria-label','Действия отчёта '+period);menu.append(trigger,actions);menuCell.append(menu);
+   }
+   card.append(periodCell,el('td',show(r.rows)),el('td',UI.fmt(r.amount,'amount')),remarks,menuCell);
+  }
   return card;
  }
  async function loadReports(index=reportIndex){
@@ -213,13 +268,19 @@ function init(){
    if(!current())return;
    if(!Array.isArray(rows)||rows.length>LIMIT)throw Error('Некорректная страница отчётов');
    reportSummary=summary;syncDeletionActions();
-   $('reportCount').textContent=summary.reports+' периодов · '+summary.rows+' строк · '+UI.fmt(summary.amount,'amount');
+   $('reportCount').textContent=summary.reports+' периодов · '+summary.rows+' строк · Сумма: '+UI.fmt(summary.amount,'amount')+' (валюта не указана)';
    root.replaceChildren();
-   for(const r of rows){root.append(reportCard(r,rev,{selectable:hasBulkDeletion}));if(kinds[r.report_type]&&validDate(r.start))savedQualityPeriods.add(r.report_type+':'+r.start);}
+   const table=el('table',undefined,'saved-reports-table'),head=el('thead'),header=el('tr'),body=el('tbody');
+   for(const title of [...(hasBulkDeletion?['Выбор']:[]),'Период','Строки','Сумма','Замечания','Действия']){
+    const th=el('th',title);th.scope='col';header.append(th);
+   }
+   head.append(header);table.append(el('caption','Валюта в данных отчётов не указана.'),head,body);
+   if(rows.length)root.append(table);
+   for(const r of rows){body.append(reportCard(r,rev,{inTable:true}));if(kinds[r.report_type]&&validDate(r.start))savedQualityPeriods.add(r.report_type+':'+r.start);}
    if($('qualitySource').value!=='pending')syncQualityPeriods();
    if(!rows.length)root.append(el('p','Отчёты не найдены.'));
    reportIndex=index;reportPageStatus.textContent='';
-   window.sqlRowScroll.attach(root,{index,size:LIMIT,count:rows.length,total,footer:reportPager,label:'Страницы загруженных отчётов',go:i=>current()&&loadReports(i)});
+   window.sqlRowScroll.attach(root,{index,size:LIMIT,count:rows.length,total,controlsOnly:true,edgeLinks:true,footer:reportPager,label:'Страницы загруженных отчётов',go:i=>current()&&loadReports(i)});
    if(year===null)year=Number((summary.latest||new Date().toISOString()).slice(0,4));
   }catch(error){if(current()){reportSummary=null;syncDeletionActions();window.sqlRowScroll.reset(root);reportPageStatus.textContent='Список недоступен';status('reportCount','Не удалось прочитать отчёты: '+String(error.message||error));root.replaceChildren();}}
  }
@@ -377,12 +438,14 @@ function init(){
  const periodHint=el('small',undefined,'muted');periodHint.id='qualityPeriodHint';$('qualityPeriod').after(periodHint);
  for(const [id,label] of [['qualitySearch','Поиск замечаний'],['qualityReportSource','Файл источника']]){const field=el('label',label),input=el('input');input.id=id;input.type='search';input.maxLength=1024;field.append(input);$('qualityType').parentElement.parentElement.append(field);}
  $('qualityType').replaceChildren();for(const [value,label] of [['all','Все проблемы'],...Object.entries(types)]){const o=el('option',label);o.value=value;$('qualityType').append(o);}
- for(const [id,title]of [['qualityFrom','С'],['qualityTo','По']]){const field=el('label',title),input=el('input');input.id=id;input.type='date';field.append(input);$('qualityType').parentElement.parentElement.append(field);input.addEventListener('change',()=>{$('qualityPeriod').value='all';syncQualityCalendar();qualityOffset=0;void loadQuality();});}
+ for(const [id,title]of [['qualityFrom','С'],['qualityTo','По']]){const field=el('label',title),input=el('input');input.id=id;input.type='date';field.append(input);$('qualityType').parentElement.parentElement.append(field);input.addEventListener('change',()=>{qualityReportId=null;$('qualityPeriod').value='all';syncQualityCalendar();qualityOffset=0;void loadQuality();});}
  function qualityFilter(){
   const period=$('qualityPeriod').value,exact=period==='all'?null:period.split(':');
-  return {from:exact?exact[1]:$('qualityFrom').value||null,to:exact?exact[1]:$('qualityTo').value||null,report_type:exact?exact[0]:null,
+  return {...(qualityReportId?{report_id:qualityReportId}:{}),from:exact?exact[1]:$('qualityFrom').value||null,to:exact?exact[1]:$('qualityTo').value||null,report_type:exact?exact[0]:null,
    organization:$('qualityOrg').value==='all'?null:$('qualityOrg').value,kind:$('qualityType').value==='all'?null:$('qualityType').value,search:$('qualitySearch').value.trim()||null,source:$('qualityReportSource').value.trim()||null};
  }
+ const clearReportFilter=button('Снять фильтр отчёта',()=>{qualityReportId=null;qualityOffset=0;void loadQuality();});
+ clearReportFilter.hidden=true;periodHint.after(clearReportFilter);
  const repairHints={
   'empty-name':'Заполните название работы в указанной ячейке Excel и повторно проверьте файл.',
   invalid:'Проверьте количество и сумму в указанных ячейках Excel, включая формулы, пустые значения и десятичный разделитель.',
@@ -440,6 +503,7 @@ function init(){
    'Адреса ячеек на исходном листе, если они сохранены. При расхождении итогов указаны контрольные ячейки. Причина расхождения может находиться в строках детализации.',null]);
  }
  async function loadQuality(){
+  clearReportFilter.hidden=!qualityReportId;
   const rev=UI.revision,ticket=++qualityTicket,pending=$('qualitySource').value==='pending',checked=review;
   qualityActions.replaceChildren();$('qualityTable').replaceChildren();
   status('qualityPage','');status('qualitySummary','Загрузка замечаний…');
@@ -484,7 +548,7 @@ function init(){
    }});
   }catch(error){if(current()){window.sqlRowScroll?.reset($('qualityTable'));status('qualitySummary','Не удалось прочитать замечания: '+String(error.message||error));$('qualityTable').replaceChildren();}}
  }
- for(const id of ['qualitySource','qualityPeriod','qualityOrg','qualityType','qualityReportSource','qualitySearch'])$(id).addEventListener(id==='qualitySearch'||id==='qualityReportSource'?'input':'change',()=>{qualityOffset=0;if(id==='qualitySource')syncQualityPeriods();if(id==='qualityPeriod')setQualityDates();void loadQuality();});
+ for(const id of ['qualitySource','qualityPeriod','qualityOrg','qualityType','qualityReportSource','qualitySearch'])$(id).addEventListener(id==='qualitySearch'||id==='qualityReportSource'?'input':'change',()=>{if(['qualitySource','qualityReportSource','qualityPeriod'].includes(id))qualityReportId=null;qualityOffset=0;if(id==='qualitySource')syncQualityPeriods();if(id==='qualityPeriod')setQualityDates();void loadQuality();});
  // The canonical file input is intercepted before the browser opens a File:
  // Rust needs the real path and owns parsing, review tokens and atomic writes.
  const acknowledgements=el('div',undefined,'import-date-grid');acknowledgements.id='unifiedImportAcknowledgements';acknowledgements.hidden=true;
@@ -904,7 +968,7 @@ function init(){
    workspaceFolder=folder;sourceWasChecked=false;++sourceTicket;sourcePath=null;sourceFolderContext=null;sheets=[];wideSheetRows=[];
    clearSourceOverrides();$('sheetSelect').replaceChildren();$('dailySheetChoices').replaceChildren();status('excelFileStatus','Выбрать файл Excel…');importLock();updateSelectedBook();
   }
-  ++generation;++reportTicket;++calendarTicket;++qualityTicket;++detailTicket;savedQualityPeriods.clear();syncQualityPeriods();if(!snapshot){window.sqlRowScroll?.reset($('reports'));window.sqlRowScroll?.reset($('qualityTable'));qualityActions.replaceChildren();reportPageStatus.textContent='Данные обновляются';resetReview();status('unifiedImportStatus',sourceWasChecked?'Обновление данных. Проверьте Excel заново.':'');$('reports').replaceChildren();$('reportCalendar').replaceChildren();$('calendarDetails').replaceChildren();$('qualityTable').replaceChildren();$('qualityPrev').disabled=$('qualityNext').disabled=true;return;}reportIndex=0;qualityOffset=0;resetReview();status('unifiedImportStatus',sourceWasChecked?'Данные обновлены. Перед импортом выполните новую проверку.':'');
+  ++generation;++reportTicket;++calendarTicket;++qualityTicket;++detailTicket;qualityReportId=null;savedQualityPeriods.clear();syncQualityPeriods();if(!snapshot){window.sqlRowScroll?.reset($('reports'));window.sqlRowScroll?.reset($('qualityTable'));qualityActions.replaceChildren();reportPageStatus.textContent='Данные обновляются';resetReview();status('unifiedImportStatus',sourceWasChecked?'Обновление данных. Проверьте Excel заново.':'');$('reports').replaceChildren();$('reportCalendar').replaceChildren();$('calendarDetails').replaceChildren();$('qualityTable').replaceChildren();$('qualityPrev').disabled=$('qualityNext').disabled=true;return;}reportIndex=0;qualityOffset=0;resetReview();status('unifiedImportStatus',sourceWasChecked?'Данные обновлены. Перед импортом выполните новую проверку.':'');
   const selected=$('qualityOrg').value;$('qualityOrg').replaceChildren();for(const [value,label]of [['all','Все подразделения'],...(snapshot.org_names||[]).map(v=>[v,v])]){const o=el('option',label);o.value=value;$('qualityOrg').append(o);}$('qualityOrg').value=(snapshot.org_names||[]).includes(selected)?selected:'all';
   void refreshUpload();
  });
