@@ -1,7 +1,7 @@
 /* Shared presentation and in-flight reads for the shell and the detailed overview. */
 (function () {
   'use strict';
-  const titles = Object.freeze({amount:'Сумма', count:'Количество / объём', average:'Сумма / количество (объём)'});
+  const titles = Object.freeze({amount:'Сумма', count:'Количество / объём', average:'Средняя сумма на единицу'});
   let current = null;
   function read(api, scope) {
     const {revision,type,source,displayType,from,to,baseFrom,baseTo,organizations} = scope;
@@ -60,7 +60,7 @@
       return 'Частичное среднее рассчитано по строкам с указанной суммой. Количество в расчёте: ' + quantity + '.' + coverage;
     }
     if (period?.amount_missing_rows && Number.isFinite(total?.count)) {
-      return 'Для частичного среднего нужны сопоставимые строки одной работы с указанной суммой и положительным суммарным количеством.';
+      return 'Для частичного среднего нужны строки с указанной суммой и положительным суммарным количеством.';
     }
     return '';
   }

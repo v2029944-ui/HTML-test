@@ -108,9 +108,13 @@ def check_filter_placement(page, record):
         page.locator('#sharedHeader .main-nav button').first.focus()
         assert sidebar.evaluate("el => getComputedStyle(el).position") == 'sticky'
         page.evaluate('window.scrollTo(0,Math.min(560,document.documentElement.scrollHeight-innerHeight))')
-        expect(sidebar).to_have_attribute('data-auto-folded','')
+        page.evaluate(settle)
+        expect(fold).to_have_js_property('open', True)
+        assert abs(sidebar.bounding_box()['y']) <= 2
         y = page.evaluate('scrollY')
         assert y > 150
+        trigger.press('Enter')
+        expect(fold).to_have_js_property('open', False)
         trigger.press('Enter')
         expect(fold).to_have_js_property('open', True)
         page.evaluate(settle)

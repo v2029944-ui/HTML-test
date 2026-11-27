@@ -227,11 +227,7 @@ fn comparable_averages(
 fn observed_average_change(before: &RangeSummary, after: &RangeSummary, threshold: f64) -> Result<AverageChange, String> {
     let base = &before.available_total;
     let current = &after.available_total;
-    let same_work = before.source_work.as_ref().zip(after.source_work.as_ref()).is_some_and(|(b, a)| b == a);
-    if let Some((b, a)) = comparable_averages(base, current, same_work) {
-        return average_change(Some(b), Some(a), threshold);
-    }
-    Ok(AverageChange { base: base.average, current: current.average, delta: None, percent: None, flags: None })
+    average_change(base.average, current.average, threshold)
 }
 fn date(s: &str) -> Result<NaiveDate, String> {
     if !valid_date(s) {

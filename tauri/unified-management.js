@@ -51,6 +51,7 @@ function init(){
  const groupPagination=el('div');$('groupList').parentNode.insertBefore(groupPagination,$('groupList').nextSibling);
  const groups=pager(groupPagination,'unifiedGroup');groups.root=$('groupList');groups.kind='groups';groups.query=()=>$('groupSearch').value;
  groups.fetch=(expected,offset,query=groups.query())=>api.unifiedManagementPage(expected,U.snapshot?.work_group_hierarchy?'group_tree':'groups',query,null,offset,LIMIT);
+ const maxGroupWorks=10000;
  const markedGroups=new Set(),maxGroupSelection=10000;
  let selectingGroups=false;
  const removalBar=el('div',null,'actions group-removal');
@@ -135,18 +136,10 @@ function init(){
   const location=workspace.mode==='shared'?'Общая база · '+workspace.folder+'\nИзменение увидят все её пользователи.':'Личная база';
   const treeNote=U.snapshot?.work_group_hierarchy&&!all
    ? ' Оставшиеся подгруппы перейдут к ближайшей сохранённой группе выше или на верхний уровень.' : '';
-  if(!await confirmAction(expected,location+'\nУдаляемых групп: '+count+'.'+treeNote+' В аналитике работы удаляемых групп снова будут видны под исходными названиями. Отчёты, справочник, количества и суммы сохранятся. Продолжить?'))return;
+  if(!await confirmAction(expected,location+'\n'+(all?'Очистить весь список групп? ':'')+'Удаляемых групп: '+count+'.'+treeNote+' В аналитике работы удаляемых групп снова будут видны под исходными названиями. Отчёты, справочник, количества и суммы сохранятся. Продолжить?'))return;
   if(!current())throw Error('Активная база изменилась. Повторите действие.');
-  let backup=null;
-  if(all){
-   if(!await confirmAction(expected,'Очистить весь список групп? Перед удалением будет создана проверенная резервная копия SQLite.'))return;
-   if(!current())throw Error('Активная база изменилась. Повторите действие.');
-   backup=await api.chooseSqliteBackupPath('analiz-before-clear-groups.sqlite3');
-   if(!backup)return;
-  }
-  if(!current())throw Error('Активная база изменилась. Повторите действие.');
-  await mutate(expected,()=>api.unifiedGroupsDelete(expected,handles,count,backup),
-   all?'Список групп очищен. Резервная копия создана.':'Группы удалены: '+count+'.');
+  await mutate(expected,()=>api.unifiedGroupsDelete(expected,handles,count,null),
+   all?'Список групп очищен.':'Группы удалены: '+count+'.');
  }
  let groupReload;
  function reloadGroups(offset){groupReload=load(groups,offset);return groupReload;}
@@ -170,7 +163,7 @@ function init(){
  function resetEditor(reload=true){editTicket++;editing=null;selected=new Set();$('groupName').value='';if(workMode==='edit')workSearch.value='';works.offset=0;if(reload&&active&&workMode==='edit')void load(works);}
  async function editGroup(group,expected,opener){if(busy||!valid(expected))return;const ticket=++editTicket;busy=true;lock();try{
   const chosen=new Set();let offset=0,total=1;
-  while(offset<total){const page=await api.unifiedManagementPage(expected,'members','',group.handle,offset,LIMIT);if(ticket!==editTicket||!valid(expected))return;if(!Array.isArray(page?.rows)||page.rows.length>LIMIT||!Number.isSafeInteger(page.total)||page.total>5000||page.total<0||(!page.rows.length&&offset<page.total))throw Error('Не удалось загрузить состав группы (лимит 5000 работ).');total=page.total;for(const row of page.rows)chosen.add(row.name);offset+=page.rows.length;}
+  while(offset<total){const page=await api.unifiedManagementPage(expected,'members','',group.handle,offset,LIMIT);if(ticket!==editTicket||!valid(expected))return;if(!Array.isArray(page?.rows)||page.rows.length>LIMIT||!Number.isSafeInteger(page.total)||page.total>maxGroupWorks||page.total<0||(!page.rows.length&&offset<page.total))throw Error('Не удалось загрузить состав группы (лимит 10 000 работ).');total=page.total;for(const row of page.rows)chosen.add(row.name);offset+=page.rows.length;}
   if(ticket!==editTicket||!valid(expected))return;editing=group;selected=chosen;showWorkMode('edit');openEditor(opener);$('groupName').value=group.name;workSearch.value='';await load(works);$('groupName').focus();
  }catch(e){if(ticket===editTicket)fail(e);}finally{busy=false;lock();}}
  function requestGroupSelection(anchor,row,expected,current,movingGroup=false){
@@ -349,21 +342,8 @@ function init(){
     await mutate(expected,()=>api.nativeSettingsEdit(expected,{kind:'delete_group',handle:group.handle}),'Группа удалена.');
     return;
    }
-   let backup;
-   if(!group.group&&(deleteDescendants||!group.children)){
-    const roots=await api.unifiedManagementPage(expected,'group_tree','',null,0,1);
-    if(!current()||!validManagementPage(roots,0)||!roots.total)throw Error('Не удалось проверить список групп.');
-    if(roots.total===1){
-     if(roots.rows[0].handle!==group.handle)throw Error('Список групп изменился. Повторите удаление.');
-     if(!await confirmAction(expected,'Будут удалены все группы. Сначала будет создана проверенная резервная копия SQLite. Продолжить?'))return;
-     if(!current())throw Error('База изменилась. Повторите действие.');
-     backup=await api.chooseSqliteBackupPath('analiz-before-clear-groups.sqlite3');
-     if(!backup)return;
-    }
-   }
-   if(!current())throw Error('База изменилась. Повторите действие.');
    await mutate(expected,()=>api.unifiedGroupTreeEdit(expected,{
-    kind:'delete',group:group.handle,delete_descendants:deleteDescendants,confirmed:true,...(backup?{backup}:{})
+    kind:'delete',group:group.handle,delete_descendants:deleteDescendants,confirmed:true
    }),'Группа удалена.');
   }));
   actions.append(edit,rename,create,move,remove);
@@ -407,7 +387,7 @@ function init(){
    groups.query().trim()?'По запросу групп не найдено':'Групп пока нет';
   for(const group of result.rows)renderGroupRow(groups.root,group,expected,result.hierarchy===true);
  };
- bind('createGroup',()=>{if(busy)return;showWorkMode('edit');resetEditor();openEditor($('createGroup'));$('groupName').focus();});bind('resetGroup',()=>{if(!busy)resetEditor();});bind('saveGroup',guard(async expected=>{const name=$('groupName').value.trim();if(!name||selected.size>5000)throw Error('Введите название и выберите не более 5000 работ.');const id=editing?.id||window.crypto.randomUUID();await mutate(expected,()=>api.unifiedGroupSave(expected,editing?.handle||null,id,name,[...selected]),'Группа сохранена.');}));
+ bind('createGroup',()=>{if(busy)return;showWorkMode('edit');resetEditor();openEditor($('createGroup'));$('groupName').focus();});bind('resetGroup',()=>{if(!busy)resetEditor();});bind('saveGroup',guard(async expected=>{const name=$('groupName').value.trim();if(!name||selected.size>maxGroupWorks)throw Error('Введите название и выберите не более 10 000 работ.');const id=editing?.id||window.crypto.randomUUID();await mutate(expected,()=>api.unifiedGroupSave(expected,editing?.handle||null,id,name,[...selected]),'Группа сохранена.');}));
  bind('groupSearch',()=>load(groups),'input');bind('workSearch',()=>load(workMode==='audit'?audit:works),'input');
  const catalogRoot=el('div',null,'catalog-list'),catalogPanel=$('groupCatalog'),catalogControls=el('div',null,'catalog-controls');catalogRoot.id='catalogList';catalogControls.id='catalogControls';
  const catalogSearch=el('input'),searchLabel=el('label','Поиск в справочнике','catalog-field');catalogSearch.id='catalogSearch';catalogSearch.type='search';catalogSearch.placeholder='Поиск в справочнике';searchLabel.append(catalogSearch);catalogControls.append(searchLabel);

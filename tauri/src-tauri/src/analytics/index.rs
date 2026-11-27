@@ -1,6 +1,6 @@
 //! Index publication and revision-bound analysis filters.
 use super::*;
-use crate::storage::work_group_hierarchy::{validate_group_parents, GroupParent, GROUP_PARENTS_FIELD};
+use crate::storage::work_group_hierarchy::{validate_group_parents, GroupParent, GROUP_PARENTS_FIELD, MAX_GROUPS};
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use std::io::{BufReader, Read};
 
@@ -548,10 +548,10 @@ impl<'de> Visitor<'de> for Settings<'_> {
 fn publish_group_hierarchy(c: &Connection, parents: Option<Vec<GroupParent>>) -> Result<(), String> {
     c.execute_batch("DELETE FROM analysis_group_nodes; DELETE FROM analysis_group_ancestors;").map_err(err)?;
     let Some(parents) = parents else { return Ok(()); };
-    let mut ids = c.prepare("SELECT id FROM temp.an_descriptors LIMIT 10001").map_err(err)?;
-    let ids = ids.query_map([], |row| row.get::<_, String>(0)).map_err(err)?
+    let mut ids = c.prepare("SELECT id FROM temp.an_descriptors LIMIT ?1").map_err(err)?;
+    let ids = ids.query_map([(MAX_GROUPS + 1) as i64], |row| row.get::<_, String>(0)).map_err(err)?
         .collect::<Result<Vec<_>,_>>().map_err(err)?;
-    if ids.len() > 10_000 || parents.len() > ids.len() {
+    if ids.len() > MAX_GROUPS || parents.len() > ids.len() {
         return Err("Превышен лимит групп или связей дерева.".into());
     }
     validate_group_parents(ids.iter().map(String::as_str), &parents)?;

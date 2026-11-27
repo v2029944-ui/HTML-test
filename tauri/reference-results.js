@@ -2,7 +2,7 @@
 (function(){
 'use strict';
 const api=window.desktopAPI,$=selector=>document.querySelector(selector),all=selector=>[...document.querySelectorAll(selector)];
-const {titles,observed,incomplete}=window.analysisSummary,categories={up:'Рост',down:'Снижение',new:'Новые работы',gone:'Без выполнений'};
+const {titles,observed,incomplete}=window.analysisSummary,categories={up:'Рост',down:'Снижение',new:'Новые работы',gone:'Только в базовом периоде'};
 let initialized=false,scope=null,screen='s1',generation=0,changesTicket=0,modalTicket=0,searchTimer=null,summaryData=null,changeData=null,changeRequest=null;
 let modalHeading=null,shownSummaryRevision=null,shownChangesRevision=null,scopeBlocked=false;
 const CHANGES_PAGE_SIZE=50;
@@ -40,9 +40,15 @@ function captions(s,roots=['#s1','#s2']){for(const root of roots){const n=$(root
 const hasReports=period=>period?.complete||period?.available_reports>0;
 const canCompare=summary=>hasReports(summary?.before)&&hasReports(summary?.after);
 const partialComparison=summary=>canCompare(summary)&&!(summary.before.complete&&summary.after.complete);
+function averageDisplay(values){
+ if(Number.isFinite(values?.average))return fmt(values.average,'average');
+ if(!Number.isFinite(values?.count))return 'Нет данных';
+ if(values.count<=0)return 'Количество ≤ 0';
+ return 'Нет сопоставимых строк';
+}
 function summaryCards(values,comparison,comparable,totalOrganizations){
  const cards=all('#s1 .metric-card');for(const [i,metric]of ['amount','count','average'].entries()){
-  const card=cards[i];if(!card)continue;card.querySelector('.metric-name').textContent=titles[metric];card.querySelector('.metric-value').textContent=fmt(values?.[metric],metric);
+  const card=cards[i];if(!card)continue;card.querySelector('.metric-name').textContent=titles[metric];card.querySelector('.metric-value').textContent=metric==='average'&&comparison?averageDisplay(values):fmt(values?.[metric],metric);
   const delta=card.querySelector('.metric-delta');delta.replaceChildren();const m=comparison?.summary?.[metric];
   if(Number.isFinite(m?.delta)){
    const change=displayedChange(m.delta,metric);
@@ -125,7 +131,7 @@ async function refreshSummary(s,ticket){
    const value=org.observed;
    const coverage=incomplete(org)?(Number.isFinite(value?.count)?' (частичные данные)':' (нет данных)'):'';
    const label=el('span',org.org+coverage);if(!comparable.includes(org.org)){const warning=button('',e=>openSample(e.target.closest?e.target.closest('button'):e.target),'org-warning');warning.setAttribute('aria-label',org.org+' · неполные отчёты. Показать состав сравнения');warning.title='В базовом или анализируемом интервале есть пропуски отчётов';const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('width','17');icon.setAttribute('height','17');icon.setAttribute('fill','none');icon.setAttribute('stroke-width','1.7');icon.setAttribute('aria-hidden','true');const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d','M12 3 2 21h20L12 3zM12 10v5M12 18v.5');icon.append(path);warning.append(icon);label.append(warning);}
-   const share=Number.isFinite(value?.amount)&&Number.isFinite(totalAmount)&&totalAmount>0?100*value.amount/totalAmount:null,shareCell=el('span',Number.isFinite(share)?new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1,minimumFractionDigits:1}).format(share)+'%':'—');if(Number.isFinite(share)&&share>=0){const bar=el('div',null,'bar'),fill=el('i');fill.style.width=Math.min(100,share)+'%';bar.append(fill);shareCell.append(bar);}return [label,fmt(value?.amount,'amount'),fmt(value?.count,'count'),shareCell,fmt(value?.average,'average')];
+   const share=Number.isFinite(value?.amount)&&Number.isFinite(totalAmount)&&totalAmount>0?100*value.amount/totalAmount:null,shareCell=el('span',Number.isFinite(share)?new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1,minimumFractionDigits:1}).format(share)+'%':'—');if(Number.isFinite(share)&&share>=0){const bar=el('div',null,'bar'),fill=el('i');fill.style.width=Math.min(100,share)+'%';bar.append(fill);shareCell.append(bar);}return [label,fmt(value?.amount,'amount'),fmt(value?.count,'count'),shareCell,averageDisplay(value)];
   }),visibleRange(s));
  }catch(error){if(current()){captions(s,['#s1']);shownSummaryRevision=null;summaryData=null;writeTable($('#s1 table'),['Подразделение',titles.amount,titles.count,'Доля суммы',titles.average],[]);summaryLeaders(null,s.metric);summaryCards(null,{summary:{}},0,0);$('#s1 .quality-notice').hidden=false;$('#s1 .quality-notice span').textContent='Не удалось рассчитать сводку: '+textError(error);}}
  finally{if(current())setBusy('#s1',false);}
@@ -181,7 +187,7 @@ async function loadChanges(s,captured,current,focusAnchor){
   if(new TextEncoder().encode(captured.search).length>512)throw Error('Сократите поисковый запрос до 512 байт UTF-8.');
   const result=await api.referenceChanges(captured);if(!current())return;
   if(!Array.isArray(result?.rows)||result.rows.length>CHANGES_PAGE_SIZE||!Number.isSafeInteger(result.total)||result.total<0||!Number.isSafeInteger(result.searched)||!Number.isSafeInteger(result.significant)||result.significant<0||result.searched<result.significant||result.searched<result.total||!Array.isArray(result.comparable)||!Object.keys(categories).every(key=>Number.isSafeInteger(result.counts?.[key])&&result.counts[key]>=0))throw Error('Некорректная страница SQL-изменений.');
-  captions(s,['#s2']);shownChangesRevision=s.revision;changeData=result;changeRequest=captured;renderCounts(result.counts);renderChangeLeader(result.leader,s.metric);notice('#s2',s,result.comparable,summaryData?.result.summary);
+  captions(s,['#s2']);shownChangesRevision=s.revision;changeData=result;changeRequest=captured;renderCounts(result.comparable.length || result.leader || Object.values(result.counts).some(n=>n>0) ? result.counts : null);renderChangeLeader(result.leader,s.metric);notice('#s2',s,result.comparable,summaryData?.result.summary);
   changeLabels(s);
   const changes=result.rows.map(row=>displayedChange(row.delta,s.metric));
   const rows=result.rows.map((row,i)=>[row.name,row.org,fmt(row.before,s.metric),fmt(row.after,s.metric),changes[i].value,pct(row.percent)]);writeTable($('#s2 .changes-table'),['Работа','Подразделение','Было','Стало','Изменение','Изменение, %'],rows,visibleRange(s)+' · Сравнение с '+baseRange(s));for(const [i,tr]of all('#s2 .changes-table tbody tr').entries()){const row=result.rows[i],direction=changes[i].direction;tr.children[4].className='num '+direction;tr.children[5].className='num '+direction;const mobile=el('td',null,'mobile-position'),heading=el('div',null,'position-heading'),metric=el('div',null,'position-metric');mobile.setAttribute('colspan','6');heading.append(el('strong',row.name),el('span',row.org));metric.append(el('span',titles[s.metric]),el('strong',changes[i].value+' · '+pct(row.percent),direction),el('span','Было '+fmt(row.before,s.metric)+' → стало '+fmt(row.after,s.metric),'position-history'));mobile.append(heading,metric);tr.append(mobile);}
