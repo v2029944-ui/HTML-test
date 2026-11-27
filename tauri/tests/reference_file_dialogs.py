@@ -506,8 +506,6 @@ def check_reference_file_dialogs(page, nativeConfirmations, output):
     initial_folder = page.evaluate('window.desktopAPI.list()')['folder']
     assert page.evaluate('window.unifiedUI.snapshot.reports') == 0
     expect(page.locator('dialog:modal')).to_have_count(0)
-    walk.evidence['notReachableOnEmptyDatabase'] = [
-        'Summary CSV is exercised after importing test data']
 
     page.locator('#refImport').click()
     expect(page.locator('#upload')).to_be_visible(timeout=TIMEOUT)
@@ -575,7 +573,7 @@ def check_reference_file_dialogs(page, nativeConfirmations, output):
 
 
 def check_reference_data_file_dialogs(page, nativeConfirmations, output):
-    """Summary Save cancellation, read-only backup UI and retained restore IPC.
+    """Summary action visibility, read-only backup UI and retained restore IPC.
 
     Call immediately after check_reference_data(), before opening other sections
     and the subsequent data-mutating scenarios in windows_smoke.py.
@@ -584,13 +582,13 @@ def check_reference_data_file_dialogs(page, nativeConfirmations, output):
                                          'native-file-dialogs-data')
     revision = walk.revision
     reports = page.evaluate('window.unifiedUI.snapshot.reports')
-    assert reports > 0, 'Populated summary is required for the actual CSV Save route'
+    assert reports > 0, 'Expected the populated summary'
     expect(page.locator('dialog:modal')).to_have_count(0)
     page.locator('#sharedHeader .main-nav').get_by_role(
         'button', name='Сводка', exact=True).click()
     walk.settled()
     csv = page.locator('#s1 .data-card .card-heading button')
-    walk.exercise('summary-csv', csv, 'Сохранить результаты анализа')
+    expect(csv).to_be_hidden()
 
     # A real backup in a unique temporary directory, never the live database.
     # The only accepted Open selects this exact file for read-only verification.

@@ -544,9 +544,9 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
         report['attempts'].append(attempt)
         save()
         try:
-            # A real visible production element; no evaluate(click) or print replacement.
-            page.locator(screen).get_by_role('button', name='Печать / PDF', exact=True).click(
-                timeout=5000, no_wait_after=True)
+            trigger = page.locator('#sharedHeader .main-nav button[aria-current="page"]')
+            trigger.focus()
+            page.keyboard.press('Control+p')
             attempt['click'] = 'completed'
         except PlaywrightError as error:
             # Modal print UI may block completion; still inspect the external native UI.
@@ -711,8 +711,7 @@ def probe_reference_print(page, output, app_pid, endpoint='http://127.0.0.1:9227
                 report['status'] = 'targeted-' + action + '-closure-not-confirmed'
                 return report
             try:
-                action_result['source_focus'] = page.locator(screen).get_by_role(
-                    'button', name='Печать / PDF', exact=True).evaluate(
+                action_result['source_focus'] = page.locator('#sharedHeader .main-nav button[aria-current="page"]').evaluate(
                         '(node) => ({documentFocused:document.hasFocus(),buttonFocused:document.activeElement===node})',
                         timeout=3000)
             except PlaywrightError as error:

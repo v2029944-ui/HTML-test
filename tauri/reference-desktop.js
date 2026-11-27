@@ -175,6 +175,13 @@
       const scale = rect.height / tools.offsetHeight;
       if (scale > 0) tools.style.minBlockSize = Math.ceil(Math.max(0, innerHeight - rect.top) / scale) + 'px';
     }, true);
+    document.addEventListener('keydown', event => {
+      if (!(event.ctrlKey || event.metaKey) || event.code !== 'KeyP' || event.shiftKey || event.altKey ||
+          byId(active).hidden || byId('sheet').open || document.querySelector('dialog[open]') ||
+          (panel && tools.contains(document.activeElement))) return;
+      event.preventDefault();
+      byId(active).querySelector('[data-print-report]')?.click();
+    });
     const native = byId('refNative');
     let plotWidth = 0;
     new ResizeObserver(([entry]) => {

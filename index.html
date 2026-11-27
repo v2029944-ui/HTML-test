@@ -1475,7 +1475,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
       </div>
       <section class="panel overview-panel" id="overviewPanel" aria-labelledby="overviewHeading">
         <div class="sectionbar"><div><h2 id="overviewHeading">Итоги за период</h2><p id="overviewPeriodText" class="muted small">Выберите период для анализа.</p></div>
-          <button type="button" id="printSummary" class="button secondary" title="Распечатать итоговую сводку или сохранить её в PDF через диалог печати браузера">Печать сводки / PDF</button></div>
+          <button type="button" id="printSummary" hidden class="button secondary" title="Распечатать итоговую сводку или сохранить её в PDF через диалог печати браузера">Печать сводки / PDF</button></div>
         <div id="overviewAlerts" role="status" aria-live="polite"></div>
         <div class="kpis overview-kpis" id="overviewKpis" aria-live="polite"></div>
         <div class="overview-sections">
@@ -5247,7 +5247,7 @@ function csvDisplayCell(value,column){
   return value;
 }
 function tableCsvButton(root,title,metric,caption,headers,rows,context=null,unit=metricUnit(metric)){
-  const button=elem('button','Скачать таблицу CSV','button secondary table-export');button.type='button';button.title='Скачать все строки этой таблицы с применёнными фильтрами в файл, который можно открыть в Excel';button.setAttribute('aria-label','Скачать таблицу CSV: '+title);
+  const button=elem('button','Скачать таблицу CSV','button secondary table-export');button.hidden=true;button.type='button';button.title='Скачать все строки этой таблицы с применёнными фильтрами в файл, который можно открыть в Excel';button.setAttribute('aria-label','Скачать таблицу CSV: '+title);
   button.addEventListener('click',()=>{
     const metadata=[['Раздел',title],['Показатель',metricTitle(metric)],['Единицы',unit],['Условия',caption],
       ...(context||[['Подразделения',[...state.selectedOrganizations].join(', ')]])];

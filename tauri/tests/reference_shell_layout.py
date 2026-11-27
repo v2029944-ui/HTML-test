@@ -147,7 +147,8 @@ def check_filter_placement(page, record):
             page.evaluate("y => scrollTo({top:y,behavior:'instant'})", max(560,origin+40))
             page.evaluate(settle)
             scrolled_y = page.evaluate('scrollY')
-            expected_top = max(0, origin - scrolled_y)
+            expected_top = max(header.bounding_box()['height'], origin - scrolled_y)
+            assert abs(header.bounding_box()['y']) <= 2
             sidebar_box = fold.bounding_box()
             report_box = page.locator('#s1 .title-row').bounding_box()
             assert abs(sidebar_box['y']-expected_top) <= 2, (scale,origin,scrolled_y,expected_top,sidebar_box)
