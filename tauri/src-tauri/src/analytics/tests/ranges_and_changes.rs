@@ -622,7 +622,7 @@ fn partial_analytics_keeps_observed_amounts_and_report_gaps_separate() {
 }
 
 #[test]
-fn partial_average_uses_priced_rows_of_one_original_work() {
+fn summary_average_uses_priced_rows_across_selected_works() {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();
     let mut data = fixture();
@@ -662,18 +662,19 @@ fn partial_average_uses_priced_rows_of_one_original_work() {
     let mixed = store.analysis_range_summary(revision, &selected, &query("2024-01-01", "2024-01-02")).unwrap();
     assert_eq!(mixed.available_total.amount, Some(40000.));
     assert_eq!(mixed.available_total.count, Some(24.));
-    assert_eq!(mixed.available_total.average, None);
+    assert_eq!(mixed.available_total.average, Some(40000. / 17.));
     let all = scope(&store, revision, "day", &["A"], None);
-    let summary = store.analysis_range_summary(revision, &all, &query("2024-01-01", "2024-01-02")).unwrap();
-    // A one-work priced group must not make a separate mixed priced group
-    // disappear from the eligibility check.
+    let summary = store.analysis_range_summary(revision, &all, &query("2023-12-31", "2024-01-02")).unwrap();
+    assert!(!summary.complete);
+    assert_eq!((summary.priced_rows, summary.report_rows), (4, 6));
+    assert_eq!(summary.available_total.count, Some(25.));
     assert_eq!(summary.available_total.amount, Some(40010.));
-    assert_eq!(summary.available_total.average, None);
+    assert_eq!(summary.available_total.average, Some(40010. / 18.));
     let comparison = ComparisonQuery { before: first, after: second, percent: 0., min_count: 0., min_amount: 0. };
     let dashboard = store.analysis_comparison_dashboard(revision, &selected, &comparison).unwrap();
     assert_eq!(dashboard.summary.average.base, Some(35000. / 15.));
     assert_eq!(dashboard.summary.average.current, Some(2500.));
-    assert_eq!(dashboard.summary.average.delta, None);
+    assert_eq!(dashboard.summary.average.delta, Some(2500. - 35000. / 15.));
     let rows = store.analysis_comparison_window(revision, &selected, &comparison, None, 0, 50).unwrap().rows;
     assert_eq!(rows[0].average.delta, None);
     for (day, expected) in [("2024-01-03", Some(0.)), ("2024-01-04", None)] {

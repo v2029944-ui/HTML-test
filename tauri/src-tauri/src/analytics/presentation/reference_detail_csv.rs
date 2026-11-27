@@ -524,12 +524,7 @@ fn write_comparison(
         }
     };
     if value(&before.available_total,metric).is_some() || value(&after.available_total,metric).is_some() {
-        let comparable_pair = if metric == "average" {
-            let same_work = before.source_work.as_ref().zip(after.source_work.as_ref()).is_some_and(|(b, a)| b == a);
-            comparable_averages(&before.available_total, &after.available_total, same_work)
-        } else {
-            value(&before.available_total, metric).zip(value(&after.available_total, metric))
-        };
+        let comparable_pair = value(&before.available_total, metric).zip(value(&after.available_total, metric));
         emit("Итого по выбранным работам", &before.available_total, &after.available_total,
             comparable_pair.map(|(base, _)| base), comparable_pair.map(|(_, current)| current))?;
     }
@@ -573,7 +568,7 @@ fn ordered_organization_totals(
 ) -> Result<Vec<OrganizationSummary>, String> {
     let mut stmt = tx.prepare(
         "SELECT f.item,(SELECT count(*) FROM an_missing m WHERE m.slot=1 AND m.org=f.item),
-                coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),CASE WHEN COUNT(v.source_work)=COUNT(v.paired_count) AND MIN(v.source_work)=MAX(v.source_work) THEN SUM(v.paired_count) END,CASE WHEN COUNT(v.source_work)=COUNT(v.paired_count) AND MIN(v.source_work)=MAX(v.source_work) THEN MIN(v.source_work) END
+                coalesce(sum(v.count),0),CASE WHEN COUNT(v.key)=0 THEN 0 WHEN COUNT(v.amount)=COUNT(v.key) THEN SUM(v.amount) END,SUM(v.known_amount),SUM(v.paired_count),CASE WHEN COUNT(v.source_work)=COUNT(v.paired_count) AND MIN(v.source_work)=MAX(v.source_work) THEN MIN(v.source_work) END
          FROM analysis_filter_items f LEFT JOIN an_values v ON v.slot=1 AND v.org=f.item
          WHERE f.id=?1 GROUP BY f.ordinal,f.item ORDER BY f.ordinal"
     ).map_err(err)?;
@@ -716,7 +711,7 @@ fn write_organizations(
         }
     }
     headers(w, &head.iter().map(String::as_str).collect::<Vec<_>>())?;
-    let mut emit = |name: &str, values: &[OrganizationSummary]| -> Result<(), String> {
+    let mut emit = |name: &str, values: &[OrganizationSummary], overall: bool| -> Result<(), String> {
         let baseline = &values[base_index];
         let base = &baseline.available_total;
         let mut line = vec![Text(name)];
@@ -724,7 +719,7 @@ fn write_organizations(
             line.push(Number(value(&row.available_total, &table.metric)));
             if i != base_index {
                 let current = &row.available_total;
-                let pair = if table.metric == "average" {
+                let pair = if table.metric == "average" && !overall {
                     let same_work = baseline.average_source_work.as_ref()
                         .zip(row.average_source_work.as_ref()).is_some_and(|(b, a)| b == a);
                     comparable_averages(base, current, same_work)
@@ -739,9 +734,9 @@ fn write_organizations(
         }
         csv_record(w, &line)
     };
-    emit("Итого по выбранным работам", &organizations)?;
+    emit("Итого по выбранным работам", &organizations, true)?;
     if s.names.is_none() {
-        visit_all_organization_works(tx, s, &organizations, None, |item| emit(&item.entry.name, &item.rows))?;
+        visit_all_organization_works(tx, s, &organizations, None, |item| emit(&item.entry.name, &item.rows, false))?;
     } else {
         let hierarchy = super::workspace::tree_indexed(tx)?;
         let mut names = tx.prepare(if hierarchy {
@@ -780,7 +775,7 @@ fn write_organizations(
                 return Err("Organization count changed".into());
             }
             let kind: String = row.get(1).map_err(err)?;
-            emit(&work_label(&name, &kind), &cells)?;
+            emit(&work_label(&name, &kind), &cells, false)?;
         }
     }
     for org in &organizations {
