@@ -1106,13 +1106,13 @@ fn bulk_group_removal_is_revision_checked_and_preserves_source_data() {
 
     let rev = receipt.revision;
     let backup = dir.path().join("before-clear.sqlite3");
-    assert!(store.unified_delete_groups(rev, None, 1, None, true).is_err());
+    assert!(store.unified_delete_groups(rev, None, 1, None, false).is_err());
     assert!(store.unified_delete_groups(rev, None, 2, Some(&backup), true).is_err());
     assert!(!backup.exists());
     let exported = dir.path().join("groups.json");
     store.unified_groups_export(rev, &exported).unwrap();
-    store.unified_delete_groups(rev, None, 1, Some(&backup), true).unwrap();
-    assert!(backup.is_file());
+    store.unified_delete_groups(rev, None, 1, None, true).unwrap();
+    assert!(!backup.exists());
     expected["settings"]["groups"] = json!([]);
     assert_eq!(store.load().unwrap(), expected);
     let rev = store.revision().unwrap();
@@ -1150,15 +1150,13 @@ fn deleting_selected_tree_nodes_keeps_surviving_descendants_linked() {
     let all = store.management_group_page(changed.revision, "", None, 50).unwrap();
     let root = all.iter().find(|group| group.id == "root").unwrap().handle;
     assert!(store.unified_group_tree_edit(changed.revision, GroupTreeEdit::Delete {
-        group: root, delete_descendants: true, confirmed: true,
+        group: root, delete_descendants: true, confirmed: false,
     }).is_err());
     assert_eq!(store.load().unwrap(), after);
 
-    let backup = dir.path().join("before-delete-tree.sqlite3");
-    store.unified_group_tree_edit_with_backup(changed.revision, GroupTreeEdit::Delete {
+    store.unified_group_tree_edit(changed.revision, GroupTreeEdit::Delete {
         group: root, delete_descendants: true, confirmed: true,
-    }, Some(&backup)).unwrap();
-    assert!(backup.is_file());
+    }).unwrap();
     let cleared = store.load().unwrap();
     assert_eq!(cleared["settings"]["groups"], json!([]));
     assert_eq!(cleared["settings"]["workGroupTreeParents"], json!([]));

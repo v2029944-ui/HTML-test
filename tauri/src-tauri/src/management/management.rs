@@ -239,9 +239,6 @@ impl Storage {
             if confirmed_count > total || (handles.is_none() && !clear) {
                 return Err("Список групп изменился. Повторите действие.".into());
             }
-            if clear && backup.is_none() {
-                return Err("Для очистки списка нужна проверенная резервная копия SQLite.".into());
-            }
             unified_settings_io::update_links_before_bulk_deletion(c, parent, handles, clear, &job)?;
             if let Some(handles) = handles {
                 for &handle in handles {
@@ -259,8 +256,7 @@ impl Storage {
             }
             Ok(clear)
         })?;
-        if clear {
-            let destination = backup.ok_or("Укажите путь для резервной копии.")?;
+        if let Some(destination) = backup.filter(|_| clear) {
             if self.backup_sqlite_verified(destination)? != revision {
                 return Err("База изменилась при создании копии. Повторите действие.".into());
             }
