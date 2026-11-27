@@ -215,7 +215,7 @@ pub fn apply_pending_restore_or_open_original(
                 Err(_) => false,
             };
             if original_is_still_present && ensure_regular(&live).is_ok()
-                && recovery::check_snapshot(&live).is_ok() {
+                && recovery::check_original_snapshot(&live).is_ok() {
                 return Ok(Some(RestoreLaunchResult {
                     restored: false,
                     message: format!(
@@ -264,14 +264,14 @@ pub fn apply_pending_restore(root: &Path) -> Result<Option<RestoreLaunchResult>,
         return Err("Подготовленная копия изменилась или повреждена. Рабочая база не затронута.".into());
     }
     ensure_regular(&live)?;
-    let current = recovery::check_snapshot(&live)?;
+    let current = recovery::check_original_snapshot(&live)?;
     let space = fs2::available_space(root).map_err(err)?;
     if space < current.bytes.saturating_add(16 * 1024 * 1024) {
         return Err("Для создания защитной копии текущей базы недостаточно места. Восстановление не выполнено.".into());
     }
     if safety.exists() {
         ensure_regular(&safety)?;
-        if recovery::check_snapshot(&safety)?.verification != current.verification {
+        if recovery::check_original_snapshot(&safety)?.verification != current.verification {
             return Err("Ранее созданная защитная копия отличается от рабочей базы. Переключение остановлено.".into());
         }
     } else {
@@ -281,7 +281,7 @@ pub fn apply_pending_restore(root: &Path) -> Result<Option<RestoreLaunchResult>,
     // An offline safety backup must be self-contained; a lone .sqlite3 file
     // has to remain recoverable even if WAL/SHM sidecars are lost.
     finalize_safety_backup(&safety)?;
-    if recovery::check_snapshot(&safety)?.verification != current.verification {
+    if recovery::check_original_snapshot(&safety)?.verification != current.verification {
         return Err("Защитная копия рабочей базы не прошла сравнение. Восстановление остановлено.".into());
     }
     // Refuse to move the live file with pending WAL pages or any remaining
@@ -289,7 +289,7 @@ pub fn apply_pending_restore(root: &Path) -> Result<Option<RestoreLaunchResult>,
     ensure_no_wal(&live)?;
     // An older application may not honor our process lock. Abort if the
     // source changed after the verified safety backup was made.
-    if recovery::check_snapshot(&live)?.verification != current.verification {
+    if recovery::check_original_snapshot(&live)?.verification != current.verification {
         return Err("Рабочая база изменилась во время подготовки восстановления. Повторите действие.".into());
     }
     ensure_no_wal(&live)?;
@@ -385,6 +385,40 @@ mod tests {
             recovery::check_snapshot(&independent).unwrap().verification,
             recovery::check_snapshot(&root.join("reports.sqlite3")).unwrap().verification
         );
+    }
+
+    #[test]
+    fn replacement_preserves_original_with_unlinked_derived_rows() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("live");
+        let store = Storage::new(root.clone()).unwrap();
+        store.save(data(10.0)).unwrap();
+        let backup = dir.path().join("source.sqlite3");
+        store.backup_sqlite_verified(&backup).unwrap();
+        let digest = store.restore_preview(&backup).unwrap().verification;
+        store.schedule_restore(&backup, &digest).unwrap();
+        let request = load_request(&root).unwrap().unwrap();
+
+        store.save(data(20.0)).unwrap();
+        let conn = store.connect().unwrap();
+        conn.execute(
+            "INSERT INTO report_rows VALUES('missing-report',0,'СМУ16','Ремонт',2,NULL)",
+            [],
+        ).unwrap();
+        drop(conn);
+        drop(store);
+
+        let _lock = AppRestoreLock::acquire(&root).unwrap();
+        let outcome = apply_pending_restore(&root).unwrap().unwrap();
+        assert!(outcome.restored);
+        assert_eq!(Storage::new(root.clone()).unwrap().load().unwrap(), data(10.0));
+        let previous = rusqlite::Connection::open_with_flags(
+            root.join(request.previous), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        ).unwrap();
+        let indexed_rows: i64 = previous.query_row(
+            "SELECT count(*) FROM report_rows WHERE report_id='missing-report'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(indexed_rows, 1);
     }
 
     #[test]
