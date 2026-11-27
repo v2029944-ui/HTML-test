@@ -3,6 +3,7 @@
   'use strict';
   const raw = (name, args = {}) => window.__TAURI__.core.invoke(name, args);
   let state = null, bootstrap = null, ready = false, timer = null, busy = false;
+  let automaticCheck = null;
   let transfer = null, renderedTransferPage = null;
   const transferBatchLimit = 25;
   const selectedTransferIds = new Set();
@@ -89,7 +90,10 @@
 
   function schedule() {
     clearTimeout(timer);
-    if (ready && (!state || state.mode === 'shared')) timer = setTimeout(() => check(false), 5000);
+    if (ready && (!state || state.mode === 'shared')) timer = setTimeout(() => {
+      automaticCheck = check(false).finally(() => { automaticCheck = null; });
+      return automaticCheck;
+    }, 5000);
   }
 
   async function apply(result, force = false) {
@@ -99,9 +103,9 @@
     if (previous && (previous.workspace_token !== state.workspace_token || (previous.available && !state.available))) {
       window.nativeFolderAutoImport?.forgetWorkspaceSession();
     }
-    render();
     if (force || !previous || state.workspace_token !== previous.workspace_token ||
         state.available !== previous.available || state.pending !== previous.pending) {
+      render();
       await window.unifiedUI.refreshWorkspace();
     }
   }
@@ -146,6 +150,11 @@
   }
 
   async function disconnect() {
+    if (automaticCheck) {
+      const selected = state?.workspace_token;
+      await automaticCheck;
+      if (!ready || state?.workspace_token !== selected) return;
+    }
     if (busy || state?.mode !== 'shared' || state.pending || window.tauriOperations?.updating || window.tauriOperations?.saves) return;
     busy = true;
     render();
