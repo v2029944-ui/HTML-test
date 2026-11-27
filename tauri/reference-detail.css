@@ -231,3 +231,7 @@
 #refNative #qualityTable :is(td:nth-child(4),td:nth-child(6),td:last-child) {overflow-wrap:anywhere}
 #refNative #qualityTable td:nth-child(4) {min-width:12ch}
 #refNative #qualityTable td:last-child {min-width:18ch}
+
+#refNative .metric-table > button {margin-block-start:8px}
+#refNative .metric-table > button + button {margin-inline-start:8px}
+#refNative #comparison .multi-filter:has(#comparisonMetrics) {margin-block-end:12px}

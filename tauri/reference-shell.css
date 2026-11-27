@@ -260,7 +260,6 @@
 :is(#s1,#sharedHeader,#reportShell) .insight-card>button {font-size:13px;min-height:35px;padding-inline:12px}
 .screen .kind-grid .kpi {padding:14px 16px;display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-height:110px}
 .screen .kpi [data-count] {font-size:28px!important;line-height:1.15;margin:0!important}
-#s2 .kpi[aria-pressed=true] {border-color:#c79e3b;background:#2c291f;box-shadow:inset 0 0 0 1px #776336}
 .screen .kpi>div:first-child {font-size:14px!important;color:var(--ui-text)!important}
 .screen .kpi>div:last-child {line-height:1.3}
 .screen .leaders .card {padding:15px 17px!important}
@@ -744,7 +743,7 @@
     line-height:1.25;
   }
   #s2 .kind-grid {grid-auto-rows:1fr}
-  #s2 .kind-grid .kpi {justify-content:center}
+  #s2 .kind-grid .kpi {justify-content:flex-start}
   #s2 .table-tools .sel {box-sizing:border-box;height:36px;min-height:36px;padding-block:0}
   #toolsPage header button, #sheet .navigation button, #sheet .quality-switch button,
   #sheet .filter-list-actions button, #sheet .filter-apply, #sheet form button {
@@ -882,12 +881,10 @@
 }
 #s2 .changes-table td:nth-child(-n+2), #s2 .position-heading>span {color:inherit}
 #s2 .kind-grid .kpi::after {display:none}
-#s2 .kind-grid .kpi[aria-pressed=true] {background:#302c20;border-color:#dbba5a;box-shadow:inset 0 0 0 1px #c9a541}
-#s2 .changes-heading {display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0}
+#s2 .changes-heading {display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0}
+#s2 .change-metric-context {margin:0;color:var(--ui-muted);font-size:.875rem;line-height:1.35}
+#s2 .change-metric-context strong {color:var(--ui-text);font-weight:600}
 #s2 .excluded-orgs {padding:3px 7px;border:1px solid #75633b;background:#29261f;color:#e6cf8a;border-radius:5px;font-size:12px;line-height:1.25}
-#s2 .table-tools .change-metrics {display:inline-flex;width:max-content;max-width:100%;border:1px solid #445264;border-radius:8px;box-sizing:border-box;height:36px;background:#151b22}
-#s2 .change-metrics button {display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:0;min-height:0;height:100%;white-space:nowrap;background:transparent;border:0;border-radius:6px;padding:0 10px;font-family:inherit;font-weight:600;font-size:13px;line-height:1.25;color:#bdc9d7;cursor:pointer}
-#s2 .change-metrics button[aria-pressed=true] {background:var(--ui-accent);color:var(--ui-accent-ink)}
 #s2 .match-note {display:flex;gap:6px 10px;align-items:center;flex-wrap:wrap}
 #s2 .match-note button {display:inline-flex;align-items:center;justify-content:center;min-height:28px;padding:2px 9px;margin:0}
 #s2 .changes-table td.mobile-position {text-align:left!important}
@@ -1055,7 +1052,8 @@ body:has(#refRoot)>footer {display:none}
 #reportShell .report-dates .date-group-title {color:var(--text,#e8edf4)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader,#toolsPage,#sheet,.period-calendar) {color:var(--text);background:var(--bg)}
 #refRoot[data-theme="light"] :is(.app-header,.tools-column header) {background:var(--surface)!important;border-color:var(--border)}
-#refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader) :is(.card,.kpi,.sel,.btn,.filter-picker,.filter-shift,.chip,.change-metrics button,.filter-threshold,.filter-reset) {color:var(--text);border-color:var(--field-border);background:var(--surface)}
+#refRoot[data-theme="light"] :is(#s1,#s2,#reportShell,#sharedHeader) :is(.card,.kpi,.sel,.btn,.filter-picker,.filter-shift,.chip,.filter-threshold,.filter-reset) {color:var(--text);border-color:var(--field-border);background:var(--surface)}
+#refRoot #s2 .kind-grid .kpi[aria-pressed=true] {background:var(--selected);border-color:var(--accent)}
 #refRoot[data-theme="light"] #reportShell .filter-summary {color:var(--muted)}
 #refRoot[data-theme="light"] :is(#s1,#s2) .report-range a[href="#reportShell"] {color:var(--accent)}
 #refRoot[data-theme="light"] :is(#s1,#s2,#sharedHeader,#reportShell) :is(.app-header nav button[aria-current="page"],.app-header nav button:hover,.analytics-trigger,.edit-dates-link) {color:var(--accent)}

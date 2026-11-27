@@ -237,7 +237,8 @@ async function exportSummary(){const data=summaryData,s=scope,mine=generation,an
 function changeTitle(value=kind){return value==='significant'?'Значимые изменения':value==='all'?'Все изменения':categories[value]||'Изменения';}
 function changeLabels(s){
  const heading=$('#s2 .changes-heading h2'),metric=$('#s2 [data-current-change-metric]');
- if(heading)heading.textContent=changeTitle();if(metric)metric.textContent=titles[s?.metric]||'Выберите показатель в общих фильтрах';
+ if(heading)heading.textContent=changeTitle();
+ if(metric){metric.textContent=titles[s?.metric]||'';const context=metric.closest?.('.change-metric-context');if(context)context.hidden=!titles[s?.metric];}
 }
 function printTable(root,headers,rows,cls){const table=el('table',null,cls);writeTable(table,headers,rows);root.append(table);}
 function printContext(root,s,comparable,overview){

@@ -6,11 +6,11 @@ const filename=path.join(__dirname,'../app-status.js');
 const statusSource=()=>fs.existsSync(filename)?fs.readFileSync(filename,'utf8'):'';
 function deferred(){let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};}
 function setup({mounts=true,version=deferred(),operations=null,observerThrows=false}={}){
- const ids={},listeners={},events=[],pending=[];
+ const ids={},listeners={},events=[],pending=[],observers=[];
  function node(tag='div'){
-  return {tagName:tag.toUpperCase(),children:[],attributes:{},hidden:false,textContent:'',className:'',
+  return {tagName:tag.toUpperCase(),children:[],attributes:{},dataset:{},hidden:false,textContent:'',className:'',
    append(...children){this.children.push(...children);for(const child of children)if(child.id)ids[child.id]=child;},
-   setAttribute(k,v){this.attributes[k]=String(v);},removeAttribute(k){delete this.attributes[k];}};
+   getAttribute(k){return this.attributes[k]??null;},setAttribute(k,v){this.attributes[k]=String(v);},removeAttribute(k){delete this.attributes[k];}};
  }
  const main=node('main'),header=node('header'),headerActions=node('div');header.append(headerActions);
  if(mounts)for(const id of ['appVersion','appActivity','appActivityText']){ids[id]=node();ids[id].id=id;}
@@ -22,10 +22,11 @@ function setup({mounts=true,version=deferred(),operations=null,observerThrows=fa
  class CustomEvent{constructor(type,init){this.type=type;this.detail=init.detail;}}
  const timers=new Map();let nextTimer=0;
  const runTimers=()=>{for(const [id,fn] of timers){timers.delete(id);fn();}};
- const context={window,document,CustomEvent,setInterval(){},clearInterval(){},setTimeout(fn){timers.set(++nextTimer,fn);return nextTimer;},clearTimeout(id){timers.delete(id);}};
+ class MutationObserver{constructor(callback){this.callback=callback;}observe(){if(!observers.includes(this.callback))observers.push(this.callback);}}
+ const context={window,document,CustomEvent,MutationObserver,setInterval(){},clearInterval(){},setTimeout(fn){timers.set(++nextTimer,fn);return nextTimer;},clearTimeout(id){timers.delete(id);}};
  function loadBridge(){vm.runInNewContext(bridge,context);}
  function loadStatus(){vm.runInNewContext(statusSource(),context);}
- return{runTimers,window,document,ids,main,headerActions,events,pending,version,loadBridge,loadStatus};
+ return{runTimers,notifyDom:()=>observers.forEach(callback=>callback()),window,document,ids,main,headerActions,events,pending,version,loadBridge,loadStatus};
 }
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 test('installed version comes from runtime independently of available updater version',async()=>{
@@ -106,4 +107,29 @@ test('a completed short read never flashes a notification',async()=>{
  const read=ui.window.desktopAPI.nativeRevision();assert.equal(ui.ids.appActivity.hidden,true);
  ui.pending[0].resolve(1);await read;ui.runTimers();
  assert.equal(ui.ids.appActivity.hidden,true);assert.equal(ui.main.attributes['aria-busy'],'false');
+});
+
+test('the active report describes the work and stays busy after IPC until rendering finishes',async()=>{
+ const ui=setup();
+ for(const id of ['refNative','chartsContainer','regularityResults'])ui.ids[id]=ui.document.createElement('div');
+ ui.ids.refNative.dataset.panel='chartPanel';
+ ui.window.unifiedUI={state:{chart:'table'}};
+ ui.loadBridge();ui.loadStatus();
+ ui.ids.chartsContainer.setAttribute('aria-busy','true');
+ ui.notifyDom();
+ const read=ui.window.desktopAPI.nativeRevision();
+ ui.runTimers();
+ assert.equal(ui.ids.appActivity.hidden,false);
+ assert.equal(ui.ids.appActivityText.textContent,'Обновляем таблицу значений…');
+ ui.pending[0].resolve(1);await read;
+ assert.equal(ui.ids.appActivity.hidden,false);
+ ui.ids.refNative.dataset.panel='regularityPanel';
+ ui.notifyDom();
+ assert.equal(ui.ids.appActivity.hidden,true);
+ ui.ids.regularityResults.setAttribute('aria-busy','true');
+ ui.notifyDom();ui.runTimers();
+ assert.equal(ui.ids.appActivityText.textContent,'Рассчитываем частоту…');
+ ui.ids.regularityResults.setAttribute('aria-busy','false');
+ ui.notifyDom();
+ assert.equal(ui.ids.appActivity.hidden,true);
 });
