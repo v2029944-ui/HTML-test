@@ -632,8 +632,8 @@ impl Storage {
         let mut editor = self.management_begin_settings(
             revision, 256 * 1024 * 1024, Arc::new(ManagementJob::new()),
         )?;
-        if editor.edit_group_tree(action)? {
-            let backup = backup.ok_or("Для очистки списка нужна проверенная резервная копия SQLite.")?;
+        let cleared = editor.edit_group_tree(action)?;
+        if let Some(backup) = backup.filter(|_| cleared) {
             if self.backup_sqlite_verified(backup)? != revision {
                 return Err("База изменилась при создании копии. Повторите действие.".into());
             }

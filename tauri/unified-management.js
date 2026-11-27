@@ -135,18 +135,10 @@ function init(){
   const location=workspace.mode==='shared'?'Общая база · '+workspace.folder+'\nИзменение увидят все её пользователи.':'Личная база';
   const treeNote=U.snapshot?.work_group_hierarchy&&!all
    ? ' Оставшиеся подгруппы перейдут к ближайшей сохранённой группе выше или на верхний уровень.' : '';
-  if(!await confirmAction(expected,location+'\nУдаляемых групп: '+count+'.'+treeNote+' В аналитике работы удаляемых групп снова будут видны под исходными названиями. Отчёты, справочник, количества и суммы сохранятся. Продолжить?'))return;
+  if(!await confirmAction(expected,location+'\n'+(all?'Очистить весь список групп? ':'')+'Удаляемых групп: '+count+'.'+treeNote+' В аналитике работы удаляемых групп снова будут видны под исходными названиями. Отчёты, справочник, количества и суммы сохранятся. Продолжить?'))return;
   if(!current())throw Error('Активная база изменилась. Повторите действие.');
-  let backup=null;
-  if(all){
-   if(!await confirmAction(expected,'Очистить весь список групп? Перед удалением будет создана проверенная резервная копия SQLite.'))return;
-   if(!current())throw Error('Активная база изменилась. Повторите действие.');
-   backup=await api.chooseSqliteBackupPath('analiz-before-clear-groups.sqlite3');
-   if(!backup)return;
-  }
-  if(!current())throw Error('Активная база изменилась. Повторите действие.');
-  await mutate(expected,()=>api.unifiedGroupsDelete(expected,handles,count,backup),
-   all?'Список групп очищен. Резервная копия создана.':'Группы удалены: '+count+'.');
+  await mutate(expected,()=>api.unifiedGroupsDelete(expected,handles,count,null),
+   all?'Список групп очищен.':'Группы удалены: '+count+'.');
  }
  let groupReload;
  function reloadGroups(offset){groupReload=load(groups,offset);return groupReload;}
@@ -349,21 +341,8 @@ function init(){
     await mutate(expected,()=>api.nativeSettingsEdit(expected,{kind:'delete_group',handle:group.handle}),'Группа удалена.');
     return;
    }
-   let backup;
-   if(!group.group&&(deleteDescendants||!group.children)){
-    const roots=await api.unifiedManagementPage(expected,'group_tree','',null,0,1);
-    if(!current()||!validManagementPage(roots,0)||!roots.total)throw Error('Не удалось проверить список групп.');
-    if(roots.total===1){
-     if(roots.rows[0].handle!==group.handle)throw Error('Список групп изменился. Повторите удаление.');
-     if(!await confirmAction(expected,'Будут удалены все группы. Сначала будет создана проверенная резервная копия SQLite. Продолжить?'))return;
-     if(!current())throw Error('База изменилась. Повторите действие.');
-     backup=await api.chooseSqliteBackupPath('analiz-before-clear-groups.sqlite3');
-     if(!backup)return;
-    }
-   }
-   if(!current())throw Error('База изменилась. Повторите действие.');
    await mutate(expected,()=>api.unifiedGroupTreeEdit(expected,{
-    kind:'delete',group:group.handle,delete_descendants:deleteDescendants,confirmed:true,...(backup?{backup}:{})
+    kind:'delete',group:group.handle,delete_descendants:deleteDescendants,confirmed:true
    }),'Группа удалена.');
   }));
   actions.append(edit,rename,create,move,remove);
