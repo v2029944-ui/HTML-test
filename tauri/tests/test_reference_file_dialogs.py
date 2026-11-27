@@ -375,6 +375,23 @@ class BackupOpenControlsTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.dialog.rename_save_controls(101,self.facts)
 
+    def test_save_typing_requires_the_verified_edit_and_sends_each_utf16_unit(self):
+        self.dialog.message = Mock()
+        self.dialog.send_keys = Mock()
+        self.dialog.focused_control = Mock(return_value=999)
+        path = '"C:/файл-🗃.sqlite3"'
+        with self.assertRaises(AssertionError):
+            self.dialog.type_save_path(101,103,path)
+        self.dialog.send_keys.assert_not_called()
+        self.dialog.focused_control.return_value = 103
+        self.dialog.type_save_path(101,103,path)
+        hwnd,focus,events = self.dialog.send_keys.call_args.args
+        self.assertEqual((hwnd,focus),(101,103))
+        down,up = events[::2],events[1::2]
+        self.assertEqual(bytes().join(scan.to_bytes(2,'little') for _,scan,_ in down).decode('utf-16-le'),path)
+        self.assertEqual(up,[(0,scan,6) for vk,scan,flags in down if vk==0 and flags==4])
+        self.dialog.message.assert_called_with(103,0x00B1,0,-1)
+
     def test_rename_save_targets_only_a_new_file_in_the_empty_test_directory(self):
         self.dialog.verify_window = Mock()
         self.dialog.native.window_class.side_effect = lambda hwnd: '#32770'
