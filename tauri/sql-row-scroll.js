@@ -59,6 +59,7 @@ function showChoices(state){
    while(Math.ceil((end-start+1)/step)>10)step*=10;
   }
   ranges.hidden=!parents.length;
+  choices.dataset.layout=step>1||end>=1e7?'wide':end>=1e5?'medium':'standard';
   const entries=[];
   for(let n=start;n<=end;n+=step){
    const last=n+Math.min(step-1,end-n);
@@ -80,8 +81,9 @@ function showChoices(state){
 }
 function positionMenu({menu,choose}){
  // Position against the visible viewport, including when hosted by a dialog.
- const rect=choose.getBoundingClientRect(),{width,height}=menu.getBoundingClientRect();
- const zoom=menu.currentCSSZoom||1;
+ const rect=choose.getBoundingClientRect(),zoom=menu.currentCSSZoom||1;
+ menu.style.setProperty('--sql-menu-zoom',String(zoom));
+ const {width,height}=menu.getBoundingClientRect();
  const below=rect.bottom+4;
  menu.style.left=Math.max(4,Math.min(rect.left,document.documentElement.clientWidth-width-4))/zoom+'px';
  menu.style.top=Math.max(4,below+height<=innerHeight?below:rect.top-height-4)/zoom+'px';
@@ -90,8 +92,8 @@ function create(root){
  const nav=element('nav'),bar=element('div'),previous=button('previous','Предыдущая страница','‹');
  const choose=button('choose','Выбрать страницу'),value=element('span'),total=element('span'),next=button('next','Следующая страница','›');
  const range=element('span'),error=element('span'),menu=element('div'),choices=element('div');
- const label=element('label','Номер страницы'),input=element('input'),accept=button('apply','Перейти на страницу','Перейти');
- const cancel=button('cancel','Отмена','Отмена'),ranges=button('ranges','К диапазонам страниц','К диапазонам'),formRow=element('div');
+ const label=element('label','Страница'),input=element('input'),accept=button('apply','Перейти на страницу','→');
+ const cancel=button('cancel','Закрыть выбор страницы','×'),ranges=button('ranges','К диапазонам страниц','К диапазонам'),formRow=element('div');
  nav.className='sql-pager';bar.className='sql-pager-controls';
  range.dataset.pageRange='';range.setAttribute('role','status');total.dataset.pageTotal='';
  error.setAttribute('role','alert');error.hidden=true;
@@ -117,6 +119,16 @@ function create(root){
   input.focus({preventScroll:true});input.select();
  };
  menu.addEventListener('beforetoggle',event=>choose.setAttribute('aria-expanded',String(event.newState==='open')));
+ choices.addEventListener('keydown',event=>{
+  const entries=Array.from(choices.children),index=entries.indexOf(event.target);
+  if(index<0)return;
+  const columns=Number(getComputedStyle(choices).getPropertyValue('--sql-choice-columns'));
+  const moves={ArrowLeft:-1,ArrowRight:1,ArrowUp:-columns,ArrowDown:columns,Home:-index,End:entries.length-1-index};
+  const move=moves[event.key];
+  if(!Number.isFinite(move))return;
+  event.preventDefault();
+  entries[Math.max(0,Math.min(entries.length-1,index+move))]?.focus();
+ });
  function apply(){
   if(!input.reportValidity())return;
   const index=input.valueAsNumber-1;
