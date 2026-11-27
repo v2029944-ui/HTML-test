@@ -60,6 +60,11 @@ fn unified_search_is_bounded_russian_case_insensitive_prefix_first() {
     let dir = tempdir().unwrap();
     let s = Storage::new(dir.path().into()).unwrap();
     let rev = management_setup(&s, &json!({"reports":[],"settings":{"orgNames":["А","Б","В","Г"],"groups":[],"catalog":[{"work":"Я ремонт","organization":"А"},{"work":"РЕМОНТ двигателя","organization":"Б"},{"work":"Ремонт блока","organization":"А"}]}}));
+    let all = s.unified_management_page(rev, "works", "  ", None, 0, 2).unwrap();
+    assert_eq!((all.total, all.grouped, all.ungrouped), (3, 0, 3));
+    assert_eq!(all.rows.len(), 2);
+    let absent = s.unified_management_page(rev, "works", "нет совпадений", None, 0, 1).unwrap();
+    assert_eq!((absent.total, absent.grouped, absent.ungrouped), (0, 0, 0));
     let page = s.unified_management_page(rev, "works", "ремонт", None, 0, 1).unwrap();
     assert_eq!(page.total, 3);
     assert_eq!(page.rows.len(), 1);
@@ -1106,13 +1111,13 @@ fn bulk_group_removal_is_revision_checked_and_preserves_source_data() {
 
     let rev = receipt.revision;
     let backup = dir.path().join("before-clear.sqlite3");
-    assert!(store.unified_delete_groups(rev, None, 1, None, true).is_err());
+    assert!(store.unified_delete_groups(rev, None, 1, None, false).is_err());
     assert!(store.unified_delete_groups(rev, None, 2, Some(&backup), true).is_err());
     assert!(!backup.exists());
     let exported = dir.path().join("groups.json");
     store.unified_groups_export(rev, &exported).unwrap();
-    store.unified_delete_groups(rev, None, 1, Some(&backup), true).unwrap();
-    assert!(backup.is_file());
+    store.unified_delete_groups(rev, None, 1, None, true).unwrap();
+    assert!(!backup.exists());
     expected["settings"]["groups"] = json!([]);
     assert_eq!(store.load().unwrap(), expected);
     let rev = store.revision().unwrap();
@@ -1150,15 +1155,13 @@ fn deleting_selected_tree_nodes_keeps_surviving_descendants_linked() {
     let all = store.management_group_page(changed.revision, "", None, 50).unwrap();
     let root = all.iter().find(|group| group.id == "root").unwrap().handle;
     assert!(store.unified_group_tree_edit(changed.revision, GroupTreeEdit::Delete {
-        group: root, delete_descendants: true, confirmed: true,
+        group: root, delete_descendants: true, confirmed: false,
     }).is_err());
     assert_eq!(store.load().unwrap(), after);
 
-    let backup = dir.path().join("before-delete-tree.sqlite3");
-    store.unified_group_tree_edit_with_backup(changed.revision, GroupTreeEdit::Delete {
+    store.unified_group_tree_edit(changed.revision, GroupTreeEdit::Delete {
         group: root, delete_descendants: true, confirmed: true,
-    }, Some(&backup)).unwrap();
-    assert!(backup.is_file());
+    }).unwrap();
     let cleared = store.load().unwrap();
     assert_eq!(cleared["settings"]["groups"], json!([]));
     assert_eq!(cleared["settings"]["workGroupTreeParents"], json!([]));

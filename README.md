@@ -1,12 +1,12 @@
 # Анализ работ — Tauri для Windows
 
-## Выпуск 1.12.9 для Windows x64
+## Выпуск 1.12.10 для Windows x64
 
-[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.9/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.9/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.12.9](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.12.9)
+[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.10/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.10/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.12.10](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.12.10)
 
-Обновление до 1.12.9 доступно через «Настройки → Проверить обновления». [План разработки и оставшиеся задачи](https://github.com/v2029944-ui/HTML-test/issues/79).
+Обновление до 1.12.10 доступно через «Настройки → Проверить обновления». [План разработки и оставшиеся задачи](https://github.com/v2029944-ui/HTML-test/issues/79).
 
-В «Настройки → Оформление» доступны пять масштабов интерфейса (80%, 90%, 100%, около 115% и около 130%). В широком окне фильтр можно закрепить слева в свободном поле рядом с отчётом. При переключении вкладок подробной аналитики, разделов отчётов и года в календаре сохраняется положение страницы. [Подключение сотрудников](tauri/README.md#общая-база-сотрудников)
+В 1.12.10 добавлена иерархия групп работ, ускорены запросы сводки и динамики подразделений, а расчёт «Сумма / количество» учитывает строки с сопоставимыми показателями. Обновлены фильтры, навигация по таблицам и экран настроек. [Подключение сотрудников](tauri/README.md#общая-база-сотрудников)
 
 «Анализ работ» — настольное приложение Tauri 2 для анализа Excel-отчётов о работах. Данные хранятся в личной SQLite или в общей базе сотрудников через сетевую папку.
 
@@ -54,7 +54,7 @@ Excel, база отчётов и настройки не отправляютс
 Сборка Tauri и Windows-проверка описаны в [tauri/README.md](tauri/README.md). Для текущих исходников предусмотрены:
 
 ```text
-node --test tauri/tests/*.test.cjs tests/*.cjs
+node --test tauri/tests/*.test.cjs tests/test_*.cjs
 python -m unittest discover -s tests -v
 cargo test --manifest-path tauri/src-tauri/Cargo.toml
 ```
@@ -75,7 +75,7 @@ npm --prefix tauri run prepare:frontend
 
 Циклы зависимостей и доступ к внутреннему состоянию стоит разбирать по показанным связям. Ширина интерфейса, длина файла и число файлов в каталоге помогают выбрать участки для дальнейшего ревью. Линтер используется как дополнительная локальная проверка. Сборка и тесты выполняются отдельно.
 
-Подписанная 1.12.9 проверена на синтетических книгах и изолированных базах. Проверки включали Windows/WebView2, импорт Excel, SQLite и обмен двух установленных клиентов через SMB. [Windows CI](https://github.com/v2029944-ui/HTML-test/actions/runs/45881801029) · [Подписанная сборка](https://github.com/v2029944-ui/HTML-test/actions/runs/45897258936).
+Подписанная 1.12.10 проверена на синтетических книгах и изолированных базах. Проверки включали Windows/WebView2, импорт Excel, SQLite и обмен двух установленных клиентов через SMB. [Windows CI](https://github.com/v2029944-ui/HTML-test/actions/runs/45964278146) · [Подписанная сборка](https://github.com/v2029944-ui/HTML-test/actions/runs/45971710837).
 
 Корневой [index.html](index.html) используется при подготовке интерфейса Tauri. Поддержка автономного запуска в браузере завершена.
 

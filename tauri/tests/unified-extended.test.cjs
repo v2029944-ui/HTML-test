@@ -872,7 +872,7 @@ test('department comparison uses observed totals and shows one coverage notice',
  assert.match(coverage.textContent,/Полные отчёты у 0 из 4/);
  assert.doesNotMatch(coverage.textContent,/Нет сопоставимых подразделений/);
  const summary=f.nodes.get('kpis').textContent;
- assert.match(summary,/Доля суммыСумма \/ количество \(объём\)/);
+ assert.match(summary,/Доля суммыСредняя сумма на единицу/);
  assert.match(summary,/A20523,5%4B30835,3%3\.75C351041,2%—D————/);
 });
 
