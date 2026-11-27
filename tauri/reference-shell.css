@@ -1422,3 +1422,6 @@ body:has(#refRoot)>footer {display:none}
 :is(#s1,#s2) .quality-counters {display:flex;align-items:center;flex-wrap:wrap;gap:3px 12px}
 :is(#s1,#s2) .quality-details:not([hidden]) {display:block;margin-block-start:6px}
 :is(#s1,#s2) .quality-info {min-height:28px;min-width:28px;padding:0;border:1px solid currentColor;border-radius:50%;color:inherit;background:transparent;font:inherit;cursor:pointer}
+
+/* The active upload tab already identifies the destination of this shortcut. */
+#refRoot:has(#refNative[data-panel="upload"] #unifiedUploadImport[aria-pressed="true"]) #refImport {display:none}
