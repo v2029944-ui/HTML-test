@@ -206,6 +206,23 @@ fn work_timeline_distinguishes_confirmed_absence_from_missing_reports() {
 }
 
 #[test]
+fn work_timeline_returns_same_results_without_period_index() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let rev = prepare(&store, &fixture());
+    let all = scope(&store, rev, "day", &["A", "B"], None);
+    let days = query("2024-02-28", "2024-03-01");
+    let read = || {
+        serde_json::to_value(
+            store.analysis_work_timeline(rev, &all, &days, None, "group:g").unwrap(),
+        ).unwrap()
+    };
+    let indexed = read();
+    store.connect().unwrap().execute_batch("DROP INDEX reports_by_period").unwrap();
+    assert_eq!(read(), indexed);
+}
+
+#[test]
 fn daily_report_rollups_are_calendar_aligned_and_never_double_count_source_types() {
     let dir=tempdir().unwrap();
     let store=Storage::new(dir.path().into()).unwrap();

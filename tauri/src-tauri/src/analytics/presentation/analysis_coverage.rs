@@ -96,8 +96,19 @@ fn window(kind: &str, start: NaiveDate, stop: NaiveDate) -> Result<(String, Stri
         if kind == "week" { stop } else { start }.to_string(),
     ))
 }
-fn require_manifests(c: &Connection, kind: &str, lower: &str, upper: &str) -> Result<(), String> {
-    let missing:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM reports r INDEXED BY reports_by_period LEFT JOIN analysis_reports a ON a.report_id=r.id WHERE r.report_type=?1 AND r.period_start BETWEEN ?2 AND ?3 AND a.report_id IS NULL)",params![kind,lower,upper],|r|r.get(0)).map_err(err)?;
+fn require_manifests(
+    c: &Connection,
+    period_index: ReportPeriodIndex,
+    kind: &str,
+    lower: &str,
+    upper: &str,
+) -> Result<(), String> {
+    let sql = period_index.sql(
+        "SELECT EXISTS(SELECT 1 FROM reports r INDEXED BY reports_by_period
+         LEFT JOIN analysis_reports a ON a.report_id=r.id
+         WHERE r.report_type=?1 AND r.period_start BETWEEN ?2 AND ?3 AND a.report_id IS NULL)",
+    );
+    let missing: bool = c.query_row(&sql, params![kind, lower, upper], |r| r.get(0)).map_err(err)?;
     if missing {
         return Err(
             "Coverage contains unindexed reports or conflict partners; index this report window"
@@ -108,6 +119,7 @@ fn require_manifests(c: &Connection, kind: &str, lower: &str, upper: &str) -> Re
 }
 fn conflicts(
     c: &Connection,
+    period_index: ReportPeriodIndex,
     kind: &str,
     report: &QualityMatrixReport,
     org: &str,
@@ -116,9 +128,9 @@ fn conflicts(
         return Ok((false, false));
     }
     let (lower, upper) = window(kind, date(&report.start)?, date(&report.end)?)?;
-    require_manifests(c, kind, &lower, &upper)?;
+    require_manifests(c, period_index, kind, &lower, &upper)?;
     c.query_row(
-        PARTNER_SQL,
+        &period_index.sql(PARTNER_SQL),
         params![kind, lower, upper, org, report.id],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )
@@ -141,6 +153,7 @@ fn report(r: &rusqlite::Row<'_>, expected: &str) -> rusqlite::Result<QualityMatr
 }
 fn matrix_cell(
     c: &Connection,
+    period_index: ReportPeriodIndex,
     kind: &str,
     period: &QualityMatrixPeriod,
     org: &str,
@@ -162,7 +175,7 @@ fn matrix_cell(
     };
     let mut usable = None;
     let mut exact_valid = 0;
-    let mut statement = c.prepare(CANDIDATES_SQL).map_err(err)?;
+    let mut statement = c.prepare(&period_index.sql(CANDIDATES_SQL)).map_err(err)?;
     let mut rows = statement
         .query(params![kind, lower, upper, org, None::<&str>])
         .map_err(err)?;
@@ -182,7 +195,7 @@ fn matrix_cell(
             continue;
         }
         exact_valid += 1;
-        let (duplicate, overlap) = conflicts(c, kind, &r, org)?;
+        let (duplicate, overlap) = conflicts(c, period_index, kind, &r, org)?;
         cell.duplicate_reports += i64::from(duplicate);
         cell.overlap_reports += i64::from(overlap);
         usable = Some(r.id);
@@ -246,16 +259,25 @@ impl Analytics<'_> {
         let tx = connection.transaction().map_err(err)?;
         check_revision(&tx, revision)?;
         check_metadata_bounds(&tx)?;
+        let period_index = ReportPeriodIndex::detect(&tx)?;
+        let unassigned_sql = period_index.sql(
+            "SELECT count(*) FROM reports r INDEXED BY reports_by_period
+             JOIN analysis_reports a ON a.report_id=r.id AND a.valid=0
+             WHERE r.report_type=?1 AND r.period_start=?2
+             AND NOT EXISTS(SELECT 1 FROM analysis_orgs o WHERE o.report_id=r.id)",
+        );
         for period in &mut periods {
             let (lower, upper) = window(report_type, date(&period.start)?, date(&period.end)?)?;
-            require_manifests(&tx, report_type, &lower, &upper)?;
-            period.unassigned_invalid=tx.query_row("SELECT count(*) FROM reports r INDEXED BY reports_by_period JOIN analysis_reports a ON a.report_id=r.id AND a.valid=0 WHERE r.report_type=?1 AND r.period_start=?2 AND NOT EXISTS(SELECT 1 FROM analysis_orgs o WHERE o.report_id=r.id)",params![report_type,period.start],|r|r.get(0)).map_err(err)?;
+            require_manifests(&tx, period_index, report_type, &lower, &upper)?;
+            period.unassigned_invalid = tx
+                .query_row(&unassigned_sql, params![report_type, period.start], |r| r.get(0))
+                .map_err(err)?;
         }
         let mut rows = Vec::with_capacity(organizations.len());
         for org in organizations {
             let cells = periods
                 .iter()
-                .map(|p| matrix_cell(&tx, report_type, p, org))
+                .map(|p| matrix_cell(&tx, period_index, report_type, p, org))
                 .collect::<Result<Vec<_>, _>>()?;
             rows.push(QualityMatrixRow {
                 organization: org.clone(),
@@ -321,18 +343,19 @@ impl Analytics<'_> {
         let tx = connection.transaction().map_err(err)?;
         check_revision(&tx, revision)?;
         check_metadata_bounds(&tx)?;
+        let period_index = ReportPeriodIndex::detect(&tx)?;
         let (lower, upper) = if organization.is_some() {
             window(report_type, first, last)?
         } else {
             (start.into(), start.into())
         };
-        require_manifests(&tx, report_type, &lower, &upper)?;
+        require_manifests(&tx, period_index, report_type, &lower, &upper)?;
         let predicate = if organization.is_some() {
             " AND (r.period_start=?6 OR (a.valid=1 AND r.period_end>=?6))"
         } else {
             " AND r.period_start=?6 AND a.valid=0 AND NOT EXISTS(SELECT 1 FROM analysis_orgs o WHERE o.report_id=r.id)"
         };
-        let candidates = format!("{CANDIDATES_SQL}{predicate}");
+        let candidates = format!("{}{predicate}", period_index.sql(CANDIDATES_SQL));
         let total_rows = tx.query_row(
             &format!("SELECT COUNT(*) FROM ({candidates})"),
             params![report_type, lower, upper, organization, Option::<&str>::None, start],
@@ -363,7 +386,7 @@ impl Analytics<'_> {
                 bounded(reason)?;
             }
             if let Some(org) = organization {
-                (r.duplicate, r.overlap) = conflicts(&tx, report_type, &r, org)?;
+                (r.duplicate, r.overlap) = conflicts(&tx, period_index, report_type, &r, org)?;
             }
             rows.push(r);
         }

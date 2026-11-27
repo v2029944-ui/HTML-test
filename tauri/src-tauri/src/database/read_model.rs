@@ -2,6 +2,7 @@
 use super::*;
 use rusqlite::{types::Value as SqlValue, OptionalExtension};
 use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use std::borrow::Cow;
 use std::io::{self, BufReader, Read};
 
 pub const MAX_PAGE_ROWS: usize = 500;
@@ -27,6 +28,33 @@ pub(super) fn check_metadata_bounds(conn: &Connection) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+// Legacy metadata can prevent initialization from creating this optional index.
+#[derive(Clone, Copy)]
+pub(super) struct ReportPeriodIndex(bool);
+
+impl ReportPeriodIndex {
+    pub(super) fn detect(conn: &Connection) -> Result<Self, String> {
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM main.sqlite_schema
+             WHERE type='index' AND name='reports_by_period' AND tbl_name='reports')",
+            [],
+            |row| row.get(0),
+        )
+        .map(Self)
+        .map_err(err)
+    }
+
+    // Only trusted SQL constants use this hint. Preserve the indexed plan for
+    // ordinary databases and keep the same predicates on legacy databases.
+    pub(super) fn sql(self, indexed_sql: &str) -> Cow<'_, str> {
+        if self.0 {
+            Cow::Borrowed(indexed_sql)
+        } else {
+            Cow::Owned(indexed_sql.replace(" INDEXED BY reports_by_period", ""))
+        }
+    }
 }
 
 pub(super) fn allow_missing_amount(conn: &Connection) -> Result<(), String> {

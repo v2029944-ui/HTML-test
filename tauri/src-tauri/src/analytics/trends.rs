@@ -88,7 +88,8 @@ pub(super) fn timeline_grouping(s: &AnalysisScope, q: &RangeQuery, grouping: Opt
 pub(super) fn fill_timeline_report_buckets(c: &Connection, mode: i64, s: &AnalysisScope) -> Result<(), String> {
     c.execute_batch("CREATE TEMP TABLE timeline_report_buckets(label TEXT PRIMARY KEY) WITHOUT ROWID;")
         .map_err(err)?;
-    c.execute(r#"
+    let period_index = ReportPeriodIndex::detect(c)?;
+    c.execute(&period_index.sql(r#"
         WITH bounds AS (
             SELECT CASE ?1 WHEN 1 THEN substr(start,1,7)
                            WHEN 2 THEN date(start,'-'||((cast(strftime('%w',start) AS integer)+6)%7)||' days')
@@ -105,7 +106,7 @@ pub(super) fn fill_timeline_report_buckets(c: &Connection, mode: i64, s: &Analys
         ) OR EXISTS (
             SELECT 1 FROM reports r INDEXED BY reports_by_period JOIN analysis_reports a ON a.report_id=r.id
             WHERE r.report_type=?2 AND r.period_start BETWEEN b.first_start AND b.last_start AND a.valid=0
-        )"#, params![mode, &s.report_type, &s.organizations]).map_err(err)?;
+        )"#), params![mode, &s.report_type, &s.organizations]).map_err(err)?;
     Ok(())
 }
 
