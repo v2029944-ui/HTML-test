@@ -31,6 +31,8 @@ SHELL_METRICS = """() => {
     .map(el=>({title:el.textContent.trim(),ratio:ratio(el)}));
   const captions=[...document.querySelectorAll('#reportShell .filter-summary, #s1 .report-range a[href="#reportShell"]')].filter(visible)
     .map(el=>({text:el.textContent.trim(),ratio:ratio(el)}));
+  const filterText=[...document.querySelectorAll('#reportShell .lbl, #reportShell .filter-more > summary, #reportShell .filter-shortcuts :is(.chip,.filter-reset):enabled')].filter(visible)
+    .map(el=>({text:el.textContent.trim(),ratio:ratio(el)}));
   const quick=[...document.querySelectorAll('#reportShell .quick-actions button')].filter(visible).map(rect);
   const chipsAligned=quick.every(r=>Math.abs(r.height-quick[0].height)<=1 &&
     quick.every(other=>Math.abs(r.top-other.top)>=r.height-1 || Math.abs(r.top-other.top)<=1));
@@ -39,7 +41,7 @@ SHELL_METRICS = """() => {
   if(visible(actions) && visible(main) && visible(actions.previousElementSibling)){
     summaryGaps=[rect(actions).top-rect(actions.previousElementSibling).bottom,rect(main).bottom-rect(actions).bottom];
   }
-  return {width:innerWidth,headings,captions,fields,chipsAligned,summaryGaps};
+  return {width:innerWidth,headings,captions,fields,filterText,chipsAligned,summaryGaps};
 }"""
 
 
@@ -49,6 +51,7 @@ def check_shell_layout(page, *, headings=False, chart=False, folded=False):
     if headings:
         assert len(metrics['headings']) == 4, metrics
         assert all(h['ratio'] >= 4.5 for h in metrics['headings']), metrics
+        assert metrics['filterText'] and all(item['ratio'] >= 4.5 for item in metrics['filterText']), metrics
         assert metrics['chipsAligned'], metrics
         gaps = metrics['summaryGaps']
         if gaps is not None:

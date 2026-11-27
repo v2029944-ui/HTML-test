@@ -242,8 +242,20 @@ function buildUnified(source){
  'Сильные изменения достигают одновременно процентного и абсолютного порогов. Услуги с малой базой показаны отдельно. Каждая строка относится к конкретной паре периодов.');
  html=html.replace(/<div class="section-filter-row" hidden style="display:none"><label>Тип источника<select id="calendarType">[\s\S]*?<\/div>/,'');
  // Preserve the distinction between zero reports, missing reports and incomplete data.
- if(!html.includes("<div class=\"segmented chart-mode-controls\"><button data-chart=\"line\" class=\"active\" title=\"Показывать изменение значений по периодам линиями\">Линейный график</button><button data-chart=\"bar\" title=\"Сравнивать значения столбцами\">Столбцы</button><button data-chart=\"table\" title=\"Показывать точные значения по периодам\">Таблица значений</button></div>"))throw Error('Canonical chart modes changed');
- html=html.replace("<div class=\"segmented chart-mode-controls\"><button data-chart=\"line\" class=\"active\" title=\"Показывать изменение значений по периодам линиями\">Линейный график</button><button data-chart=\"bar\" title=\"Сравнивать значения столбцами\">Столбцы</button><button data-chart=\"table\" title=\"Показывать точные значения по периодам\">Таблица значений</button></div>",'<label class="checkline"><input id="hideEmptyPeriods" type="checkbox"> Скрывать периоды без отчётов или с нулевыми количеством и суммой</label>'+"<div class=\"chart-mode-line\"><div class=\"segmented chart-mode-controls\"><button type=\"button\" data-chart=\"bar\" class=\"active\" title=\"Сравнить значения по периодам\">Диаграмма</button><button type=\"button\" data-chart=\"table\" title=\"Показать точные значения\">Таблица значений</button></div><label>Расположение столбцов<select id=\"chartOrientation\"><option value=\"vertical\">Вертикально</option><option value=\"horizontal\">Горизонтально</option></select></label></div>");
+ const originalChartModes="<div class=\"segmented chart-mode-controls\"><button data-chart=\"line\" class=\"active\" title=\"Показывать изменение значений по периодам линиями\">Линейный график</button><button data-chart=\"bar\" title=\"Сравнивать значения столбцами\">Столбцы</button><button data-chart=\"table\" title=\"Показывать точные значения по периодам\">Таблица значений</button></div>";
+ if(!html.includes(originalChartModes))throw Error('Canonical chart modes changed');
+ const chartViewControls=`<div class="chart-mode-line">
+   <div><strong id="chartViewLabel">Вид</strong><div class="segmented chart-mode-controls" role="group" aria-labelledby="chartViewLabel">
+     <button type="button" data-chart="bar" class="active" title="Сравнить значения по периодам">Диаграмма</button>
+     <button type="button" data-chart="table" title="Показать точные значения">Таблица</button>
+   </div></div>
+   <label>Расположение столбцов<select id="chartOrientation"><option value="vertical">Вертикально</option><option value="horizontal">Горизонтально</option></select></label>
+ </div>
+ <label class="checkline"><input id="hideEmptyPeriods" type="checkbox" aria-describedby="hideEmptyExplanation"> Скрыть пропуски и нулевые периоды</label>
+ <small id="hideEmptyExplanation">Скрывает периоды без отчётов и периоды с подтверждёнными нулями по сумме и количеству выбранных рядов.</small>`;
+ html=html.replace(originalChartModes,'');
+ html=html.replace('<div class="chart-view-controls">','<div class="chart-presentation">'+chartViewControls+'</div><div class="chart-view-controls">');
+
 
  // Chart layout select options must fit 320-390 px without clipping.
  // Long-form scale explanations remain in the chart guide and captions.

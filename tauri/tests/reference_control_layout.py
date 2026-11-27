@@ -103,10 +103,6 @@ def check_control_layout(page):
             !close(field.left,parent.left) || !close(field.right,parent.right))
           errors.push([button.textContent, 'calendar button misaligned with period label']);
       }
-      const duration = document.querySelector('#reportShell [data-base-duration]');
-      const previousPeriod = document.querySelector('#reportShell [data-baseline-quick=prev]');
-      if (visible(duration) && visible(previousPeriod) && rect(duration).bottom > rect(previousPeriod).top + tolerance)
-        errors.push(['Предыдущий', 'baseline duration overlaps the quick action']);
       for (const button of document.querySelectorAll('.sql-pager-controls button')) {
         if (visible(button) && !close(rect(button).height, 28 * button.currentCSSZoom))
           errors.push([button.getAttribute('aria-label'), 'page button differs from compact size',rect(button).height]);
@@ -156,13 +152,10 @@ def check_control_layout(page):
             errors.push(['Показатель', 'misaligned with adjacent filter']);
         }
         if (innerWidth >= 1050 && !document.querySelector('#refRoot').dataset.filterSidebar) {
-          const filterFields = [...document.querySelectorAll('#reportShell :is(.filter-periods,.filter-options) > .lbl > :is(select,button)')].filter(visible);
-          if (!filterFields.every(field => close(rect(field).top,rect(metric).top) &&
+          const fields = [...document.querySelectorAll('#reportShell .filter-options > .lbl > :is(select,button)')].filter(visible);
+          if (!fields.every(field => close(rect(field).top,rect(metric).top) &&
               close(rect(field).bottom,rect(metric).bottom)))
-            errors.push(['Периоды и фильтры', 'period, source, baseline and options are not aligned']);
-          const source = document.querySelector('#referenceSource'), baseline = document.querySelector('#sum-base');
-          if (rect(source).left >= rect(baseline).left)
-            errors.push(['Источник', 'source should precede the comparison baseline']);
+            errors.push(['Ещё фильтры', 'advanced fields are not aligned']);
         }
       }
       const orientation = document.querySelector('#chartOrientation');

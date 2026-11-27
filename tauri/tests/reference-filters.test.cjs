@@ -20,8 +20,7 @@ async function fixture(storage = new Map(), width = 1440) {
     return elements.get(selector);
   }
   const panel = one('#reportShell');
-  one('[data-compare]').parentElement={before:label=>one('.filter-periods').append(label)};
-  panel.querySelector = selector => selector === '#referenceSource' ? one('.filter-periods').options[0].options[0] : one(selector);
+  panel.querySelector = one;
   panel.querySelectorAll = selector => {
     const n = {'[data-date]':2, '[data-shift]':2}[selector] || 0;
     if (!lists.has(selector)) lists.set(selector, Array.from({length:n}, element));
@@ -361,4 +360,13 @@ test('unique work count remains correct through repeated selection and overlappi
   assert.equal(button.textContent,'Выбрано 5 из 10 работ');
   controls.setWorks(false,new Map());
   assert.equal(button.textContent,'Выбрано 0 из 10 работ');
+});
+
+test('top filters start folded and their caption identifies detail work and metric selections', async () => {
+  const {controls,one,panel,choices}=await fixture();
+  assert.equal(one('.filter-fold').open,false);
+  controls.setWorks(false,[[choices[0].key,choices[0]]]);
+  controls.setMetric('count');
+  assert.match(one('.filter-summary').textContent,/количество \/ объём, в аналитике: Ремонт/);
+  assert.equal(panel.querySelectorAll('[data-shift]')[1].title,'Сдвинуть вперёд на 1 нед.');
 });

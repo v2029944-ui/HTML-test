@@ -86,6 +86,7 @@ test('a complete zero stays hidden even if a source reports activity, while non-
  assert.equal(f.draws.at(-1)[0].length,1);
  assert.equal(f.draws.at(-1)[4].data[0].get('work:W').amount,15);
  assert.equal(seen.at(-1),1);
+ assert.match(f.nodes.get('chartDescription').textContent,/Сумма.*по дням/);
  assert.deepEqual(Array.from(f.draws.at(-1)[4].hiddenPeriods,p=>p.start),['2024-01-02']);
 });
 test('work chart keeps a zero-total day with nonzero work on another page',async()=>{

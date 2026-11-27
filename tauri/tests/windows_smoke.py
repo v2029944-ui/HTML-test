@@ -446,6 +446,8 @@ def check_runtime(page):
     expect(analytics).to_be_focused()
     navigate(page,'dashboard')
     fold=common_filters(page)
+    if not fold.locator('.filter-more').evaluate('el=>el.open'):
+        fold.locator('.filter-more > summary').click()
     select=fold.locator('#referenceSource')
     select.focus();select.press('Enter');select.press('Escape')
     assert select.evaluate('el => document.activeElement===el')
@@ -1103,6 +1105,8 @@ def check_partial_amount_charts(page, temporary, output):
     select_filter_period(filters,'День','range')
     choose_calendar_date(page,filters.locator('[data-date="start"]'),'2018-01-01')
     choose_calendar_date(page,filters.locator('[data-date="end"]'),'2018-01-03')
+    if not filters.locator('.filter-more').evaluate('el=>el.open'):
+        filters.locator('.filter-more > summary').click()
     filters.locator('[data-measure]').select_option('amount')
     filters.locator('#sum-base').select_option('prev')
     wait_for_app_state(page,

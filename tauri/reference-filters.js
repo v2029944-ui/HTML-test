@@ -129,9 +129,11 @@ function paint(lo,hi){
  baseStart.setAttribute('aria-label','Начало базового периода: '+C.stamp(lo)+'. Выбрать другую дату');
  baseEnd.setAttribute('aria-label','Конец базового периода: '+C.stamp(hi)+'. Выбрать другую дату');
  one('[data-base-duration]').textContent=range?duration(lo,hi):'';
- for(const action of many('[data-baseline-quick]')){
-  action.setAttribute('aria-pressed',String(rule===action.dataset.baselineQuick));
-  action.disabled=boundsPending||boundsFailed||!snapshot||!allowRule(action.dataset.baselineQuick);
+ const months=(Number(to.slice(0,4))-Number(from.slice(0,4)))*12+Number(to.slice(5,7))-Number(from.slice(5,7))+1;
+ const units={day:[size(from,to),'дн.'],week:[size(from,to)/7,'нед.'],month:[months,'мес.'],year:[months/12,'г.']};
+ for(const arrow of many('[data-shift]')){
+  arrow.title='Сдвинуть '+(arrow.dataset.shift==='1'?'вперёд':'назад')+' на '+units[kind].join(' ');
+  arrow.setAttribute('aria-label',arrow.title);
  }
  one('[data-compare]').value=rule;
  for(const opt of one('[data-compare]').options)opt.disabled=!allowRule(opt.value);
@@ -141,7 +143,12 @@ function paint(lo,hi){
  workFilter.textContent=workCountNotice||(workCounts
   ? window.analysisSummary.workSelectionText({selected:allNames?workCounts.total:workCounts.selected,total:workCounts.total})
   : allNames?'Все работы и группы':'Выбрано '+nameRows.size+' из '+nameCount);
- one('.filter-summary').textContent=caption+', база '+interval(lo,hi)+(allOrgs?'':', подразделений '+orgs.size+' из '+orgNames.length);
+ const summary=[caption,'база '+interval(lo,hi)];
+ if(!allOrgs)summary.push('подразделений '+orgs.size+' из '+orgNames.length);
+ if(source!=='daily')summary.push('отчёты выбранного типа');
+ if(metric==='count')summary.push('количество / объём');
+ if(!allNames)summary.push('в аналитике: '+(nameRows.size===1?[...nameRows.values()][0].name:'выбрано позиций '+nameRows.size));
+ one('.filter-summary').textContent=summary.join(', ');
  const note=one('.period-length-note');note.hidden=size(lo,hi)===size(from,to);note.textContent=note.hidden?'':'Интервалы разной длительности. Сравниваются итоги за каждый интервал.';
  many('.quick-actions button').forEach((b,i)=>{const p=quick(i);b.disabled=!p||!snapshot||boundsPending||boundsFailed;b.setAttribute('aria-pressed',String(Boolean(p&&source==='daily'&&p.kind===kind&&p.from===from&&p.to===to)));if(p)b.title=interval(p.from,p.to);else b.removeAttribute('title');});
 }
@@ -356,7 +363,10 @@ async function readBounds(snap){
 function setBoundsPending(busy){
  boundsPending=busy;
  const blocked=busy||boundsFailed||!snapshot;
- for(const b of [...many('[data-date]'),...many('[data-shift]'),one('[data-period-selection]'),...many('[data-baseline-quick]'),one('[data-base-start]'),one('[data-base-end]'),one('[data-compare]')])b.disabled=blocked;
+ for(const b of [...many('[data-date]'),...many('[data-shift]'),one('[data-period-selection]'),one('[data-base-start]'),one('[data-base-end]'),one('[data-compare]')])b.disabled=blocked;
+ const reason=one('[data-presets-reason]');
+ reason.textContent=boundsFailed?'Не удалось загрузить периоды.':busy||!snapshot?'Загрузка периодов…':!latestDay?'Нет дневных отчётов.':'';
+ reason.hidden=!reason.textContent;
  if(blocked)for(const b of many('.quick-actions button'))b.disabled=true;
  const retry=one('[data-retry-periods]');retry.hidden=!boundsFailed;retry.disabled=busy;
  for(const id of [...detailPanels,'analyticsDetails','changeDetails']){
@@ -456,7 +466,7 @@ function initPlacement(){
   if(fits===Boolean(root.dataset.filterSidebar))return;
   if(fits)root.dataset.filterSidebar='true';else delete root.dataset.filterSidebar;
   releaseSpace();
-  if(fits)fold.open=true;
+  fold.open=fits;
  }
  function display(value){
   const layout=value==='side'?'side':'top';
@@ -467,7 +477,7 @@ function initPlacement(){
  }
  let initial='top';
  try{initial=window.localStorage.getItem(layoutKey);}catch{/* Storage may be unavailable. */}
- fold.open=!matchMedia('(max-width:680px)').matches;
+ fold.open=false;
  display(initial);
  placement.onchange=()=>{
   const layout=placement.checked?'side':'top';
@@ -496,13 +506,10 @@ function initPlacement(){
 function init(){
  if(initialized)return;
  initialized=true;dates(today());
- const sourceLabel=make('label','Источник');sourceLabel.className='lbl';const input=make('select');input.id='referenceSource';input.className='sel';
- for(const [value,text] of [['daily','Дневные отчёты'],['imported','Отчёты выбранного типа']]){const option=make('option',text);option.value=value;input.append(option);}
+ one('#referenceSource').onchange=sourceChanged;
  const compare=one('[data-compare]');compare.replaceChildren();
- sourceLabel.append(input);compare.parentElement.before(sourceLabel);input.onchange=sourceChanged;
  for(const [value,text] of baselines){const option=make('option',text);option.value=value;compare.append(option);}
  compare.onchange=()=>{if(compare.value==='custom'){compare.value=rule;chooseDate('base',compare);}else{rule=compare.value;customEnd=null;publish();}};
- for(const button of many('[data-baseline-quick]'))button.onclick=()=>{if(!allowRule(button.dataset.baselineQuick))return;rule=button.dataset.baselineQuick;customEnd=null;publish();};
  initPlacement();
  const period=one('[data-period-selection]');period.onchange=()=>setPeriodSelection(period.value);
  many('[data-date]').forEach(b=>b.onclick=()=>chooseDate(b.dataset.date,b));
