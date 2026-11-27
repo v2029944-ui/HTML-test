@@ -22,6 +22,13 @@ test('installed reference screens and detail tools share the same native forms',
   }
 });
 
+test('preset precedes its design and palette controls in standalone and installed settings', () => {
+  for (const markup of [original,html]) {
+    const fields = Array.from(markup.matchAll(/<select id="appearance(Preset|Design|Palette|Theme)">/g), match => match[1]);
+    assert.deepEqual(fields,['Preset','Design','Theme','Palette']);
+  }
+});
+
 test('desktop starts in reference colors and honors previously selected appearance', () => {
   const context = {window:{}};
   vm.runInNewContext(script, context);

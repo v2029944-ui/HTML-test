@@ -333,9 +333,9 @@ function buildUnified(source){
  const filterSetting='<label class="placement-setting"><span id="filterPlacementLabel">Закреплять фильтр слева</span>'+
   '<input type="checkbox" role="switch" id="appearanceFilterPlacement" aria-labelledby="filterPlacementLabel" aria-describedby="filterPlacementHint"><span class="placement-value" aria-hidden="true"><span>Выкл</span><span>Вкл</span></span>'+
   '<small class="muted" id="filterPlacementHint">В узком окне фильтр остаётся сверху.</small></label>';
- const designLabel='<label>Дизайн<select id="appearanceDesign">';
- if(!html.includes(designLabel))throw Error('Missing desktop appearance settings');
- html=html.replace(designLabel,filterSetting+designLabel);
+ const designLabel=/<label>Дизайн<select id="appearanceDesign">[\s\S]*?<\/select><\/label>/;
+ if(!designLabel.test(html))throw Error('Missing desktop appearance settings');
+ html=html.replace(designLabel,label=>label+filterSetting);
  const storageView='<section id="storage" class="view">';
  const uploadView='<section id="upload" class="view">';
  if(!html.includes(storageView)||!html.includes(uploadView))throw Error('Missing desktop management view');
