@@ -1463,6 +1463,7 @@ def check_groups(page, confirmations):
     expect(page.locator('#groupCoverage')).to_contain_text('1')
     expect(group.locator('.group-members .group-assign').first).to_be_visible()
     expect(group.locator('.group-members [data-sql-pager]')).to_have_count(0)
+    group.get_by_role('button',name='Ещё',exact=True).click()
     rename=group.locator('button[data-group-rename]')
     initial_revision=confirmations.revision()
     for how in ('button','escape'):
@@ -1489,12 +1490,12 @@ def check_groups(page, confirmations):
     group=page.locator('#groupList details').filter(has_text='Переименованная группа CI')
     # Rename reloads the list, opens the replacement row, then restores focus.
     # Clicking its summary while that restoration is in flight can close the row.
-    expect(group.get_by_role('button',name='Переименовать',exact=True)).to_be_focused(timeout=90_000)
+    expect(group.get_by_role('button',name='Ещё',exact=True)).to_be_focused(timeout=90_000)
     expect(group).to_have_js_property('open',True)
     assert confirmations.revision()>initial_revision
     member=group.locator('.group-member').filter(has_text='Альфа')
     group_button=member.locator('.group-assign')
-    expect(group_button).to_have_text('Группа')
+    expect(group_button).to_have_text('Перенести…')
     group_button.click(timeout=90_000)
     picker=page.locator('#groupPickerDialog')
     search=picker.locator('#groupPickerSearch')
@@ -1527,7 +1528,8 @@ def check_groups(page, confirmations):
     confirmations.cancel_only(page.get_by_role('button',name='Удалить выбранные',exact=True),
         'Удаляемых групп: 1.')
     page.get_by_role('button',name='Завершить выбор',exact=True).click()
-    confirmations.cancel_then_accept(group.get_by_role('button',name='Удалить группу',exact=True),
+    group.get_by_role('button',name='Ещё',exact=True).click()
+    confirmations.cancel_then_accept(group.get_by_role('button',name='Удалить',exact=True),
         'Удалить группу «Группа CI»? Исходные работы останутся.')
     wait_for_text(page,'#flash','Группа удалена.',90_000)
     dismiss_notice.focus()

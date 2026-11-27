@@ -167,7 +167,7 @@ function init(){
   if(ticket!==editTicket||!valid(expected))return;editing=group;selected=chosen;showWorkMode('edit');openEditor(opener);$('groupName').value=group.name;workSearch.value='';await load(works);$('groupName').focus();
  }catch(e){if(ticket===editTicket)fail(e);}finally{busy=false;lock();}}
  function requestGroupSelection(anchor,row,expected,current,movingGroup=false){
-  const dialog=el('dialog',null,'group-picker'),heading=el('h2',movingGroup?'Переместить группу':'Группа'),work=el('p',row.name,'muted small');
+  const dialog=el('dialog',null,'group-picker'),heading=el('h2',movingGroup?'Переместить группу':'Перенести работу'),work=el('p',row.name,'muted small');
   const label=el('label','Поиск групп'),search=el('input'),status=el('p','','muted small');
   const choices=el('div',null,'group-picker-choices'),more=el('button','Показать ещё','button secondary');
   const cancel=el('button','Отмена','button secondary');
@@ -217,7 +217,7 @@ function init(){
  }
  function moveControl(row,expected,sourceGroup){
   const box=el('div',null,'group-member');
-  const pick=button('Группа',async()=>{
+  const pick=button('Перенести…',async()=>{
    if(!valid(expected))return;
    let moved=false;
    await guard(async()=>{
@@ -239,30 +239,36 @@ function init(){
    else $('groupSearch').focus({preventScroll:true});
   });
   pick.className='button secondary group-assign';pick.setAttribute('aria-haspopup','dialog');
-  pick.setAttribute('aria-label','Группа для работы '+row.name);
+  pick.setAttribute('aria-label','Перенести работу «'+row.name+'» в другую группу');
   box.append(el('span',row.name),pick);return box;
  }
  function expandMembers(details,root,group,expected,openChildren){
   const pageTicket=groups.ticket,status=el('p','','muted small');
-  let offset=0,total=Number.isSafeInteger(group.members)&&group.members>=0?group.members:1,ticket=0;
-  root.append(status);status.hidden=true;status.setAttribute('role','status');
-  details.addEventListener('toggle',async()=>{
-   updateRemovalControls();
-   const request=++ticket,current=()=>request===ticket&&pageTicket===groups.ticket&&valid(expected)&&details.open;
+  let offset=0,total=Number.isSafeInteger(group.members)&&group.members>=0?group.members:1,loading=false;
+  const more=button('Показать ещё работы',loadNext);
+  more.hidden=true;status.hidden=true;status.setAttribute('role','status');root.append(status,more);
+  const current=()=>pageTicket===groups.ticket&&valid(expected)&&details.open&&details.isConnected!==false;
+  async function loadNext(){
+   if(loading||offset>=total||!current())return;
+   loading=true;status.hidden=false;status.textContent='Загрузка состава группы…';
+   try{
+    const result=await api.unifiedManagementPage(expected,'members','',group.handle,offset,LIMIT);
+    if(!current())return;
+    if(!validManagementPage(result,offset))throw Error('Получен некорректный состав группы.');
+    const rows=result.rows.map(row=>moveControl(row,expected,group.id));
+    for(const row of rows)root.insertBefore(row,more);
+    offset+=rows.length;total=result.total;status.hidden=true;
+    if(document.activeElement===more)rows[0]?.querySelectorAll('button')[0]?.focus();
+    more.hidden=offset>=total;
+   }catch(error){
+    if(current()){status.textContent='Не удалось загрузить состав группы. '+(error?.message||String(error));more.hidden=false;}
+   }finally{loading=false;}
+  }
+  details.addEventListener('toggle',()=>{
+   if(selectingGroups)updateRemovalControls();
    if(!current())return;
    openChildren?.();
-   if(offset>=total)return;
-   status.hidden=false;status.textContent='Загрузка состава группы…';
-   try{
-    while(current()&&offset<total){
-     const result=await api.unifiedManagementPage(expected,'members','',group.handle,offset,LIMIT);
-     if(!current())return;
-     if(!validManagementPage(result,offset))throw Error('Получен некорректный состав группы.');
-     root.append(...result.rows.map(row=>moveControl(row,expected,group.id)));
-     offset+=result.rows.length;total=result.total;
-    }
-    if(current())status.hidden=true;
-   }catch(error){if(current())status.textContent='Не удалось загрузить состав группы. '+(error?.message||String(error));}
+   if(!offset)return loadNext();
   });
  }
  function confirmGroupTreeDeletion(anchor,group){
@@ -305,11 +311,11 @@ function init(){
     if(active&&valid(revision))await load(groups,groups.offset);
    })();
    if(rename.isConnected!==false&&!rename.disabled){rename.focus({preventScroll:true});return;}
-   const current=Array.from(groups.root.querySelectorAll('button')).find(item=>item.dataset.groupRename===group.id);
+   const current=Array.from(groups.root.querySelectorAll('button')).find(item=>item.dataset.groupMore===group.id);
    if(current){current.closest('details').open=true;current.focus({preventScroll:true});}else $('groupSearch').focus({preventScroll:true});
   });
   rename.dataset.groupRename=group.id;
-  const edit=button('Изменить группу',()=>editGroup(group,expected,edit));
+  const edit=button('Изменить состав',()=>editGroup(group,expected,edit));
   const activeScope=()=>{
    const opened=U.generation,token=window.sharedWorkspace?.state?.workspace_token;
    return ()=>valid(expected)&&opened===U.generation&&token===window.sharedWorkspace?.state?.workspace_token;
@@ -322,14 +328,14 @@ function init(){
     kind:'create',id:window.crypto.randomUUID(),name,parent:group.handle
    }),'Подгруппа создана.');
   }));
-  const move=button('Переместить группу',guard(async ()=>{
+  const move=button('Переместить',guard(async ()=>{
    const current=activeScope();
    const parent=await requestGroupSelection(move,group,expected,current,true);
    if(parent===undefined||parent===(group.group||null))return;
    if(!current())throw Error('База изменилась. Повторите действие.');
    await mutate(expected,()=>api.unifiedGroupTreeEdit(expected,{kind:'move',group:group.handle,parent}),'Группа перемещена.');
   }));
-  const remove=button('Удалить группу',guard(async ()=>{
+  const remove=button('Удалить',guard(async ()=>{
    if(!valid(expected))return;
    const current=activeScope();
    let deleteDescendants=false;
@@ -346,7 +352,16 @@ function init(){
     kind:'delete',group:group.handle,delete_descendants:deleteDescendants,confirmed:true
    }),'Группа удалена.');
   }));
-  actions.append(edit,rename,create,move,remove);
+  const extra=el('div',null,'group-extra-actions');
+  const more=button('Ещё',()=>showExtra(extra.hidden));
+  function showExtra(open){
+   extra.hidden=!open;more.setAttribute('aria-expanded',String(open));
+  }
+  more.dataset.groupMore=group.id;showExtra(false);
+  actions.addEventListener('keydown',event=>{
+   if(event.key==='Escape'&&!extra.hidden){event.stopPropagation();showExtra(false);more.focus();}
+  });
+  extra.append(rename,move,remove);actions.append(edit,create,more,extra);
   const checkLabel=el('label',null,'group-selection'),check=el('input');
   check.type='checkbox';check.dataset.groupHandle=group.handle;check.setAttribute('aria-label','Выбрать «'+group.name+'»');
   check.addEventListener('change',()=>{

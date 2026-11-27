@@ -1196,6 +1196,8 @@ label.placement-setting {display:grid;grid-template-columns:minmax(0,1fr) auto;a
 #groupWorkspace .group-removal {align-items:center}
 #groupWorkspace .group-selection {margin-inline-start:.5rem; cursor:pointer}
 #groupWorkspace .group-result-counts {display:flex;flex-wrap:wrap;gap:0 1rem}
+#groupWorkspace .group-extra-actions:not([hidden]) {display:flex;flex-wrap:wrap;gap:6px;flex-basis:100%}
+
 #groupWorkspace .group-assign {justify-self:end;width:auto;min-height:34px;padding:6px 10px}
 #groupPickerDialog {
  width:min(28rem,calc(100vw - 2rem));max-height:calc(100vh - 2rem);
