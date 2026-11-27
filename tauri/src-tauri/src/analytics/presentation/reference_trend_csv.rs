@@ -11,7 +11,7 @@ pub enum TrendTable { Works, Organizations, OrganizationTotals }
 pub enum TrendMetric { Count, Amount, Average }
 impl TrendMetric {
     fn label(self) -> &'static str {
-        match self { Self::Count => "Количество / объём", Self::Amount => "Сумма", Self::Average => "Сумма / количество (объём)" }
+        match self { Self::Count => "Количество / объём", Self::Amount => "Сумма", Self::Average => "Средняя сумма на единицу" }
     }
     fn value(self, value: &AnalysisTotals) -> Option<f64> {
         match self { Self::Count => value.count, Self::Amount => value.amount, Self::Average => value.average }

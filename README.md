@@ -54,7 +54,7 @@ Excel, база отчётов и настройки не отправляютс
 Сборка Tauri и Windows-проверка описаны в [tauri/README.md](tauri/README.md). Для текущих исходников предусмотрены:
 
 ```text
-node --test tauri/tests/*.test.cjs tests/*.cjs
+node --test tauri/tests/*.test.cjs tests/test_*.cjs
 python -m unittest discover -s tests -v
 cargo test --manifest-path tauri/src-tauri/Cargo.toml
 ```
