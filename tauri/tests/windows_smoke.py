@@ -407,6 +407,7 @@ def check_runtime(page):
       const {theme,palette,design,uiSize}=document.documentElement.dataset;
       return [theme,palette,design,uiSize].join('/')==='dark/paper/compact/large';
     }''')
+    check_caption_colors(page)
     check_palette_contrast(page)
     page.locator('#appearanceTheme').select_option('system')
     page.locator('#appearancePreset').select_option('minimal')
@@ -429,6 +430,21 @@ def check_runtime(page):
     assert page.locator('#categoryFilter').evaluate('el => el.open')
     dropdown.press('Enter')
     assert not page.locator('#categoryFilter').evaluate('el => el.open')
+
+
+def check_caption_colors(page):
+    if sys.getwindowsversion().build < 22000:
+        return
+    for theme, palette in (('light', 'neon'), ('dark', 'paper')):
+        page.locator('#appearanceTheme').select_option(theme)
+        page.locator('#appearancePalette').select_option(palette)
+        expect(page.locator('#refRoot')).to_have_attribute('data-palette', palette)
+        fill = page.locator('#sharedHeader .app-header').evaluate(
+            "node => getComputedStyle(node).getPropertyValue('--window-caption-background').trim()")
+        assert re.fullmatch(r'#[0-9a-f]{6}', fill, re.IGNORECASE), fill
+        background = list(bytes.fromhex(fill[1:]))
+        assert page.evaluate("""args => window.__TAURI__.core.invoke('set_window_caption', args)""",
+                             {'background': background, 'dark': theme == 'dark'}) is True
 
 
 def check_palette_contrast(page):

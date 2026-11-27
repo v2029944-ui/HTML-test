@@ -2,6 +2,8 @@
 
 #[cfg(windows)]
 mod windows_taskbar;
+#[cfg(windows)]
+mod windows_caption;
 mod storage;
 #[path = "commands/native_shared_runtime.rs"]
 mod native_shared_runtime;
@@ -52,6 +54,24 @@ use native_import::{
 use storage::{AnalysisScope, ManagementJob, RangeQuery, RangeSummary, ReadExcel, ReadFilter, ReportHeader, Rule, Storage};
 use std::sync::Arc;
 use tauri::{Manager, State};
+
+#[tauri::command]
+fn set_window_caption(
+    window: tauri::Window,
+    background: Option<[u8; 3]>,
+    dark: bool,
+) -> Result<bool, String> {
+    #[cfg(windows)]
+    {
+        let hwnd = window.hwnd().map_err(|error| error.to_string())?;
+        windows_caption::apply(hwnd, background, dark).map_err(|error| error.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, background, dark);
+        Ok(false)
+    }
+}
 
 #[tauri::command]
 async fn native_report_calendar(
@@ -1823,6 +1843,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            set_window_caption,
             shared_workspace_status,
             shared_workspace_choose_folder,
             shared_workspace_connect,
