@@ -1777,10 +1777,10 @@ def check_scheduled_backup(page):
     control=page.locator('#scheduledBackupEnabled')
     expect(control).to_be_enabled()
     assert not control.is_checked()
-    expect(page.locator('#scheduledBackupStatus')).to_contain_text('ещё не создавалась')
+    expect(page.locator('#scheduledBackupStatus')).to_contain_text('Автокопирование выключено')
     revision=api(page,'nativeRevision')
     control.click()
-    wait_for_text(page,'#scheduledBackupStatus','Последняя успешная копия:',90_000)
+    wait_for_text(page,'#scheduledBackupStatus','Последняя успешная копия —',90_000)
     assert control.is_checked()
     status=api(page,'nativeScheduledBackup',None)
     assert status['enabled'] and status['lastSuccess']>0 and status['error'] is None,status
