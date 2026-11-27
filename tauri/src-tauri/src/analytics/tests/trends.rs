@@ -126,6 +126,27 @@ fn organization_trends_are_bounded_and_independently_complete() {
 }
 
 #[test]
+fn organization_trends_still_rejects_overflow_across_finite_points() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let rev = prepare(&store, &fixture());
+    let selected = scope(&store, rev, "day", &["A"], None);
+    let conn = store.connect().unwrap();
+    conn.execute(
+        "UPDATE report_rows SET amount=1e308 WHERE organization='A' AND row_index=0",
+        [],
+    ).unwrap();
+    let first = store.analysis_organization_trends(
+        rev, &selected, &query("2024-02-28", "2024-02-28"),
+    ).unwrap();
+    assert!(first.series[0].points[0].total.amount.unwrap().is_finite());
+    let error = store.analysis_organization_trends(
+        rev, &selected, &query("2024-02-28", "2024-03-01"),
+    ).unwrap_err();
+    assert!(error.contains("numeric overflow"), "{error}");
+}
+
+#[test]
 fn organization_trends_explicitly_limits_organization_series() {
     let dir = tempdir().unwrap();
     let store = Storage::new(dir.path().into()).unwrap();

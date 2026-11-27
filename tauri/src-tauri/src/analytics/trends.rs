@@ -266,12 +266,16 @@ impl Analytics<'_> {
         let mut c = self.database.connect()?;
         let tx = c.transaction().map_err(err)?;
         workspace(&tx, expected, s)?;
-        fill_range(&tx, s, q, 1)?;
         let selected_organizations: i64 = tx.query_row(
             "SELECT COUNT(*) FROM analysis_filter_items WHERE id=?1",
             [&s.organizations],
             |r| r.get(0),
         ).map_err(err)?;
+        if selected_organizations > 8 {
+            fill_range(&tx, s, q, 1)?;
+        } else {
+            super::workspace::fill_periods(&tx, s, q, 1)?;
+        }
         let periods: i64 = tx.query_row(
             "SELECT COUNT(*) FROM temp.an_periods WHERE slot=1",
             [], |r| r.get(0),
@@ -296,7 +300,8 @@ impl Analytics<'_> {
             ), values_by_bucket AS (
                 SELECT v.org,
                        CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count,CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active, SUM(x.amount) AS known_amount, CASE WHEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL)=MAX(x.work) FILTER (WHERE x.amount IS NOT NULL) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END AS paired_count
+                       SUM(x.count) AS count,CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active, SUM(x.amount) AS known_amount, CASE WHEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL)=MAX(x.work) FILTER (WHERE x.amount IS NOT NULL) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END AS paired_count,
+                       TOTAL(ABS(x.count)) AS absolute_count, TOTAL(ABS(x.amount)) AS absolute_amount
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN selected s ON s.org=v.org
@@ -308,7 +313,8 @@ impl Analytics<'_> {
                 GROUP BY v.org,label
             )
             SELECT s.org,b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(v.count,0),CASE WHEN v.count IS NULL THEN 0 ELSE v.amount END, COALESCE(v.active,0), b.first_start, b.last_start, v.known_amount, v.paired_count
+                   COALESCE(v.count,0),CASE WHEN v.count IS NULL THEN 0 ELSE v.amount END, COALESCE(v.active,0), b.first_start, b.last_start, v.known_amount, v.paired_count,
+                   COALESCE(v.absolute_count,0),COALESCE(v.absolute_amount,0)
             FROM selected s CROSS JOIN buckets b
             LEFT JOIN missing m ON m.org=s.org AND m.label=b.label
             LEFT JOIN values_by_bucket v ON v.org=s.org AND v.label=b.label
@@ -318,7 +324,11 @@ impl Analytics<'_> {
         let mut rows = stmt.query(params![mode,&s.organizations,&s.names]).map_err(err)?;
         let mut series: Vec<OrganizationTrendSeries> = Vec::new();
         let mut count = 0_usize;
+        let mut absolute_count = 0.0;
+        let mut absolute_amount = 0.0;
         while let Some(row) = rows.next().map_err(err)? {
+            absolute_count += row.get::<_, f64>(11).map_err(err)?;
+            absolute_amount += row.get::<_, f64>(12).map_err(err)?;
             count += 1;
             if count > 992 { return Err("Organization timeline exceeds 992 points".into()); }
             let org: String = row.get(0).map_err(err)?;
@@ -343,6 +353,15 @@ impl Analytics<'_> {
                 available_total: paired_observed_totals(row.get(4).map_err(err)?,row.get(5).map_err(err)?,
                     row.get(9).map_err(err)?,row.get(10).map_err(err)?,missing < periods)?,
             });
+        }
+        drop(rows);
+        drop(stmt);
+        // Absolute totals bound any subtotal. Keep the existing per-work and
+        // range-wide overflow checks when the bound is close to the float limit.
+        if selected_organizations <= 8
+            && (absolute_count >= f64::MAX / 2.0 || absolute_amount >= f64::MAX / 2.0)
+        {
+            super::workspace::fill_range_values(&tx, s, 1)?;
         }
         Ok(OrganizationTrends{
             granularity: granularity.into(),

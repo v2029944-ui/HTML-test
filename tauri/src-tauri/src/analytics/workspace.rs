@@ -145,6 +145,10 @@ pub(super) fn fill_periods(c: &Connection, s: &AnalysisScope, q: &RangeQuery, sl
 
 pub(super) fn fill_range(c: &Connection, s: &AnalysisScope, q: &RangeQuery, slot: i64) -> Result<(), String> {
     fill_periods(c, s, q, slot)?;
+    fill_range_values(c, s, slot)
+}
+
+pub(super) fn fill_range_values(c: &Connection, s: &AnalysisScope, slot: i64) -> Result<(), String> {
     c.execute(RANGE_VALUES_SQL, params![slot, s.names]).map_err(err)?;
     c.execute("INSERT INTO temp.an_combined SELECT slot,key,name,kind,SUM(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,MAX(active),SUM(known_amount),SUM(paired_count),CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END,SUM(report_rows),SUM(priced_rows) FROM temp.an_values WHERE slot=?1 GROUP BY key",[slot]).map_err(err)?;
     validate_numbers(c, "SELECT count,amount FROM temp.an_combined")?;
