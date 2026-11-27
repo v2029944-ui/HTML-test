@@ -60,7 +60,9 @@ const RANGE_VALUES_SQL: &str = "
            SUM(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,
            MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0),
            SUM(x.amount),SUM(x.count) FILTER (WHERE x.amount IS NOT NULL),
-           CASE WHEN MIN(x.work)=MAX(x.work) THEN MIN(x.work) END,
+           CASE WHEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL)
+                     =MAX(x.work) FILTER (WHERE x.amount IS NOT NULL)
+                THEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL) END,
            COUNT(*),COUNT(x.amount)
     FROM (
         SELECT DISTINCT v.report_id,v.start
@@ -92,7 +94,7 @@ pub(super) fn fill_range(c: &Connection, s: &AnalysisScope, q: &RangeQuery, slot
     drop(insert);
     c.execute("INSERT INTO temp.an_missing SELECT ?1,f.item,p.start FROM analysis_filter_items f CROSS JOIN temp.an_periods p LEFT JOIN temp.an_valid v ON v.org=f.item AND v.start=p.start WHERE f.id=?2 AND p.slot=?1 AND v.report_id IS NULL",params![slot,s.organizations]).map_err(err)?;
     c.execute(RANGE_VALUES_SQL, params![slot, s.names]).map_err(err)?;
-    c.execute("INSERT INTO temp.an_combined SELECT slot,key,name,kind,SUM(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,MAX(active),SUM(known_amount),SUM(paired_count),CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END,SUM(report_rows),SUM(priced_rows) FROM temp.an_values WHERE slot=?1 GROUP BY key",[slot]).map_err(err)?;
+    c.execute("INSERT INTO temp.an_combined SELECT slot,key,name,kind,SUM(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,MAX(active),SUM(known_amount),SUM(paired_count),CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END,SUM(report_rows),SUM(priced_rows) FROM temp.an_values WHERE slot=?1 GROUP BY key",[slot]).map_err(err)?;
     validate_numbers(c, "SELECT count,amount FROM temp.an_combined")?;
     validate_numbers(c, "SELECT count,amount FROM temp.an_values")?;
     validate_numbers(

@@ -196,8 +196,8 @@ fn observed_totals(count: f64, amount: Option<f64>, known_amount: Option<f64>, o
     Ok(result)
 }
 // Quantities are comparable for the same original work and report format.
-// The SQL passes a denominator only when that identity is uniform and uses
-// exactly the rows with a known amount.
+// Identity and quantity are both based on the rows with a known amount. At
+// each rollup, ignore groups without paired rows and reject mixed identities.
 fn paired_observed_totals(
     count: f64,
     amount: Option<f64>,

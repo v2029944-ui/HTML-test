@@ -254,8 +254,8 @@ fn comparison_csv_context(
     let observed = |slot| -> Result<(AnalysisTotals, Option<String>), String> {
         let (count, amount, known_amount, paired_count, source_work) = c.query_row("SELECT coalesce(sum(count),0.0),
             CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,
-            SUM(known_amount), CASE WHEN MIN(name)=MAX(name) THEN SUM(paired_count) END,
-            CASE WHEN MIN(name)=MAX(name) THEN MIN(name) END FROM ref_values WHERE slot=?1", [slot],
+            SUM(known_amount), CASE WHEN MIN(name) FILTER (WHERE paired_count IS NOT NULL)=MAX(name) FILTER (WHERE paired_count IS NOT NULL) THEN SUM(paired_count) END,
+            CASE WHEN MIN(name) FILTER (WHERE paired_count IS NOT NULL)=MAX(name) FILTER (WHERE paired_count IS NOT NULL) THEN MIN(name) FILTER (WHERE paired_count IS NOT NULL) END FROM ref_values WHERE slot=?1", [slot],
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).map_err(err)?;
         let available = observed_reports(c, slot, None)?;
         Ok((paired_observed_totals(count, amount, known_amount, paired_count, available)?, source_work))
@@ -411,7 +411,7 @@ impl Analytics<'_> {
                 csv_record(writer,&[Cell::Text("Подразделение"),Cell::Text("Сумма"),Cell::Text("Количество / объём"),Cell::Text("Доля суммы, %"),Cell::Text("Сумма / количество (объём)"),Cell::Text("Состояние")])?;
                 let mut statement=tx.prepare("WITH observed AS (
                     SELECT v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,CASE WHEN COUNT(x.row_index)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(x.row_index) THEN SUM(x.amount) END amount,SUM(x.amount) known_amount,
-                           CASE WHEN MIN(x.work)=MAX(x.work) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END paired_count
+                           CASE WHEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL)=MAX(x.work) FILTER (WHERE x.amount IS NOT NULL) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END paired_count
                     FROM an_valid v JOIN an_periods p ON p.slot=2 AND p.start=v.start
                     LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY v.org)
                     SELECT f.item,coalesce(o.reports,0),o.count,o.amount,

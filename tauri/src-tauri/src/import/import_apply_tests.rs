@@ -179,11 +179,16 @@ fn confirmed_reimport_recovers_pre_fix_count_without_inventing_an_amount() {
     let dates = super::analytics::RangeQuery { from:"2026-11-01".into(), to:"2026-11-02".into() };
     let summary = store.analysis_range_summary(receipt.revision, &scope, &dates).unwrap();
     assert_eq!((summary.available_total.count,summary.available_total.amount,summary.available_total.average),
-        (Some(9.0), Some(0.0), None));
+        (Some(9.0), Some(0.0), Some(0.0)));
+    // Only the explicit zero amount is paired with quantity. The recovered
+    // unpriced row stays absent from this denominator and keeps coverage partial.
+    assert_eq!(summary.available_total.partial_average_quantity, Some(2.0));
     assert!(summary.amount_missing_rows);
     let timeline = store.analysis_timeline(receipt.revision, &scope, &dates).unwrap();
     assert_eq!(timeline.points[0].available_total.amount, Some(0.0));
+    assert_eq!(timeline.points[0].available_total.average, Some(0.0));
     assert_eq!(timeline.points[1].available_total.amount, None);
+    assert_eq!(timeline.points[1].available_total.average, None);
     let copy = root.path().join("backup.sqlite3");
     store.backup_sqlite(&copy).unwrap();
     let db = Connection::open(copy).unwrap();

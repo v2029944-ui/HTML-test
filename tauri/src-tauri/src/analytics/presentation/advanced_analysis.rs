@@ -164,7 +164,7 @@ impl Calendar {
             CREATE TEMP TABLE adv_facts(label TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,known_amount REAL,active INTEGER,paired_count REAL,source_work TEXT,PRIMARY KEY(label,org,key)) WITHOUT ROWID;")).map_err(err)?;
         c.execute("INSERT INTO adv_facts SELECT v.label,v.org,coalesce(g.key,'work:'||x.work),coalesce(g.name,x.work),
             CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,sum(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount),max(x.count<>0 OR x.amount IS NULL OR x.amount<>0),
-            SUM(x.count) FILTER (WHERE x.amount IS NOT NULL),CASE WHEN MIN(x.work)=MAX(x.work) THEN MIN(x.work) END
+            SUM(x.count) FILTER (WHERE x.amount IS NOT NULL),CASE WHEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL)=MAX(x.work) FILTER (WHERE x.amount IS NOT NULL) THEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL) END
             FROM adv_reports v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work
             WHERE (?1 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=coalesce(g.name,x.work)))
             GROUP BY v.label,v.org,coalesce(g.key,'work:'||x.work)",[&s.names]).map_err(err)?;
@@ -453,7 +453,7 @@ fn usual_row(
             SELECT batch, SUM(count) AS quantity,
                 CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END AS amount,
                 SUM(known_amount) AS known_amount, SUM(paired_count) AS paired_count,
-                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work
+                CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work
             FROM adv_combined JOIN adv_dates USING(label)
             WHERE key=?1 AND slot=0 AND observed GROUP BY batch
          ), baseline AS (
@@ -462,16 +462,16 @@ fn usual_row(
                 coalesce(SUM(amount),0) AS strict_amount,
                 ?2-COUNT(*) FILTER(WHERE amount IS NULL) AS strict_samples,
                 CASE WHEN COUNT(*)<?2 THEN COALESCE(SUM(known_amount),0) ELSE SUM(known_amount) END AS known_amount,
-                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN SUM(paired_count) END AS paired_count,
-                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work,
+                CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN SUM(paired_count) END AS paired_count,
+                CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work,
                 ?2-COUNT(*) FILTER(WHERE known_amount IS NULL) AS known_samples
             FROM historical
          ), current AS (
             SELECT coalesce(SUM(count),0) AS count,
                 CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END AS amount,
                 SUM(known_amount) AS known_amount,
-                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN SUM(paired_count) END AS paired_count,
-                CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work
+                CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN SUM(paired_count) END AS paired_count,
+                CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END AS source_work
             FROM adv_combined JOIN adv_dates USING(label) WHERE key=?1 AND slot=1 AND observed
          ) SELECT baseline.*, current.* FROM baseline CROSS JOIN current",
         params![key, previous],
@@ -628,7 +628,7 @@ impl Analytics<'_> {
           CREATE TEMP TABLE adv_tail(label TEXT PRIMARY KEY,distance INTEGER) WITHOUT ROWID;
           CREATE TEMP TABLE adv_combined(key TEXT,label TEXT,count REAL,amount REAL,known_amount REAL,active INTEGER,paired_count REAL,source_work TEXT,PRIMARY KEY(key,label)) WITHOUT ROWID;
           INSERT INTO adv_combined SELECT key,label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),max(active),SUM(paired_count),
-                   CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END FROM adv_facts GROUP BY key,label;
+                   CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END FROM adv_facts GROUP BY key,label;
           CREATE TEMP TABLE adv_keys(key TEXT PRIMARY KEY,name TEXT,kind TEXT) WITHOUT ROWID;
           INSERT INTO adv_keys SELECT key,name,kind FROM adv_facts GROUP BY key;").map_err(err)?;
         tx.execute("INSERT INTO adv_complete SELECT label FROM adv_coverage WHERE complete GROUP BY label HAVING count(*)=(SELECT count(*) FROM analysis_filter_items WHERE id=?1)",[&s.organizations]).map_err(err)?;
@@ -690,7 +690,7 @@ impl Analytics<'_> {
         if usual {
             tx.execute_batch("INSERT INTO adv_keys VALUES('','Итого по выбранным работам','total');
                 INSERT INTO adv_combined SELECT '',label,sum(count),CASE WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,SUM(known_amount),max(active),SUM(paired_count),
-                   CASE WHEN COUNT(source_work)=COUNT(*) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END FROM adv_combined GROUP BY label;").map_err(err)?;
+                   CASE WHEN COUNT(source_work)=COUNT(paired_count) AND MIN(source_work)=MAX(source_work) THEN MIN(source_work) END FROM adv_combined GROUP BY label;").map_err(err)?;
         } else {
             tx.execute_batch("CREATE TEMP TABLE adv_baseline_active(key TEXT,label TEXT,PRIMARY KEY(key,label)) WITHOUT ROWID").map_err(err)?;
             if clipped_baseline {
