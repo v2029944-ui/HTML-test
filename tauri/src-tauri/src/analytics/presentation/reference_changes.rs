@@ -131,15 +131,20 @@ fn prepare_reference(c:&Connection,q:&ReferenceChangesRequest,s:&AnalysisScope)-
     prepare_reference_values(c,q,s)?;
     c.execute_batch("CREATE TEMP TABLE ref_changes(name TEXT,org TEXT,before REAL,after REAL,delta REAL,percent REAL,kind TEXT,PRIMARY KEY(name,org)) WITHOUT ROWID;").map_err(err)?;
     let mut statement=c.prepare("WITH keys AS (SELECT DISTINCT org,name FROM ref_values),
-        presence AS (SELECT p.slot,v.org FROM an_valid v JOIN an_periods p ON v.start=p.start GROUP BY p.slot,v.org)
+        coverage AS (
+            SELECT p.slot,v.org,NOT EXISTS(
+                SELECT 1 FROM an_missing m WHERE m.slot=p.slot AND m.org=v.org
+            ) AS complete
+            FROM an_valid v JOIN an_periods p ON v.start=p.start GROUP BY p.slot,v.org
+        )
         SELECT k.name,k.org,coalesce(b.count,0.0),CASE WHEN b.name IS NULL THEN 0 ELSE b.amount END,
                coalesce(a.count,0.0),CASE WHEN a.name IS NULL THEN 0 ELSE a.amount END,
-               b.known_amount,a.known_amount,bp.org IS NOT NULL,ap.org IS NOT NULL,o.org IS NOT NULL
+               b.known_amount,a.known_amount,b.name IS NOT NULL OR coalesce(bp.complete,0),
+               a.name IS NOT NULL OR coalesce(ap.complete,0),coalesce(bp.complete,0),coalesce(ap.complete,0)
         FROM keys k LEFT JOIN ref_values b ON b.org=k.org AND b.name=k.name AND b.slot=1
         LEFT JOIN ref_values a ON a.org=k.org AND a.name=k.name AND a.slot=2
-        LEFT JOIN presence bp ON bp.org=k.org AND bp.slot=1
-        LEFT JOIN presence ap ON ap.org=k.org AND ap.slot=2
-        LEFT JOIN ref_orgs o ON o.org=k.org").map_err(err)?;
+        LEFT JOIN coverage bp ON bp.org=k.org AND bp.slot=1
+        LEFT JOIN coverage ap ON ap.org=k.org AND ap.slot=2").map_err(err)?;
     let mut rows = statement.query([]).map_err(err)?;
     let mut put = c
         .prepare("INSERT INTO ref_changes VALUES(?1,?2,?3,?4,?5,?6,?7)")
@@ -153,7 +158,8 @@ fn prepare_reference(c:&Connection,q:&ReferenceChangesRequest,s:&AnalysisScope)-
         let aa: Option<f64> = row.get(5).map_err(err)?;
         let before = observed_totals(bc,ba,row.get(6).map_err(err)?,row.get(8).map_err(err)?)?;
         let after = observed_totals(ac,aa,row.get(7).map_err(err)?,row.get(9).map_err(err)?)?;
-        let complete: bool = row.get(10).map_err(err)?;
+        let before_complete: bool = row.get(10).map_err(err)?;
+        let after_complete: bool = row.get(11).map_err(err)?;
         let (old, new, available_pair, minimum) = if q.metric == "count" {
             (before.count, after.count, Some((bc,ac)), q.min_count)
         } else {
@@ -171,7 +177,7 @@ fn prepare_reference(c:&Connection,q:&ReferenceChangesRequest,s:&AnalysisScope)-
         let value = measure(b, a, minimum, q.percent)?;
         let kind = if !lifecycle.is_empty() {
             lifecycle
-        } else if (b != 0. || !complete) && value.significant {
+        } else if (b != 0. || !(before_complete && after_complete)) && value.significant {
             if value.delta > 0. {
                 "up"
             } else {
@@ -254,8 +260,8 @@ fn comparison_csv_context(
     let observed = |slot| -> Result<(AnalysisTotals, Option<String>), String> {
         let (count, amount, known_amount, paired_count, source_work) = c.query_row("SELECT coalesce(sum(count),0.0),
             CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(amount)=COUNT(*) THEN SUM(amount) END,
-            SUM(known_amount), CASE WHEN MIN(name)=MAX(name) THEN SUM(paired_count) END,
-            CASE WHEN MIN(name)=MAX(name) THEN MIN(name) END FROM ref_values WHERE slot=?1", [slot],
+            SUM(known_amount), CASE WHEN MIN(name) FILTER (WHERE paired_count IS NOT NULL)=MAX(name) FILTER (WHERE paired_count IS NOT NULL) THEN SUM(paired_count) END,
+            CASE WHEN MIN(name) FILTER (WHERE paired_count IS NOT NULL)=MAX(name) FILTER (WHERE paired_count IS NOT NULL) THEN MIN(name) FILTER (WHERE paired_count IS NOT NULL) END FROM ref_values WHERE slot=?1", [slot],
             |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))).map_err(err)?;
         let available = observed_reports(c, slot, None)?;
         Ok((paired_observed_totals(count, amount, known_amount, paired_count, available)?, source_work))
@@ -411,7 +417,7 @@ impl Analytics<'_> {
                 csv_record(writer,&[Cell::Text("Подразделение"),Cell::Text("Сумма"),Cell::Text("Количество / объём"),Cell::Text("Доля суммы, %"),Cell::Text("Сумма / количество (объём)"),Cell::Text("Состояние")])?;
                 let mut statement=tx.prepare("WITH observed AS (
                     SELECT v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,CASE WHEN COUNT(x.row_index)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(x.row_index) THEN SUM(x.amount) END amount,SUM(x.amount) known_amount,
-                           CASE WHEN MIN(x.work)=MAX(x.work) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END paired_count
+                           CASE WHEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL)=MAX(x.work) FILTER (WHERE x.amount IS NOT NULL) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END paired_count
                     FROM an_valid v JOIN an_periods p ON p.slot=2 AND p.start=v.start
                     LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY v.org)
                     SELECT f.item,coalesce(o.reports,0),o.count,o.amount,

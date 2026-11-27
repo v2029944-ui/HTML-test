@@ -165,9 +165,9 @@ pub(super) fn status_with_observed_amounts(
 pub(super) fn fill_changes(c: &Connection, s: &AnalysisScope, q: &ChangeQuery) -> Result<(), String> {
     thresholds(q)?;
     c.execute_batch("CREATE TEMP TABLE an_currents(start TEXT PRIMARY KEY,base TEXT) WITHOUT ROWID;
- CREATE TEMP TABLE an_pairs(start TEXT,base TEXT,org TEXT,base_id TEXT,current_id TEXT,warned INTEGER,partial INTEGER DEFAULT 0,PRIMARY KEY(start,org)) WITHOUT ROWID;
+ CREATE TEMP TABLE an_pairs(start TEXT,base TEXT,org TEXT,base_id TEXT,current_id TEXT,warned INTEGER,partial INTEGER DEFAULT 0,base_complete INTEGER DEFAULT 1,current_complete INTEGER DEFAULT 1,PRIMARY KEY(start,org)) WITHOUT ROWID;
  CREATE TEMP TABLE an_period_values(start TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,count REAL,amount REAL,known_amount REAL,paired_count REAL,source_work TEXT,PRIMARY KEY(start,org,key)) WITHOUT ROWID;
- CREATE TEMP TABLE an_changes(start TEXT,base TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL,b_known REAL,a_known REAL,b_paired REAL,a_paired REAL,same_source_work INTEGER,PRIMARY KEY(start,org,key)) WITHOUT ROWID;").map_err(err)?;
+ CREATE TEMP TABLE an_changes(start TEXT,base TEXT,org TEXT,key TEXT,name TEXT,kind TEXT,bc REAL,ba REAL,cc REAL,ca REAL,b_known REAL,a_known REAL,b_paired REAL,a_paired REAL,same_source_work INTEGER,base_observed INTEGER,current_observed INTEGER,PRIMARY KEY(start,org,key)) WITHOUT ROWID;").map_err(err)?;
     if q.method == "previous" {
         let d = date(&q.to)?;
         let b = shift(&s.report_type, d, -1)?;
@@ -192,11 +192,11 @@ pub(super) fn fill_changes(c: &Connection, s: &AnalysisScope, q: &ChangeQuery) -
         }
     }
     c.execute("INSERT INTO temp.an_pairs(start,base,org,base_id,current_id,warned) SELECT p.start,p.base,f.item,b.report_id,v.report_id,COALESCE(b.warned,0) OR COALESCE(v.warned,0) FROM temp.an_currents p CROSS JOIN analysis_filter_items f LEFT JOIN temp.an_valid b ON b.org=f.item AND b.start=p.base LEFT JOIN temp.an_valid v ON v.org=f.item AND v.start=p.start WHERE f.id=?1",[&s.organizations]).map_err(err)?;
-    c.execute("INSERT INTO temp.an_period_values SELECT v.start,v.org,COALESCE(g.key,'work:'||x.work),COALESCE(g.name,x.work),CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,SUM(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount),SUM(x.count) FILTER (WHERE x.amount IS NOT NULL),CASE WHEN MIN(x.work)=MAX(x.work) THEN MIN(x.work) END FROM temp.an_valid v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work WHERE EXISTS(SELECT 1 FROM temp.an_pairs p WHERE p.org=v.org AND p.base_id IS NOT NULL AND p.current_id IS NOT NULL AND (p.base=v.start OR p.start=v.start)) AND (?1 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=COALESCE(g.name,x.work))) GROUP BY v.start,v.org,COALESCE(g.key,'work:'||x.work)",[&s.names]).map_err(err)?;
+    c.execute("INSERT INTO temp.an_period_values SELECT v.start,v.org,COALESCE(g.key,'work:'||x.work),COALESCE(g.name,x.work),CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END,SUM(x.count),CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END,SUM(x.amount),SUM(x.count) FILTER (WHERE x.amount IS NOT NULL),CASE WHEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL)=MAX(x.work) FILTER (WHERE x.amount IS NOT NULL) THEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL) END FROM temp.an_valid v JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org LEFT JOIN analysis_groups g ON g.work=x.work WHERE EXISTS(SELECT 1 FROM temp.an_pairs p WHERE p.org=v.org AND p.base_id IS NOT NULL AND p.current_id IS NOT NULL AND (p.base=v.start OR p.start=v.start)) AND (?1 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND f.item=COALESCE(g.name,x.work))) GROUP BY v.start,v.org,COALESCE(g.key,'work:'||x.work)",[&s.names]).map_err(err)?;
     finish_changes(c)
 }
 pub(super) fn finish_changes(c: &Connection) -> Result<(), String> {
-    c.execute_batch("INSERT INTO temp.an_changes SELECT p.start,p.base,p.org,k.key,COALESCE(b.name,a.name),COALESCE(b.kind,a.kind),COALESCE(b.count,0),CASE WHEN b.key IS NULL THEN 0 ELSE b.amount END,COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END,b.known_amount,a.known_amount,CASE WHEN b.source_work IS NOT NULL THEN b.paired_count END,CASE WHEN a.source_work IS NOT NULL THEN a.paired_count END,COALESCE(b.source_work=a.source_work,0) FROM temp.an_pairs p JOIN (SELECT p.start,p.org,v.key FROM temp.an_pairs p JOIN temp.an_period_values v ON v.org=p.org AND (v.start=p.base OR v.start=p.start) WHERE p.base_id IS NOT NULL AND p.current_id IS NOT NULL GROUP BY p.start,p.org,v.key) k ON k.start=p.start AND k.org=p.org LEFT JOIN temp.an_period_values b ON b.start=p.base AND b.org=p.org AND b.key=k.key LEFT JOIN temp.an_period_values a ON a.start=p.start AND a.org=p.org AND a.key=k.key;").map_err(err)?;
+    c.execute_batch("INSERT INTO temp.an_changes SELECT p.start,p.base,p.org,k.key,COALESCE(b.name,a.name),COALESCE(b.kind,a.kind),COALESCE(b.count,0),CASE WHEN b.key IS NULL THEN 0 ELSE b.amount END,COALESCE(a.count,0),CASE WHEN a.count IS NULL THEN 0 ELSE a.amount END,b.known_amount,a.known_amount,CASE WHEN b.source_work IS NOT NULL THEN b.paired_count END,CASE WHEN a.source_work IS NOT NULL THEN a.paired_count END,COALESCE(b.source_work=a.source_work,0),p.base_complete OR b.key IS NOT NULL,p.current_complete OR a.key IS NOT NULL FROM temp.an_pairs p JOIN (SELECT p.start,p.org,v.key FROM temp.an_pairs p JOIN temp.an_period_values v ON v.org=p.org AND (v.start=p.base OR v.start=p.start) WHERE p.base_id IS NOT NULL AND p.current_id IS NOT NULL GROUP BY p.start,p.org,v.key) k ON k.start=p.start AND k.org=p.org LEFT JOIN temp.an_period_values b ON b.start=p.base AND b.org=p.org AND b.key=k.key LEFT JOIN temp.an_period_values a ON a.start=p.start AND a.org=p.org AND a.key=k.key;").map_err(err)?;
     validate_numbers(c, "SELECT count,amount FROM temp.an_period_values")?;
     validate_numbers(
         c,
@@ -222,7 +222,12 @@ pub(super) fn change_value(r: &rusqlite::Row<'_>, q: &ChangeQuery) -> Result<Cha
         key: r.get(3).map_err(err)?,
         name: r.get(4).map_err(err)?,
         kind: r.get(5).map_err(err)?,
-        status: status(bc, ba, cc, ca),
+        status: if r.get::<_, bool>("base_observed").map_err(err)?
+            && r.get::<_, bool>("current_observed").map_err(err)? {
+            status(bc, ba, cc, ca)
+        } else {
+            "existing".into()
+        },
         observed_amount_before: None,
         observed_amount_after: None,
         count: measure(bc, cc, q.min_count, q.percent)?,
@@ -254,7 +259,7 @@ impl Analytics<'_> {
         let tx = c.transaction().map_err(err)?;
         workspace(&tx, expected, s)?;
         fill_changes(&tx, s, q)?;
-        let mut stmt=tx.prepare("SELECT start,base,org,key,name,kind,bc,ba,cc,ca FROM temp.an_changes WHERE (?1=0 OR (start,org,key)>(?2,?3,?4)) ORDER BY start,org,key LIMIT ?5").map_err(err)?;
+        let mut stmt=tx.prepare("SELECT start,base,org,key,name,kind,bc,ba,cc,ca,base_observed,current_observed FROM temp.an_changes WHERE (?1=0 OR (start,org,key)>(?2,?3,?4)) ORDER BY start,org,key LIMIT ?5").map_err(err)?;
         let mut rows = stmt
             .query(params![after.is_some(), a.current_start, a.org, a.key, n])
             .map_err(err)?;
@@ -298,6 +303,8 @@ impl Storage {
         self.analysis().analysis_changes_summary(expected, s, q)
     }
 }
+// A pair is partial only when a grouped period has some of its source reports.
+// Standalone periods have one source report per side; missing cells are independent.
 pub(super) fn change_pair_coverage(tx: &Connection) -> Result<(i64, i64), String> {
     tx.query_row(
         "SELECT COUNT(*) FILTER (WHERE base_id IS NULL OR current_id IS NULL),
@@ -310,7 +317,7 @@ pub(super) fn change_pair_coverage(tx: &Connection) -> Result<(i64, i64), String
 }
 
 pub(super) fn changes_summary(tx: &Connection, q: &ChangeQuery) -> Result<ChangesSummary, String> {
-    let (rows,new,gone):(i64,i64,i64)=tx.query_row("SELECT COUNT(*),COALESCE(SUM((bc=0 AND ba=0) AND (cc<>0 OR ca<>0)),0),COALESCE(SUM((bc<>0 OR ba<>0) AND (cc=0 AND ca=0)),0) FROM temp.an_changes",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
+    let (rows,new,gone):(i64,i64,i64)=tx.query_row("SELECT COUNT(*),COALESCE(SUM(base_observed AND current_observed AND (bc=0 AND ba=0) AND (cc<>0 OR ca<>0)),0),COALESCE(SUM(base_observed AND current_observed AND (bc<>0 OR ba<>0) AND (cc=0 AND ca=0)),0) FROM temp.an_changes",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(err)?;
     let (bc,ba,cc,ca):(f64,Option<f64>,f64,Option<f64>)=tx.query_row("SELECT COALESCE(SUM(bc),0),CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(ba)=COUNT(*) THEN SUM(ba) END,COALESCE(SUM(cc),0),CASE WHEN COUNT(*)=0 THEN 0 WHEN COUNT(ca)=COUNT(*) THEN SUM(ca) END FROM temp.an_changes",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(err)?;
     let bt = totals(bc, ba, true)?;
     let at = totals(cc, ca, true)?;

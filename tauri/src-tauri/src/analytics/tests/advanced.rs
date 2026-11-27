@@ -60,7 +60,7 @@ fn daily_week_changes_use_available_reports_and_ignore_imported_totals() {
     };
     store.unified_changes_csv(rev, &s, &q, Some("week"), &options, &file).unwrap();
     let csv = fs::read_to_string(file).unwrap();
-    assert!(csv.contains("Пар по доступным отчётам: 1. Пар без отчётов за один или оба периода: 1."));
+    assert!(csv.contains("Пар с неполным покрытием отчётами: 1. Пар без отчётов за один или оба периода: 1."));
     assert!(csv.lines().any(|row| row.starts_with("\"work:item\"") && row.contains("\"109\"")));
     assert!(!csv.contains("2024-01-22"));
 }
@@ -348,5 +348,35 @@ fn russian_collation_selects_classic_structure_remainder_at_cutoff() {
                 old["structure"]["rows"][12][field]
             );
         }
+    }
+}
+
+#[test]
+fn grouped_changes_do_not_infer_work_absence_from_missing_daily_reports() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    data["reports"] = json!([
+        {"id":"before","type":"day","start":"2024-01-01","end":"2024-01-01",
+         "organizations":["A"],"rows":[{"organization":"A","work":"Old","count":2,"amount":20}]},
+        {"id":"after","type":"day","start":"2024-01-08","end":"2024-01-08",
+         "organizations":["A"],"rows":[{"organization":"A","work":"New","count":3,"amount":30}]}
+    ]);
+    let rev = prepare(&store, &data);
+    let scope = scope(&store, rev, "day", &["A"], None);
+    let q = changes("2024-01-01", "2024-01-14", "range");
+    let mut options = UnifiedChangeOptions {
+        metrics: vec!["amount".into()], mode: "all".into(), search: String::new(),
+        direction: "all".into(), sort: "name".into(),
+    };
+    let page = store.unified_changes_page(rev, &scope, &q, Some("week"), &options, None).unwrap();
+    assert_eq!((page.summary.totals.missing_pairs, page.summary.totals.partial_pairs), (0, 1));
+    assert_eq!((page.summary.new, page.summary.gone), (0, 0));
+    assert!(page.rows.iter().all(|row| row.status == "existing"));
+    assert_eq!(page.rows.len(), 2);
+    for category in ["new", "gone"] {
+        options.direction = category.into();
+        let page = store.unified_changes_page(rev, &scope, &q, Some("week"), &options, None).unwrap();
+        assert!(page.rows.is_empty(), "{category}");
     }
 }

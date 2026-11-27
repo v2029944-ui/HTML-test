@@ -22,6 +22,7 @@ pub struct UnifiedChangeSummary {
     pub gone: i64,
     pub top_count: Option<ChangeValue>,
     pub top_amount: Option<ChangeValue>,
+    pub top_average: Option<ChangeValue>,
     pub rows_with_missing_amount: i64,
     pub totals: ChangesSummary,
 }
@@ -144,7 +145,7 @@ fn prepare_unified(
         CASE WHEN ba IS NOT NULL AND bc>0 THEN ba/bc WHEN ba IS NULL AND b_paired>0 THEN b_known/b_paired END bavg,
         CASE WHEN ca IS NOT NULL AND cc>0 THEN ca/cc WHEN ca IS NULL AND a_paired>0 THEN a_known/a_paired END cavg,
         (ba IS NOT NULL AND ca IS NOT NULL) OR same_source_work average_comparable FROM an_changes
-    ) SELECT *,classic_normalized(name) normalized_name,((bc=0 AND ba=0) AND (cc<>0 OR camount<>0)) is_new,((bc<>0 OR bamount<>0) AND (cc=0 AND ca=0)) is_gone,{} FROM averages",expressions.join(","))).map_err(err)?;
+    ) SELECT *,classic_normalized(name) normalized_name,(base_observed AND current_observed AND (bc=0 AND ba=0) AND (cc<>0 OR camount<>0)) is_new,(base_observed AND current_observed AND (bc<>0 OR bamount<>0) AND (cc=0 AND ca=0)) is_gone,{} FROM averages",expressions.join(","))).map_err(err)?;
     let direction = match o.direction.as_str() {
         "significant-up" => significant_direction(o, ">"),
         "significant-down" => significant_direction(o, "<"),
@@ -199,16 +200,19 @@ fn prepare_unified(
     };
     Ok(order)
 }
-const COLS: &str = "start,base,org,key,name,kind,bc,ba,cc,ca,bamount,camount,bavg,cavg,average_comparable";
+const COLS: &str = "start,base,org,key,name,kind,bc,ba,cc,ca,bamount,camount,bavg,cavg,average_comparable,base_observed,current_observed";
 
 fn unified_change_value(row: &rusqlite::Row<'_>, q: &ChangeQuery) -> Result<ChangeValue, String> {
     let mut value = change_value(row, q)?;
     let number = |column| row.get::<_, Option<f64>>(column).map_err(err)?.map(finite).transpose();
     let before = number(10)?;
     let after = number(11)?;
-    value.status = status_with_observed_amounts(
-        value.count.base, number(7)?, value.count.current, number(9)?, before, after,
-    ).into();
+    if row.get::<_, bool>("base_observed").map_err(err)?
+        && row.get::<_, bool>("current_observed").map_err(err)? {
+        value.status = status_with_observed_amounts(
+            value.count.base, number(7)?, value.count.current, number(9)?, before, after,
+        ).into();
+    }
     value.amount = before.zip(after).map(|(b, a)| measure(b, a, q.min_amount, q.percent)).transpose()?;
     if value.amount.is_none() {
         value.observed_amount_before = before;
@@ -442,6 +446,11 @@ impl Analytics<'_> {
             gone: unique("is_gone")?,
             top_count: top(&tx, q, "count")?,
             top_amount: top(&tx, q, "amount")?,
+            top_average: if options.metrics.iter().any(|metric| metric == "average") {
+                top(&tx, q, "average")?
+            } else {
+                None
+            },
             rows_with_missing_amount: count_sql(&tx, "SELECT COUNT(*) FROM unified_visible WHERE ba IS NULL OR ca IS NULL")?,
             totals,
         };
@@ -523,12 +532,14 @@ impl Analytics<'_> {
             )?;
             if missing_pairs > 0 || partial_pairs > 0 {
                 let coverage = format!(
-                    "Пар по доступным отчётам: {partial_pairs}. Пар без отчётов за один или оба периода: {missing_pairs}."
+                    "Пар с неполным покрытием отчётами: {partial_pairs}. Пар без отчётов за один или оба периода: {missing_pairs}."
                 );
                 csv_record(w, &[Text("Качество данных"), Text(&coverage)])?;
             }
-            if count_sql(&tx, "SELECT COUNT(*) FROM unified_visible WHERE ba IS NULL OR ca IS NULL")? > 0 {
-                csv_record(w, &[Text("Качество данных"), Text("Есть строки без суммы. Сравнение суммы учитывает заполненные ячейки, а среднее — сопоставимые количества из тех же строк.")])?;
+            let missing_amount_rows = count_sql(&tx, "SELECT COUNT(*) FROM unified_visible WHERE ba IS NULL OR ca IS NULL")?;
+            if missing_amount_rows > 0 {
+                let coverage = format!("Строк сравнения с незаполненной суммой: {missing_amount_rows}. Сумма и среднее учитывают заполненные ячейки.");
+                csv_record(w, &[Text("Качество данных"), Text(&coverage)])?;
             }
             let metrics: Vec<_> = options.metrics.iter().map(String::as_str).collect();
             changes_csv_header(w, &metrics)?;

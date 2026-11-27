@@ -219,12 +219,14 @@ test('missing report pairs are reported separately with formatted dates',async()
  const p=page('Missing');
  p.summary.totals.missing_pairs=2;
  p.summary.totals.partial_pairs=3;
+ p.summary.rows_with_missing_amount=1;
  p.missing_examples=[{org:'A',missing_base:true,base_start:'2024-01-01',missing_current:false}];
  const f=fixture({unifiedChangesPage:async()=>p});f.publish();f.view('changes');await settle();
  const message=f.nodes.get('changesWarnings').textContent;
  assert.match(message,/Пар без отчётов за один или оба периода: 2/);
  assert.match(message,/не включены в сопоставление/);
- assert.match(message,/Пар по доступным отчётам: 3/);
+ assert.match(message,/Пар с неполным покрытием отчётами: 3/);
+ assert.match(message,/Строк сравнения с незаполненной суммой: 1/);
  assert.match(message,/01\.01\.2024/);
 });
 
@@ -669,7 +671,7 @@ test('contribution detail respects the selected work scope used by its parent co
  assert.match(f.nodes.get('contributionCheck').textContent,/все работы/);
 });
 
-test('department comparison loads a line chart automatically only for a range',async()=>{
+test('department comparison shows a period table for both single periods and selected ranges',async()=>{
  let trendReads=0;
  const values=[{org:'A',complete:true,missing:0,total:{count:5,amount:10,average:2}}];
  const f=fixture({
@@ -685,12 +687,13 @@ test('department comparison loads a line chart automatically only for a range',a
  await f.window.unifiedExtended.openComparison();await settle();
  assert.equal(trendReads,0);
  const chart=f.nodes.get('comparisonDynamics');
- assert.equal(chart.hidden,true);
+ assert.equal(chart.hidden,false);
+ assert.ok(f.tables.some(t=>t.options?.title==='Значения по периодам · Сумма'));
  f.publish({overviewMode:'range'});
  await f.window.unifiedExtended.openComparison();
  assert.equal(trendReads,1);
  assert.equal(chart.hidden,false);
- assert.match(f.nodes.get('comparisonDynamicsPlots').textContent,/один период/);
+ assert.match(f.nodes.get('comparisonDynamicsPlots').textContent,/10/);
 });
 
 test('switching comparison type clears the previous results before SQL completes',async()=>{
@@ -777,6 +780,11 @@ test('department comparison graphs one selected metric, preserving zero and miss
  assert.equal(trend[4].data[1].get('B').amount,3);
  assert.match(trend[4].pointNotice(0,['A','B','C']),/B, C/);
  assert.equal(trend[4].pointNotice(0,['A']),'');
+ const timeline=f.tables.find(t=>t.options?.title==='Значения по периодам · Сумма');
+ assert.ok(timeline,f.nodes.get('comparisonDynamicsPlots').textContent);
+ assert.deepEqual(Array.from(timeline.headers),['Период','A','B','C','Неполные данные']);
+ assert.deepEqual(Array.from(timeline.options.csvRows[0]).slice(1,4),[0,null,null]);
+ assert.deepEqual(Array.from(timeline.options.csvRows[1]).slice(1,4),[9,3,null]);
 });
 
 test('deviations explain missing reports and insufficient historical windows',async()=>{

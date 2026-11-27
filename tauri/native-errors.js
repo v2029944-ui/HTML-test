@@ -3,6 +3,7 @@
 (function(root){
 'use strict';
 const rules=[
+ [/^Pattern history exceeds 3660 calendar buckets\b/i,'Слишком длинный исторический диапазон. Сократите анализируемый диапазон или число предыдущих окон.'],
  [/^Management session disk quota exceeded\b/i,'Превышен допустимый объём временных данных. Освободите место на диске или уменьшите объём операции.'],
  [/^Session size overflow\b/i,'Объём временных данных слишком велик. Разделите операцию на меньшие части.'],
  [/^Management string\/raw token exceeds64KiB\b/i,'Название или значение слишком длинное. Сократите его и повторите действие.'],
