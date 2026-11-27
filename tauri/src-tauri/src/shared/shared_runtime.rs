@@ -23,6 +23,7 @@ pub enum Access {
 }
 #[derive(Clone, Debug, Serialize)]
 pub struct WorkspaceStatus {
+    pub personal_database_path: String,
     pub mode: String,
     pub folder: Option<String>,
     pub generation: Option<u64>,
@@ -269,6 +270,7 @@ impl Runtime {
         let retention = state.selection.folder.as_deref().filter(|_| state.available)
             .map(shared_folder::retention::enabled).transpose();
         WorkspaceStatus {
+            personal_database_path: state.personal.db_path().to_string_lossy().into_owned(),
             mode: if state.selection.folder.is_some() {
                 "shared"
             } else {

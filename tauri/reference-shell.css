@@ -1300,3 +1300,13 @@ body:has(#refRoot)>footer {display:none}
   margin-inline-start:.45em;
 }
 .chart-group-toggle[aria-expanded="true"]::after {content:'▾'}
+
+#personalDatabasePath {overflow-wrap:anywhere;user-select:text}
+#refNative :is(.panel,.actions,.catalog-actions,.desktop-file-actions,.change-pagination) > button.button,
+#refNative .actions > label.file-label,
+#refNative #personalTransferPanel .actions button,
+#s2 .changes-header-actions .btn,
+#s1 .summary-actions > button {
+ width:fit-content;max-width:100%;min-width:0;flex:0 1 auto;
+ justify-self:start;align-self:center;white-space:normal;overflow-wrap:anywhere;
+}

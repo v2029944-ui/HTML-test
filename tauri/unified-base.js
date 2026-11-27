@@ -78,15 +78,7 @@ function table(root,metric,caption,headers,rows,options={}){
  const showHelp=options.headerHelp?.some(Boolean);
  O.makeTable(root,metric,caption,headers,rows,showHelp?{...options,headerHelp:[]}:options);
  const section=root.lastElementChild,table=section.querySelector('table');
- if(caption&&headers.length){
-  table.caption.classList.add('sql-caption-source');
-  const period=el('td',caption);
-  period.colSpan=headers.length;
-  const row=el('tr',null,'sql-table-period');
-  row.setAttribute('aria-hidden','true');
-  row.append(period);
-  table.tHead.append(row);
- }
+ if(table.caption)table.caption.classList.add('sql-caption-source');
  if(showHelp)tableHelp(section,table,headers,options.headerHelp);
 }
 const originalCsv=O.tableCsvButton;
