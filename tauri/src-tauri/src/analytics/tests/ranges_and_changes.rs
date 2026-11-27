@@ -452,6 +452,11 @@ fn comparison_dashboard_ranking_has_fixed_size_and_zero_base_no_percent() {
             json!({"organization":"A","work":name,"count":1.,"amount":(i+1) as f64}),
         );
     }
+    for (slot, amount) in [(0, 2.), (1, 1.)] {
+        data["reports"][slot]["rows"].as_array_mut().unwrap().push(
+            json!({"organization":"A","work":"small decline","count":1.,"amount":amount}),
+        );
+    }
     let rev=prepare(&store,&data);
     let selected=scope(&store,rev,"day",&["A"],None);
     let q=ComparisonQuery {
@@ -459,7 +464,13 @@ fn comparison_dashboard_ranking_has_fixed_size_and_zero_base_no_percent() {
         after:query("2024-02-29","2024-02-29"),
         percent:0.,min_count:0.,min_amount:0.,
     };
-    let result=store.analysis_comparison_dashboard(rev,&selected,&q).unwrap();
+    let detail=store.analysis_comparison_dashboard(rev,&selected,&q).unwrap();
+    assert!(detail.amount_leaders.up.is_empty() && detail.count_leaders.down.is_empty());
+    let result=store.analysis_comparison_dashboard_with_leaders(rev,&selected,&q,true).unwrap();
+    assert_eq!(result.amount_leaders.up.len(), 5);
+    assert_eq!(result.amount_leaders.up[0].name, "one");
+    assert!(result.amount_leaders.up.iter().all(|row| row.name != "Group" && row.delta > 0.));
+    assert!(result.amount_leaders.down.iter().any(|row| row.name == "small decline" && row.delta == -1.));
     assert_eq!(result.top_amount.len(),12);
     assert_eq!(result.top_count.len(),12);
     assert_eq!(result.top_amount[0].name,"Group");

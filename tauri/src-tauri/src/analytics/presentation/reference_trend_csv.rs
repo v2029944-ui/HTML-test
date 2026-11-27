@@ -11,7 +11,7 @@ pub enum TrendTable { Works, Organizations, OrganizationTotals }
 pub enum TrendMetric { Count, Amount, Average }
 impl TrendMetric {
     fn label(self) -> &'static str {
-        match self { Self::Count => "Количество / объём", Self::Amount => "Сумма", Self::Average => "Средняя сумма на единицу" }
+        match self { Self::Count => "Количество", Self::Amount => "Сумма", Self::Average => "Сумма / количество" }
     }
     fn value(self, value: &AnalysisTotals) -> Option<f64> {
         match self { Self::Count => value.count, Self::Amount => value.amount, Self::Average => value.average }
@@ -418,7 +418,7 @@ mod tests {
         store.reference_trend_csv(rev,&scope,&q,Some("day"),&options,&orgcsv).unwrap();
         let content=fs::read_to_string(orgcsv).unwrap();
         assert!(content.contains("\"B\";\"Сумма\";\"0\";\"0\";\"\";\"0\""));
-        assert!(content.contains("\"A\";\"Количество / объём\";\"53\";\"0\";\"1\";\"0\""));
+        assert!(content.contains("\"A\";\"Количество\";\"53\";\"0\";\"1\";\"0\""));
         let org_chart_csv = dir.path().join("chart-organizations.csv");
         let org_chart_options = TrendCsvOptions {
             table: TrendTable::Organizations, metrics: options.metrics.clone(),
@@ -427,8 +427,8 @@ mod tests {
         store.reference_trend_csv(rev, &scope, &q, Some("day"), &org_chart_options, &org_chart_csv).unwrap();
         let chart = fs::read_to_string(org_chart_csv).unwrap();
         assert!(chart.starts_with("\u{feff}\"Подразделение\";\"Показатель\";\"2024-01-01\";\"2024-01-03\"\r\n"));
-        assert!(chart.lines().any(|line| line == r#""A";"Количество / объём";"53";"1""#));
-        assert!(chart.lines().any(|line| line == r#""B";"Количество / объём";"0";"""#));
+        assert!(chart.lines().any(|line| line == r#""A";"Количество";"53";"1""#));
+        assert!(chart.lines().any(|line| line == r#""B";"Количество";"0";"""#));
         let dest=dir.path().join("org-totals.csv");
         let options=TrendCsvOptions{table:TrendTable::OrganizationTotals,..options};
         store.reference_trend_csv(rev,&scope,&q,Some("day"),&options,&dest).unwrap();

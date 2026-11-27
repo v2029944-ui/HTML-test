@@ -175,13 +175,14 @@ test('printed complete summaries include both captured driver tables',async()=>{
 test('quantity and average labels never claim fractional volume is a count of jobs',async()=>{
  const f=fixture();await f.bootstrap();
  const kpis=f.nodes.get('overviewKpis').textContent;
- assert.match(kpis,/Количество \/ объём/);
- assert.match(kpis,/Средняя сумма на единицу/);
+ assert.match(kpis,/Количество/);
+ assert.doesNotMatch(kpis,/Количество \/ объём/);
+ assert.match(kpis,/Сумма \/ количество/);
  assert.doesNotMatch(kpis,/Количество выполненных работ|Средняя сумма на работу/);
  assert.match(f.nodes.get('overviewInsights').textContent,/Дробное количество может означать объём/);
  f.nodes.get('printSummary').dispatch('click');
  const printed=f.nodes.get('printReport').textContent;
- assert.match(printed,/Количество \/ объём/);
+ assert.match(printed,/Количество/);
  assert.match(printed,/сверять с исходными Excel/);
  assert.doesNotMatch(printed,/Средняя сумма на работу/);
 });
@@ -587,7 +588,11 @@ test('department trends with all performed works allow an empty individual selec
  const trendReads=()=>f.calls.filter(c=>c.key==='nativeOrganizationTrends');
  assert.equal(trendReads().length,1);
  assert.deepEqual([...trendReads()[0].args[7]],[]);
- assert.match(f.nodes.get('chartHelp').textContent,/все выполненные работы/);
+ const help=f.nodes.get('chartHelp'),info=help.children.find(node=>node.tagName==='BUTTON'),note=help.children.at(-1);
+ assert.match(help.textContent,/все выполненные работы/);
+ assert.equal(info.type,'button');assert.equal(note.hidden,true);
+ info.dispatch('click');assert.equal(note.hidden,false);assert.match(note.textContent,/Пропуски не считаются нулём/);
+ info.dispatch('click');assert.equal(note.hidden,true);
  f.nodes.get('chartOrgScope').value='selected';f.nodes.get('chartOrgScope').dispatch('change');await settle();
  assert.equal(trendReads().length,1);
  assert.match(f.nodes.get('chartsContainer').textContent,/Нет отмеченных работ/);

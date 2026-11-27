@@ -45,12 +45,67 @@ pub struct DivisionPeriodChange {
     pub amount: Option<ChangeMeasure>,
 }
 #[derive(Debug, Serialize)]
+pub struct WorkLeader {
+    pub name: String,
+    pub delta: f64,
+}
+#[derive(Debug, Default, Serialize)]
+pub struct WorkLeaders {
+    pub up: Vec<WorkLeader>,
+    pub down: Vec<WorkLeader>,
+}
+#[derive(Debug, Serialize)]
 pub struct ComparisonDashboard {
     pub summary: ComparisonSummary,
     pub divisions: Vec<DivisionPeriodChange>,
     pub top_amount: Vec<ComparisonValue>,
     pub top_count: Vec<ComparisonValue>,
+    pub amount_leaders: WorkLeaders,
+    pub count_leaders: WorkLeaders,
     pub top_average: Vec<ComparisonValue>,
+}
+
+/// Rank individual source works even when the usual dashboard groups them.
+fn dashboard_work_leaders(c: &Connection) -> Result<(WorkLeaders, WorkLeaders), String> {
+    c.execute_batch("CREATE TEMP TABLE an_work_deltas AS
+        WITH observed AS (
+            SELECT selected.slot,v.org,x.work,SUM(x.count) quantity,SUM(x.amount) amount
+            FROM (SELECT DISTINCT p.slot,v.start,v.report_id FROM an_periods p JOIN an_valid v ON v.start=p.start) selected
+            CROSS JOIN report_rows x ON x.report_id=selected.report_id
+            CROSS JOIN an_valid v ON v.org=x.organization AND v.start=selected.start AND v.report_id=selected.report_id
+            GROUP BY selected.slot,v.org,x.work
+        ), pairs AS (
+            SELECT org,work,
+                MAX(quantity) FILTER (WHERE slot=1) bq,MAX(quantity) FILTER (WHERE slot=2) aq,
+                MAX(amount) FILTER (WHERE slot=1) ba,MAX(amount) FILTER (WHERE slot=2) aa
+            FROM observed GROUP BY org,work
+        ), comparable AS (
+            SELECT work,coalesce(aq,0)-coalesce(bq,0) quantity,
+                (CASE WHEN aq IS NULL THEN 0 ELSE aa END) -
+                (CASE WHEN bq IS NULL THEN 0 ELSE ba END) amount
+            FROM pairs w
+            WHERE (bq IS NOT NULL OR NOT EXISTS (SELECT 1 FROM an_missing m WHERE m.slot=1 AND m.org=w.org))
+              AND (aq IS NOT NULL OR NOT EXISTS (SELECT 1 FROM an_missing m WHERE m.slot=2 AND m.org=w.org))
+        )
+        SELECT work,SUM(quantity) quantity,SUM(amount) amount FROM comparable GROUP BY work").map_err(err)?;
+    let rank = |metric: &str| -> Result<WorkLeaders, String> {
+        let mut leaders = WorkLeaders::default();
+        for (condition, order, destination) in [
+            (">", "DESC", &mut leaders.up), ("<", "ASC", &mut leaders.down),
+        ] {
+            let sql = format!("SELECT work,{metric} FROM an_work_deltas WHERE {metric} {condition} 0
+                ORDER BY {metric} {order},work LIMIT 5");
+            let mut stmt = c.prepare(&sql).map_err(err)?;
+            let mut rows = stmt.query([]).map_err(err)?;
+            while let Some(row) = rows.next().map_err(err)? {
+                destination.push(WorkLeader {
+                    name: row.get(0).map_err(err)?, delta: finite(row.get(1).map_err(err)?)?,
+                });
+            }
+        }
+        Ok(leaders)
+    };
+    Ok((rank("amount")?, rank("quantity")?))
 }
 
 pub(super) fn comparison(
@@ -198,6 +253,7 @@ impl Analytics<'_> {
         expected: i64,
         s: &AnalysisScope,
         q: &ComparisonQuery,
+        include_work_leaders: bool,
     ) -> Result<ComparisonDashboard, String> {
         let mut c = self.database.connect()?;
         let tx = c.transaction().map_err(err)?;
@@ -292,7 +348,12 @@ impl Analytics<'_> {
                 top_average.push(item);
             }
         }
-        Ok(ComparisonDashboard { summary, divisions, top_amount, top_count, top_average })
+        let (amount_leaders, count_leaders) = if include_work_leaders && s.names.is_none() && summary.before.available_reports > 0 && summary.after.available_reports > 0 {
+            dashboard_work_leaders(&tx)?
+        } else {
+            (WorkLeaders::default(), WorkLeaders::default())
+        };
+        Ok(ComparisonDashboard { summary, divisions, top_amount, top_count, top_average, amount_leaders, count_leaders })
     }
     pub(super) fn analysis_comparison_window(&self,expected:i64,s:&AnalysisScope,q:&ComparisonQuery,org:Option<&str>,page_index:usize,size:usize)->Result<SqlPage<ComparisonValue>,String> {
         let limit=cap(size)?;
@@ -362,7 +423,13 @@ impl Storage {
         s: &AnalysisScope,
         q: &ComparisonQuery,
     ) -> Result<ComparisonDashboard, String> {
-        self.analysis().analysis_comparison_dashboard(expected, s, q)
+        self.analysis_comparison_dashboard_with_leaders(expected, s, q, false)
+    }
+
+    pub fn analysis_comparison_dashboard_with_leaders(
+        &self, expected: i64, s: &AnalysisScope, q: &ComparisonQuery, include_work_leaders: bool,
+    ) -> Result<ComparisonDashboard, String> {
+        self.analysis().analysis_comparison_dashboard(expected, s, q, include_work_leaders)
     }
 
     pub fn analysis_comparison_window(&self,expected:i64,s:&AnalysisScope,q:&ComparisonQuery,org:Option<&str>,page_index:usize,size:usize)->Result<SqlPage<ComparisonValue>,String> {

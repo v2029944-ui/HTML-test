@@ -6,6 +6,7 @@ const {titles,observed,incomplete}=window.analysisSummary,categories={up:'Рос
 let initialized=false,scope=null,screen='s1',generation=0,changesTicket=0,modalTicket=0,searchTimer=null,summaryData=null,changeData=null,changeRequest=null;
 let modalHeading=null,shownSummaryRevision=null,shownChangesRevision=null,scopeBlocked=false;
 const CHANGES_PAGE_SIZE=50;
+let orgSort='amount',orgAscending=false,leaderDirection='up';
 let kind='significant',page=0,percent=30,minCount=5,minAmount=1000;
 const el=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined&&text!==null)n.textContent=String(text);if(cls)n.className=cls;return n;};
 const button=(text,run,cls='btn')=>{const n=el('button',text,cls);n.type='button';n.addEventListener('click',run);return n;};
@@ -13,6 +14,7 @@ const fmt=(n,metric='amount')=>Number.isFinite(n)?new Intl.NumberFormat('ru-RU',
 const displayedChange=(delta,metric)=>window.analysisSummary.displayedChange(delta,metric,fmt);
 function pct(n,summary=false){
  if(!Number.isFinite(n))return '—';
+ if(n===0)return '0,0%';
  if(Math.abs(n)<0.05)return summary?'< 0,1%':Math.abs(n)<1e-9?'0,0%':'≈ 0,0%';
  return (n>0?'+':'−')+new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1,minimumFractionDigits:1}).format(Math.abs(n))+'%';
 }
@@ -52,11 +54,22 @@ function summaryCards(values,comparison,comparable,totalOrganizations){
   const delta=card.querySelector('.metric-delta');delta.replaceChildren();const m=comparison?.summary?.[metric];
   if(Number.isFinite(m?.delta)){
    const change=displayedChange(m.delta,metric);
-   const percentText=change.direction!=='neutral'&&Number.isFinite(m.percent)?' ('+pct(m.percent,true)+')':'';
+   const percentText=Number.isFinite(m.percent)?' ('+pct(m.percent,true)+')':'';
    delta.append(el('span',change.label+percentText,change.direction));
   }
-  else delta.append(el('span',comparison?'Сравнение недоступно':'Загрузка…','mut'));
-  if(comparison&&totalOrganizations>0){
+  else if(!comparison)delta.append(el('span','Загрузка…','mut'));
+  if(comparison?.summary?.before){
+   const summary=comparison.summary,base=observed(summary.before)?.[metric];
+   delta.append(el('span','База: '+fmt(base,metric),'mut'));
+   const periods=[summary.before,summary.after];
+   if(metric==='amount'&&canCompare(summary)&&periods.some(period=>period?.amount_missing_rows||observed(period)?.amount==null))
+    delta.append(el('span',Number.isFinite(m?.delta)?'Учтены строки с указанной суммой.':'Для сравнения нужна указанная сумма в каждом интервале.','mut'));
+   if(metric==='average'&&canCompare(summary)){
+    const note=periods.map((period,i)=>{const text=window.analysisSummary.averageNote(period);return text?(i?'Текущий период: ':'База: ')+text:'';}).filter(Boolean).join(' ');
+    if(note||!Number.isFinite(m?.delta))delta.append(el('span',note||'Для сравнения нужны сопоставимые строки с суммой и положительным количеством в обоих интервалах.','mut'));
+   }
+  }
+  if(i===0&&comparison&&totalOrganizations>0){
    const label=partialComparison(comparison.summary)?'По доступным отчётам':comparable?'по '+comparable+' из '+totalOrganizations:'Почему недоступно?';
    delta.append(button(label,e=>openSample(e.target),'metric-sample sample-link'));
   }
@@ -107,13 +120,67 @@ function appendTableRow(body,values){
  values.forEach((value,i)=>{const td=el('td',typeof value==='object'&&value!==null?null:value,i?'num':'');if(value&&typeof value==='object')td.append(value);tr.append(td);});
  body.append(tr);
 }
-function writeTable(table,headers,rows){if(!table)return;let head=table.querySelector('thead'),body=table.querySelector('tbody');if(!head){head=el('thead');table.append(head);}if(!body){body=el('tbody');table.append(body);}const tr=el('tr');for(const h of headers){const th=el('th',h);th.setAttribute('scope','col');tr.append(th);}head.replaceChildren(tr);
+function writeTable(table,headers,rows){if(!table)return;table.querySelector('tfoot')?.replaceChildren();let head=table.querySelector('thead'),body=table.querySelector('tbody');if(!head){head=el('thead');table.append(head);}if(!body){body=el('tbody');table.append(body);}const tr=el('tr');for(const h of headers){const th=el('th',h);th.setAttribute('scope','col');tr.append(th);}head.replaceChildren(tr);
  body.replaceChildren();for(const row of rows)appendTableRow(body,row);return body;}
-function summaryLeaders(result,metric){const root=$('#s1 .insight-card');if(!root)return;const rows=result?.['top_'+metric]||[],valid=rows.filter(r=>Number.isFinite(r[metric]?.delta)&&r[metric].delta!==0).sort((a,b)=>Math.abs(b[metric].delta)-Math.abs(a[metric].delta)).slice(0,2);const body=root.querySelector('div');if(!body)return;body.replaceChildren(el('p',titles[metric]+(partialComparison(result?.summary)?' · по доступным отчётам':''),'mut'));for(const row of valid){const line=el('div',null,'insight-row'),change=displayedChange(row[metric].delta,metric);line.append(el('span',window.analysisSummary.itemLabel(row)),el('strong',change.label,change.direction));body.append(line);}if(!valid.length)body.append(el('p','Нет сопоставимых ненулевых изменений.','mut'));}
+function summaryLeaders(result,metric){
+ const root=$('#s1 .insight-card');if(!root)return;
+ root.querySelector('h2').textContent='Наибольшие изменения по работам · '+titles[metric];
+ const body=root.querySelector('.leader-list');
+ body.replaceChildren();
+ for(const control of root.querySelectorAll('[data-leader-direction]'))
+  control.setAttribute('aria-pressed',String(control.dataset.leaderDirection===leaderDirection));
+ if(partialComparison(result?.summary))body.append(el('p','По доступным отчётам','mut'));
+ const rows=result?.[metric+'_leaders']?.[leaderDirection]||[];
+ for(const row of rows){
+  const line=el('div',null,'insight-row'),change=displayedChange(row.delta,metric);
+  line.append(el('span',row.name),el('strong',change.label,change.direction));body.append(line);
+ }
+ if(!rows.length)body.append(el('p','Нет сопоставимых работ с '+(leaderDirection==='up'?'ростом.':'снижением.'),'mut'));
+}
+function divisionHeaders(metric){
+ return ['Подразделение',titles.amount,titles.count,'Доля суммы',titles.average,'Изменение · '+titles[metric]];
+}
+function shareOf(amount,total){
+ return Number.isFinite(amount)&&Number.isFinite(total)&&total>0?amount/total*100:null;
+}
+function drawDivisions(data,restoreFocus=false){
+ const {organizations,result,observed:total,comparable,scope:s}=data;
+ const metric=s.metric,divisions=new Map(result.divisions.map(row=>[row.organization,row]));
+ const keys=['org','amount','count','share','average','delta'];
+ const rows=organizations.map(org=>({...org,...org.observed,share:shareOf(org.observed?.amount,total?.amount),
+  delta:divisions.get(org.org)?.[metric]?.delta}));
+ rows.sort((a,b)=>{
+  const x=a[orgSort],y=b[orgSort];
+  if(orgSort!=='org'&&Number.isFinite(x)!==Number.isFinite(y))return Number.isFinite(x)?-1:1;
+  const diff=orgSort==='org'?x.localeCompare(y,'ru'):(x??0)-(y??0);
+  return (orgAscending?diff:-diff)||a.org.localeCompare(b.org,'ru');
+ });
+ const table=$('#s1 table'),headers=divisionHeaders(metric);
+ writeTable(table,headers,rows.map(org=>{
+   const value=org.observed;
+   const label=el('span',org.org);
+   if(incomplete(org))label.append(' ',el('small',Number.isFinite(value?.count)?'частичные данные':'Нет данных','coverage-label'));
+   if(!comparable.includes(org.org)){const warning=button('',e=>openSample(e.target.closest?e.target.closest('button'):e.target),'org-warning');warning.setAttribute('aria-label',org.org+' · неполные отчёты. Показать состав сравнения');warning.title='В базовом или анализируемом интервале есть пропуски отчётов';const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('width','17');icon.setAttribute('height','17');icon.setAttribute('fill','none');icon.setAttribute('stroke-width','1.7');icon.setAttribute('aria-hidden','true');const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d','M12 3 2 21h20L12 3zM12 10v5M12 18v.5');icon.append(path);warning.append(icon);label.append(warning);}
+   const share=org.share,shareCell=el('span',Number.isFinite(share)?new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1,minimumFractionDigits:1}).format(share)+'%':'—');
+   if(Number.isFinite(share)&&share>=0){const bar=el('div',null,'bar'),fill=el('i');fill.style.width=Math.min(100,share)+'%';bar.append(fill);shareCell.append(bar);}
+   return [label,fmt(value?.amount),fmt(value?.count,'count'),shareCell,averageDisplay(value),displayedChange(org.delta,metric).value];
+ }));
+ let foot=table.querySelector('tfoot');if(!foot){foot=el('tfoot');table.append(foot);}
+ foot.replaceChildren();
+ appendTableRow(foot,['Итого',fmt(total?.amount),fmt(total?.count,'count'),Number.isFinite(shareOf(total?.amount,total?.amount))?'100,0%':'—',averageDisplay(total),displayedChange(result.summary[metric]?.delta,metric).value]);
+ table.querySelectorAll('th').forEach((th,i)=>{
+  const key=keys[i],active=key===orgSort;
+  const sort=button(headers[i]+(active?(orgAscending?' ↑':' ↓'):''),()=>{
+   orgAscending=key===orgSort?!orgAscending:key==='org';orgSort=key;drawDivisions(data,true);
+  },'division-sort');
+  if(active)th.setAttribute('aria-sort',orgAscending?'ascending':'descending');
+  th.replaceChildren(sort);if(active&&restoreFocus)sort.focus({preventScroll:true});
+ });
+}
 async function refreshSummary(s,ticket){
  const current=()=>ticket===generation&&scope===s;
  try{
-  const [result,organizations]=await window.analysisSummary.read(api,s);
+  const [result,organizations]=await window.analysisSummary.read(api,s,true);
   if(!current())return;
   if(!result?.summary?.after||!Array.isArray(result.divisions)||!Array.isArray(organizations))throw Error('Некорректный результат SQL-сводки.');
   const comparable=result.divisions.filter(r=>s.organizations.includes(r.organization)&&Number.isFinite(r.before?.count)&&Number.isFinite(r.after?.count)).map(r=>r.organization);
@@ -121,18 +188,11 @@ async function refreshSummary(s,ticket){
   for(let offset=0;offset<organizations.length;offset+=4){const part=await Promise.all(organizations.slice(offset,offset+4).map(async org=>{
    if(org.available_total||org.complete)return {...org,observed:observed(org)};const partial=await api.nativeAnalysisRange(s.revision,s.type,s.from,s.to,[org.org]);return {...org,observed:partial.available_reports>0?partial.available_total:null};
   }));if(!current())return;rows.push(...part);}
-  rows.sort((a,b)=>{const av=a.observed?.amount,bv=b.observed?.amount;if(Number.isFinite(av)!==Number.isFinite(bv))return Number.isFinite(av)?-1:1;return (Number.isFinite(av)&&av!==bv?bv-av:0)||a.org.localeCompare(b.org,'ru');});
   const after=result.summary.after,available=observed(after);
   captions(s,['#s1']);shownSummaryRevision=s.revision;summaryData={scope:s,result,organizations:rows,observed:available,comparable};$('#s1 .data-card button').disabled=false;
   summaryCards(available,result,comparable.length,s.organizations.length);notice('#s1',s,comparable,result.summary);if(screen==='s2'&&changeData)notice('#s2',s,changeData.comparable,result.summary);summaryLeaders(result,s.metric);
-  const totalAmount=available?.amount;
-  writeTable($('#s1 table'),['Подразделение',titles.amount,titles.count,'Доля суммы',titles.average],rows.map(org=>{
-   const value=org.observed;
-   const coverage=incomplete(org)?(Number.isFinite(value?.count)?' (частичные данные)':' (нет данных)'):'';
-   const label=el('span',org.org+coverage);if(!comparable.includes(org.org)){const warning=button('',e=>openSample(e.target.closest?e.target.closest('button'):e.target),'org-warning');warning.setAttribute('aria-label',org.org+' · неполные отчёты. Показать состав сравнения');warning.title='В базовом или анализируемом интервале есть пропуски отчётов';const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('width','17');icon.setAttribute('height','17');icon.setAttribute('fill','none');icon.setAttribute('stroke-width','1.7');icon.setAttribute('aria-hidden','true');const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d','M12 3 2 21h20L12 3zM12 10v5M12 18v.5');icon.append(path);warning.append(icon);label.append(warning);}
-   const share=Number.isFinite(value?.amount)&&Number.isFinite(totalAmount)&&totalAmount>0?100*value.amount/totalAmount:null,shareCell=el('span',Number.isFinite(share)?new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1,minimumFractionDigits:1}).format(share)+'%':'—');if(Number.isFinite(share)&&share>=0){const bar=el('div',null,'bar'),fill=el('i');fill.style.width=Math.min(100,share)+'%';bar.append(fill);shareCell.append(bar);}return [label,fmt(value?.amount,'amount'),fmt(value?.count,'count'),shareCell,averageDisplay(value)];
-  }));
- }catch(error){if(current()){captions(s,['#s1']);shownSummaryRevision=null;summaryData=null;writeTable($('#s1 table'),['Подразделение',titles.amount,titles.count,'Доля суммы',titles.average],[]);summaryLeaders(null,s.metric);summaryCards(null,{summary:{}},0,0);$('#s1 .quality-notice').hidden=false;$('#s1 .quality-notice span').textContent='Не удалось рассчитать сводку: '+textError(error);}}
+  drawDivisions(summaryData);
+ }catch(error){if(current()){captions(s,['#s1']);shownSummaryRevision=null;summaryData=null;writeTable($('#s1 table'),divisionHeaders(s?.metric||'amount'),[]);summaryLeaders(null,s.metric);summaryCards(null,{summary:{}},0,0);$('#s1 .quality-notice').hidden=false;$('#s1 .quality-notice span').textContent='Не удалось рассчитать сводку: '+textError(error);}}
  finally{if(current())setBusy('#s1',false);}
 }
 function summaryRequest(s){
@@ -222,7 +282,7 @@ function sensitivity(anchor){
  const label=el('label','Порог изменения ');slider.type='range';slider.min='0';slider.max='200';slider.step='1';slider.value=String(percent);
  label.append(slider,output);root.append(label);slider.addEventListener('input',()=>{output.textContent=slider.value+'%';});
  const fields=[];
- for(const [text,n]of [['Минимум количества / объёма',minCount],['Минимум суммы',minAmount]]){
+ for(const [text,n]of [['Минимум количества',minCount],['Минимум суммы',minAmount]]){
   const field=el('input'),caption=el('label',text+' ');field.type='number';field.min='0';field.step='any';field.required=true;field.value=String(n);
   caption.append(field);root.append(caption);fields.push(field);
  }
@@ -236,7 +296,7 @@ function sensitivity(anchor){
 }
 function sensitivityCaption(){const n=$('#s2 .filter-threshold');if(n)n.textContent='Чувствительность: '+percent+'% ▾';
  const minima=$('#s2 .filter-sensitivity span');
- if(minima)minima.textContent='Минимальное изменение: количество / объём — '+String(minCount).replace('.',',')+', сумма — '+String(minAmount).replace('.',',')+'.';}
+ if(minima)minima.textContent='Минимальное изменение: количество — '+String(minCount).replace('.',',')+', сумма — '+String(minAmount).replace('.',',')+'.';}
 async function exportChanges(anchor){const captured=changeRequest,s=scope,mine=generation;if(!captured||!changeData?.total)return;anchor.disabled=true;try{const destination=await api.chooseCsvPath('izmeneniya-'+s.from+'-'+s.to+'.csv');if(!destination)return;if(scope!==s||mine!==generation||captured!==changeRequest)throw Error('Параметры изменились. Рассчитайте изменения заново.');await api.referenceChangesCsv(captured,destination);}catch(error){notify(textError(error));}finally{anchor.disabled=!changeData?.total;}}
 async function exportSummary(){const data=summaryData,s=scope,mine=generation,anchor=$('#s1 .data-card button');if(!data||data.scope!==s)return;anchor.disabled=true;try{const destination=await api.chooseCsvPath('svodka-'+s.from+'-'+s.to+'.csv');if(!destination)return;if(scope!==s||mine!==generation||summaryData!==data)throw Error('Параметры изменились. Рассчитайте сводку заново.');await api.referenceSummaryCsv(summaryRequest(s),destination);}catch(error){notify(textError(error));}finally{anchor.disabled=!summaryData;}}
 function changeTitle(value=kind){return value==='significant'?'Значимые изменения':value==='all'?'Все изменения':categories[value]||'Изменения';}
@@ -281,13 +341,13 @@ async function printScreen(event){
    root.append(el('h2','Наблюдаемые итоги за анализируемый период'));
    const after=data.result.summary.after,totals=observed(after);
    printTable(root,['Показатель','Наблюдаемое значение'],['amount','count','average'].map(metric=>[titles[metric],fmt(after.available_reports===0?null:totals?.[metric],metric)]),'print-observed');
-   printTable(root,['Подразделение',titles.amount,titles.count,'Доля суммы',titles.average],all('#s1 table tbody tr').map(row=>[...row.children].map(cell=>cell.textContent)),'print-organizations');
+   printTable(root,divisionHeaders(s.metric),[...all('#s1 table tbody tr'),...all('#s1 table tfoot tr')].map(row=>[...row.children].map(cell=>cell.textContent)),'print-organizations');
   }else{
    root.append(el('h1',changeTitle(captured.kind)),el('p','Показатель: '+titles[captured.metric]));
    const comparable=data.comparable;let overview=summaryData?.scope===s?summaryData.result:null;if(!overview){overview=await api.nativeAnalysisCompare(s.revision,s.type,s.baseFrom,s.baseTo,s.from,s.to,s.organizations);if(!current())return;}
    printContext(root,s,comparable,overview);
    if(comparable.length<s.organizations.length&&data.total)root.append(el('p','Изменения в таблице рассчитываются по доступным отчётам, если данные есть за оба интервала.'));
-   root.append(el('p','Фильтр: '+changeTitle(captured.kind)+(captured.search?' · Поиск: '+captured.search:'')+' · Сортировка: '+({delta:'по величине изменения',percent:'по изменению, %',name:'по названию'}[captured.sort]||captured.sort)),el('p','Порог: '+captured.percent+'% · Количество / объём: '+captured.minCount+' · Сумма: '+captured.minAmount));
+   root.append(el('p','Фильтр: '+changeTitle(captured.kind)+(captured.search?' · Поиск: '+captured.search:'')+' · Сортировка: '+({delta:'по величине изменения',percent:'по изменению, %',name:'по названию'}[captured.sort]||captured.sort)),el('p','Порог: '+captured.percent+'% · Количество: '+captured.minCount+' · Сумма: '+captured.minAmount));
    const totalLine=el('p'),table=el('table',null,'print-changes');
    let rowCount=0;
    const body=writeTable(table,['Работа','Подразделение','Было','Стало','Изменение','Изменение, %'],[]);
@@ -315,7 +375,13 @@ function init(){if(initialized)return;initialized=true;
  for(const root of ['#s1','#s2']){const quality=$(root+' .quality-notice button');if(quality){quality.textContent='Проверить отчёты';quality.addEventListener('click',e=>openQuality(e.target));}for(const n of all(root+' button')){if(n.textContent.includes('Печать'))n.addEventListener('click',printScreen);}}
  $('#summaryImport')?.addEventListener('click',event=>window.referenceDesktop.openPanel('upload',event.target));
  const summaryExport=$('#s1 .data-card button');summaryExport?.addEventListener('click',exportSummary);if(summaryExport)summaryExport.disabled=true;
- const open=$('#s1 .insight-card button');open?.addEventListener('click',()=>window.referenceDesktop.navigate('s2'));
+ for(const control of all('#s1 [data-leader-direction]'))control.addEventListener('click',()=>{
+  leaderDirection=control.dataset.leaderDirection;summaryLeaders(summaryData?.result,scope?.metric||'amount');
+ });
+ const open=$('#s1 .insight-card header button');open?.addEventListener('click',()=>{
+  kind='all';page=0;$('#s2 input[placeholder]').value='';
+  return window.referenceDesktop.navigate('s2');
+ });
  for(const [i,key]of ['up','down','new','gone'].entries())all('#s2 .kpi')[i]?.addEventListener('click',()=>{kind=kind===key?'significant':key;page=0;return refreshChanges();});
  $('#s2 input[placeholder]')?.addEventListener('input',()=>{page=0;refreshChanges(true);});$('#s2 [data-sort]')?.addEventListener('change',()=>{page=0;return refreshChanges();});
  $('#s2 .filter-threshold')?.addEventListener('click',e=>sensitivity(e.target));$('#s2 [data-export-changes]')?.addEventListener('click',e=>exportChanges(e.target));
@@ -332,7 +398,7 @@ function invalidateScope(value){
 function clearSummary(s,loading){
  const empty=$('#summaryEmpty');if(empty)empty.hidden=true;
  shownSummaryRevision=null;captions(s,['#s1']);summaryCards(null,loading?null:{summary:{}},0,0);
- $('#s1 .quality-notice').hidden=true;writeTable($('#s1 table'),['Подразделение',titles.amount,titles.count,'Доля суммы',titles.average],[]);summaryLeaders(null,s?.metric||'amount');
+ $('#s1 .quality-notice').hidden=true;writeTable($('#s1 table'),divisionHeaders(s?.metric||'amount'),[]);summaryLeaders(null,s?.metric||'amount');
 }
 function beginScopeChange(revision){
  invalidateScope(null);scopeBlocked=true;

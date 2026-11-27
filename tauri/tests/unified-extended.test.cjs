@@ -51,7 +51,7 @@ test('extended SQL pagination seeks directly, removes duplicate ranges and rejec
  const ends=()=>[rendered()[0][0].textContent,rendered().at(-1)[0].textContent];
  fx.publish();fx.view('changes');await settle();let entry=attached.findLast(x=>x.root.id==='changesResults');assert.ok(entry);assert.equal(entry.options.size,50);assert.equal(entry.options.direct,true);assert.equal(entry.options.total,240);assert.equal(entry.options.count,50);
  assert.equal(rendered().length,50);assert.deepEqual(ends(),['Work 1','Work 25']);
- assert.deepEqual(Array.from(rendered().slice(0,2),row=>row[4]),['Количество / объём','Сумма']);
+ assert.deepEqual(Array.from(rendered().slice(0,2),row=>row[4]),['Количество','Сумма']);
  assert.equal(fx.nodes.get('changesPrev').hidden,true);assert.equal(fx.nodes.get('changesNext').hidden,true);assert.equal(fx.nodes.get('changesPage').textContent,'');
  const resets=reset.filter(root=>root.id==='changesResults').length;
  await entry.options.go(5);assert.equal(requests.length,1);
@@ -872,7 +872,7 @@ test('department comparison uses observed totals and shows one coverage notice',
  assert.match(coverage.textContent,/Полные отчёты у 0 из 4/);
  assert.doesNotMatch(coverage.textContent,/Нет сопоставимых подразделений/);
  const summary=f.nodes.get('kpis').textContent;
- assert.match(summary,/Доля суммыСредняя сумма на единицу/);
+ assert.match(summary,/Доля суммыСумма \/ количество/);
  assert.match(summary,/A20523,5%4B30835,3%3\.75C351041,2%—D————/);
 });
 

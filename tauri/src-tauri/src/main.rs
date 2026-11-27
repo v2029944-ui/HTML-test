@@ -844,6 +844,7 @@ async fn native_analysis_compare(
     organizations: Vec<String>,
     selected_name: Option<String>,
     selected_names: Option<Vec<String>>,
+    include_work_leaders: Option<bool>,
     workspace_token: Option<String>,
 ) -> Result<storage::ComparisonDashboard, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -884,7 +885,7 @@ async fn native_analysis_compare(
                         selected_names,
                         scope,
                         |scope| {
-                            store.analysis_comparison_dashboard(
+                            store.analysis_comparison_dashboard_with_leaders(
                                 revision,
                                 scope,
                                 &storage::ComparisonQuery {
@@ -897,6 +898,7 @@ async fn native_analysis_compare(
                                     min_count: 0.,
                                     min_amount: 0.,
                                 },
+                                include_work_leaders.unwrap_or(false),
                             )
                         },
                     )

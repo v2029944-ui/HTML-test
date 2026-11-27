@@ -252,8 +252,8 @@
     nativeCompositionPage:(request,before,mode,metric,after,structureLimit=null)=>tracked('native_composition_page',{request,before,mode,metric,after,structureLimit},'reads'),
     nativeCompositionPageAtPage:(request,before,mode,metric,pageIndex=0,structureLimit=null)=>tracked('native_composition_page',{request,before,mode,metric,after:null,structureLimit,pageIndex},'reads'),
     nativePatternPage:(request,mode,windowSize,after)=>tracked('native_pattern_page',{request,mode,windowSize,after},'reads'),
-    nativeAnalysisCompare:(revision,reportType,beforeFrom,beforeTo,from,to,organizations,selectedName=null,selectedNames=null)=>tracked(
-      'native_analysis_compare',{revision,reportType,beforeFrom,beforeTo,from,to,organizations,selectedName,selectedNames},'reads'),
+    nativeAnalysisCompare:(revision,reportType,beforeFrom,beforeTo,from,to,organizations,selectedName=null,selectedNames=null,includeWorkLeaders=false)=>tracked(
+      'native_analysis_compare',{revision,reportType,beforeFrom,beforeTo,from,to,organizations,selectedName,selectedNames,includeWorkLeaders},'reads'),
     nativeWorkTimeline:(revision,reportType,from,to,organizations,organization,key,selectedName=null,grouping=null,selectedNames=null)=>tracked(
       'native_analysis_work_timeline',{revision,reportType,from,to,organizations,organization,key,selectedName,grouping,selectedNames},'reads'),
     nativeAnalysisRanking:(revision,reportType,from,to,organizations,organization,metric,category,selectedName=null,selectedNames=null)=>tracked(

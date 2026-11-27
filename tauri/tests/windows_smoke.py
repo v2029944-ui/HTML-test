@@ -1499,7 +1499,7 @@ def check_extended(page):
     position=pager.locator('[data-page-range]')
     expect(position).to_have_text('Позиции 1–50 из 120',timeout=90_000)
     expect(rows).to_have_count(50)
-    expect(rows.nth(0).locator('td').nth(4)).to_have_text('Количество / объём')
+    expect(rows.nth(0).locator('td').nth(4)).to_have_text('Количество')
     expect(rows.nth(1).locator('td').nth(4)).to_have_text('Сумма')
     pager.locator('[data-page-action="next"]').click()
     expect(position).to_have_text('Позиции 51–100 из 120',timeout=90_000)

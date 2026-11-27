@@ -235,7 +235,7 @@ fn comparison_csv_context(
     q: &ReferenceChangesRequest,
     s: &AnalysisScope,
     title: &str,
-) -> Result<(), String> {
+) -> Result<(AnalysisTotals, AnalysisTotals), String> {
     use Cell::{Number, Text};
     let current_end=end(&q.report_type,date(&q.to)?)?.to_string();
     let baseline_end=end(&q.report_type,date(&q.base_to)?)?.to_string();
@@ -270,12 +270,13 @@ fn comparison_csv_context(
     csv_record(writer,&[Text("Сравнение по доступным отчётам · все работы")])?;
     csv_record(writer,&[Text("Показатель"),Text("Было"),Text("Стало"),Text("Изменение"),Text("Изменение, %")])?;
     for (label,before,after,pair) in [("Сумма",before.amount,after.amount,before.amount.zip(after.amount)),
-        ("Количество / объём",before.count,after.count,before.count.zip(after.count)),
-        ("Средняя сумма на единицу",before.average,after.average,average_pair)] {
+        ("Количество",before.count,after.count,before.count.zip(after.count)),
+        ("Сумма / количество",before.average,after.average,average_pair)] {
         let change=pair.map(|(before,after)|measure(before,after,0.,0.)).transpose()?;
         csv_record(writer,&[Text(label),Number(before),Number(after),Number(change.as_ref().map(|value|value.delta)),Number(change.and_then(|value|value.percent))])?;
     }
-    csv_record(writer,&[])
+    csv_record(writer,&[])?;
+    Ok((before, after))
 }
 impl Analytics<'_> {
     fn reference_scope<T>(
@@ -372,12 +373,12 @@ impl Analytics<'_> {
             export(destination,|writer| {
                 comparison_csv_context(writer,&tx,q,scope,"Анализируемый период")?;
                 csv_record(writer,&[Cell::Text("Качество данных"),Cell::Text("Изменения в таблице рассчитываются по доступным отчётам, если данные есть за оба интервала. Пропуски не считаются нулём.")])?;
-                csv_record(writer,&[Cell::Text("Показатель строк"),Cell::Text(if q.metric=="amount"{"Сумма"}else{"Количество / объём"})])?;
+                csv_record(writer,&[Cell::Text("Показатель строк"),Cell::Text(if q.metric=="amount"{"Сумма"}else{"Количество"})])?;
                 csv_record(writer,&[Cell::Text("Фильтр позиций"),Cell::Text(&q.kind)])?;
                 csv_record(writer,&[Cell::Text("Поиск работ"),Cell::Text(&q.search)])?;
                 csv_record(writer,&[Cell::Text("Сортировка"),Cell::Text(&q.sort)])?;
                 csv_record(writer,&[Cell::Text("Порог изменения, %"),Cell::Number(Some(q.percent))])?;
-                csv_record(writer,&[Cell::Text("Минимальное количество / объём"),Cell::Number(Some(q.min_count))])?;
+                csv_record(writer,&[Cell::Text("Минимальное количество"),Cell::Number(Some(q.min_count))])?;
                 csv_record(writer,&[Cell::Text("Минимальная сумма"),Cell::Number(Some(q.min_amount))])?;
                 csv_record(writer,&[])?;
                 csv_record(writer,&[Cell::Text("Работа"),Cell::Text("Подразделение"),Cell::Text("Было"),Cell::Text("Стало"),Cell::Text("Изменение"),Cell::Text("%")])?;
@@ -409,20 +410,23 @@ impl Analytics<'_> {
             let mut conn=self.database.connect()?;let tx=conn.transaction().map_err(err)?;
             prepare_reference_values(&tx,q,scope)?;
             export(destination,|writer| {
-                comparison_csv_context(writer,&tx,q,scope,"Сводка доступных данных")?;
+                let (before,after)=comparison_csv_context(writer,&tx,q,scope,"Сводка доступных данных")?;
                 csv_record(writer,&[Cell::Text("Наблюдаемые итоги анализируемого интервала"),Cell::Text("Все выбранные подразделения"),Cell::Text("Доли от суммы заполненных ячеек")])?;
-                csv_record(writer,&[Cell::Text("Подразделение"),Cell::Text("Сумма"),Cell::Text("Количество / объём"),Cell::Text("Доля суммы, %"),Cell::Text("Средняя сумма на единицу"),Cell::Text("Состояние")])?;
+                csv_record(writer,&[Cell::Text("Подразделение"),Cell::Text("Сумма"),Cell::Text("Количество"),Cell::Text("Доля суммы, %"),Cell::Text("Сумма / количество"),Cell::Text("Состояние"),Cell::Text(if q.metric=="count" {"Изменение · Количество"} else {"Изменение · Сумма"})])?;
                 let mut statement=tx.prepare("WITH observed AS (
-                    SELECT v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,CASE WHEN COUNT(x.row_index)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(x.row_index) THEN SUM(x.amount) END amount,SUM(x.amount) known_amount,
+                    SELECT p.slot,v.org,count(DISTINCT v.report_id) reports,coalesce(sum(x.count),0.0) count,CASE WHEN COUNT(x.row_index)=0 THEN 0 WHEN COUNT(x.amount)=COUNT(x.row_index) THEN SUM(x.amount) END amount,SUM(x.amount) known_amount,
                            SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) paired_count
-                    FROM an_valid v JOIN an_periods p ON p.slot=2 AND p.start=v.start
-                    LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY v.org)
+                    FROM an_valid v JOIN an_periods p ON p.start=v.start
+                    LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org GROUP BY p.slot,v.org)
                     SELECT f.item,coalesce(o.reports,0),o.count,o.amount,
                     NOT EXISTS(SELECT 1 FROM an_missing m WHERE m.slot=2 AND m.org=f.item),
-                    (SELECT SUM(coalesce(amount,known_amount)) FROM observed),o.known_amount,o.paired_count
-                    FROM analysis_filter_items f LEFT JOIN observed o ON o.org=f.item WHERE f.id=?1
+                    (SELECT SUM(coalesce(amount,known_amount)) FROM observed WHERE slot=2),o.known_amount,o.paired_count,
+                    CASE WHEN EXISTS(SELECT 1 FROM ref_orgs complete WHERE complete.org=f.item)
+                         THEN CASE WHEN ?2='count' THEN o.count-b.count ELSE o.amount-b.amount END END
+                    FROM analysis_filter_items f LEFT JOIN observed o ON o.org=f.item AND o.slot=2
+                    LEFT JOIN observed b ON b.org=f.item AND b.slot=1 WHERE f.id=?1
                     ORDER BY (coalesce(o.amount,o.known_amount) IS NULL),coalesce(o.amount,o.known_amount) DESC,f.item COLLATE classic_ru,f.item").map_err(err)?;
-                let mut rows=statement.query([&scope.organizations]).map_err(err)?;
+                let mut rows=statement.query(params![scope.organizations,q.metric]).map_err(err)?;
                 while let Some(row)=rows.next().map_err(err)? {
                     let org:String=row.get(0).map_err(err)?;let available:i64=row.get(1).map_err(err)?;
                     let strict_amount:Option<f64>=row.get(3).map_err(err)?;
@@ -432,9 +436,12 @@ impl Analytics<'_> {
                     let share=match (totals.amount,total) {(Some(a),Some(t)) if t>0.=>Some(finite(a/t*100.)?),_=>None};
                     let complete:bool=row.get(4).map_err(err)?;
                     let state=if available==0 {"нет данных"} else if strict_amount.is_none() {"частичные данные, есть строки без суммы"} else if complete {"полные периоды"} else {"частичные данные"};
-                    csv_record(writer,&[Cell::Text(&org),Cell::Number(totals.amount),Cell::Number(totals.count),Cell::Number(share),Cell::Number(totals.average),Cell::Text(state)])?;
+                    csv_record(writer,&[Cell::Text(&org),Cell::Number(totals.amount),Cell::Number(totals.count),Cell::Number(share),Cell::Number(totals.average),Cell::Text(state),Cell::Number(row.get::<_,Option<f64>>(8).map_err(err)?.map(finite).transpose()?)])?;
                 }
-                Ok(())
+                let (old,new)=if q.metric=="count" {(before.count,after.count)} else {(before.amount,after.amount)};
+                let delta=old.zip(new).map(|(b,a)|finite(a-b)).transpose()?;
+                csv_record(writer,&[Cell::Text("Итого"),Cell::Number(after.amount),Cell::Number(after.count),
+                    Cell::Number(after.amount.filter(|a|*a>0.).map(|_|100.)),Cell::Number(after.average),Cell::Text(""),Cell::Number(delta)])
             })
         })
     }

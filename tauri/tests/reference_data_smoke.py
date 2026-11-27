@@ -110,8 +110,8 @@ def _check_trend_exports(page, scratch, scope, evidence):
             assert records[0][2:] == ['2024-02'], records
             data = [row for row in records[1:] if row and row[0] in scope['organizations']]
             assert len(data) == 12, records
-            expected = {'Сумма': 145, 'Количество / объём': 14.5,
-                        'Средняя сумма на единицу': 10}
+            expected = {'Сумма': 145, 'Количество': 14.5,
+                        'Сумма / количество': 10}
             assert {(row[0], row[1]) for row in data} == {
                 (org, metric) for org in scope['organizations'] for metric in expected}, records
             assert all(len(row) == 3 and _number(row[2]) == expected[row[1]]
@@ -144,8 +144,8 @@ def _check_detail_table_csv_parity(page, scratch, scope, evidence):
                   'percent': 30, 'min_count': 0, 'min_amount': 0},
     }
     baseline = {'from': scope['baseFrom'], 'to': scope['baseTo']}
-    metrics = {'amount': 'Сумма', 'count': 'Количество / объём',
-               'average': 'Средняя сумма на единицу'}
+    metrics = {'amount': 'Сумма', 'count': 'Количество',
+               'average': 'Сумма / количество'}
     orgs = req['organizations']
     observed = {}
 
@@ -413,7 +413,7 @@ def check_reference_data(page, output):
         title = ('Сводка выполненных работ' if screen == '#s1' else
                  page.locator('#s2 .changes-heading h2').inner_text())
         periods = page.locator(screen + ' .report-range span').all_text_contents()
-        source = '#s1 .data-card table tbody tr' if screen == '#s1' else '#s2 .changes-table tbody tr'
+        source = '#s1 .data-card table :is(tbody,tfoot) tr' if screen == '#s1' else '#s2 .changes-table tbody tr'
         expected_rows = page.locator(source).evaluate_all(
             '(rows) => rows.map(row => [...row.cells].slice(0, row.closest("#s1") ? row.cells.length : 6).map(cell => cell.textContent))')
         expected_values = page.locator('#s1 .metric-value').all_text_contents() if screen == '#s1' else None
@@ -485,7 +485,8 @@ def check_reference_data(page, output):
             assert rows[0][1:] == [scope()['from'], scope()['to']], rows
             assert rows[1][1:] == [scope()['baseFrom'], scope()['baseTo']], rows
             header = next(i for i, row in enumerate(rows) if row[:2] == ['Подразделение', 'Сумма'])
-            data = rows[header + 1:]
+            assert rows[-1][0] == 'Итого', rows
+            data = rows[header + 1:-1]
             assert len(data) == 4 and {r[0] for r in data} == set(organizations), rows
             if coverage == 'empty':
                 assert all(row[1:5] == ['', '', '', ''] and row[5] == 'нет данных' for row in data), rows

@@ -19,9 +19,9 @@ fn headers(w: &mut impl Write, labels: &[&str]) -> Result<(), String> {
 }
 fn measure_label(m: &str) -> Result<&'static str, String> {
     match m {
-        "count" => Ok("Количество / объём"),
+        "count" => Ok("Количество"),
         "amount" => Ok("Сумма"),
-        "average" => Ok("Средняя сумма на единицу"),
+        "average" => Ok("Сумма / количество"),
         _ => Err("Unknown metric".into()),
     }
 }
