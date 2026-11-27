@@ -1300,3 +1300,5 @@ body:has(#refRoot)>footer {display:none}
   margin-inline-start:.45em;
 }
 .chart-group-toggle[aria-expanded="true"]::after {content:'▾'}
+
+#groupWorkspace .group-extra-actions:not([hidden]) {display:flex;flex-wrap:wrap;gap:6px;flex-basis:100%}

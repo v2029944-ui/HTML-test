@@ -174,7 +174,7 @@ function init(){
   if(ticket!==editTicket||!valid(expected))return;editing=group;selected=chosen;showWorkMode('edit');openEditor(opener);$('groupName').value=group.name;workSearch.value='';await load(works);$('groupName').focus();
  }catch(e){if(ticket===editTicket)fail(e);}finally{busy=false;lock();}}
  function requestGroupSelection(anchor,row,expected,current,movingGroup=false){
-  const dialog=el('dialog',null,'group-picker'),heading=el('h2',movingGroup?'Переместить группу':'Группа'),work=el('p',row.name,'muted small');
+  const dialog=el('dialog',null,'group-picker'),heading=el('h2',movingGroup?'Переместить группу':'Перенести работу'),work=el('p',row.name,'muted small');
   const label=el('label','Поиск групп'),search=el('input'),status=el('p','','muted small');
   const choices=el('div',null,'group-picker-choices'),more=el('button','Показать ещё','button secondary');
   const cancel=el('button','Отмена','button secondary');
@@ -224,7 +224,7 @@ function init(){
  }
  function moveControl(row,expected,sourceGroup){
   const box=el('div',null,'group-member');
-  const pick=button('Группа',async()=>{
+  const pick=button('Перенести…',async()=>{
    if(!valid(expected))return;
    let moved=false;
    await guard(async()=>{
@@ -246,7 +246,7 @@ function init(){
    else $('groupSearch').focus({preventScroll:true});
   });
   pick.className='button secondary group-assign';pick.setAttribute('aria-haspopup','dialog');
-  pick.setAttribute('aria-label','Группа для работы '+row.name);
+  pick.setAttribute('aria-label','Перенести работу «'+row.name+'» в другую группу');
   box.append(el('span',row.name),pick);return box;
  }
  function expandMembers(details,root,group,expected,openChildren){
@@ -318,11 +318,11 @@ function init(){
     if(active&&valid(revision))await load(groups,groups.offset);
    })();
    if(rename.isConnected!==false&&!rename.disabled){rename.focus({preventScroll:true});return;}
-   const current=Array.from(groups.root.querySelectorAll('button')).find(item=>item.dataset.groupRename===group.id);
+   const current=Array.from(groups.root.querySelectorAll('button')).find(item=>item.dataset.groupMore===group.id);
    if(current){current.closest('details').open=true;current.focus({preventScroll:true});}else $('groupSearch').focus({preventScroll:true});
   });
   rename.dataset.groupRename=group.id;
-  const edit=button('Изменить группу',()=>editGroup(group,expected,edit));
+  const edit=button('Изменить состав',()=>editGroup(group,expected,edit));
   const activeScope=()=>{
    const opened=U.generation,token=window.sharedWorkspace?.state?.workspace_token;
    return ()=>valid(expected)&&opened===U.generation&&token===window.sharedWorkspace?.state?.workspace_token;
@@ -335,14 +335,14 @@ function init(){
     kind:'create',id:window.crypto.randomUUID(),name,parent:group.handle
    }),'Подгруппа создана.');
   }));
-  const move=button('Переместить группу',guard(async ()=>{
+  const move=button('Переместить',guard(async ()=>{
    const current=activeScope();
    const parent=await requestGroupSelection(move,group,expected,current,true);
    if(parent===undefined||parent===(group.group||null))return;
    if(!current())throw Error('База изменилась. Повторите действие.');
    await mutate(expected,()=>api.unifiedGroupTreeEdit(expected,{kind:'move',group:group.handle,parent}),'Группа перемещена.');
   }));
-  const remove=button('Удалить группу',guard(async ()=>{
+  const remove=button('Удалить',guard(async ()=>{
    if(!valid(expected))return;
    const current=activeScope();
    let deleteDescendants=false;
@@ -372,7 +372,16 @@ function init(){
     kind:'delete',group:group.handle,delete_descendants:deleteDescendants,confirmed:true,...(backup?{backup}:{})
    }),'Группа удалена.');
   }));
-  actions.append(edit,rename,create,move,remove);
+  const extra=el('div',null,'group-extra-actions');
+  const more=button('Ещё',()=>showExtra(extra.hidden));
+  function showExtra(open){
+   extra.hidden=!open;more.setAttribute('aria-expanded',String(open));
+  }
+  more.dataset.groupMore=group.id;showExtra(false);
+  actions.addEventListener('keydown',event=>{
+   if(event.key==='Escape'&&!extra.hidden){event.stopPropagation();showExtra(false);more.focus();}
+  });
+  extra.append(rename,move,remove);actions.append(edit,create,more,extra);
   const checkLabel=el('label',null,'group-selection'),check=el('input');
   check.type='checkbox';check.dataset.groupHandle=group.handle;check.setAttribute('aria-label','Выбрать «'+group.name+'»');
   check.addEventListener('change',()=>{

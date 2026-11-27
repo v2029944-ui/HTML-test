@@ -87,7 +87,7 @@ test('selected works survive pages and search and save through one atomic API',a
 test('deferred stale pages cannot resurrect rows after snapshot invalidation',async()=>{const m=mount();let resolve;m.setHandler((r,kind)=>kind==='works'?new Promise(done=>resolve=done):({rows:[],total:0}));m.snapshot(7);m.views.groups();await tick();m.snapshot(null);resolve({rows:[{name:'stale'}],total:1});await tick();assert.equal(m.nodes.worksList.children.length,0);assert.equal(m.nodes.workNext.disabled,true);});
 test('moving a member uses the Group picker and cannot assign from a stale dialog',async()=>{
  const m=mount();m.snapshot(7);m.views.groups();await tick();const group=m.nodes.groupList.children[0];group.open=true;await group.fire('toggle');await tick();
- const assignment=actionByText(group.children[2],'Группа');
+ const assignment=actionByText(group.children[2],'Перенести…');
  const opening=assignment.fire();await tick();
  const picker=m.body.querySelectorAll('dialog').find(n=>n.id==='groupPickerDialog');
  assert.equal(picker.open,true);
@@ -98,7 +98,7 @@ test('moving a member uses the Group picker and cannot assign from a stale dialo
 test('group picker returns focus on Escape and selecting the current group does not write',async()=>{
  const m=mount();m.snapshot(7);m.views.groups();await tick();
  const group=m.nodes.groupList.children[0];group.open=true;await group.fire('toggle');
- const assignment=actionByText(group.children[2],'Группа');
+ const assignment=actionByText(group.children[2],'Перенести…');
  for(const action of ['cancel','escape','current']){
   assignment.focused=false;
   const opening=assignment.fire();await tick();
@@ -116,7 +116,7 @@ test('confirmed group move focuses the refreshed group or the group search if it
  for(const survives of [true,false]){
   const m=mount();m.snapshot(7);m.views.groups();await tick();
   const group=m.nodes.groupList.children[0];group.open=true;await group.fire('toggle');
-  const assignment=actionByText(group.children[2],'Группа'),refresh=m.UI.refresh;
+  const assignment=actionByText(group.children[2],'Перенести…'),refresh=m.UI.refresh;
   m.UI.refresh=async()=>{
    assignment.isConnected=false;
    if(!survives)m.setHandler(()=>({rows:[],total:0,grouped:0}));
@@ -158,7 +158,7 @@ test('expanded groups load one member page on demand and reuse loaded rows when 
  assert.deepEqual(m.reads.slice(before),[[7,'members','','g0',0,50],[7,'members','','g0',50,50],[7,'members','','g0',100,50]]);
  assert.equal(members.children.filter(row=>row.className==='group-member').length,101);
  assert.equal(members.scrollWindow,undefined);
- assert.equal(members.querySelectorAll('button').filter(row=>row.textContent==='Группа').length,101);
+ assert.equal(members.querySelectorAll('button').filter(row=>row.textContent==='Перенести…').length,101);
  assert.equal(members.querySelectorAll('input').length,0);
 });
 test('group picker searches across SQLite pages and applies only an explicit choice',async()=>{
@@ -167,7 +167,7 @@ test('group picker searches across SQLite pages and applies only an explicit cho
   return {total:1,grouped:1,ungrouped:0,rows:[{name:'A',group:'g0'}]};
  });
  m.snapshot(7);m.views.groups();await tick();const group=m.nodes.groupList.children[0];group.open=true;await group.fire('toggle');await tick();
- const opening=actionByText(group.children[2],'Группа').fire();await tick();
+ const opening=actionByText(group.children[2],'Перенести…').fire();await tick();
  const picker=m.body.querySelectorAll('dialog').find(n=>n.id==='groupPickerDialog');
  const search=picker.querySelectorAll('input')[0];
  await actionByText(picker,'Показать ещё').fire();
@@ -192,7 +192,7 @@ test('editing and audit share one visible search and result list',async()=>{
  assert.equal(m.nodes.worksList.parentNode,m.nodes.groupAuditResults);
  assert.ok(m.nodes.groupAuditPanel.querySelectorAll('input').includes(m.nodes.workSearch));
  assert.ok(!m.nodes.groupEditor.querySelectorAll('input').includes(m.nodes.workSearch));
- const opening=actionByText(m.nodes.worksList,'Группа').fire();await tick();
+ const opening=actionByText(m.nodes.worksList,'Перенести…').fire();await tick();
  const picker=m.body.querySelectorAll('dialog').find(n=>n.id==='groupPickerDialog');
  assert.ok(picker);
  await actionByText(picker,'Отмена').fire();await opening;
@@ -208,7 +208,7 @@ test('editing and audit share one visible search and result list',async()=>{
 });
 test('closing an existing group editor returns focus to its edit button',async()=>{
  const m=mount();m.snapshot(7);m.views.groups();await tick();
- const edit=actionByText(m.nodes.groupList,'Изменить группу');
+ const edit=actionByText(m.nodes.groupList,'Изменить состав');
  await edit.fire();
  assert.equal(m.nodes.groupEditor.hidden,false);
  m.nodes.groupEditor.open=false;await m.nodes.groupEditor.fire('toggle');
@@ -221,7 +221,7 @@ test('failure to open a group editor leaves the active audit results intact',asy
  m.nodes.groupAuditPanel.open=true;await m.nodes.groupAuditPanel.fire('toggle');
  const original=m.nodes.worksList.children[0],pager=m.nodes.worksList.scrollWindow;
  m.setHandler(()=>{throw Error('Не удалось прочитать состав');});
- await actionByText(m.nodes.groupList,'Изменить группу').fire();
+ await actionByText(m.nodes.groupList,'Изменить состав').fire();
  assert.equal(m.nodes.worksList.children[0],original);
  assert.equal(m.nodes.worksList.scrollWindow,pager);
  assert.equal(m.nodes.groupAuditPanel.open,true);
@@ -287,6 +287,11 @@ test('group rename inside an open workspace discards Cancel and Escape, restores
  const m=mount();m.snapshot(7);m.views.groups();await tick();
  const workspace=new Node('dialog');workspace.open=true;m.body.append(workspace);workspace.append(m.nodes.groupList.parentNode);
  const rename=actionByText(m.nodes.groupList,'Переименовать');
+ const more=actionByText(m.nodes.groupList,'Ещё'),extra=rename.parentNode;
+ assert.deepEqual(extra.children.map(action=>action.textContent),['Переименовать','Переместить','Удалить']);
+ assert.equal(extra.hidden,true);await more.fire();assert.equal(extra.hidden,false);
+ await extra.parentNode.fire('keydown',{key:'Escape'});assert.equal(extra.hidden,true);assert.equal(more.focused,true);
+ await more.fire();
  assert.equal(rename.dataset.groupRename,'group-1');
  for(const method of ['cancel','escape']){
   rename.focused=false;const action=rename.fire();await tick();
@@ -315,7 +320,7 @@ test('all management destructive confirmations await native false promises',asyn
  for(const name of ['delete group','save catalog','delete catalog','import groups','import catalog','rename organizations']){
   const m=mount();m.snapshot(7);m.views.groups();await tick();m.setBackup('/safe.sqlite3');m.setSource('/source');
   let action;
-  if(name==='delete group')action=actionByText(m.nodes.groupList,'Удалить группу');
+  if(name==='delete group')action=actionByText(m.nodes.groupList,'Удалить');
   if(name==='save catalog'){const field=m.nodes.groupCatalog.querySelectorAll('input').find(n=>n.placeholder==='Название услуги');field.value='Service';action=actionByText(m.nodes.groupCatalog,'Сохранить услугу');}
   if(name==='delete catalog'){m.setHandler((r,kind)=>({rows:kind==='catalog'?[{handle:'c1',name:'Service',organization:'А'}]:[],total:kind==='catalog'?1:0}));m.nodes.groupCatalog.open=true;await m.nodes.groupCatalog.fire('toggle');await tick();action=actionByText(m.nodes.groupCatalog,'Удалить');}
   if(name==='import groups')action=m.nodes.importGroups;
@@ -399,11 +404,11 @@ test('work group tree requests nested pages and offers explicit choices for desc
  const parent=m.nodes.groupList.children[0];
  parent.open=true;await parent.fire('toggle');await tick();
  assert.ok(m.reads.some(args=>args[1]==='group_tree'&&args[3]==='root'));
- let pending=actionByText(parent,'Удалить группу').fire();
+ let pending=actionByText(parent,'Удалить').fire();
  const dialog=m.body.querySelectorAll('dialog').find(d=>d.id==='groupTreeDeletion');
  await actionByText(dialog,'Отмена').fire();await pending;
  assert.equal(m.writes.length,0);
- pending=actionByText(parent,'Удалить группу').fire();
+ pending=actionByText(parent,'Удалить').fire();
  const next=m.body.querySelectorAll('dialog').find(d=>d.id==='groupTreeDeletion');
  await actionByText(next,'Перенести подгруппы на уровень выше').fire();await pending;
  assert.deepEqual(m.writes,[[7,{kind:'delete',group:'root',delete_descendants:false,confirmed:true}]]);
@@ -438,7 +443,7 @@ test('removing the sole root subtree requires a backup destination before IPC wr
  m.setHandler((revision,kind,query,parent)=>({rows:kind==='group_tree'&&!parent?[root]:[],total:kind==='group_tree'&&!parent?1:0,hierarchy:true}));
  m.api.unifiedGroupTreeEdit=async(...args)=>{m.writes.push(JSON.parse(JSON.stringify(args)));return {revision:8};};
  m.snapshot(7,12,true,2);m.views.groups();await tick();
- const remove=actionByText(m.nodes.groupList,'Удалить группу');
+ const remove=actionByText(m.nodes.groupList,'Удалить');
  async function attempt(){
   const pending=remove.fire();
   await actionByText(m.body.querySelectorAll('dialog').at(-1),'Удалить группу и подгруппы').fire();
