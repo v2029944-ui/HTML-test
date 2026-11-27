@@ -674,3 +674,33 @@ fn partial_average_uses_priced_rows_of_one_original_work() {
         assert_eq!(summary.available_total.average, expected);
     }
 }
+
+#[test]
+fn range_reads_each_selected_report_for_its_eligible_organizations() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut data = fixture();
+    data["reports"] = json!([
+        {"id":"outside","type":"day","start":"2024-01-01","end":"2024-01-01","organizations":["A"],
+         "rows":[{"organization":"A","work":"one","count":90,"amount":900}]},
+        {"id":"selected","type":"day","start":"2024-01-02","end":"2024-01-02","organizations":["A","B","C"],
+         "rows":[
+            {"organization":"A","work":"one","count":2,"amount":20},
+            {"organization":"A","work":"one","count":3,"amount":null},
+            {"organization":"A","work":"other","count":40,"amount":400},
+            {"organization":"B","work":"one","count":4,"amount":0},
+            {"organization":"C","work":"one","count":80,"amount":800}
+         ]}
+    ]);
+    let rev = prepare(&store, &data);
+    store.connect().unwrap().execute_batch("ANALYZE main").unwrap();
+    let scope = scope(&store, rev, "day", &["A", "B", "D"], Some(&["Group"]));
+    let summary = store
+        .analysis_range_summary(rev, &scope, &query("2024-01-02", "2024-01-02"))
+        .unwrap();
+    assert_eq!((summary.available_reports, summary.missing), (2, 1));
+    assert_eq!((summary.report_rows, summary.priced_rows), (3, 2));
+    assert_eq!(summary.available_total.count, Some(9.));
+    assert_eq!(summary.available_total.amount, Some(20.));
+    assert_eq!(summary.available_total.average, Some(20. / 6.));
+}
