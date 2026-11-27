@@ -729,13 +729,11 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
  bind(['changesPercent','changesCountMin','changesAmountMin','changesSearch'],'input',()=>{explainSensitivity();describeActiveFilters();schedule('changes',changes);});
  $('changesType').addEventListener('change',()=>{changesKind=value('changesType');for(const id of ['changesFrom','changesTo'])setDate(id,changesKind,scope?.to||new Date().toISOString().slice(0,10),true);invalidate('changes');changes();});
  for(const name of ['changes','contribution','usual','regularity']){const run=name==='changes'?changes:name==='contribution'?contributions:index=>patterns(name,index);$(name+'Prev').addEventListener('click',()=>{const state=slot(name);if(state.index>0)return run(state.index-1);});$(name+'Next').addEventListener('click',()=>{const state=slot(name);if((state.index+1)*RESULTS_PAGE_SIZE<(state.page?.total_rows||0))return run(state.index+1);});}
- bind(['comparisonMode','periodComparisonScope','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonScope','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','comparisonBaseOrg'],'change',()=>{invalidate('comparison');invalidate('contribution');comparison();});
- bind(['structureBase','structureCurrent','structureMetric','structureLimit','structureScope'],'change',structure);bind(['usualPeriod','usualWindow'],'change',()=>patterns('usual'));bind(['usualPercent'],'input',()=>schedule('usual',()=>patterns('usual')));bind(['regularityStatus','regularityUseBaseline'],'change',()=>patterns('regularity'));
+ // Apply the history source before the regularity field's calculation listener.
  $('regularityGap').addEventListener('change',()=>{
   if($('regularityUseBaseline'))$('regularityUseBaseline').checked=false;
-  patterns('regularity');
  });
- bind(['regularitySearch'],'input',()=>schedule('regularity',()=>patterns('regularity')));
+ bind(['regularityUseBaseline'],'change',()=>patterns('regularity'));
  for(const [id,mode] of [['usualWindow','usual'],['regularityGap','regularity']]){
   for(const size of [4,8])$(id+size)?.addEventListener('click',()=>{
    $(id).value=String(size);
@@ -743,6 +741,8 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
    patterns(mode);
   });
  }
+ bind(['comparisonMode','periodComparisonScope','basePeriod','currentPeriod','baseRangeStart','baseRangeEnd','currentRangeStart','currentRangeEnd','comparisonScope','comparisonPeriod','comparisonRangeStart','comparisonRangeEnd','comparisonBaseOrg'],'change',()=>{invalidate('comparison');invalidate('contribution');comparison();});
+ bind(['structureBase','structureCurrent','structureMetric','structureLimit','structureScope'],'change',structure);bind(['usualPeriod','usualWindow'],'change',()=>patterns('usual'));bind(['usualPercent'],'input',()=>schedule('usual',()=>patterns('usual')));bind(['regularityGap','regularityStatus'],'change',()=>patterns('regularity'));bind(['regularitySearch'],'input',()=>schedule('regularity',()=>patterns('regularity')));
  for(const [id,run] of [['advancedAnalytics',()=>{comparison();if(!window.referenceDetail?.active&&compositionVisible())structure();}],['usualPanel',()=>patterns('usual')],['regularityPanel',()=>patterns('regularity')]])$(id).addEventListener('toggle',()=>{if($(id).open&&scope)run();});
  $('closeAnalyticsDetails').addEventListener('click',()=>closeHistory('analytics'));$('closeChangeDetails').addEventListener('click',()=>closeHistory('change'));
  $('overviewShowComparison').addEventListener('click',()=>{
