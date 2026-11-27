@@ -616,6 +616,10 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         settings = page.locator('#refSettings')
         settings.click()
         panel('storage')
+        expect(page.get_by_role('heading', name='Настройки', level=1)).to_be_focused()
+        expect(page.locator('#reportShell')).to_be_hidden()
+        expect(page.locator('#s1')).to_be_hidden()
+        expect(page.locator('#backBtn')).to_have_text('Вернуться к анализу')
         page.locator('#appearanceTheme').select_option('light')
         page.locator('#appearanceSize').select_option('xlarge')
         update_notes = page.locator('#appUpdateWhatsNew')
@@ -808,6 +812,14 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
 
         if has_reports:
             check_filter_placement(page, record)
+            page.evaluate('window.referenceFilters.openFilters()')
+            works = page.locator('#reportShell [data-pick="works"]')
+            works.click()
+            search = page.get_by_role('searchbox', name='Найти работу')
+            expect(search).to_be_focused()
+            expect(search).to_have_css('outline-offset', '-2px')
+            page.locator('#sheet').get_by_role('button', name='Закрыть', exact=True).click()
+            focused(works)
 
         # Layout checks include classic Windows scrollbars (clientWidth, not innerWidth).
         for width, height in [(1440, 1000), (768, 1024), (390, 844), (320, 568)]:

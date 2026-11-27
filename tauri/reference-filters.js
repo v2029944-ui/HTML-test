@@ -219,7 +219,7 @@ function chooseOrgs(anchor){
 }
 function chooseWorks(anchor){
  const {box,query,actions,list,count,pages}=listShell('Работы в подробной аналитике',anchor,'Выбор применяется к подробной аналитике. В сводке учитываются все работы.');
- query.placeholder='Найти работу';list.dataset.sqlScrollHost='reference-work-options';
+ query.placeholder='Найти работу';query.setAttribute('aria-label',query.placeholder);list.dataset.sqlScrollHost='reference-work-options';
  const opened=snapshot,selected=new Map(nameRows);
  let everything=allNames,rows=[],index=0,ticket=0,matchingTotal=0,hasUnselectable=false;
  const limit=50;

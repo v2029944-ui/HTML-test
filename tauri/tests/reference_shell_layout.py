@@ -77,9 +77,28 @@ def check_filter_placement(page, record):
     # Like the other CDP geometry checks, wait for layout directly. Chromium's
     # wait_for_function polling can require page-side eval, disallowed by Tauri.
     settle = '() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))'
+    settings_button = page.locator('#refSettings')
+    back = page.locator('#backBtn')
+
+    def appearance(*, mode=None, scale=None):
+        if not settings.is_visible():
+            settings_button.click()
+        expect(settings).to_be_visible()
+        expect(sidebar).to_be_hidden()
+        if scale is not None:
+            size.focus()
+            size.select_option(scale)
+            expect(size).to_be_focused()
+            expect(page.locator('#refRoot')).to_have_attribute('data-ui-size',scale)
+        if mode is not None:
+            placement.select_option(mode)
+        back.click()
+        expect(fold).to_be_visible()
+        page.evaluate(settle)
+
     try:
         page.set_viewport_size({'width':1440,'height':650})
-        placement.select_option('top',force=True)
+        appearance(mode='top')
         # Leave the initially expanded controls in the document and scroll
         # past them, just as someone reading the summary with the mouse would.
         page.evaluate("window.scrollTo(0,0)")
@@ -103,30 +122,18 @@ def check_filter_placement(page, record):
         assert not fold.evaluate('el => el.open')
         assert abs(page.evaluate('scrollY') - y) <= 2
 
-        # On a short overview at 80% the header can remain in view even at the
-        # bottom. Use the actual Settings page (where the user changes scale)
-        # so that there is also a long document in which to test pinning.
-        if not settings_already_open:
-            page.locator('#refSettings').click()
-        expect(settings).to_be_visible()
         page.set_viewport_size({'width':2600,'height':650})
         scope = page.evaluate('JSON.stringify(window.referenceFilters.scope)')
         reset = fold.locator('.filter-reset')
         for scale in ('80','90','standard','large','xlarge'):
-            # select_option dispatches input/change without focusing the select.
-            # Move focus to Settings just as when the user chooses the scale.
-            size.focus()
-            size.select_option(scale)
-            expect(size).to_be_focused()
-            expect(page.locator('#refRoot')).to_have_attribute('data-ui-size',scale)
+            appearance(mode='top', scale=scale)
             page.evaluate("scrollTo({top:0,behavior:'instant'})")
             report = page.locator('#s1 main')
             header = page.locator('#sharedHeader')
             brand = header.locator('.brand')
-            placement.select_option('top')
             page.evaluate(settle)
             original = [element.bounding_box() for element in (report, header, brand)]
-            placement.select_option('side')
+            appearance(mode='side')
             expect(sidebar).to_have_css('--filter-at-side','1')
             page.evaluate(settle)
             for element, before in zip((report, header, brand), original):
@@ -145,7 +152,7 @@ def check_filter_placement(page, record):
             report_box = page.locator('#s1 .title-row').bounding_box()
             assert abs(sidebar_box['y']-expected_top) <= 2, (scale,origin,scrolled_y,expected_top,sidebar_box)
             assert sidebar_box['x'] + sidebar_box['width'] <= report_box['x'] + 2, (scale,sidebar_box,report_box)
-            assert scrolled_y > origin + 2, ('Settings should scroll past the header', scale,origin,scrolled_y)
+            assert scrolled_y > origin + 2, ('Analytics should scroll past the header', scale,origin,scrolled_y)
             if scale == 'standard':
                 record('18-filter-side', fold, scroll=False)
             # Enter the final action by keyboard from its preceding available
@@ -169,12 +176,12 @@ def check_filter_placement(page, record):
         # up the free left margin. The saved preference still applies again
         # when there is room.
         page.set_viewport_size({'width':1920,'height':650})
-        size.select_option('standard')
+        appearance(scale='standard')
         expect(sidebar).to_have_css('--filter-at-side','1')
-        size.select_option('xlarge')
+        appearance(scale='xlarge')
         page.evaluate(settle)
         assert not page.evaluate('window.referenceFilters.atSide()')
-        size.select_option('standard')
+        appearance(scale='standard')
         expect(sidebar).to_have_css('--filter-at-side','1')
         page.set_viewport_size({'width':720,'height':650})
         page.evaluate(settle)
@@ -182,13 +189,12 @@ def check_filter_placement(page, record):
         assert placement.input_value() == 'side'
         assert page.evaluate('JSON.stringify(window.referenceFilters.scope)') == scope
     finally:
-        size.select_option(previous_size,force=True)
-        placement.select_option(previous_placement,force=True)
-        if not settings_already_open and settings.is_visible():
-            page.locator('#backBtn').click()
+        appearance(mode=previous_placement, scale=previous_size)
         page.evaluate('window.scrollTo(0,0)')
         if fold.evaluate('el => el.open') != previous_open:
             trigger.click()
+        if settings_already_open:
+            settings_button.click()
 
 
 def check_sticky_table_header(page):

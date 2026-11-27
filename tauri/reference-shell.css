@@ -145,6 +145,7 @@
 #sheet .filter-list-dialog{display:grid;gap:12px}
 #sheet .filter-list-dialog p{margin:0}
 #sheet .filter-list-dialog>input{width:100%;box-sizing:border-box;min-height:39px}
+#sheet .filter-list-dialog>input:focus{outline:2px solid var(--focus,var(--ui-accent));outline-offset:-2px}
 #sheet .filter-checkboxes{border-block:1px solid #3b4654;max-height:min(45dvh,360px);overflow:auto;overscroll-behavior:contain;padding:3px 0}
 #sheet .filter-checkboxes label{display:flex;gap:10px;align-items:center;min-height:34px;box-sizing:border-box;margin:0;padding:5px 8px;border-radius:5px}
 #sheet .filter-checkboxes label:hover{background:#26313d}
@@ -961,7 +962,8 @@
 
 #refRoot {min-height:100vh;min-width:0}
 #refRoot *,#refRoot *::before,#refRoot *::after {box-sizing:border-box}
-#refRoot [hidden] {display:none!important}
+#refRoot [hidden],#refRoot[data-settings-page] :is(#reportShell,#s1,#s2) {display:none!important}
+#refRoot[data-settings-page] #toolsPage > header {position:sticky;inset-block-start:0;z-index:8}
 #sheet[open] {display:flex;flex-direction:column;overflow:hidden}
 #sheet #dialogBody {min-height:0;overflow:auto;overscroll-behavior:contain}
 #sheet form {display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:8px;flex:none}
