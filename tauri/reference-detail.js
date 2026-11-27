@@ -46,7 +46,7 @@
     const analytics = window.unifiedAnalytics;
     const displayed = key === 'chartPanel' ? analytics?.displayedChartScope : key === 'overviewPanel' ? analytics?.displayedOverviewScope : null;
     const scope = displayed || selected;
-    const shared = window.referenceFilters.scope;
+    const shared = window.referenceFilters?.scope || selected;
     const separatePeriod = scope && shared && (scope.from !== shared.from || scope.to !== shared.to ||
       scope.source !== shared.source || scope.displayType !== shared.displayType);
     const showDate = value => value.split('-').reverse().join('.');
