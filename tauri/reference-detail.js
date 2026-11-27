@@ -79,9 +79,10 @@
         chartButtons();
       };
       group.prepend(line);
+      // Store the requested mode before the SQL renderer handles the click.
       for (const button of group.querySelectorAll('[data-chart]')) button.addEventListener('click', () => {
         if (active === 'chartPanel') { chartMode = button.dataset.chart; chartButtons(); }
-      });
+      }, {capture: true});
     }
     const single = singlePeriodChart || window.referenceFilters?.scope?.overviewMode === 'single';
     const line = group.querySelector('[data-reference-line]');

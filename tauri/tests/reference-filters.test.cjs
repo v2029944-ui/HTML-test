@@ -66,6 +66,7 @@ async function fixture(storage = new Map(), width = 1440) {
   const observer=class {observe(){}};
   const ctx={window,document,getComputedStyle,matchMedia:()=>({matches:width<=680}),ResizeObserver:observer,IntersectionObserver:observer};
   const run = name => vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../'+name+'.js'),'utf8'),ctx);
+  run('analysis-summary');
   run('reference-calendar');
   let draft;
   window.referenceCalendar={...window.referenceCalendar,open:options=>{draft=options;}};
@@ -334,4 +335,30 @@ test('one selection applies the year and single-period mode and shows actual dat
   const compare=one('[data-compare]');
   compare.value='year';compare.onchange();
   assert.equal(one('[data-base-start]').textContent,'01.01 — 31.12.2024');
+});
+
+test('unique work count remains correct through repeated selection and overlapping reads', async () => {
+  const {controls,ui,one,choices}=await fixture();
+  const group={...choices[0],has_children:true};
+  const included={...choices[1],ancestor_keys:[group.key]};
+  ui.api.unifiedNameOptions=async()=>({total_rows:6,work_counts:{selected:0,total:10}});
+  await ui.configure({revision:1,org_names:['A']});
+  const button=one('[data-pick=works]');
+  assert.equal(button.textContent,'Выбрано 10 из 10 работ');
+  const pending=[];
+  ui.api.unifiedSelectedNameOptions=async(revision,keys)=>new Promise(resolve=>pending.push({keys:[...keys],resolve}));
+  controls.setWorks(false,new Map([[group.key,group],[included.key,included]]));
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(pending[0].keys,[group.key,included.key]);
+  assert.equal(button.textContent,'Подсчёт работ…');
+  controls.setWorks(false,new Map([[group.key,group]]));
+  await new Promise(resolve=>setImmediate(resolve));
+  pending[1].resolve({work_counts:{selected:5,total:10}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(button.textContent,'Выбрано 5 из 10 работ');
+  pending[0].resolve({work_counts:{selected:6,total:10}});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(button.textContent,'Выбрано 5 из 10 работ');
+  controls.setWorks(false,new Map());
+  assert.equal(button.textContent,'Выбрано 0 из 10 работ');
 });

@@ -628,6 +628,8 @@ fn visit_all_organization_works(
             key: name.get(0).map_err(err)?,
             name: name.get(1).map_err(err)?,
             kind: name.get(2).map_err(err)?,
+            ancestor_keys: Vec::new(),
+            has_children: false,
         };
         let mut values = amounts.query(params![s.organizations, entry.key]).map_err(err)?;
         let mut rows = Vec::with_capacity(organizations.len());
@@ -741,12 +743,17 @@ fn write_organizations(
     if s.names.is_none() {
         visit_all_organization_works(tx, s, &organizations, None, |item| emit(&item.entry.name, &item.rows))?;
     } else {
-        let mut names = tx.prepare(
+        let hierarchy = super::workspace::tree_indexed(tx)?;
+        let mut names = tx.prepare(if hierarchy {
+            "SELECT name,kind FROM an_scope_selections ORDER BY ordinal"
+        } else {
             "SELECT f.item, CASE WHEN g.key IS NULL THEN 'work' ELSE 'group' END
              FROM analysis_filter_items f LEFT JOIN analysis_group_names g ON g.name=f.item
              WHERE f.id=?1 ORDER BY f.ordinal"
-        ).map_err(err)?;
-        let mut names = names.query([&s.names]).map_err(err)?;
+        }).map_err(err)?;
+        let filter = [&s.names];
+        let mut names = names.query(rusqlite::params_from_iter(if hierarchy { &filter[..0] } else { &filter }))
+            .map_err(err)?;
         tx.execute(
             "CREATE INDEX an_values_name_org ON an_values(slot,name,org)",
             [],

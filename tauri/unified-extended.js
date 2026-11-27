@@ -395,7 +395,7 @@ async function departmentComparison(task,index){
  if(!task.valid())return;
  const perName=workPage?workPage.rows:[];
  if(!workPage){
-  const names=(s.nameRows||[]).filter(row=>s.selectedKeys.includes(row.key)).slice(0,50);
+  const names=window.analysisSummary.topLevelWorkRows((s.nameRows||[]).filter(row=>s.selectedKeys.includes(row.key))).slice(0,50);
   for(let i=0;i<names.length;i+=4){
    const batch=await Promise.all(names.slice(i,i+4).map(async entry=>({entry,rows:await api.nativeAnalysisOrganizations(s.revision,s.type,s.from,s.to,s.organizations,null,[entry.name])})));
    if(!task.valid())return;

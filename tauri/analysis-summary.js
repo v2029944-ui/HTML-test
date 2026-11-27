@@ -25,6 +25,14 @@
    return {value:signed,label:(delta>0?'▲ ':'▼ ')+signed,direction:delta>0?'up':'down'};
   }
   function itemLabel(row) { return row.name + (row.kind === 'group' ? ' (группа)' : ''); }
+  function topLevelWorkRows(rows) {
+    const keys = new Set(rows.map(row => row.key));
+    return rows.filter(row => !row.ancestor_keys?.some(key => keys.has(key)));
+  }
+  function workSelectionText({selected,total}) {
+    const works = total % 10 === 1 && total % 100 !== 11 ? 'работы' : 'работ';
+    return 'Выбрано ' + selected + ' из ' + total + ' ' + works;
+  }
   function timelinePeriods(points, granularity, scope, periodEnd) {
     const type = granularity === 'period' ? scope.displayType : granularity;
     return points.map(point => {
@@ -56,5 +64,5 @@
     }
     return '';
   }
-  window.analysisSummary = Object.freeze({titles,read,timelinePeriods,displayedChange,itemLabel,observed,incomplete,averageNote});
+  window.analysisSummary = Object.freeze({titles,read,timelinePeriods,displayedChange,itemLabel,topLevelWorkRows,workSelectionText,observed,incomplete,averageNote});
 })();

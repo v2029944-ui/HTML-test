@@ -134,10 +134,10 @@ pub(super) const TIMELINE_BUCKET_TOTALS: &str = r#"
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN analysis_filter_items f ON f.id=?2 AND f.item=v.org
                 JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
-                LEFT JOIN analysis_groups g ON g.work=x.work
-                WHERE p.slot=1 AND (?3 IS NULL OR EXISTS(
+                LEFT JOIN an_scope_groups g ON g.work=x.work
+                WHERE p.slot=1 AND (?3 IS NULL OR COALESCE(g.selected, EXISTS(
                     SELECT 1 FROM analysis_filter_items names
-                    WHERE names.id=?3 AND names.item=COALESCE(g.name,x.work)))
+                    WHERE names.id=?3 AND names.item=COALESCE(g.name,x.work))))
                 GROUP BY label
             )
             SELECT b.label,b.periods,COALESCE(m.missing,0),
@@ -182,10 +182,11 @@ fn zero_buckets_with_nonzero_works(
             JOIN an_valid v ON v.start=d.start
             JOIN analysis_filter_items f ON f.id=?2 AND f.item=v.org
             JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
-            LEFT JOIN analysis_groups g ON g.work=x.work
-            WHERE ?3 IS NULL OR EXISTS(SELECT 1 FROM analysis_filter_items n
-                WHERE n.id=?3 AND n.item=COALESCE(g.name,x.work))
-            GROUP BY d.label,COALESCE(g.key,'work:'||x.work)
+            LEFT JOIN an_scope_groups g ON g.work=x.work
+            WHERE ?3 IS NULL OR COALESCE(g.selected, EXISTS(SELECT 1 FROM analysis_filter_items n
+                WHERE n.id=?3 AND n.item=COALESCE(g.name,x.work)))
+            GROUP BY d.label,CASE WHEN g.selected IS NULL THEN COALESCE(g.key,'work:'||x.work)
+                ELSE 'work:'||x.work END
             HAVING SUM(x.count)<>0 OR SUM(x.amount)<>0
          ) SELECT DISTINCT label FROM nonzero ORDER BY label"
     ).map_err(err)?;
@@ -266,12 +267,16 @@ impl Analytics<'_> {
         let mut c = self.database.connect()?;
         let tx = c.transaction().map_err(err)?;
         workspace(&tx, expected, s)?;
-        fill_range(&tx, s, q, 1)?;
         let selected_organizations: i64 = tx.query_row(
             "SELECT COUNT(*) FROM analysis_filter_items WHERE id=?1",
             [&s.organizations],
             |r| r.get(0),
         ).map_err(err)?;
+        if selected_organizations > 8 {
+            fill_range(&tx, s, q, 1)?;
+        } else {
+            super::workspace::fill_periods(&tx, s, q, 1)?;
+        }
         let periods: i64 = tx.query_row(
             "SELECT COUNT(*) FROM temp.an_periods WHERE slot=1",
             [], |r| r.get(0),
@@ -296,19 +301,21 @@ impl Analytics<'_> {
             ), values_by_bucket AS (
                 SELECT v.org,
                        CASE ?1 WHEN 1 THEN substr(p.start,1,7) WHEN 2 THEN date(p.start, '-' || ((CAST(strftime('%w',p.start) AS INTEGER)+6)%7) || ' days') WHEN 3 THEN substr(p.start,1,4)||'-01-01' ELSE p.start END AS label,
-                       SUM(x.count) AS count,CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active, SUM(x.amount) AS known_amount, CASE WHEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL)=MAX(x.work) FILTER (WHERE x.amount IS NOT NULL) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END AS paired_count
+                       SUM(x.count) AS count,CASE WHEN COUNT(x.amount)=COUNT(*) THEN SUM(x.amount) END AS amount, MAX(x.count<>0 OR x.amount IS NULL OR x.amount<>0) AS active, SUM(x.amount) AS known_amount, CASE WHEN MIN(x.work) FILTER (WHERE x.amount IS NOT NULL)=MAX(x.work) FILTER (WHERE x.amount IS NOT NULL) THEN SUM(x.count) FILTER (WHERE x.amount IS NOT NULL) END AS paired_count,
+                       TOTAL(ABS(x.count)) AS absolute_count, TOTAL(ABS(x.amount)) AS absolute_amount
                 FROM temp.an_periods p
                 JOIN temp.an_valid v ON v.start=p.start
                 JOIN selected s ON s.org=v.org
                 JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
-                LEFT JOIN analysis_groups g ON g.work=x.work
-                WHERE p.slot=1 AND (?3 IS NULL OR EXISTS(
+                LEFT JOIN an_scope_groups g ON g.work=x.work
+                WHERE p.slot=1 AND (?3 IS NULL OR COALESCE(g.selected, EXISTS(
                     SELECT 1 FROM analysis_filter_items names
-                    WHERE names.id=?3 AND names.item=COALESCE(g.name,x.work)))
+                    WHERE names.id=?3 AND names.item=COALESCE(g.name,x.work))))
                 GROUP BY v.org,label
             )
             SELECT s.org,b.label,b.periods,COALESCE(m.missing,0),
-                   COALESCE(v.count,0),CASE WHEN v.count IS NULL THEN 0 ELSE v.amount END, COALESCE(v.active,0), b.first_start, b.last_start, v.known_amount, v.paired_count
+                   COALESCE(v.count,0),CASE WHEN v.count IS NULL THEN 0 ELSE v.amount END, COALESCE(v.active,0), b.first_start, b.last_start, v.known_amount, v.paired_count,
+                   COALESCE(v.absolute_count,0),COALESCE(v.absolute_amount,0)
             FROM selected s CROSS JOIN buckets b
             LEFT JOIN missing m ON m.org=s.org AND m.label=b.label
             LEFT JOIN values_by_bucket v ON v.org=s.org AND v.label=b.label
@@ -318,7 +325,11 @@ impl Analytics<'_> {
         let mut rows = stmt.query(params![mode,&s.organizations,&s.names]).map_err(err)?;
         let mut series: Vec<OrganizationTrendSeries> = Vec::new();
         let mut count = 0_usize;
+        let mut absolute_count = 0.0;
+        let mut absolute_amount = 0.0;
         while let Some(row) = rows.next().map_err(err)? {
+            absolute_count += row.get::<_, f64>(11).map_err(err)?;
+            absolute_amount += row.get::<_, f64>(12).map_err(err)?;
             count += 1;
             if count > 992 { return Err("Organization timeline exceeds 992 points".into()); }
             let org: String = row.get(0).map_err(err)?;
@@ -343,6 +354,15 @@ impl Analytics<'_> {
                 available_total: paired_observed_totals(row.get(4).map_err(err)?,row.get(5).map_err(err)?,
                     row.get(9).map_err(err)?,row.get(10).map_err(err)?,missing < periods)?,
             });
+        }
+        drop(rows);
+        drop(stmt);
+        // Absolute totals bound any subtotal. Keep the existing per-work and
+        // range-wide overflow checks when the bound is close to the float limit.
+        if selected_organizations <= 8
+            && (absolute_count >= f64::MAX / 2.0 || absolute_amount >= f64::MAX / 2.0)
+        {
+            super::workspace::fill_range_values(&tx, s, 1)?;
         }
         Ok(OrganizationTrends{
             granularity: granularity.into(),
@@ -419,10 +439,11 @@ impl Analytics<'_> {
                 FROM temp.an_valid v
                 JOIN temp.an_periods p ON p.slot=1 AND p.start=v.start
                 LEFT JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
-                AND (?3 IS NULL OR EXISTS(
-                    SELECT 1 FROM analysis_filter_items names
-                    LEFT JOIN analysis_groups g ON g.work=x.work
-                    WHERE names.id=?3 AND names.item=COALESCE(g.name,x.work)))
+                AND (?3 IS NULL OR COALESCE(
+                    (SELECT g.selected FROM an_scope_groups g WHERE g.work=x.work),
+                    EXISTS(SELECT 1 FROM analysis_filter_items names
+                        LEFT JOIN an_scope_groups g ON g.work=x.work
+                        WHERE names.id=?3 AND names.item=COALESCE(g.name,x.work))))
                 GROUP BY label
             )
             SELECT b.label,b.days,COALESCE(m.absent,0),COALESCE(o.reports,0),
@@ -485,25 +506,57 @@ impl Analytics<'_> {
         let tx = c.transaction().map_err(err)?;
         workspace(&tx, expected, s)?;
         org_check(&tx, s, organization)?;
-        fill_range(&tx, s, q, 1)?;
+        super::workspace::fill_periods(&tx, s, q, 1)?;
         // The paged picker covers globally known identities, including works
         // absent throughout this range. Resolve identity independently of its
         // activity; coverage below decides whether absence is zero or unknown.
         // A fabricated key and a key outside an explicit name selection still
         // fail instead of becoming a made-up zero-valued service.
-        let descriptor: Option<(String,String)> = if let Some(work)=key.strip_prefix("work:") {
+        let hierarchy: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM analysis_group_nodes)", [], |row| row.get(0),
+        ).map_err(err)?;
+        let raw_work = key.strip_prefix("work:");
+        let descriptor: Option<(String, String)> = if let Some(work) = raw_work {
             tx.query_row(
-                "SELECT x.work,'work' FROM report_rows x WHERE x.work=?1
-                 AND NOT EXISTS(SELECT 1 FROM analysis_groups g WHERE g.work=x.work)
-                 GROUP BY x.work LIMIT 1",[work],|r|Ok((r.get(0)?,r.get(1)?)),
+                "SELECT ?1,'work' WHERE
+                    (?2 AND EXISTS(SELECT 1 FROM analysis_groups WHERE work=?1))
+                    OR (EXISTS(SELECT 1 FROM report_rows WHERE work=?1)
+                        AND NOT EXISTS(SELECT 1 FROM analysis_groups WHERE work=?1))",
+                params![work,hierarchy], |row| Ok((row.get(0)?,row.get(1)?)),
+            ).optional().map_err(err)?
+        } else if key.starts_with("group:") && hierarchy {
+            tx.query_row(
+                "SELECT name,'group' FROM analysis_group_nodes WHERE key=?1", [key],
+                |row| Ok((row.get(0)?,row.get(1)?)),
             ).optional().map_err(err)?
         } else if key.starts_with("group:") {
-            tx.query_row("SELECT name,'group' FROM analysis_groups WHERE key=?1 GROUP BY name LIMIT 1",[key],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(err)?
-        } else {None};
-        let (name,kind)=descriptor.ok_or("Selected work/group not found in analysis scope")?;
-        if let Some(filter)=s.names.as_deref() {
-            let selected:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM analysis_filter_items WHERE id=?1 AND item=?2)",params![filter,name],|r|r.get(0)).map_err(err)?;
-            if !selected {return Err("Selected work/group not found in analysis scope".into());}
+            tx.query_row(
+                "SELECT name,'group' FROM analysis_groups WHERE key=?1 GROUP BY name LIMIT 1",
+                [key], |row| Ok((row.get(0)?,row.get(1)?)),
+            ).optional().map_err(err)?
+        } else {
+            None
+        };
+        let (name, kind) = descriptor.ok_or("Selected work/group not found in analysis scope")?;
+        if let Some(filter) = s.names.as_deref() {
+            let selected: bool = tx.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM analysis_filter_items f WHERE f.id=?1 AND
+                    ((f.item=?2 AND (NOT ?3 OR ?4 IS NULL OR NOT EXISTS(
+                        SELECT 1 FROM analysis_group_names g WHERE g.name=f.item
+                    ))) OR (?3 AND EXISTS(
+                        SELECT 1 FROM analysis_group_ancestors a
+                        JOIN analysis_group_nodes n ON n.key=a.ancestor_key
+                        WHERE n.name=f.item AND a.descendant_key=(
+                            CASE WHEN ?4 IS NULL THEN ?5 ELSE (SELECT key FROM analysis_groups WHERE work=?4) END
+                        )
+                    )))
+                )",
+                params![filter,name,hierarchy,raw_work,key], |row| row.get(0),
+            ).map_err(err)?;
+            if !selected {
+                return Err("Selected work/group not found in analysis scope".into());
+            }
         }
         let count: i64 = tx.query_row(
             "SELECT COUNT(*) FROM temp.an_periods WHERE slot=1",
@@ -528,7 +581,13 @@ impl Analytics<'_> {
                 JOIN report_rows x ON x.report_id=v.report_id AND x.organization=v.org
                 LEFT JOIN analysis_groups g ON g.work=x.work
                 WHERE p.slot=1 AND (?2 IS NULL OR v.org=?2)
-                  AND COALESCE(g.key,'work:'||x.work)=?3
+                  AND (
+                      (NOT ?4 AND COALESCE(g.key,'work:'||x.work)=?3)
+                      OR (?4 AND (?5=x.work OR (?5 IS NULL AND EXISTS(
+                          SELECT 1 FROM analysis_group_ancestors a
+                          WHERE a.descendant_key=g.key AND a.ancestor_key=?3
+                      ))))
+                  )
                 GROUP BY label
             )
             SELECT b.label,b.periods,COALESCE(m.missing,0),
@@ -540,7 +599,7 @@ impl Analytics<'_> {
         "#;
         let organizations = if organization.is_some() { 1 } else { selected_organization_count(&tx, s)? };
         let mut stmt = tx.prepare(sql).map_err(err)?;
-        let mut rows = stmt.query(params![mode,organization,key]).map_err(err)?;
+        let mut rows = stmt.query(params![mode,organization,key,hierarchy,raw_work]).map_err(err)?;
         let mut points=Vec::new();
         while let Some(row)=rows.next().map_err(err)? {
             if points.len()>=124 {return Err("Work timeline exceeds 124 points".into());}

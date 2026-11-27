@@ -164,6 +164,9 @@ function buildUnified(source){
         <div id="comparisonCharts" role="region" aria-label="Графики сравнения"></div>
         <div id="comparisonTable"></div>`);
 
+ // The desktop controller supplies the entire selection caption.
+ html=html.replace('Выбрано: <span id="categoryCount"', '<span id="categoryCount"');
+
  // Extend the shared preference only in the installed application.
  const compactSizes=['80','90'];
  script+=`\nUI_SIZES.unshift(...${JSON.stringify(compactSizes)});\n`;

@@ -9,11 +9,11 @@ function init(){
  const controls=new Set(),pages=new Set();
  const valid=r=>Number.isSafeInteger(r)&&r===revision&&r===U.revision;
  async function confirmAction(expected,message){const accepted=await window.confirm(message);if(!valid(expected))throw Error('База изменилась. Повторите действие.');return accepted===true;}
- function requestGroupName(anchor,group){
-  const dialog=el('dialog'),form=el('form'),heading=el('h2','Переименовать группу');
+ function requestGroupName(anchor,group,create=false){
+  const dialog=el('dialog'),form=el('form'),heading=el('h2',create?'Создать подгруппу в «'+group.name+'»':'Переименовать группу');
   dialog.id='groupRenameDialog';heading.id='groupRenameTitle';dialog.setAttribute('aria-labelledby',heading.id);
-  const label=el('label','Новое название группы'),input=el('input');
-  input.id='groupRenameName';input.type='text';input.required=true;input.value=group.name;label.htmlFor=input.id;
+  const label=el('label',create?'Название подгруппы':'Новое название группы'),input=el('input');
+  input.id='groupRenameName';input.type='text';input.required=true;input.value=create?'':group.name;label.htmlFor=input.id;
   const actions=el('div',null,'actions'),cancel=el('button','Отмена','button secondary'),save=el('button','Сохранить','button');
   cancel.id='groupRenameCancel';cancel.type='button';save.id='groupRenameSubmit';save.type='submit';
   actions.append(cancel,save);form.append(heading,label,input,actions);dialog.append(form);
@@ -47,11 +47,12 @@ function init(){
    if(ticket!==p.ticket||!valid(expected)||busy)return false;
    return load(p,i*LIMIT);
   }});
- }catch(e){if(ticket===p.ticket&&valid(expected)){window.sqlRowScroll?.reset(p.root);p.root.replaceChildren();if(p.prefix==='unifiedGroup')visibleGroups=[];p.total=0;p.label.textContent='Не удалось загрузить данные.';fail(e);}}finally{if(ticket===p.ticket){p.loading=false;lock();}}}
+ }catch(e){if(ticket===p.ticket&&valid(expected)){window.sqlRowScroll?.reset(p.root);p.root.replaceChildren();p.total=0;p.label.textContent='Не удалось загрузить данные.';fail(e);}}finally{if(ticket===p.ticket){p.loading=false;lock();}}}
  const groupPagination=el('div');$('groupList').parentNode.insertBefore(groupPagination,$('groupList').nextSibling);
  const groups=pager(groupPagination,'unifiedGroup');groups.root=$('groupList');groups.kind='groups';groups.query=()=>$('groupSearch').value;
+ groups.fetch=(expected,offset,query=groups.query())=>api.unifiedManagementPage(expected,U.snapshot?.work_group_hierarchy?'group_tree':'groups',query,null,offset,LIMIT);
  const markedGroups=new Set(),maxGroupSelection=10000;
- let selectingGroups=false,visibleGroups=[];
+ let selectingGroups=false;
  const removalBar=el('div',null,'actions group-removal');
  const selectionStatus=el('span','','muted small');
  selectionStatus.setAttribute('role','status');
@@ -60,14 +61,16 @@ function init(){
  });
  const selectVisible=button('Выбрать на странице',()=>{
   if(busy||groups.loading||!selectingGroups)return;
-  addMarkedGroups(visibleGroups);
+  addMarkedGroups(groupsOnPage());
  });
  const selectFound=button('Выбрать все найденные',guard(async expected=>{
   if(groups.loading||!selectingGroups)return;
-  const query=groups.query(),token=window.sharedWorkspace?.state?.workspace_token,expectedTotal=groups.total;
+  const query=groups.query(),token=window.sharedWorkspace?.state?.workspace_token;
+  const allTree=Boolean(U.snapshot?.work_group_hierarchy&&!query.trim());
+  const expectedTotal=matchingGroupCount();
   const handles=[];
   for(let offset=0;offset<expectedTotal;){
-   const page=await api.unifiedManagementPage(expected,'groups',query,null,offset,LIMIT);
+   const page=allTree?await api.unifiedManagementPage(expected,'groups','',null,offset,LIMIT):await groups.fetch(expected,offset,query);
    if(!valid(expected)||token!==window.sharedWorkspace?.state?.workspace_token||groups.query()!==query)
     throw Error('База или условия поиска изменились. Повторите выбор.');
    if(!validManagementPage(page,offset)||page.total!==expectedTotal)throw Error('Список групп изменился. Повторите выбор.');
@@ -86,15 +89,30 @@ function init(){
   for(const handle of handles)markedGroups.add(handle);
   updateRemovalControls();
  }
+ function groupsOnPage(){
+  return [...groups.root.querySelectorAll('input')].filter(check=>{
+   if(!check.dataset.groupHandle)return false;
+   // A row is present even when its own details are closed, while its
+   // descendants are visible only through open ancestor groups.
+   let parent=check.closest('details')?.parentNode?.closest('details');
+   while(parent){if(!parent.open)return false;parent=parent.parentNode?.closest('details');}
+   return true;
+  }).map(check=>check.dataset.groupHandle);
+ }
+ function matchingGroupCount(){
+  const total=U.snapshot?.groups;
+  return U.snapshot?.work_group_hierarchy&&!groups.query().trim()&&Number.isSafeInteger(total)?total:groups.total;
+ }
  function updateRemovalControls(){
   selectionMode.setAttribute('aria-pressed',String(selectingGroups));
   selectionMode.textContent=selectingGroups?'Завершить выбор':'Выбрать группы';
   selectionStatus.hidden=!selectingGroups;
   selectionStatus.textContent='Выбрано групп: '+markedGroups.size;
   for(const control of [selectVisible,selectFound,unmark,removeSelected])control.hidden=!selectingGroups;
-  selectVisible.disabled=busy||revision===null||groups.loading||!visibleGroups.length;
-  selectFound.disabled=busy||revision===null||groups.loading||!groups.total||groups.total>maxGroupSelection;
-  selectFound.textContent='Выбрать все найденные ('+groups.total+')';
+  selectVisible.disabled=busy||revision===null||groups.loading||!groupsOnPage().length;
+  const matching=matchingGroupCount(),allTree=U.snapshot?.work_group_hierarchy&&!groups.query().trim();
+  selectFound.disabled=busy||revision===null||groups.loading||!matching||matching>maxGroupSelection;
+  selectFound.textContent=(allTree?'Выбрать все группы':'Выбрать все найденные')+' ('+matching+')';
   unmark.disabled=removeSelected.disabled=busy||revision===null||!markedGroups.size;
   for(const check of groups.root.querySelectorAll('input')){
    check.parentNode.hidden=!selectingGroups;
@@ -108,12 +126,16 @@ function init(){
   const current=()=>valid(expected)&&workspace?.workspace_token===window.sharedWorkspace?.state?.workspace_token;
   if(!workspace?.available||workspace.pending||!workspace.workspace_token)throw Error('Активная база недоступна.');
   const page=await api.unifiedManagementPage(expected,'groups','',null,0,1);
-  if(!current()||!validManagementPage(page,0))throw Error('Не удалось проверить активную базу и список групп.');
+  const total=U.snapshot?.groups;
+  if(!current()||!validManagementPage(page,0)||(Number.isSafeInteger(total)&&total!==page.total))
+   throw Error('Не удалось проверить активную базу и список групп.');
   const count=handles?.length??page.total;
   if(!count){U.notice('В активной базе нет групп.');return;}
   const all=count===page.total;
   const location=workspace.mode==='shared'?'Общая база · '+workspace.folder+'\nИзменение увидят все её пользователи.':'Личная база';
-  if(!await confirmAction(expected,location+'\nУдаляемых групп: '+count+'. В аналитике их работы снова будут видны под исходными названиями. Отчёты, справочник, количества и суммы сохранятся. Продолжить?'))return;
+  const treeNote=U.snapshot?.work_group_hierarchy&&!all
+   ? ' Оставшиеся подгруппы перейдут к ближайшей сохранённой группе выше или на верхний уровень.' : '';
+  if(!await confirmAction(expected,location+'\nУдаляемых групп: '+count+'.'+treeNote+' В аналитике работы удаляемых групп снова будут видны под исходными названиями. Отчёты, справочник, количества и суммы сохранятся. Продолжить?'))return;
   if(!current())throw Error('Активная база изменилась. Повторите действие.');
   let backup=null;
   if(all){
@@ -151,8 +173,8 @@ function init(){
   while(offset<total){const page=await api.unifiedManagementPage(expected,'members','',group.handle,offset,LIMIT);if(ticket!==editTicket||!valid(expected))return;if(!Array.isArray(page?.rows)||page.rows.length>LIMIT||!Number.isSafeInteger(page.total)||page.total>5000||page.total<0||(!page.rows.length&&offset<page.total))throw Error('Не удалось загрузить состав группы (лимит 5000 работ).');total=page.total;for(const row of page.rows)chosen.add(row.name);offset+=page.rows.length;}
   if(ticket!==editTicket||!valid(expected))return;editing=group;selected=chosen;showWorkMode('edit');openEditor(opener);$('groupName').value=group.name;workSearch.value='';await load(works);$('groupName').focus();
  }catch(e){if(ticket===editTicket)fail(e);}finally{busy=false;lock();}}
- function requestGroupSelection(anchor,row,expected,current){
-  const dialog=el('dialog',null,'group-picker'),heading=el('h2','Группа'),work=el('p',row.name,'muted small');
+ function requestGroupSelection(anchor,row,expected,current,movingGroup=false){
+  const dialog=el('dialog',null,'group-picker'),heading=el('h2',movingGroup?'Переместить группу':'Группа'),work=el('p',row.name,'muted small');
   const label=el('label','Поиск групп'),search=el('input'),status=el('p','','muted small');
   const choices=el('div',null,'group-picker-choices'),more=el('button','Показать ещё','button secondary');
   const cancel=el('button','Отмена','button secondary');
@@ -173,13 +195,13 @@ function init(){
     if(!dialog.open||!current())return;
     const request=++ticket,term=search.value.trim();
     const live=()=>dialog.open&&current()&&request===ticket;
-    if(offset===0){choices.replaceChildren(choice(null,'Без группы'));more.hidden=true;}
+    if(offset===0){choices.replaceChildren(choice(null,movingGroup?'Верхний уровень':'Без группы'));more.hidden=true;}
     more.disabled=true;status.textContent='Загрузка групп…';
     try{
      const result=await api.unifiedManagementPage(expected,'groups',term,null,offset,LIMIT);
      if(!live())return;
      if(!validManagementPage(result,offset))throw Error('Получен некорректный список групп.');
-     choices.append(...result.rows.map(group=>choice(group.handle,group.name)));
+     choices.append(...result.rows.filter(group=>!movingGroup||group.handle!==row.handle).map(group=>choice(group.handle,group.name)));
      nextOffset=offset+result.rows.length;more.hidden=nextOffset>=result.total;
      status.textContent=result.total?'Найдено групп: '+result.total:'Группы не найдены.';
     }catch(error){
@@ -227,13 +249,16 @@ function init(){
   pick.setAttribute('aria-label','Группа для работы '+row.name);
   box.append(el('span',row.name),pick);return box;
  }
- function expandMembers(details,root,group,expected){
+ function expandMembers(details,root,group,expected,openChildren){
   const pageTicket=groups.ticket,status=el('p','','muted small');
   let offset=0,total=Number.isSafeInteger(group.members)&&group.members>=0?group.members:1,ticket=0;
   root.append(status);status.hidden=true;status.setAttribute('role','status');
   details.addEventListener('toggle',async()=>{
+   updateRemovalControls();
    const request=++ticket,current=()=>request===ticket&&pageTicket===groups.ticket&&valid(expected)&&details.open;
-   if(!current()||offset>=total)return;
+   if(!current())return;
+   openChildren?.();
+   if(offset>=total)return;
    status.hidden=false;status.textContent='Загрузка состава группы…';
    try{
     while(current()&&offset<total){
@@ -247,11 +272,35 @@ function init(){
    }catch(error){if(current())status.textContent='Не удалось загрузить состав группы. '+(error?.message||String(error));}
   });
  }
- groups.render=(result,expected)=>{
-  visibleGroups=result.rows.map(row=>row.handle);
-  found.textContent=result.total?'Найдено групп: '+result.total:
-   groups.query().trim()?'По запросу групп не найдено':'Групп пока нет';
-  for(const group of result.rows){const details=el('details',null,'group-details'),summary=el('summary',group.name),actions=el('div',null,'actions'),memberRoot=el('div',null,'group-members');details.dataset.groupId=group.id;summary.append(el('small','Работ: '+group.members));details.append(summary,actions,memberRoot);
+ function confirmGroupTreeDeletion(anchor,group){
+  const dialog=el('dialog'),heading=el('h2','Удалить группу «'+group.name+'»?');
+  dialog.id='groupTreeDeletion';heading.id='groupTreeDeletionTitle';dialog.setAttribute('aria-labelledby',heading.id);
+  const actions=el('div',null,'actions');
+  const choices=[
+   ['Отмена',null,'button secondary'],
+   ['Перенести подгруппы на уровень выше',false,'button secondary'],
+   ['Удалить группу и подгруппы',true,'button danger-button']
+  ];
+  const host=anchor.closest('dialog[open]')||anchor.closest('#refNative')||document.body;
+  return new Promise((resolve,reject)=>{
+   let answer=null;
+   for(const [label,choice,style] of choices){
+    const action=el('button',label,style);action.type='button';
+    action.addEventListener('click',()=>{answer=choice;dialog.close();});actions.append(action);
+   }
+   dialog.append(heading,el('p','Непосредственных подгрупп: '+group.children+'. Исходные работы и отчёты сохранятся.'),actions);
+   dialog.addEventListener('cancel',event=>{event.preventDefault();dialog.close();});
+   dialog.addEventListener('close',()=>{dialog.remove();resolve(answer);},{once:true});
+   host.append(dialog);
+   try{dialog.showModal();actions.children[0].focus();}catch(error){dialog.remove();reject(error);}
+  });
+ }
+ function renderGroupRow(root,group,expected,hierarchy,depth=0){
+  const details=el('details',null,'group-details'),summary=el('summary',group.name);
+  const actions=el('div',null,'actions'),memberRoot=el('div',null,'group-members');
+  details.dataset.groupId=group.id;
+  summary.append(el('small',(group.children?'Работ напрямую: ':'Работ: ')+group.members+(group.children?' · Подгрупп: '+group.children:'')));
+  details.append(summary,actions,memberRoot);
   const rename=button('Переименовать',async()=>{
    if(busy||!valid(expected))return;
    await guard(async()=>{
@@ -268,7 +317,56 @@ function init(){
   });
   rename.dataset.groupRename=group.id;
   const edit=button('Изменить группу',()=>editGroup(group,expected,edit));
-  actions.append(edit,rename,button('Удалить группу',guard(async()=>{if(!valid(expected)||!await confirmAction(expected,'Удалить группу «'+group.name+'»? Исходные работы останутся.'))return;await mutate(expected,()=>api.nativeSettingsEdit(expected,{kind:'delete_group',handle:group.handle}),'Группа удалена.');})));
+  const activeScope=()=>{
+   const opened=U.generation,token=window.sharedWorkspace?.state?.workspace_token;
+   return ()=>valid(expected)&&opened===U.generation&&token===window.sharedWorkspace?.state?.workspace_token;
+  };
+  const create=button('Создать подгруппу',guard(async ()=>{
+   const current=activeScope(),name=await requestGroupName(create,group,true);
+   if(name===null)return;
+   if(!current())throw Error('База изменилась. Повторите действие.');
+   await mutate(expected,()=>api.unifiedGroupTreeEdit(expected,{
+    kind:'create',id:window.crypto.randomUUID(),name,parent:group.handle
+   }),'Подгруппа создана.');
+  }));
+  const move=button('Переместить группу',guard(async ()=>{
+   const current=activeScope();
+   const parent=await requestGroupSelection(move,group,expected,current,true);
+   if(parent===undefined||parent===(group.group||null))return;
+   if(!current())throw Error('База изменилась. Повторите действие.');
+   await mutate(expected,()=>api.unifiedGroupTreeEdit(expected,{kind:'move',group:group.handle,parent}),'Группа перемещена.');
+  }));
+  const remove=button('Удалить группу',guard(async ()=>{
+   if(!valid(expected))return;
+   const current=activeScope();
+   let deleteDescendants=false;
+   if(group.children){
+    deleteDescendants=await confirmGroupTreeDeletion(remove,group);
+    if(deleteDescendants===null)return;
+   }else if(!await confirmAction(expected,'Удалить группу «'+group.name+'»? Исходные работы останутся.'))return;
+   if(!current())throw Error('База изменилась. Повторите действие.');
+   if(!hierarchy){
+    await mutate(expected,()=>api.nativeSettingsEdit(expected,{kind:'delete_group',handle:group.handle}),'Группа удалена.');
+    return;
+   }
+   let backup;
+   if(!group.group&&(deleteDescendants||!group.children)){
+    const roots=await api.unifiedManagementPage(expected,'group_tree','',null,0,1);
+    if(!current()||!validManagementPage(roots,0)||!roots.total)throw Error('Не удалось проверить список групп.');
+    if(roots.total===1){
+     if(roots.rows[0].handle!==group.handle)throw Error('Список групп изменился. Повторите удаление.');
+     if(!await confirmAction(expected,'Будут удалены все группы. Сначала будет создана проверенная резервная копия SQLite. Продолжить?'))return;
+     if(!current())throw Error('База изменилась. Повторите действие.');
+     backup=await api.chooseSqliteBackupPath('analiz-before-clear-groups.sqlite3');
+     if(!backup)return;
+    }
+   }
+   if(!current())throw Error('База изменилась. Повторите действие.');
+   await mutate(expected,()=>api.unifiedGroupTreeEdit(expected,{
+    kind:'delete',group:group.handle,delete_descendants:deleteDescendants,confirmed:true,...(backup?{backup}:{})
+   }),'Группа удалена.');
+  }));
+  actions.append(edit,rename,create,move,remove);
   const checkLabel=el('label',null,'group-selection'),check=el('input');
   check.type='checkbox';check.dataset.groupHandle=group.handle;check.setAttribute('aria-label','Выбрать «'+group.name+'»');
   check.addEventListener('change',()=>{
@@ -278,9 +376,38 @@ function init(){
    updateRemovalControls();
   });
   checkLabel.append(check);summary.append(checkLabel);
-  expandMembers(details,memberRoot,group,expected);groups.root.append(details);
- }};
- bind('createGroup',()=>{if(busy)return;showWorkMode('edit');resetEditor();openEditor($('createGroup'));$('groupName').focus();});bind('resetGroup',()=>{if(!busy)resetEditor();});bind('saveGroup',guard(async expected=>{const name=$('groupName').value.trim();if(!name||!selected.size||selected.size>5000)throw Error('Введите название и выберите от 1 до 5000 работ.');const id=editing?.id||window.crypto.randomUUID();await mutate(expected,()=>api.unifiedGroupSave(expected,editing?.handle||null,id,name,[...selected]),'Группа сохранена.');}));
+  let openChildren;
+  if(group.children){
+   const subtree=el('div',null,depth<6?'group-children':null),status=el('p','','muted small');
+   const pageTicket=groups.ticket;
+   let offset=0,loading=false;
+   const more=button('Показать ещё подгруппы',loadChildren);
+   status.setAttribute('role','status');more.hidden=true;
+   details.append(subtree,status,more);
+   async function loadChildren(){
+    const current=()=>pageTicket===groups.ticket&&valid(expected)&&details.isConnected!==false;
+    if(!current()||loading||offset>=group.children)return;
+    loading=true;more.hidden=true;status.textContent='Загрузка подгрупп…';
+    try{
+     const page=await api.unifiedManagementPage(expected,'group_tree','',group.handle,offset,LIMIT);
+     if(!current())return;
+     if(!validManagementPage(page,offset)||page.total!==group.children)throw Error('Не удалось проверить список подгрупп.');
+     for(const row of page.rows)renderGroupRow(subtree,row,expected,hierarchy,depth+1);
+     offset+=page.rows.length;status.textContent='';
+    }catch(error){if(current())status.textContent=error?.message||String(error);}
+    finally{loading=false;if(current()){more.hidden=offset>=group.children;updateRemovalControls();}}
+   }
+   openChildren=()=>{if(!offset)void loadChildren();};
+  }
+  expandMembers(details,memberRoot,group,expected,openChildren);
+  root.append(details);
+ }
+ groups.render=(result,expected)=>{
+  found.textContent=result.total?(result.hierarchy&&!groups.query().trim()?'Групп верхнего уровня: ':'Найдено групп: ')+result.total:
+   groups.query().trim()?'По запросу групп не найдено':'Групп пока нет';
+  for(const group of result.rows)renderGroupRow(groups.root,group,expected,result.hierarchy===true);
+ };
+ bind('createGroup',()=>{if(busy)return;showWorkMode('edit');resetEditor();openEditor($('createGroup'));$('groupName').focus();});bind('resetGroup',()=>{if(!busy)resetEditor();});bind('saveGroup',guard(async expected=>{const name=$('groupName').value.trim();if(!name||selected.size>5000)throw Error('Введите название и выберите не более 5000 работ.');const id=editing?.id||window.crypto.randomUUID();await mutate(expected,()=>api.unifiedGroupSave(expected,editing?.handle||null,id,name,[...selected]),'Группа сохранена.');}));
  bind('groupSearch',()=>load(groups),'input');bind('workSearch',()=>load(workMode==='audit'?audit:works),'input');
  const catalogRoot=el('div',null,'catalog-list'),catalogPanel=$('groupCatalog'),catalogControls=el('div',null,'catalog-controls');catalogRoot.id='catalogList';catalogControls.id='catalogControls';
  const catalogSearch=el('input'),searchLabel=el('label','Поиск в справочнике','catalog-field');catalogSearch.id='catalogSearch';catalogSearch.type='search';catalogSearch.placeholder='Поиск в справочнике';searchLabel.append(catalogSearch);catalogControls.append(searchLabel);
@@ -299,7 +426,7 @@ function init(){
  catalog.render=(result,expected)=>{ $('catalogStatus').textContent='Записей в справочнике: '+result.total;for(const row of result.rows){const node=el('div',null,'group-member catalog-row'),entry=el('div',null,'catalog-entry'),actions=el('div',null,'catalog-row-actions');entry.append(el('span',row.name,'catalog-name'),el('span',row.organization||'Без подразделения','catalog-organization'));actions.append(button('Изменить',()=>{if(!valid(expected)||busy)return;catalogEdit=row;clearCatalogFeedback();workInput.value=row.name;orgInput.value=row.organization||'';workInput.focus();}),button('Удалить',guard(async()=>{if(!valid(expected)||!await confirmAction(expected,'Удалить «'+row.name+'» из справочника?'))return;await mutate(expected,()=>api.nativeSettingsEdit(expected,{kind:'delete_catalog',handle:row.handle}),'Услуга удалена.');})));node.append(entry,actions);catalogRoot.append(node);}};
  catalogPanel.addEventListener('toggle',()=>{if(catalogPanel.open)void load(catalog);});
  function file(id,run){const n=$(id);if(!n)return;controls.add(n);n.addEventListener('click',event=>{event.preventDefault();return guard(run)();});}
- file('importGroups',async expected=>{const source=await api.chooseGroupsImport();if(!source)return;const review=await api.unifiedGroupsPreview(expected,source);if(!valid(expected))throw Error('База изменилась. Повторите импорт.');if(!await confirmAction(expected,'Заменить текущие группы? Групп: '+review.groups+', работ: '+review.works+'.'))return;await mutate(expected,()=>api.unifiedGroupsImport(expected,source,review.hash,true),'Группы импортированы.');});
+ file('importGroups',async expected=>{const source=await api.chooseGroupsImport();if(!source)return;const review=await api.unifiedGroupsPreview(expected,source);if(!valid(expected))throw Error('База изменилась. Повторите импорт.');const question='Заменить текущие группы? Групп: '+review.groups+', работ: '+review.works+'.'+(review.requires_backup?' Сначала будет создана проверенная копия SQLite.':'');if(!await confirmAction(expected,question))return;let backup;if(review.requires_backup){backup=await api.chooseSqliteBackupPath('analiz-before-group-import.sqlite3');if(!backup)return;}await mutate(expected,()=>review.requires_backup?api.unifiedGroupsImport(expected,source,review.hash,true,backup):api.unifiedGroupsImport(expected,source,review.hash,true),'Группы импортированы.');});
  bind('exportGroups',guard(async expected=>{const destination=await api.chooseGroupsExport();if(!destination)return;if(!valid(expected))throw Error('База изменилась. Повторите экспорт.');await api.unifiedGroupsExport(expected,destination);U.notice('Группы сохранены.');}));
  file('catalogFile',async expected=>{const source=await api.chooseXlsx();if(!source)return;const review=await api.unifiedCatalogPreview(expected,source);if(!valid(expected))throw Error('База изменилась. Повторите импорт.');if(!await confirmAction(expected,'Добавить услуги из Excel? Найдено: '+review.catalog+'.'))return;await mutate(expected,()=>api.unifiedCatalogApply(expected,source,review.hash,true),'Справочник добавлен.');});
  function organizationFields(){const root=$('organizationFields');root.replaceChildren();orgInput.replaceChildren();const none=el('option','Без подразделения');none.value='';orgInput.append(none);for(const [i,name] of U.state.settings.orgNames.entries()){const label=el('label','Подразделение '+(i+1)),input=el('input');input.value=name;input.dataset.org=i;label.append(input);root.append(label);const option=el('option',name);option.value=name;orgInput.append(option);}}
@@ -398,7 +525,7 @@ function init(){
   $('groupAuditCoverage').textContent=scope?'':auditEmptyPeriod;
   if(workMode==='audit'){clear(audit);if(scope&&active&&auditPanel.open)void load(audit);}
  });
- U.onSnapshot(snapshot=>{markedGroups.clear();selectingGroups=false;visibleGroups=[];revision=Number.isSafeInteger(snapshot?.revision)?snapshot.revision:null;editTicket++;editing=null;selected=new Set();resetCatalogEditor();for(const p of pages)clear(p);found.textContent='';coverage.textContent='';$('catalogStatus').textContent='';$('groupAuditCoverage').textContent=U.scope?'':auditEmptyPeriod;organizationFields();lock();if(active&&valid(revision)){void reloadGroups();void load(workMode==='audit'?audit:works);if(workMode==='audit'||workSearch.value.trim())void readGroupTotals(revision);if(catalogPanel.open)void load(catalog);}});
+ U.onSnapshot(snapshot=>{markedGroups.clear();selectingGroups=false;revision=Number.isSafeInteger(snapshot?.revision)?snapshot.revision:null;editTicket++;editing=null;selected=new Set();resetCatalogEditor();for(const p of pages)clear(p);found.textContent='';coverage.textContent='';$('catalogStatus').textContent='';$('groupAuditCoverage').textContent=U.scope?'':auditEmptyPeriod;organizationFields();lock();if(active&&valid(revision)){void reloadGroups();void load(workMode==='audit'?audit:works);if(workMode==='audit'||workSearch.value.trim())void readGroupTotals(revision);if(catalogPanel.open)void load(catalog);}});
  U.onView('groups',()=>{active=true;if(valid(revision)){void reloadGroups(groups.offset);const page=workMode==='audit'?audit:works;void load(page,page.offset);if(!coverage.textContent&&(workMode==='audit'||workSearch.value.trim()))void readGroupTotals(revision);if(catalogPanel.open)void load(catalog);}});U.onView('storage',()=>{organizationFields();});
 }
 window.unifiedManagement={init};

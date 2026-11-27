@@ -391,3 +391,63 @@ fn analysis_filter_writers_share_only_their_database_queue() {
     let id=receive.recv_timeout(std::time::Duration::from_secs(15)).unwrap().unwrap();
     worker.join().unwrap();first.analysis_filter_delete(&id).unwrap();
 }
+
+#[test]
+fn hierarchy_index_has_the_full_lineage_and_unique_direct_work_assignments() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Storage::new(dir.path().to_owned()).unwrap();
+    store.save(json!({"reports":[], "settings":{
+        "orgNames":["A","B","C","D"],"catalog":[],
+        "groups":[{"id":"head","name":"Head","works":["Direct"]},
+            {"id":"branch","name":"Branch","works":[]},
+            {"id":"leaf","name":"Leaf","works":["Nested"]}],
+        "workGroupTreeParents":[{"child":"leaf","parent":"branch"},{"child":"branch","parent":"head"}]
+    }})).unwrap();
+    let rev = store.revision().unwrap();
+    store.analysis_index_settings(rev).unwrap();
+    let c = store.connect().unwrap();
+    let mut stmt = c.prepare(
+        "SELECT ancestor_key,distance FROM analysis_group_ancestors
+         WHERE descendant_key='group:leaf' ORDER BY distance",
+    ).unwrap();
+    let lineage = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?,r.get::<_, i64>(1)?)))
+        .unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+    assert_eq!(lineage, vec![("group:leaf".into(),0),("group:branch".into(),1),("group:head".into(),2)]);
+    assert_eq!(c.query_row("SELECT COUNT(*) FROM analysis_groups", [], |r|r.get::<_, i64>(0)).unwrap(), 2);
+}
+
+#[test]
+fn work_tree_migration_installs_schema_and_invalidates_old_settings_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Storage::new(dir.path().to_owned()).unwrap();
+    let canonical = json!({"reports":[], "settings":{
+        "orgNames":["A","B","C","D"],"catalog":[],
+        "groups":[{"id":"head","name":"Head","works":[]},
+            {"id":"leaf","name":"Leaf","works":["Nested"]}],
+        "workGroupTreeParents":[{"child":"leaf","parent":"head"}]
+    }});
+    store.save(canonical.clone()).unwrap();
+    let revision = store.revision().unwrap();
+    store.analysis_index_settings(revision).unwrap();
+    let c = store.connect().unwrap();
+    c.execute_batch("DROP TRIGGER analysis_group_index_settings_insert;
+        DROP TRIGGER analysis_group_index_settings_update;
+        DROP TRIGGER analysis_group_index_settings_delete;
+        DROP TABLE analysis_group_ancestors;
+        DROP TABLE analysis_group_nodes;
+        DROP INDEX analysis_group_works_by_key;
+        PRAGMA user_version=2;").unwrap();
+    drop(c);
+
+    let c = store.connect().unwrap();
+    assert_eq!(c.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0)).unwrap(), 3);
+    assert_eq!(store.revision().unwrap(), revision);
+    assert_eq!(store.load().unwrap(), canonical);
+    assert!(store.unified_name_options_at_page(revision, "", 0, 50)
+        .err().unwrap().contains("not indexed"));
+
+    store.analysis_index_settings(revision).unwrap();
+    let children = store.unified_group_children_at_page(revision, "group:head", 0, 50).unwrap();
+    assert_eq!(children.total_rows, 1);
+    assert_eq!(children.rows[0].key, "group:leaf");
+}

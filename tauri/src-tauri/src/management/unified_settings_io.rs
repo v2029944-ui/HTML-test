@@ -1,14 +1,126 @@
 //! File-based settings transfers. Reports never enter these documents or IPC.
 use super::*;
+use crate::storage::work_group_hierarchy::{validate_group_parents, GroupParent, GROUP_PARENTS_FIELD};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Deserialize)]
 struct GroupsDocument {
     format: String,
     version: u32,
     groups: Vec<GroupDocument>,
+    #[serde(default)]
+    parents: Option<Value>,
 }
+
+pub(super) fn group_parents_node(c: &Connection) -> Result<Option<i64>, String> {
+    let root = settings(c)?.0;
+    match tree::child(c, root, GROUP_PARENTS_FIELD)? {
+        Some((node, kind, _)) if kind == "array" => Ok(Some(node)),
+        None => Ok(None),
+        _ => Err("Некорректные связи дерева групп в настройках.".into()),
+    }
+}
+
+fn write_group_parents(c: &Connection, parents: Option<&impl Serialize>, job: &ManagementJob) -> Result<(), String> {
+    let root = settings(c)?.0;
+    if let Some(node) = group_parents_node(c)? {
+        remove_node(c, node)?;
+    }
+    if let Some(parents) = parents {
+        let node = tree::parse(c, std::io::Cursor::new(serde_json::to_vec(parents).map_err(err)?), job)?;
+        let ordinal: i64 = c.query_row(
+            "SELECT COALESCE(MAX(ordinal)+1,0) FROM management_nodes WHERE parent=?1",
+            [root], |row| row.get(0),
+        ).map_err(err)?;
+        c.execute(
+            "UPDATE management_nodes SET parent=?1,ordinal=?2,field=?3 WHERE handle=?4",
+            params![root,ordinal,GROUP_PARENTS_FIELD,node],
+        ).map_err(err)?;
+    }
+    Ok(())
+}
+
+fn read_group_parents(c: &Connection, job: &ManagementJob) -> Result<Vec<GroupParent>, String> {
+    let Some(node) = group_parents_node(c)? else { return Ok(Vec::new()); };
+    let mut document = Vec::new();
+    tree::write(c, node, &mut document, job, 0)?;
+    serde_json::from_slice(&document).map_err(err)
+}
+
+// Input links have already been validated. Follow removed parents until the
+// closest surviving ancestor, which can be the root of the entire forest.
+fn promote_surviving_children(links: &[GroupParent], removed: &HashSet<String>) -> Vec<GroupParent> {
+    let parents: HashMap<_, _> = links.iter()
+        .map(|link| (link.child.as_str(), link.parent.as_str())).collect();
+    links.iter().filter_map(|link| {
+        if removed.contains(&link.child) {
+            return None;
+        }
+        let mut parent = link.parent.as_str();
+        while removed.contains(parent) {
+            parent = *parents.get(parent)?;
+        }
+        Some(GroupParent { child: link.child.clone(), parent: parent.to_owned() })
+    }).collect()
+}
+
+pub(super) fn update_links_before_bulk_deletion(
+    c: &Connection,
+    list: i64,
+    handles: Option<&[i64]>,
+    clear: bool,
+    job: &ManagementJob,
+) -> Result<(), String> {
+    if group_parents_node(c)?.is_none() {
+        return Ok(());
+    }
+    if clear {
+        return write_group_parents(c, Some(&Vec::<GroupParent>::new()), job);
+    }
+    let handles = handles.ok_or("Укажите удаляемые группы.")?;
+    let removed = handles.iter().map(|&handle| group_id(c, list, handle))
+        .collect::<Result<HashSet<_>, _>>()?;
+    let links = read_group_parents(c, job)?;
+    let ids = group_ids(c, list)?;
+    validate_group_parents(ids.keys().map(String::as_str), &links)?;
+    let remaining = promote_surviving_children(&links, &removed);
+    write_group_parents(c, Some(&remaining), job)
+}
+
+pub enum GroupTreeEdit {
+    Create { id: String, name: String, parent: Option<i64> },
+    Move { group: i64, parent: Option<i64> },
+    Delete { group: i64, delete_descendants: bool, confirmed: bool },
+}
+
+fn group_id(c: &Connection, list: i64, handle: i64) -> Result<String, String> {
+    belongs(c, handle, list, "object")?;
+    tree::child(c, handle, "id")?.and_then(|(_, _, id)| id)
+        .ok_or_else(|| "У группы нет идентификатора.".into())
+}
+
+fn group_ids(c: &Connection, list: i64) -> Result<HashMap<String, i64>, String> {
+    let mut stmt = c.prepare(
+        "SELECT id.value,g.handle FROM management_nodes g
+         LEFT JOIN management_nodes id ON id.parent=g.handle AND id.field='id' AND id.kind='string'
+         WHERE g.parent=?1 AND g.kind='object' LIMIT 10001",
+    ).map_err(err)?;
+    let mut rows = stmt.query([list]).map_err(err)?;
+    let mut ids = HashMap::new();
+    while let Some(row) = rows.next().map_err(err)? {
+        let id = row.get::<_, Option<String>>(0).map_err(err)?
+            .ok_or("Перед созданием дерева задайте идентификаторы всем группам.")?;
+        if id.trim().is_empty() || ids.insert(id, row.get(1).map_err(err)?).is_some() {
+            return Err("Перед созданием дерева исправьте пустые и повторяющиеся идентификаторы групп.".into());
+        }
+        if ids.len() > 10_000 {
+            return Err("Дерево может содержать не более 10 000 групп.".into());
+        }
+    }
+    Ok(ids)
+}
+
 #[derive(Deserialize, Serialize)]
 struct GroupDocument {
     #[serde(default)]
@@ -24,6 +136,8 @@ pub struct UnifiedSettingsReview {
     pub groups: u64,
     pub works: u64,
     pub catalog: u64,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub requires_backup: bool,
 }
 #[derive(Debug, Serialize)]
 pub struct UnifiedCatalogReceipt {
@@ -233,19 +347,96 @@ impl PreparedCatalogSettings {
 }
 
 impl SettingsEditor {
-    fn replace_groups(&mut self, mut groups: Vec<GroupDocument>, actual: &str) -> Result<(), String> {
+    fn edit_group_tree(&mut self, action: GroupTreeEdit) -> Result<bool, String> {
+        let job = self.job.clone();
+        self.mutate(|c| {
+            let list = settings(c)?.1;
+            let mut links = read_group_parents(c, &job)?;
+            let existing = group_ids(c, list)?;
+            validate_group_parents(existing.keys().map(String::as_str), &links)?;
+            match action {
+                GroupTreeEdit::Create { id, name, parent } => {
+                    if id.trim().is_empty() || id.len() > 128 || name.trim().is_empty() || name.len() > 1024 {
+                        return Err("Введите допустимое название и идентификатор группы.".into());
+                    }
+                    let parent = parent.map(|handle| group_id(c, list, handle)).transpose()?;
+                    check_group_name(c, list, None, &name)?;
+                    let handle = add(c, list, None, "object", None)?;
+                    scalar(c, handle, "id", ManagementScalar::String(id.clone()))?;
+                    scalar(c, handle, "name", ManagementScalar::String(name.trim().into()))?;
+                    add(c, handle, Some("works"), "array", None)?;
+                    if let Some(parent) = parent {
+                        links.push(GroupParent { child: id, parent });
+                    }
+                }
+                GroupTreeEdit::Move { group, parent } => {
+                    let child = group_id(c, list, group)?;
+                    let parent = parent.map(|handle| group_id(c, list, handle)).transpose()?;
+                    links.retain(|link| link.child != child);
+                    if let Some(parent) = parent {
+                        links.push(GroupParent { child, parent });
+                    }
+                }
+                GroupTreeEdit::Delete { group, delete_descendants, confirmed } => {
+                    if !confirmed {
+                        return Err("Подтвердите удаление и выберите, что делать с подгруппами.".into());
+                    }
+                    let id = group_id(c, list, group)?;
+                    if delete_descendants {
+                        let mut descendants = HashMap::<&str, Vec<&str>>::new();
+                        for link in &links {
+                            descendants.entry(&link.parent).or_default().push(&link.child);
+                        }
+                        let mut deleted = HashSet::new();
+                        let mut pending = vec![id.as_str()];
+                        while let Some(child) = pending.pop() {
+                            if !deleted.insert(child) { continue; }
+                            let handle = existing.get(child).ok_or("Дерево ссылается на отсутствующую группу.")?;
+                            remove_node(c, *handle)?;
+                            pending.extend(descendants.get(child).into_iter().flatten().copied());
+                        }
+                        let removed: HashSet<String> = deleted.into_iter().map(str::to_owned).collect();
+                        links.retain(|link| !removed.contains(&link.child));
+                    } else {
+                        links = promote_surviving_children(&links, &HashSet::from([id]));
+                        remove_node(c, group)?;
+                    }
+                }
+            }
+            let ids = group_ids(c, list)?;
+            validate_group_parents(ids.keys().map(String::as_str), &links)?;
+            let conflicting_assignments: bool = c.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM management_nodes g
+                    JOIN management_nodes w ON w.parent=g.handle AND w.field='works' AND w.kind='array'
+                    JOIN management_nodes n ON n.parent=w.handle AND n.kind='string'
+                    WHERE g.parent=?1 GROUP BY n.value HAVING COUNT(DISTINCT g.handle)>1
+                 )",
+                [list], |row| row.get(0),
+            ).map_err(err)?;
+            if conflicting_assignments {
+                return Err("Перед созданием дерева оставьте для каждой работы только одну прямую группу.".into());
+            }
+            write_group_parents(c, Some(&links), &job)?;
+            Ok(ids.is_empty())
+        })
+    }
+
+    fn replace_groups(&mut self, mut doc: GroupsDocument, actual: &str) -> Result<bool, String> {
         let job = self.job.clone();
         self.mutate(|c| {
             let parent=settings(c)?.1;
+            let needs_backup = doc.parents.is_some() || group_replacement_needs_backup(c)?;
+            write_group_parents(c, doc.parents.as_ref(), &job)?;
             c.execute("WITH RECURSIVE descendants(handle) AS (SELECT handle FROM management_nodes WHERE parent=?1 UNION ALL SELECT n.handle FROM management_nodes n JOIN descendants d ON n.parent=d.handle) DELETE FROM management_nodes WHERE handle IN descendants",[parent]).map_err(err)?;
-            for (ordinal,g) in groups.iter_mut().enumerate() {
+            for (ordinal,g) in doc.groups.iter_mut().enumerate() {
                 if g.id.trim().is_empty() {g.id=format!("import-{}-{}", &actual[..16],ordinal);}
                 g.name=g.name.trim().into();
                 let serialized=serde_json::to_vec(g).map_err(err)?;
                 let group=tree::parse(c,std::io::Cursor::new(serialized),&job)?;
                 c.execute("UPDATE management_nodes SET parent=?1,ordinal=?2,field=NULL WHERE handle=?3",params![parent,ordinal as i64,group]).map_err(err)?;
             }
-            Ok(())
+            Ok(needs_backup)
         })
     }
 
@@ -316,6 +507,7 @@ impl Storage {
             groups: 0,
             works: 0,
             catalog: count,
+            requires_backup: false,
         })
     }
     pub fn unified_catalog_apply(
@@ -370,7 +562,7 @@ fn read_groups(source: &Path) -> Result<(GroupsDocument, String), String> {
         return Err("Файл JSON больше 40 МБ.".into());
     }
     let mut doc: GroupsDocument = serde_json::from_slice(&bytes).map_err(err)?;
-    if doc.format != "work-groups" || doc.version != 1 || doc.groups.len() > 10000 {
+    if doc.format != "work-groups" || !matches!(doc.version, 1 | 2) || doc.groups.len() > 10000 {
         return Err("Неверный формат групп или более 10000 групп.".into());
     }
     let mut names = HashSet::new();
@@ -402,22 +594,67 @@ fn read_groups(source: &Path) -> Result<(GroupsDocument, String), String> {
             }
         }
     }
+    if doc.version == 2 {
+        let parents = doc.parents.as_ref()
+            .ok_or("В JSON отсутствует список связей дерева групп.")?;
+        let count = parents.as_array().ok_or("Связи дерева групп должны быть списком.")?.len();
+        if count > doc.groups.len() {
+            return Err("Число связей дерева превышает число групп.".into());
+        }
+        let links = Vec::<GroupParent>::deserialize(parents).map_err(err)?;
+        validate_group_parents(doc.groups.iter().map(|group| group.id.as_str()), &links)?;
+    } else {
+        // The flat format historically ignored unknown top-level extensions.
+        doc.parents = None;
+    }
     Ok((doc, format!("{:x}", Sha256::digest(&bytes))))
 }
+fn group_replacement_needs_backup(c: &Connection) -> Result<bool, String> {
+    let groups = settings(c)?.1;
+    let has_groups: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM management_nodes WHERE parent=?1 AND kind='object')",
+        [groups], |row| row.get(0),
+    ).map_err(err)?;
+    Ok(has_groups || group_parents_node(c)?.is_some())
+}
+
 impl Storage {
+    pub fn unified_group_tree_edit(&self, revision: i64, action: GroupTreeEdit) -> Result<ManagementReceipt, String> {
+        self.unified_group_tree_edit_with_backup(revision, action, None)
+    }
+
+    pub fn unified_group_tree_edit_with_backup(
+        &self,
+        revision: i64,
+        action: GroupTreeEdit,
+        backup: Option<&Path>,
+    ) -> Result<ManagementReceipt, String> {
+        let mut editor = self.management_begin_settings(
+            revision, 256 * 1024 * 1024, Arc::new(ManagementJob::new()),
+        )?;
+        if editor.edit_group_tree(action)? {
+            let backup = backup.ok_or("Для очистки списка нужна проверенная резервная копия SQLite.")?;
+            if self.backup_sqlite_verified(backup)? != revision {
+                return Err("База изменилась при создании копии. Повторите действие.".into());
+            }
+        }
+        self.management_commit_settings(editor)
+    }
+
     pub fn unified_groups_preview(
         &self,
         revision: i64,
         source: &Path,
     ) -> Result<UnifiedSettingsReview, String> {
         let (doc, hash) = read_groups(source)?;
-        let c = self.management_connect()?;
-        checked(&c, revision)?;
+        let mut c = self.management_connect()?;
+        let tx = settings_snapshot(&mut c, revision)?;
         Ok(UnifiedSettingsReview {
             hash,
             groups: doc.groups.len() as u64,
             works: doc.groups.iter().map(|g| g.works.len() as u64).sum(),
             catalog: 0,
+            requires_backup: doc.parents.is_some() || group_replacement_needs_backup(&tx)?,
         })
     }
     pub fn unified_groups_import(
@@ -426,6 +663,17 @@ impl Storage {
         source: &Path,
         hash: &str,
         confirmed: bool,
+    ) -> Result<ManagementReceipt, String> {
+        self.unified_groups_import_with_backup(revision, source, hash, confirmed, None)
+    }
+
+    pub fn unified_groups_import_with_backup(
+        &self,
+        revision: i64,
+        source: &Path,
+        hash: &str,
+        confirmed: bool,
+        backup: Option<&Path>,
     ) -> Result<ManagementReceipt, String> {
         if !confirmed {
             return Err("Подтвердите замену групп.".into());
@@ -439,7 +687,13 @@ impl Storage {
             256 * 1024 * 1024,
             Arc::new(ManagementJob::new()),
         )?;
-        editor.replace_groups(doc.groups, &actual)?;
+        let needs_backup = editor.replace_groups(doc, &actual)?;
+        if needs_backup {
+            let path = backup.ok_or("Перед заменой групп создайте проверенную копию SQLite.")?;
+            if self.backup_sqlite_verified(path)? != revision {
+                return Err("База изменилась. Повторите проверку файла групп.".into());
+            }
+        }
         self.management_commit_settings(editor)
     }
     pub fn unified_groups_export(&self, revision: i64, destination: &Path) -> Result<(), String> {
@@ -452,8 +706,9 @@ impl Storage {
             .map_err(err)?;
         let result = (|| {
             let mut out = BufWriter::new(file);
-            out.write_all(b"{\"format\":\"work-groups\",\"version\":1,\"groups\":[")
-                .map_err(err)?;
+            let parents = group_parents_node(&tx)?;
+            let version = if parents.is_some() { 2 } else { 1 };
+            write!(out, "{{\"format\":\"work-groups\",\"version\":{version},\"groups\":[").map_err(err)?;
             let mut groups = tx
                 .prepare("SELECT handle,id,name FROM management_groups ORDER BY ordinal,handle")
                 .map_err(err)?;
@@ -467,7 +722,12 @@ impl Storage {
                 let handle: i64 = row.get(0).map_err(err)?;
                 tree::write(&tx, handle, &mut out, &ManagementJob::new(), 0)?;
             }
-            out.write_all(b"]}\n").map_err(err)?;
+            out.write_all(b"]").map_err(err)?;
+            if let Some(node) = parents {
+                out.write_all(b",\"parents\":").map_err(err)?;
+                tree::write(&tx, node, &mut out, &ManagementJob::new(), 0)?;
+            }
+            out.write_all(b"}\n").map_err(err)?;
             out.flush().map_err(err)?;
             out.get_ref().sync_all().map_err(err)
         })();
@@ -475,5 +735,151 @@ impl Storage {
             let _ = fs::remove_file(destination);
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod group_tree_file_tests {
+    use super::*;
+
+    fn review(groups: usize, parents: &str) -> Result<GroupsDocument, String> {
+        let names: Vec<_> = (0..groups)
+            .map(|i| serde_json::json!({"id":i.to_string(),"name":format!("Group {i}"),"works":[]}))
+            .collect();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::write(
+            file.path(),
+            format!(r#"{{"format":"work-groups","version":2,"groups":{},"parents":{parents}}}"#,
+                serde_json::json!(names)),
+        ).unwrap();
+        read_groups(file.path()).map(|(doc, _)| doc)
+    }
+
+    #[test]
+    fn tree_group_file_accepts_multiple_levels_and_forward_references() {
+        assert!(review(5, r#"[{"child":"0","parent":"1"},{"child":"1","parent":"2"},
+            {"child":"2","parent":"3"},{"child":"3","parent":"4"}]"#).is_ok());
+    }
+
+    #[test]
+    fn tree_group_file_round_trip_requires_verified_backup_and_preserves_reports() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Storage::new(root.path().join("store")).unwrap();
+        let original = serde_json::json!({
+            "reports":[{"id":"original","type":"day","start":"2026-09-01","end":"2026-09-01",
+                "rows":[{"organization":"A","work":"First","count":4,"amount":null}]}],
+            "settings":{"orgNames":["A","B","C","D"],"catalog":[],"groups":[]}
+        });
+        store.save(original.clone()).unwrap();
+        let revision = store.revision().unwrap();
+        store.management_index_settings(revision, &ManagementJob::new()).unwrap();
+        let document = root.path().join("tree.json");
+        let json = serde_json::json!({
+            "format":"work-groups","version":2,
+            "groups":[{"id":"root","name":"Root","works":[]},{"id":"child","name":"Child","works":["First"]}],
+            "parents":[{"child":"child","parent":"root"}]
+        });
+        fs::write(&document, json.to_string()).unwrap();
+        let review = store.unified_groups_preview(revision, &document).unwrap();
+        assert!(review.requires_backup);
+        assert!(store.unified_groups_import(revision, &document, &review.hash, true).is_err());
+        assert_eq!(store.load().unwrap(), original);
+
+        let backup = root.path().join("before-tree.sqlite3");
+        let receipt = store.unified_groups_import_with_backup(
+            revision, &document, &review.hash, true, Some(&backup),
+        ).unwrap();
+        assert!(backup.is_file());
+        assert_eq!(store.load().unwrap()["reports"], original["reports"]);
+        let target = root.path().join("export.json");
+        store.unified_groups_export(receipt.revision, &target).unwrap();
+        assert_eq!(serde_json::from_slice::<Value>(&fs::read(target).unwrap()).unwrap(), json);
+    }
+
+    #[test]
+    fn tree_edit_rejects_cycles_and_promotes_children_without_touching_reports() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Storage::new(root.path().join("store")).unwrap();
+        let original = serde_json::json!({
+            "reports":[{"id":"retained","type":"day","start":"2026-09-01","end":"2026-09-01",
+                "rows":[{"organization":"A","work":"First","count":4,"amount":null}]}],
+            "settings":{"orgNames":["A","B","C","D"],"catalog":[],"groups":[
+                {"id":"root","name":"Root","works":["First"]}]}
+        });
+        store.save(original.clone()).unwrap();
+        let mut revision = store.revision().unwrap();
+        store.management_index_settings(revision, &ManagementJob::new()).unwrap();
+        let handle = |id: &str, rev| store.management_group_page(rev, "", None, 50).unwrap()
+            .into_iter().find(|row| row.id == id).unwrap().handle;
+        let root_id = handle("root", revision);
+        revision = store.unified_group_tree_edit(revision, GroupTreeEdit::Create {
+            id:"branch".into(), name:"Branch".into(), parent:Some(root_id),
+        }).unwrap().revision;
+        let branch = handle("branch", revision);
+        revision = store.unified_group_tree_edit(revision, GroupTreeEdit::Create {
+            id:"leaf".into(), name:"Leaf".into(), parent:Some(branch),
+        }).unwrap().revision;
+        let leaf = handle("leaf", revision);
+        let mut conflicting_edit = store.management_begin_settings(
+            revision, 16 * 1024 * 1024, Arc::new(ManagementJob::new()),
+        ).unwrap();
+        assert!(conflicting_edit.rename_group(leaf, " branch ").is_err());
+        assert!(conflicting_edit.append_members(leaf, &["First".into()]).is_err());
+        drop(conflicting_edit);
+        assert!(store.unified_group_tree_edit(revision, GroupTreeEdit::Move {
+            group:root_id, parent:Some(leaf),
+        }).is_err());
+        assert_eq!(store.revision().unwrap(), revision);
+        store.unified_group_tree_edit(revision, GroupTreeEdit::Delete {
+            group:branch, delete_descendants:false, confirmed:true,
+        }).unwrap();
+        let after = store.load().unwrap();
+        assert_eq!(after["settings"]["workGroupTreeParents"], serde_json::json!([
+            {"child":"leaf","parent":"root"}
+        ]));
+        assert_eq!(after["settings"]["groups"].as_array().unwrap().len(), 2);
+        assert_eq!(after["reports"], original["reports"]);
+    }
+
+    #[test]
+    fn group_tree_page_lists_roots_and_children_and_search_keeps_parent_context() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Storage::new(root.path().join("store")).unwrap();
+        store.save(serde_json::json!({"reports":[],"settings":{
+            "orgNames":["A","B","C","D"],"catalog":[],
+            "groups":[{"id":"engine","name":"Двигатель","works":[]},
+                {"id":"head","name":"ГБЦ","works":[]},{"id":"testing","name":"Опрессовка","works":["A"]}],
+            "workGroupTreeParents":[{"child":"head","parent":"engine"},{"child":"testing","parent":"head"}]
+        }})).unwrap();
+        let revision = store.revision().unwrap();
+        store.management_index_settings(revision, &ManagementJob::new()).unwrap();
+        let roots = store.unified_management_page(revision, "group_tree", "", None, 0, 50).unwrap();
+        assert_eq!(roots.total, 1);
+        assert_eq!(roots.rows[0].id.as_deref(), Some("engine"));
+        assert_eq!(roots.rows[0].children, Some(1));
+        let handle = roots.rows[0].handle.as_deref().unwrap().parse().unwrap();
+        let nested = store.unified_management_page(revision, "group_tree", "", Some(handle), 0, 50).unwrap();
+        assert_eq!(nested.total, 1);
+        assert_eq!(nested.rows[0].id.as_deref(), Some("head"));
+        let search = store.unified_management_page(revision, "group_tree", "опресс", None, 0, 50).unwrap();
+        assert_eq!(search.rows[0].id.as_deref(), Some("testing"));
+        assert_eq!(search.rows[0].group, nested.rows[0].handle);
+    }
+
+    #[test]
+    fn tree_group_file_rejects_cycles_bad_links_and_excessive_depth() {
+        for links in [
+            r#"[{"child":"0","parent":"0"}]"#,
+            r#"[{"child":"0","parent":"1"},{"child":"1","parent":"0"}]"#,
+            r#"[{"child":"0","parent":"9"}]"#,
+            r#"[{"child":"0","parent":"1"},{"child":"0","parent":"2"}]"#,
+        ] {
+            assert!(review(3, links).is_err(), "{links}");
+        }
+        let parents: Vec<_> = (0..32).map(|i| serde_json::json!({
+            "child":i.to_string(),"parent":(i+1).to_string()
+        })).collect();
+        assert!(review(32, &serde_json::json!(parents[..31]).to_string()).is_ok());
+        assert!(review(33, &serde_json::json!(parents).to_string()).is_err());
     }
 }

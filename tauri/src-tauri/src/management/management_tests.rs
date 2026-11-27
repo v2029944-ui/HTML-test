@@ -48,7 +48,11 @@ fn unified_group_json_round_trips_empty_groups_and_extension_metadata() {
     let rev=management_setup(&s,&original);let destination=dir.path().join("groups.json");s.unified_groups_export(rev,&destination).unwrap();
     let exported:Value=serde_json::from_slice(&std::fs::read(&destination).unwrap()).unwrap();assert_eq!(exported["groups"],original["settings"]["groups"]);
     let review=s.unified_groups_preview(rev,&destination).unwrap();assert_eq!(review.groups,2);assert_eq!(review.works,2);
-    s.unified_groups_import(rev,&destination,&review.hash,true).unwrap();let after=s.load().unwrap();assert_eq!(after,original);
+    assert!(review.requires_backup);
+    let backup = dir.path().join("before-import.sqlite3");
+    s.unified_groups_import_with_backup(rev,&destination,&review.hash,true,Some(&backup)).unwrap();
+    assert!(backup.is_file());
+    assert_eq!(s.load().unwrap(), original);
 }
 
 #[test]
@@ -72,7 +76,11 @@ fn unified_group_json_requires_review_confirmation_revision_and_keeps_reports() 
     assert!(s.unified_groups_import(rev,&source,&review.hash,false).is_err());
     assert_eq!(s.revision().unwrap(),rev);
     let destination=dir.path().join("export.json");s.unified_groups_export(rev,&destination).unwrap();assert!(s.unified_groups_export(rev,&destination).is_err());
-    let receipt=s.unified_groups_import(rev,&source,&review.hash,true).unwrap();
+    assert!(review.requires_backup);
+    assert!(s.unified_groups_import(rev,&source,&review.hash,true).is_err());
+    let backup = dir.path().join("before-import.sqlite3");
+    let receipt=s.unified_groups_import_with_backup(rev,&source,&review.hash,true,Some(&backup)).unwrap();
+    assert!(backup.is_file());
     assert!(s.unified_groups_import(rev,&source,&review.hash,true).is_err());
     assert_eq!(s.load().unwrap()["reports"],management_data()["reports"]);
     let before=s.load().unwrap();std::fs::write(&source,r#"{"format":"work-groups","version":1,"groups":[]}"#).unwrap();
@@ -1112,4 +1120,47 @@ fn bulk_group_removal_is_revision_checked_and_preserves_source_data() {
     store.unified_groups_import(rev, &exported, &preview.hash, true).unwrap();
     expected["settings"]["groups"] = json!([original["settings"]["groups"][2]]);
     assert_eq!(store.load().unwrap(), expected);
+}
+
+#[test]
+fn deleting_selected_tree_nodes_keeps_surviving_descendants_linked() {
+    let dir = tempdir().unwrap();
+    let store = Storage::new(dir.path().into()).unwrap();
+    let mut original = management_data();
+    original["settings"]["groups"] = json!([
+        {"id":"root","name":"Root","works":[]},
+        {"id":"first","name":"First","works":[]},
+        {"id":"second","name":"Second","works":[]},
+        {"id":"leaf","name":"Leaf","works":["one"]}
+    ]);
+    original["settings"]["workGroupTreeParents"] = json!([
+        {"child":"first","parent":"root"},
+        {"child":"second","parent":"first"},
+        {"child":"leaf","parent":"second"}
+    ]);
+    let revision = management_setup(&store, &original);
+    let handles: Vec<_> = store.management_group_page(revision, "", None, 50).unwrap()
+        .into_iter().filter(|group| matches!(group.id.as_str(), "first" | "second"))
+        .map(|group| group.handle).collect();
+    let changed = store.unified_delete_groups(revision, Some(&handles), 2, None, true).unwrap();
+    let after = store.load().unwrap();
+    assert_eq!(after["settings"]["workGroupTreeParents"], json!([{"child":"leaf","parent":"root"}]));
+    assert_eq!(after["reports"], original["reports"]);
+
+    let all = store.management_group_page(changed.revision, "", None, 50).unwrap();
+    let root = all.iter().find(|group| group.id == "root").unwrap().handle;
+    assert!(store.unified_group_tree_edit(changed.revision, GroupTreeEdit::Delete {
+        group: root, delete_descendants: true, confirmed: true,
+    }).is_err());
+    assert_eq!(store.load().unwrap(), after);
+
+    let backup = dir.path().join("before-delete-tree.sqlite3");
+    store.unified_group_tree_edit_with_backup(changed.revision, GroupTreeEdit::Delete {
+        group: root, delete_descendants: true, confirmed: true,
+    }, Some(&backup)).unwrap();
+    assert!(backup.is_file());
+    let cleared = store.load().unwrap();
+    assert_eq!(cleared["settings"]["groups"], json!([]));
+    assert_eq!(cleared["settings"]["workGroupTreeParents"], json!([]));
+    assert_eq!(cleared["reports"], original["reports"]);
 }

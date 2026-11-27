@@ -73,7 +73,26 @@ impl Analytics<'_> {
         let coverage = range_summary(&tx, &scope, 1)?;
         let term = analysis_presentation::normalized(search);
         let extras = term.chars().count() >= 3;
-        if mode == "unused" {
+        if mode == "unused" && super::workspace::tree_indexed(&tx)? {
+            tx.execute_batch("CREATE TEMP TABLE audit_observed_groups(key TEXT PRIMARY KEY) WITHOUT ROWID;
+                INSERT OR IGNORE INTO audit_observed_groups
+                SELECT a.ancestor_key FROM an_valid v JOIN an_periods p ON p.slot=1 AND p.start=v.start
+                JOIN report_rows r ON r.report_id=v.report_id AND r.organization=v.org
+                JOIN analysis_groups d ON d.work=r.work
+                JOIN analysis_group_ancestors a ON a.descendant_key=d.key
+                WHERE r.count<>0 OR r.amount IS NULL OR r.amount<>0;
+                CREATE TEMP TABLE audit_rows AS
+                SELECT g.name name,'group:'||g.id key,g.handle group_handle,g.name group_name,
+                    (SELECT COUNT(*) FROM analysis_group_ancestors a JOIN analysis_groups d ON d.key=a.descendant_key
+                        WHERE a.ancestor_key='group:'||g.id) members,0 observed
+                FROM management_groups g WHERE NOT EXISTS(
+                    SELECT 1 FROM audit_observed_groups o WHERE o.key='group:'||g.id);").map_err(err)?;
+            tx.execute("DELETE FROM audit_rows WHERE instr(classic_normalized(name),?1)=0 AND NOT (
+                ?2 AND EXISTS(SELECT 1 FROM analysis_group_ancestors a
+                    JOIN analysis_groups d ON d.key=a.descendant_key
+                    WHERE a.ancestor_key=audit_rows.key AND instr(classic_normalized(d.work),?1)>0)
+            )",params![term,extras]).map_err(err)?;
+        } else if mode == "unused" {
             tx.execute_batch("CREATE TEMP TABLE audit_rows AS
                 SELECT g.name name,'group:'||g.id key,g.handle group_handle,g.name group_name,g.members members,
                   EXISTS(SELECT 1 FROM an_combined a WHERE a.slot=1 AND a.key='group:'||g.id AND a.active<>0) observed
