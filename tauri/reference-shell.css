@@ -1225,6 +1225,16 @@ label.placement-setting {display:grid;grid-template-columns:minmax(0,1fr) auto;a
  #referencePrintDocument .num {text-align:right;font-variant-numeric:tabular-nums}
 }
 
+#personalDatabasePath {overflow-wrap:anywhere;user-select:text}
+#refNative :is(.panel,.actions,.catalog-actions,.desktop-file-actions,.change-pagination) > button.button,
+#refNative .actions > label.file-label,
+#refNative #personalTransferPanel .actions button,
+#s2 .changes-header-actions .btn,
+#s1 .summary-actions > button {
+ width:fit-content;max-width:100%;min-width:0;flex:0 1 auto;
+ justify-self:start;align-self:center;white-space:normal;overflow-wrap:anywhere;
+}
+
 /* Selected management and report sections stay identifiable in every theme. */
 #refRoot #toolsPage .tool-tabs button[aria-pressed="true"],
 #refNative #unifiedUploadNav button[aria-pressed="true"],

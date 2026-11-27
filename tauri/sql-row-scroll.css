@@ -47,16 +47,8 @@
 .sql-obsolete-control[hidden],.sql-pager[hidden],.sql-pager-controls[hidden] {display:none!important}
 @media print {.sql-pager {display:none!important}.sql-page-content {max-block-size:none!important;min-height:0!important;overflow:visible!important}}
 
-/* Keep the semantic caption and paint its text with the sticky column headers. */
+/* Keep the period available to assistive technology. */
 .sql-caption-source {position:absolute;inline-size:1px;block-size:1px;overflow:hidden;clip-path:inset(50%)}
-:is(.table-scroll,.table-viewport,.sql-page-content) > table > thead > .sql-table-period > td {
-  padding:.45em .75em;
-  text-align:start;
-  white-space:normal;
-  background:var(--subtle);
-  color:var(--text);
-}
-
 @media screen {
   /* A table with an inner horizontal viewport also scrolls vertically there.
      Keeping a second scroll container outside it prevents sticky headers. */

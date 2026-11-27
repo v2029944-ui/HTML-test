@@ -51,6 +51,9 @@
     node('personalDatabaseCard').dataset.selected = String(local);
     node('sharedDatabaseCard').dataset.selected = String(shared);
     node('personalDatabaseSelection').textContent = local ? '✓ Используется сейчас' : '';
+    const path = node('personalDatabasePath');
+    path.textContent = state?.personal_database_path || '';
+    path.hidden = !path.textContent;
     node('sharedDatabaseSelection').textContent = shared ? '✓ Используется сейчас' : '';
     node('sharedWorkspaceDisconnect').hidden = !shared;
     node('sharedWorkspaceDisconnect').disabled = busy || Boolean(state?.pending);

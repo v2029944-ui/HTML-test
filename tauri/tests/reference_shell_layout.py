@@ -203,7 +203,7 @@ def check_filter_placement(page, record):
 
 
 def check_sticky_table_header(page):
-    """Verify that the table's date range and column labels stay together while scrolling."""
+    """Verify that only the column labels stay pinned while scrolling."""
     result = page.evaluate("""() => {
       const host = document.createElement('div');
       host.className = 'sql-page-content';
@@ -215,21 +215,20 @@ def check_sticky_table_header(page):
       const viewport = host.querySelector('.table-scroll');
       const table = viewport.querySelector('table');
       table.style.minWidth = '700px';
-      const head = table.tHead, labels = head.rows[0], period = head.rows[1], body = table.tBodies[0];
+      const head = table.tHead, labels = head.rows[0], body = table.tBodies[0];
       document.body.append(host);
       try {
         const initialLeft = labels.cells[1].getBoundingClientRect().left;
         const initialBodyTop = body.rows[0].getBoundingClientRect().top;
         viewport.scrollTop = 100;
         viewport.scrollLeft = 70;
-        const rect = head.getBoundingClientRect(), periodRect = period.getBoundingClientRect();
+        const rect = head.getBoundingClientRect();
         return {
           vertical: Math.abs(rect.top - viewport.getBoundingClientRect().top) < 2 &&
             initialBodyTop - body.rows[0].getBoundingClientRect().top > 90,
           horizontal: initialLeft - labels.cells[1].getBoundingClientRect().left > 60 &&
             Math.abs(labels.cells[1].getBoundingClientRect().left - body.rows[0].cells[1].getBoundingClientRect().left) < 2,
-          dates: period.textContent === dates && table.caption.textContent === dates &&
-            periodRect.top > rect.top && Math.abs(periodRect.bottom - rect.bottom) < 2,
+          dates: head.rows.length === 1 && table.caption.textContent === dates,
         };
       } finally {
         host.remove();

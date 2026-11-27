@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const script=name=>fs.readFileSync(path.join(__dirname,'..',name+'.js'),'utf8');
-const personal={mode:'personal',folder:null,generation:null,available:true,error:null,pending:false,workspace_token:'private'};
+const personal={mode:'personal',personal_database_path:'fixture/private/reports.sqlite3',folder:null,generation:null,available:true,error:null,pending:false,workspace_token:'private'};
 const team={...personal,mode:'shared',folder:'fixture/team',generation:0,workspace_token:'team-0',retention_enabled:false,retention_limit:3};
 
 function fixture(initial=personal) {
@@ -167,10 +167,12 @@ test('a registered offline share can be replaced on the first selection without 
 test('switching back confirms, never moves reports and never crosses pending publication',async()=>{
   const f=fixture(team);await f.window.sharedWorkspace.init();
   assert.equal(f.node('sharedDatabaseCard').dataset.selected,'true');
+  assert.equal(f.node('personalDatabasePath').textContent,personal.personal_database_path);
   await f.click('sharedWorkspaceDisconnect');assert.equal(f.scenario.stops,0);
   f.scenario.accept=true;await f.click('sharedWorkspaceDisconnect');
   assert.equal(f.scenario.stops,1);assert.equal(f.refreshes.at(-1).mode,'personal');
   assert.equal(f.node('personalDatabaseCard').dataset.selected,'true');
+  assert.equal(f.node('personalDatabasePath').textContent,personal.personal_database_path);
   assert.equal(f.node('sharedWorkspaceDisconnect').hidden,true);
   const pending=fixture({...team,pending:true});await pending.window.sharedWorkspace.init();
   pending.scenario.accept=true;
