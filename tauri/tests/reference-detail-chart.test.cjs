@@ -83,9 +83,9 @@ test('single-period chart hides the line control without losing the user\'s pref
   assert.equal(f.state.chart, 'line');
 });
 
-test('single selection mode disables line before SQL data arrives', () => {
+test('single day selection disables line before SQL data arrives', () => {
   const f = fixture();
-  f.referenceFilters.scope.overviewMode = 'single';
+  Object.assign(f.referenceFilters.scope, {overviewMode: 'single', source: 'daily', from: '2026-01-05', to: '2026-01-05'});
   f.detail.show('chartPanel');
   assert.equal(f.getLine().hidden, true);
   assert.equal(f.state.chart, 'bar');
@@ -93,6 +93,21 @@ test('single selection mode disables line before SQL data arrives', () => {
   f.changedScope();
   assert.equal(f.getLine().hidden, false);
   assert.equal(f.state.chart, 'line');
+});
+
+test('one selected year can show a line from multiple observations within the year', () => {
+  const f = fixture();
+  Object.assign(f.referenceFilters.scope, {
+    overviewMode: 'single', source: 'daily', displayType: 'year', from: '2026-01-01', to: '2026-12-31',
+  });
+  f.detail.show('chartPanel');
+  assert.equal(f.getLine().hidden, false);
+  f.detail.setChartPeriodCount(12);
+  assert.equal(f.getLine().disabled, false);
+  assert.equal(f.state.chart, 'line');
+  f.detail.setChartPeriodCount(1);
+  assert.equal(f.getLine().hidden, true);
+  assert.equal(f.state.chart, 'bar');
 });
 
 test('opening a pattern tab loads its data directly without a disclosure event', () => {

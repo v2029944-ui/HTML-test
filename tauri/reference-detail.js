@@ -83,7 +83,9 @@
         if (active === 'chartPanel') { chartMode = button.dataset.chart; chartButtons(); }
       });
     }
-    const single = singlePeriodChart || window.referenceFilters?.scope?.overviewMode === 'single';
+    const scope = window.referenceFilters?.scope;
+    const oneObservation = scope?.overviewMode === 'single' && (scope.source !== 'daily' || scope.from === scope.to);
+    const single = singlePeriodChart || oneObservation;
     const line = group.querySelector('[data-reference-line]');
     line.hidden = single;
     line.disabled = single;
