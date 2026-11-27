@@ -130,7 +130,7 @@ test('confirmed group move focuses the refreshed group or the group search if it
   else assert.equal(m.nodes.groupSearch.focused,true);
  }
 });
-test('expanded members load every bounded SQLite page without per-member reads or pagination',async()=>{
+test('expanded groups load one member page on demand and reuse loaded rows when reopened',async()=>{
  const m=mount();
  m.setHandler((_rev,kind,_query,_group,offset,limit)=>{
   if(kind==='groups')return {total:1,rows:[{name:'Group',handle:'g0',id:'id0',members:101}]};
@@ -143,6 +143,18 @@ test('expanded members load every bounded SQLite page without per-member reads o
  assert.match(m.nodes.groupCoverage.textContent,/101/);
  const group=m.nodes.groupList.children[0],members=group.children[2],before=m.reads.length;
  group.open=true;await group.fire('toggle');await tick();
+ const rows=()=>members.children.filter(row=>row.className==='group-member');
+ const more=actionByText(members,'Показать ещё работы');
+ assert.deepEqual(m.reads.slice(before),[[7,'members','','g0',0,50]]);
+ assert.equal(rows().length,50);
+ assert.equal(more.hidden,false);
+ group.open=false;await group.fire('toggle');group.open=true;await group.fire('toggle');
+ assert.equal(m.reads.length,before+1);
+ await Promise.all([more.fire(),more.fire()]);
+ assert.equal(rows().length,100);
+ await more.fire();
+ assert.equal(more.hidden,true);
+ assert.deepEqual(rows().map(row=>row.children[0].textContent),Array.from({length:101},(_,i)=>'Work '+i));
  assert.deepEqual(m.reads.slice(before),[[7,'members','','g0',0,50],[7,'members','','g0',50,50],[7,'members','','g0',100,50]]);
  assert.equal(members.children.filter(row=>row.className==='group-member').length,101);
  assert.equal(members.scrollWindow,undefined);

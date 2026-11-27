@@ -251,25 +251,31 @@ function init(){
  }
  function expandMembers(details,root,group,expected,openChildren){
   const pageTicket=groups.ticket,status=el('p','','muted small');
-  let offset=0,total=Number.isSafeInteger(group.members)&&group.members>=0?group.members:1,ticket=0;
-  root.append(status);status.hidden=true;status.setAttribute('role','status');
-  details.addEventListener('toggle',async()=>{
-   updateRemovalControls();
-   const request=++ticket,current=()=>request===ticket&&pageTicket===groups.ticket&&valid(expected)&&details.open;
+  let offset=0,total=Number.isSafeInteger(group.members)&&group.members>=0?group.members:1,loading=false;
+  const more=button('Показать ещё работы',loadNext);
+  more.hidden=true;status.hidden=true;status.setAttribute('role','status');root.append(status,more);
+  const current=()=>pageTicket===groups.ticket&&valid(expected)&&details.open&&details.isConnected!==false;
+  async function loadNext(){
+   if(loading||offset>=total||!current())return;
+   loading=true;status.hidden=false;status.textContent='Загрузка состава группы…';
+   try{
+    const result=await api.unifiedManagementPage(expected,'members','',group.handle,offset,LIMIT);
+    if(!current())return;
+    if(!validManagementPage(result,offset))throw Error('Получен некорректный состав группы.');
+    const rows=result.rows.map(row=>moveControl(row,expected,group.id));
+    for(const row of rows)root.insertBefore(row,more);
+    offset+=rows.length;total=result.total;status.hidden=true;
+    if(document.activeElement===more)rows[0]?.querySelectorAll('button')[0]?.focus();
+    more.hidden=offset>=total;
+   }catch(error){
+    if(current()){status.textContent='Не удалось загрузить состав группы. '+(error?.message||String(error));more.hidden=false;}
+   }finally{loading=false;}
+  }
+  details.addEventListener('toggle',()=>{
+   if(selectingGroups)updateRemovalControls();
    if(!current())return;
    openChildren?.();
-   if(offset>=total)return;
-   status.hidden=false;status.textContent='Загрузка состава группы…';
-   try{
-    while(current()&&offset<total){
-     const result=await api.unifiedManagementPage(expected,'members','',group.handle,offset,LIMIT);
-     if(!current())return;
-     if(!validManagementPage(result,offset))throw Error('Получен некорректный состав группы.');
-     root.append(...result.rows.map(row=>moveControl(row,expected,group.id)));
-     offset+=result.rows.length;total=result.total;
-    }
-    if(current())status.hidden=true;
-   }catch(error){if(current())status.textContent='Не удалось загрузить состав группы. '+(error?.message||String(error));}
+   if(!offset)return loadNext();
   });
  }
  function confirmGroupTreeDeletion(anchor,group){
