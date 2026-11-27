@@ -1086,7 +1086,7 @@ body:has(#refRoot)>footer {display:none}
   & :is(#s1,#s2) .quality-notice > svg {stroke:var(--warning)}
   & #s1 .metric-card:first-child::before {background:var(--selected-border)}
   & :is(#s1,#s2) .report-range a[href="#reportShell"] {color:var(--accent)}
-  & .period-calendar .cal-actions .cal-confirm:hover {
+  & :is(#sheet,.period-calendar) .cal-actions .cal-confirm:hover {
    background:var(--accent-hover);filter:none
   }
   &[data-theme="dark"] {
@@ -1111,7 +1111,7 @@ body:has(#refRoot)>footer {display:none}
   &[data-theme="dark"] #reportShell .filter-shortcuts .quick-actions .chip:hover {
    background:var(--hover)
   }
-  &[data-theme="dark"] #reportShell [data-compare],
+  &[data-theme="dark"] #reportShell .report-filter .sel[data-compare],
   &[data-theme="dark"] #reportShell .filter-shortcuts .chip[aria-pressed="true"] {
    background:var(--selected);color:var(--text);border-color:var(--selected-border)
   }
