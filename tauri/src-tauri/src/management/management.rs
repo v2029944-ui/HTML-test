@@ -192,9 +192,19 @@ impl Storage {
             _ => return Err("Неизвестная страница настроек.".into()),
         };
         let children = if kind == "group_tree" { "children" } else { "NULL" };
-        let total:i64 = tx.query_row(&format!("SELECT COUNT(*) FROM ({table}) WHERE instr(unified_normalized(name),?1)>0"), [&term], |r| r.get(0)).map_err(err)?;
-        let grouped:i64 = if kind == "works" { tx.query_row(&format!("SELECT COUNT(*) FROM ({table}) WHERE instr(unified_normalized(name),?1)>0 AND group_handle IS NOT NULL"), [&term], |r| r.get(0)).map_err(err)? } else { 0 };
-        let mut stmt = tx.prepare(&format!("SELECT handle,id,name,organization,members,group_handle,{children} FROM ({table}) WHERE instr(unified_normalized(name),?1)>0 ORDER BY CASE WHEN substr(unified_normalized(name),1,length(?1))=?1 THEN 0 ELSE 1 END,name COLLATE unified_ru,name,handle LIMIT ?2 OFFSET ?3")).map_err(err)?;
+        let (filter, prefix_order) = if term.is_empty() {
+            ("", "")
+        } else {
+            ("WHERE instr(unified_normalized(name),?1)>0",
+             "CASE WHEN substr(unified_normalized(name),1,length(?1))=?1 THEN 0 ELSE 1 END,")
+        };
+        let grouped_count = if kind == "works" { "COUNT(group_handle)" } else { "0" };
+        let counts_sql = format!("SELECT COUNT(*),{grouped_count} FROM ({table}) {filter}");
+        let search_param = (!term.is_empty()).then_some(&term);
+        let (total, grouped): (i64, i64) = tx.query_row(
+            &counts_sql, rusqlite::params_from_iter(search_param), |row| Ok((row.get(0)?, row.get(1)?))
+        ).map_err(err)?;
+        let mut stmt = tx.prepare(&format!("SELECT handle,id,name,organization,members,group_handle,{children} FROM ({table}) {filter} ORDER BY {prefix_order}name COLLATE unified_ru,name,handle LIMIT ?2 OFFSET ?3")).map_err(err)?;
         let rows = stmt.query_map(params![term,limit as i64,offset], |r| Ok(UnifiedManagementRow { handle:r.get(0)?, id:r.get(1)?, name:r.get(2)?, organization:r.get(3)?, members:r.get(4)?, group:r.get(5)?, children:r.get(6)? })).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
         Ok(UnifiedManagementPage { rows,total,grouped,ungrouped:total-grouped,hierarchy:link_root.is_some() })
     }
