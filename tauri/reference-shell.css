@@ -926,6 +926,10 @@
 #s1 {--detail-spacing:16px}
 #s1 main {padding-bottom:var(--detail-spacing)!important}
 #s1 .summary-bottom-actions {margin:0}
+#s1 .summary-empty {padding:clamp(16px,3vw,28px)}
+#s1 .summary-empty p {color:var(--muted)}
+#s1:has(.summary-empty:not([hidden])) :is(.metrics-grid,.quality-notice,.result-grid,.summary-actions) {display:none!important}
+
 #s1 main:has(.summary-bottom-actions) {row-gap:var(--detail-spacing)!important}
 #toolsPage,.screen .changes-card h2 {scroll-margin-top:calc(var(--sticky-filter-height,48px) + 8px)}
 #sharedHeader .main-nav button[aria-current=page]{border-bottom-color:transparent}
@@ -979,6 +983,21 @@ body:has(#refRoot)>footer {display:none}
  max-height:calc(min(46dvh, 100dvh - 64px) / var(--filter-zoom,1));
  overflow:auto;overscroll-behavior:contain;scroll-padding-block:8px;
 }
+@media screen and (max-height:700px) {
+ #refRoot:not([data-filter-sidebar]) #reportShell:not([data-floating]):has(.filter-fold[open]) {
+  position:relative;top:auto;
+ }
+ #refRoot:not([data-filter-sidebar]) #reportShell:not([data-floating]) .filter-content {
+  max-height:none;overflow:visible;
+ }
+ #refRoot:not([data-filter-sidebar]) #reportShell[data-floating] .filter-content {
+  overflow-y:scroll;scrollbar-gutter:stable;scrollbar-color:var(--scroll-thumb) var(--subtle);
+ }
+}
+@media screen and (max-width:920px) {
+ #refRoot[data-ui-size="xlarge"] #reportShell .report-dates {grid-template-columns:minmax(0,1fr);max-width:none}
+}
+#refRoot[data-ui-size="xlarge"] #reportShell .filter-periods > .lbl:has([data-compare]) {grid-column:1/-1}
 @media screen {
  /* The side panel uses the free margin outside the centered report. Its
     sticky anchor occupies no vertical space in the report flow. */

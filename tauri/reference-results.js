@@ -305,6 +305,7 @@ async function printScreen(event){
 }
 function init(){if(initialized)return;initialized=true;
  for(const root of ['#s1','#s2']){const quality=$(root+' .quality-notice button');if(quality){quality.textContent='Проверить отчёты';quality.addEventListener('click',e=>openQuality(e.target));}for(const n of all(root+' button')){if(n.textContent.includes('Печать'))n.addEventListener('click',printScreen);}}
+ $('#summaryImport')?.addEventListener('click',event=>window.referenceDesktop.openPanel('upload',event.target));
  const summaryExport=$('#s1 .data-card button');summaryExport?.addEventListener('click',exportSummary);if(summaryExport)summaryExport.disabled=true;
  const open=$('#s1 .insight-card button');open?.addEventListener('click',()=>window.referenceDesktop.navigate('s2'));
  for(const [i,key]of ['up','down','new','gone'].entries())all('#s2 .kpi')[i]?.addEventListener('click',()=>{kind=kind===key?'significant':key;page=0;return refreshChanges();});
@@ -321,6 +322,7 @@ function invalidateScope(value){
  $('#s1 .data-card button').disabled=true;$('#s2 [data-export-changes]').disabled=true;
 }
 function clearSummary(s,loading){
+ const empty=$('#summaryEmpty');if(empty)empty.hidden=true;
  shownSummaryRevision=null;captions(s,['#s1']);summaryCards(null,loading?null:{summary:{}},0,0);
  $('#s1 .quality-notice').hidden=true;writeTable($('#s1 table'),['Подразделение',titles.amount,titles.count,'Доля суммы',titles.average],[]);summaryLeaders(null,s?.metric||'amount');
 }
@@ -343,9 +345,12 @@ function refresh(value){
  if(!available||shownChangesRevision!==scope.revision){
   captions(available?scope:null,['#s2']);clearChanges(available?scope:null,available?'Загрузка изменений…':'Выберите периоды и подразделения.');
  }
- setBusy('#s1',available);setBusy('#s2',available&&screen==='s2');
+ const empty=$('#summaryEmpty'),snapshot=window.unifiedUI?.snapshot;
+ const emptyDatabase=Boolean(snapshot&&snapshot.reports===0&&(!scope||snapshot.revision===scope.revision));
+ if(empty)empty.hidden=!emptyDatabase;
+ setBusy('#s1',available&&!emptyDatabase);setBusy('#s2',available&&screen==='s2');
  if(!available)return Promise.resolve();
- const tasks=[refreshSummary(scope,generation)];if(screen==='s2')tasks.push(refreshChanges());return Promise.all(tasks);
+ const tasks=emptyDatabase?[]:[refreshSummary(scope,generation)];if(screen==='s2')tasks.push(refreshChanges());return Promise.all(tasks);
 }
 function setScreen(id){if(screen!==id)printAbort?.abort();screen=id==='s2'?'s2':'s1';$('#s1').hidden=screen!=='s1';$('#s2').hidden=screen!=='s2';return screen==='s2'?refreshChanges():Promise.resolve();}
 function resetSelection(){kind='significant';page=0;percent=30;minCount=5;minAmount=1000;clearTimeout(searchTimer);$('#s2 input[placeholder]').value='';$('#s2 [data-sort]').value='delta';sensitivityCaption();}

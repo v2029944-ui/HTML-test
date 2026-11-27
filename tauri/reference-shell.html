@@ -74,7 +74,13 @@
 <div class="title-row"><div>
 <h1 style="margin:0 0 4px;font-size:30px">Анализ выполненных работ</h1>
 <p class="report-range"></p>
-</div><div class="summary-actions"><button class="btn">Печать / PDF</button></div></div><section aria-label="Итоги за период" class="metrics-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
+</div><div class="summary-actions"><button class="btn">Печать / PDF</button></div></div>
+<section class="card summary-empty" id="summaryEmpty" aria-labelledby="summaryEmptyTitle" hidden>
+<h2 id="summaryEmptyTitle">Отчёты ещё не загружены</h2>
+<p>Добавьте отчёты Excel, чтобы увидеть итоги и изменения.</p>
+<button type="button" class="btn pri" id="summaryImport">Импортировать Excel</button>
+</section>
+<section aria-label="Итоги за период" class="metrics-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px">
 <div class="card metric-card" style="padding:20px"><div class="metric-name">Сумма выполненных работ</div>
 <div class="num metric-value">—</div>
 <div class="num metric-delta"></div></div>

@@ -301,7 +301,9 @@ function init(){
   for(const [kind,label] of [['missing','Нет дневного отчёта'],['error','Ошибка в дневных данных'],['warn','Неполнота или замечания'],['complete','Есть данные, включая нулевые итоги']])
    legend.append(el('li',label,'calendar-'+kind));
   root.append(legend);
-  const grid=el('div',undefined,'calendar-day-grid'),detail=el('div',undefined,'calendar-day-details');detail.setAttribute('aria-live','polite');
+  const grid=el('div',undefined,'calendar-day-grid'),detail=el('div',undefined,'calendar-day-details');
+  detail.id='calendarDayDetails';
+  let selectedDay=null;
   for(const name of ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'])grid.append(el('span',name,'calendar-weekday'));
   for(let i=0;i<(new Date(from+'T12:00:00Z').getUTCDay()+6)%7;i++)grid.append(el('span'));
   for(let d=1;d<=Number(to.slice(8));d++){
@@ -312,14 +314,24 @@ function init(){
    const zero=kind!=='error'&&complete&&totals?.count===0&&totals.amount===0;
    const label={missing:'Нет дневного отчёта',error:'Ошибка в дневных данных',warn:'Неполнота или замечания',complete:'Полнота подтверждена'}[kind];
    const b=button('',()=>{
-    const heading=el('div',undefined,'calendar-day-heading');
-    heading.append(el('h4',date),button('Закрыть подробности дня',()=>{detail.replaceChildren();b.focus({preventScroll:true});}));
+    selectedDay?.setAttribute('aria-expanded','false');
+    selectedDay=b;
+    b.setAttribute('aria-expanded','true');
+    const heading=el('div',undefined,'calendar-day-heading'),title=el('h4',date);
+    title.tabIndex=-1;
+    heading.append(title,button('Закрыть подробности дня',()=>{
+     detail.replaceChildren();b.setAttribute('aria-expanded','false');selectedDay=null;b.focus();
+    }));
     const message=kind==='error'&&!exists?'Дневной отчёт сохранён. Пригодных данных нет.':zero?'Нулевые итоги. '+label+'.':label+'.';
     detail.replaceChildren(heading,el('p',message,'calendar-day-status calendar-'+kind));
     if(exists)detail.append(el('p','Количество: '+UI.fmt(totals?.count,'count')+' · Сумма: '+UI.fmt(totals?.amount,'amount')));
-    const list=el('div');detail.append(el('h5','Источники'),list);void sourceList(list,{from:date,to:date},rev,{showOrganizations:true});
+    const list=el('div');detail.append(el('h5','Источники'),list);
+    title.focus({preventScroll:true});title.scrollIntoView({block:'start'});
+    void sourceList(list,{from:date,to:date},rev,{showOrganizations:true});
    });
    b.className='calendar-day calendar-'+kind;
+   b.setAttribute('aria-expanded','false');
+   b.setAttribute('aria-controls','calendarDayDetails');
    b.append(el('strong',d),el('small',kind==='error'?'Ошибка':zero?'Ноль':{missing:'Нет отчёта',warn:complete?'Замечания':'Неполнота',complete:'Есть данные'}[kind]));
    b.setAttribute('aria-label',date+': '+(zero?'Нулевые итоги. ':'')+label);
    if(exists)b.append(el('small','Кол.: '+UI.fmt(totals?.count,'count')),el('small','Сум.: '+UI.fmt(totals?.amount,'amount')));grid.append(b);
