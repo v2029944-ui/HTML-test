@@ -258,15 +258,15 @@ test('filter placement stays on this device and falls back to the top in a narro
   const storage=new Map();
   const wide=await fixture(storage,2048);
   const picker=wide.one('#appearanceFilterPlacement');
-  assert.equal(picker.value,'top');
+  assert.equal(picker.checked,false);
   const before=wide.controls.scope;
-  picker.value='side';
+  picker.checked=true;
   picker.onchange();
   assert.equal(wide.controls.scope,before);
   assert.equal(wide.controls.atSide(),true);
   assert.equal((await fixture(storage,2048)).controls.atSide(),true);
   const narrow=await fixture(storage,1440);
-  assert.equal(narrow.one('#appearanceFilterPlacement').value,'side');
+  assert.equal(narrow.one('#appearanceFilterPlacement').checked,true);
   assert.equal(narrow.controls.atSide(),false);
 });
 

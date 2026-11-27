@@ -1168,7 +1168,7 @@ body:has(#refRoot)>footer {display:none}
 
 /* Group members and work pages use the vertical scroll of the workspace. */
 #groupWorkspace :is(.group-members,.works-list) {max-height:none;overflow:visible}
-#groupWorkspace .group-children {margin-inline-start:.35rem; padding-inline-start:.35rem; border-inline-start:1px solid var(--line)}
+#groupWorkspace .group-children {margin-inline-start:clamp(4px,1vw,16px); padding-inline-start:4px; border-inline-start:1px solid var(--line)}
 #groupWorkspace .group-removal {align-items:center}
 #groupWorkspace .group-selection {margin-inline-start:.5rem; cursor:pointer}
 #groupWorkspace .group-result-counts {display:flex;flex-wrap:wrap;gap:0 1rem}
@@ -1300,3 +1300,21 @@ body:has(#refRoot)>footer {display:none}
   margin-inline-start:.45em;
 }
 .chart-group-toggle[aria-expanded="true"]::after {content:'▾'}
+
+#groupWorkspace .group-details > summary::before {content:"📁" / "";margin-inline-end:.45em}
+#groupWorkspace .group-details[open] > summary::before {content:"📂" / ""}
+#groupWorkspace .group-members .group-member > span:first-child::before {content:"📄" / "";margin-inline-end:.45em}
+#groupWorkspace .group-members .group-member > span:first-child {min-width:0;overflow-wrap:anywhere}
+
+label.placement-setting {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 12px}
+.placement-setting small {grid-column:1/-1}
+#appearanceFilterPlacement {
+ appearance:none;box-sizing:border-box;display:block;width:42px;height:24px;min-height:0;
+ margin:0;padding:2px;border:1px solid var(--muted);border-radius:20px;
+ background:var(--surface);color:var(--muted);cursor:pointer;
+}
+#appearanceFilterPlacement::before {content:"";display:block;width:18px;height:18px;border-radius:50%;background:currentColor}
+#appearanceFilterPlacement:checked {color:var(--text);border-color:currentColor}
+#appearanceFilterPlacement:checked::before {transform:translateX(17px)}
+#appearanceFilterPlacement:focus-visible {outline:2px solid currentColor;outline-offset:3px}
+@media(forced-colors:active){#appearanceFilterPlacement {appearance:auto}}
