@@ -903,6 +903,7 @@
 #reportShell {--filter-sidebar-min-width:208px;--filter-sidebar-max-width:272px;--filter-sidebar-gap:12px;position:sticky;top:0;z-index:8;overflow:visible;overflow-anchor:none;background:var(--ui-bg)}
 #reportShell>.report-filter {margin:0 auto;width:min(calc(100% - 2 * var(--gutter)),calc(var(--max) - 2 * var(--gutter)));border:1px solid var(--ui-line);border-radius:9px}
 #reportShell .filter-fold > summary {position:sticky;top:0;z-index:1;background:var(--ui-surface);border-radius:inherit}
+#reportShell .filter-fold:not([open]) > summary {background:transparent;border-radius:8px}
 #reportShell .filter-fold summary {min-height:42px;padding-block:9px}
 #reportShell .filter-summary {display:inline;font-size:12px;line-height:1.3}
 #reportShell .report-filter :is(.filter-periods,.filter-options) {align-items:stretch}
