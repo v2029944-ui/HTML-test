@@ -2,8 +2,8 @@
 
 The import flow opens a synthetic XLSX for preview. The after-data walkthrough opens an
 isolated backup for read-only verification, then tests copy/schedule/cancel via
-real IPC on that backup. It never accepts a Save destination or replaces the live
-database. No dialog/IPC API is replaced.
+real IPC on that backup. The department rename test saves a backup in its own empty
+temporary directory. No dialog or IPC API is replaced.
 """
 import ctypes
 from ctypes import wintypes
@@ -288,9 +288,7 @@ class OwnedFileDialogs:
         assert self.user32.IsWindowVisible(opened) and self.user32.IsWindowEnabled(opened), facts
         return opened
 
-    def escape(self, hwnd):
-        # Send a real key only while Windows itself reports focus inside this
-        # exact verified file dialog. Never use ambient/global SendKeys.
+    def focused_control(self, hwnd):
         class GuiThreadInfo(ctypes.Structure):
             _fields_ = [('cbSize', wintypes.DWORD), ('flags', wintypes.DWORD),
                         ('hwndActive', wintypes.HWND), ('hwndFocus', wintypes.HWND),
@@ -298,14 +296,10 @@ class OwnedFileDialogs:
                         ('hwndMoveSize', wintypes.HWND), ('hwndCaret', wintypes.HWND),
                         ('rcCaret', wintypes.RECT)]
 
-        Input = windows_input_type()
-
         self.user32.GetForegroundWindow.restype = wintypes.HWND
         self.user32.GetForegroundWindow.argtypes = []
         self.user32.GetGUIThreadInfo.restype = wintypes.BOOL
         self.user32.GetGUIThreadInfo.argtypes = [wintypes.DWORD, ctypes.POINTER(GuiThreadInfo)]
-        self.user32.SendInput.restype = wintypes.UINT
-        self.user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(Input), ctypes.c_int]
         pid = wintypes.DWORD()
         thread = self.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         info = GuiThreadInfo()
@@ -314,17 +308,39 @@ class OwnedFileDialogs:
             raise ctypes.WinError(ctypes.get_last_error())
         assert pid.value == self.native.pid
         assert self.user32.GetForegroundWindow() == hwnd and info.hwndActive == hwnd, (
-            'Escape refused: verified dialog is not foreground/active')
+            'Verified file dialog is not foreground/active')
         assert info.hwndFocus and self.native.process(info.hwndFocus) == self.native.pid
         assert info.hwndFocus == hwnd or self.user32.IsChild(hwnd, info.hwndFocus), (
-            'Escape refused: keyboard focus left the verified dialog')
-        keys = (Input * 2)()
-        keys[0].type = keys[1].type = 1  # INPUT_KEYBOARD
-        keys[0].ki.wVk = keys[1].ki.wVk = 0x1B  # VK_ESCAPE
-        keys[1].ki.dwFlags = 0x0002  # KEYEVENTF_KEYUP
-        if self.user32.SendInput(2, keys, ctypes.sizeof(Input)) != 2:
-            raise ctypes.WinError(ctypes.get_last_error())
+            'Keyboard focus left the verified dialog')
         return int(info.hwndFocus)
+
+    def send_keys(self, hwnd, focus, events):
+        Input = windows_input_type()
+        keys = (Input * len(events))()
+        for key,(vk,scan,flags) in zip(keys,events):
+            key.type = 1
+            key.ki.wVk, key.ki.wScan, key.ki.dwFlags = vk,scan,flags
+        self.user32.SendInput.restype = wintypes.UINT
+        self.user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(Input), ctypes.c_int]
+        assert self.focused_control(hwnd) == focus, 'Keyboard focus changed before native input'
+        if self.user32.SendInput(len(keys), keys, ctypes.sizeof(Input)) != len(keys):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def escape(self, hwnd):
+        focus = self.focused_control(hwnd)
+        self.send_keys(hwnd,focus,[(0x1B,0,0),(0x1B,0,2)])
+        return focus
+
+    def type_save_path(self, hwnd, edit, path):
+        # Focus the verified Edit through the dialog manager, then select the
+        # entire suggested name, including its extension if visible.
+        self.message(hwnd,0x0028,edit,1)  # WM_NEXTDLGCTL
+        assert self.focused_control(hwnd) == edit
+        self.message(edit,0x00B1,0,-1)  # EM_SETSEL
+        utf16 = path.encode('utf-16-le')
+        events = [(0, int.from_bytes(utf16[i:i+2],'little'), flags)
+                  for i in range(0,len(utf16),2) for flags in (4,6)]  # KEYEVENTF_UNICODE + KEYUP
+        self.send_keys(hwnd,edit,events)
 
     def title(self, hwnd):
         text = ctypes.create_unicode_buffer(512)
@@ -412,16 +428,30 @@ class OwnedFileDialogs:
         facts, _ = self.inspect(hwnd, title, screenshot)
         controls = self.rename_save_controls if action == 'save-rename-backup' else self.backup_open_controls
         edit, opened = controls(hwnd, facts)
-        text = ctypes.create_unicode_buffer(str(source))
-        assert self.message(edit, 0x000C, 0, ctypes.addressof(text)), 'WM_SETTEXT refused the selected file path'
-        readback = ctypes.create_unicode_buffer(len(str(source)) + 2)
-        self.message(edit, 0x000D, len(readback), ctypes.addressof(readback))  # WM_GETTEXT, cross-process
-        assert readback.value == str(source), 'Verified file-name edit did not retain the selected file path'
+        is_save = action == 'save-rename-backup'
+        # Quoted, explicit filename prevents the Save dialog appending a hidden extension.
+        entered = '"'+str(source)+'"' if is_save else str(source)
+        if is_save:
+            self.type_save_path(hwnd,edit,entered)
+        else:
+            text = ctypes.create_unicode_buffer(entered)
+            assert self.message(edit, 0x000C, 0, ctypes.addressof(text)), 'WM_SETTEXT refused the selected file path'
+        readback = ctypes.create_unicode_buffer(len(entered.encode('utf-16-le'))//2 + 2)
+        deadline = time.monotonic() + 5
+        while True:
+            self.message(edit, 0x000D, len(readback), ctypes.addressof(readback))
+            if readback.value == entered:
+                break
+            assert time.monotonic() < deadline, 'Verified file-name edit did not retain the selected file path'
+            time.sleep(.03)
         self.verify_window(hwnd, owner, title)
         assert controls(hwnd, facts) == (edit, opened)
-        self.message(opened, 0x00F5)  # BM_CLICK only on the verified file dialog’s IDOK
+        if is_save:
+            self.send_keys(hwnd,edit,[(0x0D,0,0),(0x0D,0,2)])  # VK_RETURN on verified filename field
+        else:
+            self.message(opened, 0x00F5)  # BM_CLICK verified Open IDOK
         fact = {'action': action, 'controlId': 1, 'fileNameControlId': self.user32.GetDlgCtrlID(edit),
-                'fileNameClass': 'Edit', 'delivery': 'WM_SETTEXT + BM_CLICK verified IDOK'}
+                'fileNameClass': 'Edit', 'delivery': 'SendInput Unicode + Enter' if is_save else 'WM_SETTEXT + BM_CLICK verified IDOK'}
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if not self.user32.IsWindowVisible(hwnd) and self.user32.IsWindowEnabled(owner):
