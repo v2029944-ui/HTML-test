@@ -93,6 +93,22 @@ class RecoveryCopyTests(unittest.TestCase):
             restore.recover_copy(self.source,self.destination)
         self.assertFalse(self.destination.exists())
 
+    def test_reports_without_parent_are_refused(self):
+        self.live.executescript("""
+            CREATE TABLE report_rows(
+                report_id TEXT NOT NULL, row_index INTEGER NOT NULL,
+                PRIMARY KEY(report_id, row_index)
+            ) WITHOUT ROWID;
+            INSERT INTO report_rows VALUES('r1', 0);
+            INSERT INTO report_rows VALUES('missing-report', 0);
+        """)
+        self.assertEqual(self.live.execute('PRAGMA quick_check').fetchall(), [('ok',)])
+        self.assertEqual(self.live.execute('PRAGMA foreign_key_check').fetchall(), [])
+        with self.assertRaisesRegex(ValueError, 'report_rows'):
+            restore.recover_copy(self.source, self.destination)
+        self.assertFalse(self.destination.exists())
+        self.assertEqual(self.live.execute('SELECT COUNT(*) FROM report_rows').fetchone()[0], 2)
+
     def test_publish_failure_cleans_staging_and_leaves_source(self):
         with patch.object(restore.os,'link',side_effect=OSError('hard link unavailable')):
             with self.assertRaises(OSError):

@@ -24,10 +24,18 @@ def _healthy(conn: sqlite3.Connection) -> None:
     if rows != [('ok',)]:
         raise ValueError('SQLite integrity check failed: ' + repr(rows[:4]))
     names = {name for (name,) in conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('reports','kv')"
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name IN ('reports','kv','report_rows')"
     )}
-    if names != {'reports', 'kv'}:
+    if not {'reports', 'kv'} <= names:
         raise ValueError('Not an Analiz rabot database: reports/kv tables are required')
+    if 'report_rows' in names and conn.execute("""
+        SELECT EXISTS(
+            SELECT 1 FROM report_rows AS derived GROUP BY derived.report_id
+            HAVING NOT EXISTS(SELECT 1 FROM reports WHERE reports.id=derived.report_id)
+        )
+    """).fetchone()[0]:
+        raise ValueError('Rows in report_rows have no parent report')
     # Validate one report at a time, never the entire report history in memory.
     for (raw,) in conn.execute('SELECT json FROM reports'):
         if not isinstance(json.loads(raw), dict):

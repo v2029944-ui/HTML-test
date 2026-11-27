@@ -30,6 +30,16 @@ fn validate_backup(live_database: &Path, source: &Path) -> Result<PathBuf, Strin
 }
 
 pub(super) fn check_snapshot(path: &Path) -> Result<RestorePreview, String> {
+    read_snapshot(path, true)
+}
+
+// An original and its safety copy must remain available as rollback artifacts,
+// even when a bad derived index prompted the user to restore a healthy copy.
+pub(super) fn check_original_snapshot(path: &Path) -> Result<RestorePreview, String> {
+    read_snapshot(path, false)
+}
+
+fn read_snapshot(path: &Path, check_report_row_links: bool) -> Result<RestorePreview, String> {
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(err)?;
     // Keep integrity, schema, and every table in the same read snapshot. A
     // backup may have WAL writers while the user inspects it.
@@ -111,6 +121,21 @@ pub(super) fn check_snapshot(path: &Path) -> Result<RestorePreview, String> {
     drop(table_rows);
     drop(names);
     for table in table_names {
+        if check_report_row_links && table.eq_ignore_ascii_case("report_rows") {
+            // report_rows is derived and has no declared foreign key. Group on
+            // its primary key prefix so the parent lookup runs once per report.
+            let has_orphans: bool = conn.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM report_rows AS derived GROUP BY derived.report_id
+                    HAVING NOT EXISTS(SELECT 1 FROM reports WHERE reports.id=derived.report_id)
+                )",
+                [],
+                |row| row.get(0),
+            ).map_err(err)?;
+            if has_orphans {
+                return Err("В резервной копии есть строки report_rows без исходного отчёта.".into());
+            }
+        }
         hasher.update(b"\0additional-table\0");
         hasher.update((table.len() as u64).to_le_bytes());
         hasher.update(table.as_bytes());
@@ -354,6 +379,44 @@ mod tests {
         assert!(live.restore_preview(&source).unwrap_err().contains("JSON"));
         assert_eq!(live.load().unwrap(), sample());
     }
+    #[test]
+    fn restore_rejects_indexed_rows_without_a_parent_report() {
+        let dir = tempdir().unwrap();
+        let live = Storage::new(dir.path().join("live")).unwrap();
+        live.save(sample()).unwrap();
+        let source = dir.path().join("backup.sqlite3");
+        live.backup_sqlite_verified(&source).unwrap();
+        let writer = Connection::open(&source).unwrap();
+        let linked_rows: i64 = writer.query_row(
+            "SELECT count(*) FROM report_rows WHERE report_id='restore-a'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(linked_rows, 1);
+        let preview = live.restore_preview(&source).unwrap();
+        writer.execute(
+            "INSERT INTO report_rows VALUES('missing-report',0,'СМУ16','Ремонт',2,NULL)",
+            [],
+        ).unwrap();
+        let integrity: String = writer.query_row("PRAGMA integrity_check", [], |r| r.get(0)).unwrap();
+        assert_eq!(integrity, "ok");
+        let mut foreign_keys = writer.prepare("PRAGMA foreign_key_check").unwrap();
+        assert!(foreign_keys.query([]).unwrap().next().unwrap().is_none());
+        drop(foreign_keys);
+        drop(writer);
+
+        let problem = live.restore_preview(&source).unwrap_err();
+        assert!(problem.contains("report_rows") && problem.contains("без исходного отчёта"));
+        let destination = dir.path().join("orphaned.sqlite3");
+        assert_eq!(
+            live.restore_verified_copy(&source, &preview.verification, &destination).unwrap_err(),
+            problem,
+        );
+        assert!(!destination.exists());
+        assert_eq!(live.load().unwrap(), sample());
+        let source = Connection::open_with_flags(&source, OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let indexed_rows: i64 = source.query_row("SELECT count(*) FROM report_rows", [], |r| r.get(0)).unwrap();
+        assert_eq!(indexed_rows, 2);
+    }
+
     #[test]
     fn restore_rejects_invalid_sources_and_stale_review() {
         let dir = tempdir().unwrap();
