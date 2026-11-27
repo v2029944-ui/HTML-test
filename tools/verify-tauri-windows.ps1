@@ -28,9 +28,9 @@ try {
   }
 
   $sourceHtmlHash = (Get-FileHash 'index.html' -Algorithm SHA256).Hash
-  Invoke-Checked 'npm.cmd' @('install', '--prefix', 'tauri', '--no-audit', '--no-fund')
+  Invoke-Checked 'npm.cmd' @('ci', '--prefix', 'tauri', '--no-audit', '--no-fund', '--include=optional')
 
-  $nodeTests = @(Get-ChildItem -Path 'tauri/tests/*.test.cjs', 'tests/*.cjs' -File |
+  $nodeTests = @(Get-ChildItem -Path 'tauri/tests/*.test.cjs', 'tests/test_*.cjs', '.github/scripts/pr-safety.test.cjs' -File |
     Sort-Object -Property FullName | ForEach-Object { $_.FullName })
   if ($nodeTests.Count -eq 0) { throw 'No Node.js test files were found.' }
   Invoke-Checked 'node.exe' (@('--test') + $nodeTests)
@@ -41,17 +41,19 @@ try {
     throw 'Preparing Tauri unexpectedly modified the standalone index.html.'
   }
   $preparedHtml = Get-Content 'tauri/web/index.html' -Raw -Encoding UTF8
-  if (-not ($preparedHtml.Contains('tauri-folder-importer.js') -and
+  if (-not ($preparedHtml.Contains('tauri-unified-app.js') -and
+             $preparedHtml.Contains('tauri-reference-desktop.js') -and
              $preparedHtml.Contains('tauri-bridge.js') -and
              $preparedHtml.Contains('tauri-updates.js'))) {
     throw 'Prepared Tauri frontend is missing a required script.'
   }
 
-  Invoke-Checked 'cargo.exe' @('test', '--manifest-path', 'tauri/src-tauri/Cargo.toml')
+  Invoke-Checked 'cargo.exe' @('test', '--locked', '--manifest-path', 'tauri/src-tauri/Cargo.toml')
   Invoke-Checked 'cargo.exe' @('test', '--locked', '--manifest-path', 'tauri/import-core/Cargo.toml')
+  Invoke-Checked 'cargo.exe' @('test', '--locked', '--manifest-path', 'tauri/storage-core/Cargo.toml')
 
   if ($BuildInstaller) {
-    Invoke-Checked 'npm.cmd' @('--prefix', 'tauri', 'run', 'build:windows')
+    Invoke-Checked 'npm.cmd' @('--prefix', 'tauri', 'run', 'build:windows', '--', '--', '--locked')
     $nsisFolder = 'tauri/src-tauri/target/release/bundle/nsis'
     $installers = @(Get-ChildItem -Path $nsisFolder -Filter '*.exe' -File -ErrorAction SilentlyContinue)
     if ($installers.Count -ne 1) {
@@ -62,7 +64,7 @@ try {
     Write-Host ('SHA256: ' + (Get-FileHash $setup.FullName -Algorithm SHA256).Hash)
   }
 
-  Write-Host 'PASS: Node.js tests, Tauri frontend parity, SQLite Rust tests, native XLSX tests.'
+  Write-Host 'PASS: Node.js tests, Tauri frontend preparation, unchanged standalone HTML, Rust app/import/storage tests.'
   if ($BuildInstaller) {
     Write-Host 'PASS: unsigned local installer built. Windows GUI and user data are NOT tested.'
   } else {

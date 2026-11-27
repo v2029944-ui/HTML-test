@@ -54,10 +54,18 @@ Excel, база отчётов и настройки не отправляютс
 Сборка Tauri и Windows-проверка описаны в [tauri/README.md](tauri/README.md). Для текущих исходников предусмотрены:
 
 ```text
-node --test tauri/tests/*.test.cjs tests/*.cjs
-python -m unittest discover -s tests -v
-cargo test --manifest-path tauri/src-tauri/Cargo.toml
+node --test tauri/tests/*.test.cjs tests/test_*.cjs .github/scripts/pr-safety.test.cjs
+npm --prefix tauri run prepare:frontend
+python -m unittest discover -s tests -p test_sqlite_restore_copy.py -v
+python -m unittest discover -s tauri/tests -p 'test_reference_*.py' -v
+cargo test --locked --manifest-path tauri/src-tauri/Cargo.toml
+cargo test --locked --manifest-path tauri/import-core/Cargo.toml
+cargo test --locked --manifest-path tauri/storage-core/Cargo.toml
 ```
+
+Для Node используется Node.js 24. Шаблон `tests/test_*.cjs` выбирает тесты; файлы `native_*_golden.cjs` — вспомогательные программы, ожидающие JSON из stdin, и не предназначены для `node --test`. Подготовка интерфейса создаёт `tauri/web/`; изменять нужно исходники, а не файлы этого каталога.
+
+Полный браузерный набор запускается отдельно командой `python -m unittest discover -s tests -v` в окружении с Playwright и Chromium; часть тестов ожидает `/usr/bin/chromium`. Тесты `test_reference_*.py` проверяют вспомогательную логику Windows GUI-проверки, а само установленное приложение проверяется в Windows с WebView2. [Локальный Windows-скрипт и границы проверок](docs/WINDOWS_RUNNER.md).
 
 Для архитектурного ревью Rust можно запускать [deslop-please](https://github.com/deterministic-machines/deslop-please). Установите версию `0.1.4` и компоненты `rust-analyzer` и `rust-src` активного toolchain. Для проверенной конфигурации использован Rust `1.99.0`.
 
@@ -77,7 +85,7 @@ npm --prefix tauri run prepare:frontend
 
 Подписанная 1.12.9 проверена на синтетических книгах и изолированных базах. Проверки включали Windows/WebView2, импорт Excel, SQLite и обмен двух установленных клиентов через SMB. [Windows CI](https://github.com/v2029944-ui/HTML-test/actions/runs/45881801029) · [Подписанная сборка](https://github.com/v2029944-ui/HTML-test/actions/runs/45897258936).
 
-Корневой [index.html](index.html) используется при подготовке интерфейса Tauri. Поддержка автономного запуска в браузере завершена.
+Корневой [index.html](index.html) используется при подготовке интерфейса Tauri и сохраняет самостоятельный запуск в браузере. Основная платформа разработки — Windows Tauri; сохранение автономного HTML закреплено в [AGENTS.md](AGENTS.md).
 
 Браузерные тесты требуют Playwright и Chromium, Rust-тесты — Rust toolchain. Windows GUI-тест работает на Windows runner и проверяет установленную тестовую сборку с WebView2.
 
