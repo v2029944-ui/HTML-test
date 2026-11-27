@@ -359,6 +359,21 @@ class BackupOpenControlsTests(unittest.TestCase):
         self.assertEqual([call.args[1] for call in self.dialog.message.call_args_list],
                          [0x000C, 0x000D, 0x00F5])
 
+    def test_rename_save_targets_only_a_new_file_in_the_empty_test_directory(self):
+        self.dialog.verify_window = Mock()
+        self.dialog.native.window_class.side_effect = lambda hwnd: '#32770'
+        self.dialog._select_verified_path = Mock()
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = Path(scratch)
+            destination = self.dialog.save_rename_backup(101, 100, directory, None)
+            self.assertEqual(destination, directory/'before-rename.sqlite3')
+            self.dialog._select_verified_path.assert_called_once_with(
+                101, 100, 'Сохранить резервную копию SQLite', destination, None, 'save-rename-backup')
+            destination.touch()
+            with self.assertRaises(AssertionError):
+                self.dialog.save_rename_backup(101, 100, directory, None)
+            self.assertEqual(self.dialog._select_verified_path.call_count, 1)
+
     def test_save_dialog_cannot_be_accepted_by_preview_helper(self):
         self.dialog.message = Mock()
         with self.assertRaisesRegex(AssertionError, 'Only a read-only preview Open'):
