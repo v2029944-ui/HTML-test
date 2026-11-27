@@ -1384,3 +1384,7 @@ body:has(#refRoot)>footer {display:none}
 #s1 .data-card tfoot td {font-weight:700;border-top:1px solid var(--border)}
 #s1 .leader-directions {display:flex;gap:4px}
 #s1 .leader-directions [aria-pressed="true"] {background:var(--selected-bg);border-color:var(--selected-border);color:var(--text)}
+
+:is(#s1,#s2) .quality-counters {display:flex;align-items:center;flex-wrap:wrap;gap:3px 12px}
+:is(#s1,#s2) .quality-details:not([hidden]) {display:block;margin-block-start:6px}
+:is(#s1,#s2) .quality-info {min-height:28px;min-width:28px;padding:0;border:1px solid currentColor;border-radius:50%;color:inherit;background:transparent;font:inherit;cursor:pointer}
