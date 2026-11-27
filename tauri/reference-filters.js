@@ -457,7 +457,7 @@ function initPlacement(){
  }
  function display(value){
   const layout=value==='side'?'side':'top';
-  placement.value=layout;
+  placement.checked=layout==='side';
   root.dataset.filterPlacement=layout;
   releaseSpace();
   syncSidebar();
@@ -467,8 +467,9 @@ function initPlacement(){
  fold.open=!matchMedia('(max-width:680px)').matches;
  display(initial);
  placement.onchange=()=>{
-  display(placement.value);
-  try{window.localStorage.setItem(layoutKey,placement.value);}
+  const layout=placement.checked?'side':'top';
+  display(layout);
+  try{window.localStorage.setItem(layoutKey,layout);}
   catch{UI.notice('Расположение фильтра изменено на этот сеанс. Сохранить настройку на устройстве не удалось.');}
  };
  summary.addEventListener('click',keepFilterSpace);

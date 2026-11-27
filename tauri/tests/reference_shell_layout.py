@@ -68,7 +68,7 @@ def check_filter_placement(page, record):
     size = page.locator('#appearanceSize')
     fold = page.locator('#reportShell .filter-fold')
     trigger = fold.locator(':scope > summary')
-    previous_size, previous_placement = size.input_value(), placement.input_value()
+    previous_size, previous_placement = size.input_value(), ('side' if placement.is_checked() else 'top')
     previous_open = fold.evaluate('el => el.open')
     content = fold.locator('.filter-content')
     sidebar = page.locator('#reportShell')
@@ -86,12 +86,13 @@ def check_filter_placement(page, record):
         expect(settings).to_be_visible()
         expect(sidebar).to_be_hidden()
         if scale is not None:
-            size.focus()
-            size.select_option(scale)
-            expect(size).to_be_focused()
+            choice = page.locator(f'input[name="appearanceSizeChoice"][value="{scale}"]')
+            choice.focus()
+            choice.check()
+            expect(choice).to_be_focused()
             expect(page.locator('#refRoot')).to_have_attribute('data-ui-size',scale)
         if mode is not None:
-            placement.select_option(mode)
+            placement.set_checked(mode == "side")
         back.click()
         expect(fold).to_be_visible()
         page.evaluate(settle)
@@ -190,7 +191,7 @@ def check_filter_placement(page, record):
         page.set_viewport_size({'width':720,'height':650})
         page.evaluate(settle)
         assert not page.evaluate('window.referenceFilters.atSide()')
-        assert placement.input_value() == 'side'
+        assert placement.is_checked()
         assert page.evaluate('JSON.stringify(window.referenceFilters.scope)') == scope
     finally:
         appearance(mode=previous_placement, scale=previous_size)
