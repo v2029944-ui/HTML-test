@@ -2,13 +2,13 @@
 
 Основная платформа — Windows x64, Tauri 2 и системный WebView2. Личные данные хранятся в SQLite в папке «Документы/Анализ работ». При подключении к общей папке компьютеры обмениваются проверенными снимками отчётов. Корневой [`index.html`](../index.html) используется при подготовке интерфейса Tauri.
 
-## Выпуск 1.12.10 для Windows x64
+## Выпуск 1.12.11 для Windows x64
 
-[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.10/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.10/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.12.10](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.12.10)
+[Скачать установщик](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.11/Analiz-rabot-Tauri-Windows-x64-setup.exe) · [Подпись](https://github.com/v2029944-ui/HTML-test/releases/download/tauri-v1.12.11/Analiz-rabot-Tauri-Windows-x64-setup.exe.sig) · [Изменения в версии 1.12.11](https://github.com/v2029944-ui/HTML-test/releases/tag/tauri-v1.12.11)
 
-Перед обновлением сохраните резервную копию SQLite в настройках установленной версии. Если у сотрудников общая база, обновите приложение на каждом компьютере. Обновление до 1.12.10 доступно через «Настройки → Проверить обновления». [План разработки и оставшиеся задачи](https://github.com/v2029944-ui/HTML-test/issues/79).
+Перед обновлением сохраните резервную копию SQLite в настройках установленной версии. Если у сотрудников общая база, обновите приложение на каждом компьютере. Обновление до 1.12.11 доступно через «Настройки → Проверить обновления». [План разработки и оставшиеся задачи](https://github.com/v2029944-ui/HTML-test/issues/79).
 
-В 1.12.10 появились вложенные группы работ, настраиваемое окно истории для анализа частоты и график динамики внутри одного года. SQLite читает меньше данных для сводки и динамики подразделений. [Полное описание изменений](release-notes/1.12.10.md).
+В 1.12.11 ускорено раскрытие групп работ и увеличены лимиты их импорта. В сводке и общих итогах по нескольким работам среднее рассчитывается по строкам, где указаны и сумма, и количество. Шапка приложения остаётся на экране при прокрутке. [Полное описание изменений](release-notes/1.12.11.md).
 
 ## Общая база сотрудников
 
@@ -74,6 +74,6 @@ npm --prefix tauri run build:windows -- -- --locked
 - Workflow [`Tauri signed Windows release`](../.github/workflows/tauri-signed-release.yml) сначала проверяет ключи без публикации; новый релиз требует отдельного ручного `workflow_dispatch`, новой версии, заметок и успешного Windows CI точного SHA. [Инструкция](../docs/SIGNED_UPDATES.md).
 - Используйте отдельный уникальный тег для каждого выпуска. [Порядок выпуска](../docs/RELEASE_POLICY.md).
 
-## Проверка версии 1.12.10
+## Проверка версии 1.12.11
 
-[Windows CI на коммите выпуска](https://github.com/v2029944-ui/HTML-test/actions/runs/45964278146) и [подписанный релизный workflow](https://github.com/v2029944-ui/HTML-test/actions/runs/45971710837) проверили установленное приложение с WebView2, импорт синтетического Excel, SQLite и обмен через Windows SMB. Рабочие книги и сетевой сервер пользователей требуют отдельной приёмки. [Открытые задачи](https://github.com/v2029944-ui/HTML-test/issues/79) · [Все выпуски](https://github.com/v2029944-ui/HTML-test/releases).
+[Windows CI на коммите выпуска](https://github.com/v2029944-ui/HTML-test/actions/runs/46034074748) и [подписанный релизный workflow](https://github.com/v2029944-ui/HTML-test/actions/runs/46041121674) проверили установленное приложение с WebView2, импорт синтетического Excel, SQLite и обмен через Windows SMB. Рабочие книги и сетевой сервер пользователей требуют отдельной приёмки. [Открытые задачи](https://github.com/v2029944-ui/HTML-test/issues/79) · [Все выпуски](https://github.com/v2029944-ui/HTML-test/releases).
