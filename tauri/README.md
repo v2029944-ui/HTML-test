@@ -53,15 +53,19 @@
 Для сборки нужны Windows 10/11 x64, WebView2, Node.js 24, Rust и Microsoft C++ Build Tools. Выполните из корня репозитория:
 
 ```powershell
-npm install --prefix tauri
-node --test tauri/tests/*.test.cjs tests/test_*.cjs
+npm ci --prefix tauri --no-audit --no-fund --include=optional
+node --test tauri/tests/*.test.cjs tests/test_*.cjs .github/scripts/pr-safety.test.cjs
 npm --prefix tauri run prepare:frontend
 npm --prefix tauri run icons
-cargo test --manifest-path tauri/src-tauri/Cargo.toml
-npm --prefix tauri run build:windows
+cargo test --locked --manifest-path tauri/src-tauri/Cargo.toml
+cargo test --locked --manifest-path tauri/import-core/Cargo.toml
+cargo test --locked --manifest-path tauri/storage-core/Cargo.toml
+npm --prefix tauri run build:windows -- -- --locked
 ```
 
-Готовый NSIS-установщик появляется в `tauri/src-tauri/target/release/bundle/nsis/`. Команда `build:windows` создаёт локальную сборку без настройки публикации обновлений. Тесты папочного импорта находятся в `tests/test_folder_importer.cjs`; устаревшие Electron-тесты исключены.
+Эти этапы также выполняет [tools/verify-tauri-windows.ps1](../tools/verify-tauri-windows.ps1) с параметром `-BuildInstaller`. Шаблон `tests/test_*.cjs` исключает вспомогательные `native_*_golden.cjs`, которые читают JSON из stdin. `tauri/web/` генерируется из корневого HTML и desktop-модулей, поэтому его не редактируют вручную. Самостоятельность корневого HTML сохраняется согласно [AGENTS.md](../AGENTS.md).
+
+Готовый NSIS-установщик появляется в `tauri/src-tauri/target/release/bundle/nsis/`. Команда `build:windows` создаёт локальную сборку без настройки публикации обновлений. Тесты папочного импорта находятся в `tests/test_folder_importer.cjs`; устаревшие Electron-тесты исключены. Локальный скрипт не запускает установленное приложение, WebView2 и два клиента через SMB — эти проверки выполняет [Windows CI](../.github/workflows/tauri-windows.yml). [Требования к окружению и подробности](../docs/WINDOWS_RUNNER.md).
 
 ### Подписанные обновления
 
