@@ -231,7 +231,7 @@ function init(){
  }
  function moveControl(row,expected,sourceGroup,compact=false){
   const box=el('div',null,'group-member');
-  const pick=button('Перенести…',async()=>{
+  const pick=button('Переместить',async()=>{
    if(!valid(expected))return;
    let moved=false;
    await guard(async()=>{
@@ -310,7 +310,7 @@ function init(){
  }
  function renderGroupRow(root,group,expected,hierarchy,depth=0){
   const details=el('details',null,'group-details'),summary=el('summary',group.name);
-  const actions=el('div',null,'actions'),memberRoot=el('div',null,'group-members');
+  const actions=el('div',null,'actions group-heading-actions'),memberRoot=el('div',null,'group-members');
   details.dataset.groupId=group.id;details.dataset.groupHandle=group.handle;
   function acceptsWork(){
    return !busy&&valid(expected)&&draggedWork?.revision===expected&&draggedWork.generation===U.generation&&
@@ -434,14 +434,6 @@ function init(){
   const overlap=sticky.getBoundingClientRect().bottom+8-target.getBoundingClientRect().top;
   if(overlap>0)window.scrollBy(0,-overlap);
  }
- $('groupSectionLinks')?.addEventListener('click',event=>{
-  const link=event.target.closest('a');
-  if(!link||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
-  event.preventDefault();
-  const target=$(link.hash.slice(1));
-  if(target.tagName==='DETAILS')target.open=true;
-  focusGroupSection(target.tagName==='DETAILS'?target.firstElementChild:target);
- });
  async function openAuditGroup(row,expected){
   if(!valid(expected)||busy)return;
   const groupNode=()=>Array.from(groups.root.querySelectorAll('details')).find(item=>item.dataset.groupHandle===row.group);
@@ -562,13 +554,24 @@ function init(){
    const node=el('tr',null,'catalog-row'),scope=el('td',null,'catalog-organization'),cell=el('td');
    node.append(el('td',row.name,'catalog-name'),scope,cell);body.append(node);
    const variants=row.variants||[],orgName=v=>v.organization||'Без подразделения';
-   scope.textContent=[...new Set(variants.map(orgName))].join(', ')+(row.members>variants.length?'…':'');
+   const departments=U.state.settings.orgNames;
+   const badges=el('div',null,'catalog-badges');
+   const names=new Set(variants.map(orgName));
+   for(const name of [...departments,...[...names].filter(name=>!departments.includes(name)).sort((a,b)=>a.localeCompare(b,'ru'))]){
+    if(!names.delete(name))continue;
+    const badge=el('span',name,'catalog-badge');
+    badge.dataset.department=String(departments.indexOf(name));
+    badges.append(badge);
+   }
+   if(row.members>variants.length)badges.append(el('span','…'));
+   scope.append(badges);
    function addAction(container,variant,disclosure,detailRow){
     const entry={...variant,name:row.name},action=catalogActions(entry,expected,orgName(entry));
     entries.push({row:entry,trigger:action.trigger,disclosure,detailRow});container.append(action.menu);
    }
    if(row.members===1&&variants.length===1){addAction(cell,variants[0]);continue;}
    const disclosure=el('details'),summary=el('summary','Записи ('+row.members+')'),list=el('div');
+   summary.className='catalog-records';
    const detailRow=el('tr'),detailCell=el('td');detailCell.colSpan=3;detailRow.hidden=true;
    detailCell.append(list);detailRow.append(detailCell);body.append(detailRow);
    disclosure.append(summary);cell.append(disclosure);services.set(row.name,summary);
@@ -677,7 +680,7 @@ function init(){
  function drawAuditToolbar(result,expected){
   const tools=el('div',null,'audit-tools'),states=el('div',null,'actions');
   const chooseState=(name,selected,count,run)=>{
-   const control=button(name+' ('+count+')',run);control.setAttribute('aria-pressed',String(selected));states.append(control);
+   const control=button(name+' ('+count+')',run);control.setAttribute('aria-pressed',String(selected));if(count===0&&!selected)control.className+=' audit-zero';states.append(control);
   };
   const mode=$('groupAuditMode'),counts=result.counts;
   if(counts){
@@ -703,7 +706,7 @@ function init(){
   assign.setAttribute('aria-haspopup','dialog');
   function updateSelection(){
    assign.disabled=busy||!auditSelected.size||!valid(expected);assign.dataset.needsSelection=String(!auditSelected.size);
-   status.textContent=auditSelected.size?'Выбрано работ: '+auditSelected.size:'Выберите хотя бы одну работу.';
+   status.textContent='Выбрано: '+auditSelected.size;
   }
   selection.append(assign,status);tools.append(states,selection);audit.root.append(tools);updateSelection();return updateSelection;
  }
@@ -751,7 +754,15 @@ function init(){
    })();
    if(save.isConnected&&valid(expected)&&ticket===audit.ticket)save.focus();
   });save.hidden=true;save.id='groupAuditExportCsv';audit.actions.append(save);
- }const coverage=result.coverage;$('groupAuditCoverage').textContent='Найдено: '+result.total+(coverage?' · '+(coverage.complete?'Полные данные':'Неполные данные')+' · Периодов: '+coverage.periods+' · Пропусков подразделение–период: '+coverage.missing+'. Пропуски не считаются нулём.':'');};
+  }
+ const coverage=result.coverage,summary=$('groupAuditCoverage');
+ summary.replaceChildren(el('span','Найдено: '+result.total));
+ if(coverage){
+  const label=el('span',coverage.complete?'Полные данные':'Неполные данные','audit-coverage-label');
+  if(!coverage.complete)label.title='Пропуски не считаются нулём.';
+  summary.append(label,el('span','Периодов: '+coverage.periods),el('span','Пропусков подразделение–период: '+coverage.missing));
+ }
+ };
  function auditRequest(){
   const range=U.range(U.scope.displayType,$('groupAuditFrom').value,$('groupAuditTo').value,U.scope.source);
   if(!range)throw Error('Укажите корректный диапазон проверки.');

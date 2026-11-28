@@ -45,7 +45,7 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     previous = api(page, 'list')['folder']
     navigate(page, 'upload')
     expect(page.locator('#unifiedUploadImport')).to_have_attribute('aria-pressed', 'true')
-    expect(page.locator('#uploadStep')).to_contain_text('Шаг 1')
+    expect(page.locator('#uploadStep [aria-current="step"]')).to_contain_text('Файл')
     expect(page.locator('#inspectFileHint')).to_have_text('Сначала выберите файл.')
     expect(page.locator('#uploadReviewCard')).to_be_hidden()
     expect(page.locator('#unifiedImportStatus')).to_be_empty()
@@ -71,7 +71,7 @@ def check_reference_import_flow(page, temporary, confirmations, output):
     expect(page.locator('#importWeek')).to_have_value(rule['start'])
     page.locator('#inspectFile').click()
     wait_for_text(page, '#unifiedImportStatus', 'Проверка завершена', 90_000)
-    expect(page.locator('#uploadStep')).to_contain_text('Шаг 4')
+    expect(page.locator('#uploadStep [aria-current="step"]')).to_contain_text('Сохранение')
     expect(page.locator('#saveImport')).to_have_text('Сохранить в личную базу')
     picker_counts = page.locator('#importPreview .kpi strong').all_text_contents()[:2]
     expect(page.locator('#importPreview')).to_contain_text('2031-01-08 — 2031-02-18')

@@ -57,11 +57,11 @@ function init(){
  reportPager.id='unifiedReportsPager';reportPageStatus.id='unifiedReportsPage';reportPageStatus.setAttribute('role','status');
  reportPager.append(reportPageStatus);$('reports').after(reportPager);
  const selectedReportIds=new Set(),selectionLimit=500;
- let reportSummary=null,deleteReportsBusy=false;
+ let reportSummary=null,deleteReportsBusy=false,updatePageSelection=null;
  const deleteSelected=button('Удалить выбранные…',()=>deleteReports({kind:'selected',ids:[...selectedReportIds]}));
  const deletePeriod=button('Удалить за период…',chooseDeletionPeriod);
  deleteSelected.id='unifiedDeleteSelectedReports';deletePeriod.id='unifiedDeletePeriodReports';
- for(const control of [deleteSelected,deletePeriod])control.className='button danger-button';
+ for(const control of [deleteSelected,deletePeriod])control.className='button danger-button report-delete-outline';
  deletePeriod.setAttribute('aria-haspopup','dialog');
  const selectionStatus=el('span','');selectionStatus.setAttribute('role','status');
  const hasBulkDeletion=Boolean(api.unifiedReportDeletionCount&&api.unifiedDeleteReports);
@@ -78,7 +78,8 @@ function init(){
    control.setAttribute('aria-busy',String(deleteReportsBusy));
    control.setAttribute('aria-disabled',String(deleteReportsBusy||control.disabled));
   }
-  selectionStatus.textContent=selectedReportIds.size?'Выбрано: '+selectedReportIds.size:'Выберите хотя бы один отчёт.';
+  selectionStatus.textContent='Выбрано: '+selectedReportIds.size;
+  updatePageSelection?.();
  }
  function setReportsHost(host){
   if(listPanel.parentElement===host)return;
@@ -176,7 +177,7 @@ function init(){
   });
   return action;
  }
- function reportCard(r,rev,{inTable=false,showOrganizations=false}={}){
+ function reportCard(r,rev,{inTable=false,showOrganizations=false,pageChecks}={}){
   const token=workspaceState()?.workspace_token,fromDatabases=inTable&&reportsInDatabases();
   const current=()=>UI.revision===rev&&workspaceReady()&&workspaceState()?.workspace_token===token&&
    (!fromDatabases||(reportsInDatabases()&&reportListActive()));
@@ -201,7 +202,7 @@ function init(){
     else{check.checked=false;UI.notice?.('Можно выбрать до '+selectionLimit+' отчётов. Для большего числа используйте удаление за период или очистку в разделе «Базы данных».');}
     syncDeletionActions();
    });
-   selectCell.append(check);card.append(selectCell);
+   selectCell.className='report-select';pageChecks.set(r.id,check);selectCell.append(check);card.append(selectCell);
   }
   if(showOrganizations){
    const list=el('ul',undefined,'calendar-source-organizations');
@@ -245,15 +246,17 @@ function init(){
     const link=qualityAction(r,'⚠ '+r.warnings+' '+word);link.className='report-warning-link';remarks.replaceChildren(link);
    }
    if(actions.children.length){
-    const menu=el('details'),trigger=el('summary','⋯');
-    trigger.setAttribute('aria-label','Действия отчёта '+period);menu.append(trigger,actions);menuCell.append(menu);
+    const menu=el('details',undefined,'report-row-menu'),trigger=el('summary','⋯');
+    trigger.setAttribute('aria-label','Действия отчёта '+period);trigger.title='Действия отчёта';menu.append(trigger,actions);menuCell.append(menu);
    }
-   card.append(periodCell,el('td',show(r.rows)),el('td',UI.fmt(r.amount,'amount')),remarks,menuCell);
+   remarks.className='report-number';
+   card.append(periodCell,el('td',show(r.rows),'report-number'),el('td',UI.fmt(r.amount,'amount'),'report-number'),remarks,menuCell);
   }
   return card;
  }
  async function loadReports(index=reportIndex){
   const rev=UI.revision,ticket=++reportTicket,root=$('reports'),token=workspaceState()?.workspace_token;
+  updatePageSelection=null;
   const current=()=>live(rev,ticket,reportTicket)&&workspaceReady()&&workspaceState()?.workspace_token===token;
   databaseLabel.hidden=!reportsInDatabases();
   databaseLabel.textContent=databaseScope().label;
@@ -268,15 +271,47 @@ function init(){
    if(!current())return;
    if(!Array.isArray(rows)||rows.length>LIMIT)throw Error('Некорректная страница отчётов');
    reportSummary=summary;syncDeletionActions();
-   $('reportCount').textContent=summary.reports+' периодов · '+summary.rows+' строк · Сумма: '+UI.fmt(summary.amount,'amount')+' (валюта не указана)';
+   $('reportCount').textContent=summary.reports+' периодов · '+summary.rows+' строк · Итого: '+UI.fmt(summary.amount,'amount');
    root.replaceChildren();
    const table=el('table',undefined,'saved-reports-table'),head=el('thead'),header=el('tr'),body=el('tbody');
-   for(const title of [...(hasBulkDeletion?['Выбор']:[]),'Период','Строки','Сумма','Замечания','Действия']){
-    const th=el('th',title);th.scope='col';header.append(th);
+   const pageChecks=new Map();
+   if(hasBulkDeletion){
+    const cell=el('th',undefined,'report-select'),check=el('input');
+    cell.scope='col';check.type='checkbox';
+    check.setAttribute('aria-label','Выбрать все отчёты на этой странице');
+    check.title='Выбрать все отчёты на этой странице';
+    cell.append(check);header.append(cell);
+    updatePageSelection=()=>{
+     let count=0;
+     for(const [id,input] of pageChecks){
+      input.checked=selectedReportIds.has(id);
+      if(input.checked)count++;
+     }
+     check.checked=pageChecks.size>0&&count===pageChecks.size;
+     check.indeterminate=count>0&&!check.checked;
+     check.disabled=deleteReportsBusy||!pageChecks.size;
+    };
+    check.addEventListener('change',()=>{
+     if(!current()||deleteReportsBusy){updatePageSelection?.();return;}
+     if(check.checked){
+      const additional=[...pageChecks.keys()].filter(id=>!selectedReportIds.has(id));
+      if(selectedReportIds.size+additional.length<=selectionLimit){
+       for(const id of additional)selectedReportIds.add(id);
+      }else UI.notice?.('Можно выбрать до '+selectionLimit+' отчётов.');
+     }else for(const id of pageChecks.keys())selectedReportIds.delete(id);
+     syncDeletionActions();
+    });
    }
-   head.append(header);table.append(el('caption','Валюта в данных отчётов не указана.'),head,body);
+   for(const title of ['Период','Строки','Сумма','Замечания','Действия']){
+    const th=el('th',title);th.scope='col';
+    if(['Строки','Сумма','Замечания'].includes(title))th.className='report-number';
+    if(title==='Сумма')th.title='Валюта в данных отчётов не указана.';
+    header.append(th);
+   }
+   head.append(header);table.append(head,body);
    if(rows.length)root.append(table);
-   for(const r of rows){body.append(reportCard(r,rev,{inTable:true}));if(kinds[r.report_type]&&validDate(r.start))savedQualityPeriods.add(r.report_type+':'+r.start);}
+   for(const r of rows){body.append(reportCard(r,rev,{inTable:true,pageChecks}));if(kinds[r.report_type]&&validDate(r.start))savedQualityPeriods.add(r.report_type+':'+r.start);}
+   updatePageSelection?.();
    if($('qualitySource').value!=='pending')syncQualityPeriods();
    if(!rows.length)root.append(el('p','Отчёты не найдены.'));
    reportIndex=index;reportPageStatus.textContent='';
@@ -564,8 +599,13 @@ function init(){
   acknowledgements.hidden=overlap.parentElement.hidden&&quality.parentElement.hidden;
  }
  const importStatus=el('p',undefined,'muted small');importStatus.id='unifiedImportStatus';importStatus.setAttribute('aria-live','polite');$('importPreview').before(importStatus);
- const stepLabel=el('p',undefined,'upload-step');
- stepLabel.id='uploadStep';stepLabel.setAttribute('role','status');
+ const stepLabel=el('ol',undefined,'upload-step');
+ stepLabel.id='uploadStep';stepLabel.setAttribute('aria-label','Шаги загрузки Excel');
+ for(const [index,label] of ['Файл','Структура и лист','Проверка','Сохранение'].entries()){
+  const item=el('li'),number=el('span',String(index+1));
+  number.setAttribute('aria-hidden','true');
+  item.append(number,el('span',label));stepLabel.append(item);
+ }
  const inspectHint=el('p',undefined,'muted small');inspectHint.id='inspectFileHint';
  const layoutCards=el('div',undefined,'upload-layout-cards');
  layoutCards.setAttribute('role','group');layoutCards.setAttribute('aria-label','Примеры структуры Excel');
@@ -581,8 +621,11 @@ function init(){
  }
  function updateImportStep(){
   const layout=$('importFormat').value;
-  stepLabel.textContent=!sourcePath?'Шаг 1 из 4 · Выберите файл Excel':!layout?'Шаг 2 из 4 · Выберите структуру и лист':
-   review?'Шаг 4 из 4 · Подтвердите сохранение':'Шаг 3 из 4 · Проверьте лист и параметры Excel';
+  const activeStep=!sourcePath?0:!layout?1:review?3:2;
+  Array.from(stepLabel.children).forEach((step,index)=>{
+   step.setAttribute('aria-current',index===activeStep?'step':'false');
+   step.dataset.complete=String(index<activeStep);
+  });
   inspectHint.textContent=!sourcePath?'Сначала выберите файл.':!layout?'Сначала выберите структуру Excel.':'';
   $('inspectFile').className='button '+(sourcePath&&layout&&!review?'primary':'secondary');
   const save=$('saveImport');
@@ -933,7 +976,7 @@ function init(){
   const book=el('p',undefined,'upload-selected-book');book.id='uploadSelectedBook';book.hidden=true;source.append(book);
   const inspect=$('inspectFile'),save=$('saveImport'),actions=inspect.parentElement;
   inspect.setAttribute('aria-describedby','inspectFileHint');
-  parameters.append(fileGrid,layoutCards,$('importDateEvidence'),$('dailyWideOptions'),$('ordinaryImportHint'),$('importAdvanced'),inspect,inspectHint,importStatus);
+  parameters.append(fileGrid,layoutCards,$('importDateEvidence'),$('dailyWideOptions'),$('ordinaryImportHint'),$('importAdvanced'),inspectHint,inspect,importStatus);
   result.append($('importPreview'),$('replaceExisting').parentElement,acknowledgements,save);
   actions.remove();layout.append(stepLabel,source,parameters,result);intro.after(layout);
  }

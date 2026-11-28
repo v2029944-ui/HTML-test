@@ -331,8 +331,8 @@ function buildUnified(source){
  }).join('\n');
  html=html.replace('</head>','<style>'+paletteCss+'</style></head>');
  const filterSetting='<label class="placement-setting"><span id="filterPlacementLabel">Закреплять фильтр слева</span>'+
-  '<input type="checkbox" role="switch" id="appearanceFilterPlacement" aria-labelledby="filterPlacementLabel" aria-describedby="filterPlacementHint"><span class="placement-value" aria-hidden="true"><span>Выкл</span><span>Вкл</span></span>'+
-  '<small class="muted" id="filterPlacementHint">В узком окне фильтр остаётся сверху.</small></label>';
+  '<input type="checkbox" role="switch" id="appearanceFilterPlacement" aria-labelledby="filterPlacementLabel" aria-describedby="filterPlacementHint">'+
+  '<small class="muted" id="filterPlacementHint">Включено: фильтр слева, если хватает места. Выключено: фильтр всегда сверху.</small></label>';
  const designLabel=/<label>Дизайн<select id="appearanceDesign">[\s\S]*?<\/select><\/label>/;
  if(!designLabel.test(html))throw Error('Missing desktop appearance settings');
  html=html.replace(designLabel,label=>label+filterSetting);
@@ -366,10 +366,6 @@ function buildUnified(source){
  if(!description)throw Error('Missing group exchange description');
  html=html.slice(0,exchangeStart)+'<details id="groupExchange"><summary>Обмен файлами</summary>'+
   '<div class="actions">'+commands+'</div>'+description[0]+'</details>'+html.slice(exchangeEnd+8).replace(description[0],'');
- const groupNav='<nav id="groupSectionLinks" aria-label="Разделы групп работ">'+
-  '<a href="#groupHeading">Группы</a><a href="#groupAuditPanel">Проверка названий</a>'+
-  '<a href="#groupCatalog">Справочник услуг</a></nav>';
- html=html.replace('<h2 id="groupHeading">Группы работ</h2>',groupNav+'<h2 id="groupHeading" tabindex="-1">Группы</h2>');
  // Mount the shared navigation and SQL forms once, retaining their inputs and listeners.
  const nativeStart=html.indexOf('<header class="topbar">');
  const nativeEnd=html.indexOf('<section id="printReport"');

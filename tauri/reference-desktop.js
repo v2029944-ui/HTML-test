@@ -148,7 +148,10 @@
     if (analyticsTabs.includes(key)) analyticsTab = key;
     const back = byId('backBtn');
     back.hidden = analyticsTabs.includes(key);
-    back.textContent = settingsReturn ? 'Вернуться в раздел «' + (sections[settingsReturn.panel] || (active === 's1' ? 'Сводка' : 'Анализ изменений')) + '»' : 'Назад';
+    const returnTitle = settingsReturn && (sections[settingsReturn.panel] || (active === 's1' ? 'Сводка' : 'Анализ изменений'));
+    back.textContent = returnTitle && (!settingsReturn.panel || analyticsTabs.includes(settingsReturn.panel)) ? '← К анализу' : 'Назад';
+    if (returnTitle) back.setAttribute('aria-label', 'Вернуться в раздел «' + returnTitle + '»');
+    else back.removeAttribute('aria-label');
     tools.hidden = false;
     byId('refNative').dataset.panel = key;
     const manage = management.includes(key);
@@ -267,7 +270,14 @@
     const currentStatus = byId('unifiedIndexStatus'), status = header.querySelector('.source-state');
     status.addEventListener('click', () => openPanel('databases', status));
     function statusChanged() {
-      status.firstElementChild.textContent = currentStatus.firstElementChild.textContent;
+      const full = currentStatus.firstElementChild.textContent;
+      status.title = full + ' · Открыть базы данных';
+      status.setAttribute('aria-label', status.title);
+      status.firstElementChild.textContent = full.replace(/^(Общая|Локальная) база SQLite\. Отчётов: (\d+)$/, (_, mode, count) => {
+        const form = new Intl.PluralRules('ru').select(Number(count));
+        return (mode === 'Общая' ? 'Общая' : 'Личная') + ' · ' + count + ' ' +
+          ({one:'отчёт',few:'отчёта',many:'отчётов',other:'отчёта'}[form]);
+      });
       const failed = !window.unifiedUI.snapshot && !currentStatus.lastElementChild.hidden;
       statusAction.hidden = currentStatus.children[1].hidden && !failed;
       statusAction.textContent = failed ? 'Повторить' : 'Остановить';

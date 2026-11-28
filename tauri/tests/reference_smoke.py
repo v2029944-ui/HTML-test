@@ -412,7 +412,15 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         importer = page.locator('#refImport')
         importer.click()
         panel('upload')
-        expect(importer).to_be_hidden()
+        assert page.evaluate("""() => {
+          const bounds = selector => document.querySelector(selector).getBoundingClientRect();
+          const status = bounds('#sharedHeader .source-state'), nav = bounds('#sharedHeader .main-nav');
+          const tools = bounds('#sharedHeader .head-tools'), upload = bounds('#refImport');
+          const settings = bounds('#refSettings');
+          return upload.width > 0 && settings.width > 0 && settings.right <= innerWidth &&
+            status.right <= upload.left + 1 &&
+            (nav.right <= tools.left + 1 || nav.top >= tools.bottom - 1);
+        }"""), 'Header status, navigation and actions overlap'
         expect(page.locator('#inspectFile')).to_be_disabled()
         expect(page.locator('#saveImport')).to_be_disabled()
         expect(page.locator('#excelFile')).to_be_attached()
@@ -661,7 +669,8 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         expect(page.get_by_role('heading', name='Настройки', level=1)).to_be_focused()
         expect(page.locator('#reportShell')).to_be_hidden()
         expect(page.locator('#s1')).to_be_hidden()
-        expect(page.locator('#backBtn')).to_have_text('Вернуться в раздел «Динамика»')
+        expect(page.locator('#backBtn')).to_have_text('← К анализу')
+        expect(page.locator('#backBtn')).to_have_accessible_name('Вернуться в раздел «Динамика»')
         page.locator('input[name="appearanceThemeChoice"][value="light"]').check()
         page.locator('input[name="appearanceSizeChoice"][value="125"]').check()
         update_notes = page.locator('#appUpdateWhatsNew')

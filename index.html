@@ -729,7 +729,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 
 .appearance-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:18px 0}.appearance-grid>label{min-width:0}
 .appearance-preview{padding:16px;border:1px dashed var(--field-border);border-radius:var(--radius-panel);background:var(--subtle)}.appearance-preview .preview-table{width:100%;min-width:0;margin:10px 0;table-layout:fixed}.preview-table :is(th,td){white-space:normal;overflow-wrap:anywhere}.preview-table :last-child:is(th,td){width:35%;text-align:right}.preview-table tbody tr{background:var(--selected)}
-.preview-examples{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.preview-examples .button{cursor:default}.preview-chart{height:2em;display:inline-flex;align-items:end;gap:4px}.preview-chart i{width:1em;height:50%;background:var(--plot-0)}.preview-chart i:nth-child(2){height:100%;background:var(--plot-1)}.preview-chart i:nth-child(3){height:70%;background:var(--plot-2)}
+.preview-examples{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.preview-chart{height:2em;display:inline-flex;align-items:end;gap:4px}.preview-chart i{width:1em;height:50%;background:var(--plot-0)}.preview-chart i:nth-child(2){height:100%;background:var(--plot-1)}.preview-chart i:nth-child(3){height:70%;background:var(--plot-2)}
 .appearance-preview>strong{font-size:13px}.appearance-preview p{margin-bottom:0}
 :root[data-design="compact"]{font-size:14px}
 :root[data-design="compact"] .container{padding-top:16px}
@@ -1757,7 +1757,7 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
         </div>
       </details>
       <details class="group-section" id="groupAuditPanel">
-        <summary>Проверка справочника и групп</summary>
+        <summary>Проверка названий</summary>
         <p class="muted small">Все уникальные названия из отчётов, справочника и существующих групп. Тип периода и подразделения для проверки выполнений задаются в аналитике. Они не ограничивают общий список названий или правила группировки.</p>
         <div class="extended-filters">
           <fieldset class="group-audit-dates"><legend>Период проверки выполнений</legend><div class="period-pair"><label>С периода<select id="groupAuditFrom"></select></label><label>До периода<select id="groupAuditTo"></select></label></div><span class="muted small" id="groupAuditScope"></span></fieldset>
@@ -1794,8 +1794,8 @@ h1,h2,h3,.brand strong,#structurePanel>summary{font-family:var(--font-heading)}
             <div class="appearance-grid"><label>Масштаб текста и элементов<select id="appearanceSize"><option value="standard">Стандартный (100%)</option><option value="large">Крупный (около 115%)</option><option value="xlarge">Очень крупный (около 130%)</option></select></label></div>
           </fieldset>
         </div>
-        <div class="appearance-preview"><strong>Предпросмотр оформления</strong><table class="preview-table"><thead><tr><th>Наименование работы</th><th>Количество</th></tr></thead><tbody><tr><td>Техническое обслуживание инженерных систем здания</td><td>24</td></tr></tbody></table>
-          <div class="preview-examples"><span class="button primary">Рассчитать</span><span class="preview-chart" role="img" aria-label="Пример графика в цветах палитры"><i></i><i></i><i></i></span></div>
+        <div class="appearance-preview"><strong>Образец оформления</strong><table class="preview-table"><thead><tr><th>Наименование работы</th><th>Количество</th></tr></thead><tbody><tr><td>Техническое обслуживание инженерных систем здания</td><td>24</td></tr></tbody></table>
+          <div class="preview-examples"><span class="preview-chart" role="img" aria-label="Пример графика в цветах палитры"><i></i><i></i><i></i></span></div>
           <p id="appearanceDescription" class="muted small" role="status" aria-live="polite"></p></div>
       </section>
       <div class="panel">
