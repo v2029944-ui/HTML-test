@@ -67,7 +67,7 @@ def check_control_layout(page):
             errors.push([cell.innerText,'help button below its column heading']);
         }
       }
-      const reportButtons = document.querySelector('#reports .calendar-source');
+      const reportButtons = document.querySelector('#reports tbody tr');
       if (visible(reportButtons)) {
         const actions = [...reportButtons.querySelectorAll('button')];
         const quality = actions.find(button => button.textContent === 'Контроль качества');

@@ -102,15 +102,16 @@ test('scheduled backup is opt-in and keeps the last success visible if a later w
   const toggle=f.node('scheduledBackupEnabled');
   assert.equal(toggle.checked,false);
   assert.equal(toggle.disabled,false);
-  assert.match(f.node('scheduledBackupStatus').textContent,/не создавалась/);
+  assert.match(f.node('scheduledBackupStatus').textContent,/Автокопирование выключено/);
   f.tick();
   assert.deepEqual(f.calls,[['daily',null]],'the timer must not request a backup while disabled');
 
   toggle.checked=true;
-  lastSuccess=completed;
   await toggle.change();
+  assert.match(f.node('scheduledBackupStatus').textContent,/Включено · первая копия ещё не создана/);
   assert.deepEqual(f.calls,[['daily',null],['daily',true]]);
-  assert.match(f.node('scheduledBackupStatus').textContent,/verified\.sqlite3/);
+  lastSuccess=completed;f.tick();await new Promise(resolve=>setImmediate(resolve));
+  assert.match(f.node('scheduledBackupStatus').textContent,/Последняя успешная копия — .*verified\.sqlite3/);
 
   error='Нет места на диске';
   f.tick();
@@ -123,4 +124,18 @@ test('scheduled backup is opt-in and keeps the last success visible if a later w
   await toggle.change();
   assert.equal(toggle.checked,false);
   assert.match(f.node('scheduledBackupStatus').textContent,/verified\.sqlite3/);
+});
+
+test('switching databases removes the preceding backup timestamp before the next read completes',async()=>{
+ let resolve;
+ const f=mount('personal',async()=>f.state.mode==='personal'
+   ?{enabled:true,lastSuccess:Date.UTC(2026,10,24),lastPath:'/personal.sqlite3'}
+   :new Promise(done=>{resolve=done;}));
+ await f.refresh();await new Promise(done=>setImmediate(done));
+ const status=f.node('scheduledBackupStatus');
+ assert.match(status.textContent,/personal.sqlite3/);
+ f.state.mode='shared';f.state.workspace_token='second';await f.refresh();
+ assert.doesNotMatch(status.textContent,/personal.sqlite3/);
+ resolve({enabled:false});await new Promise(done=>setImmediate(done));
+ assert.match(status.textContent,/Автокопирование выключено/);
 });

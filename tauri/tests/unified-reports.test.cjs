@@ -277,8 +277,11 @@ test('reports and their organizations request an arbitrary page directly and kee
  managementReportOrgWindow:async(rev,id,index,limit)=>{orgReads.push([rev,id,index,limit]);return {rows:Array.from({length:Math.min(limit,103-index*limit)},(_,i)=>[index*limit+i,'Орг '+(index*limit+i)]),total_rows:103};}});
  await ui.refresh();
  const root=ui.nodes.reports;
+ assert.equal(root.scrollWindow.controlsOnly,true);
+ assert.equal(root.children[0].tag,'table');
+ assert.match(text(root),/Валюта в данных отчётов не указана/);
  await root.scrollWindow.go(3);assert.equal(root.children.length,1);assert.equal(root.scrollWindow.total,151);assert.equal(root.scrollWindow.index,3);
- const details=root.children[0].querySelectorAll('*').find(n=>n.tag==='details');details.open=true;await details.fire('toggle');await flush();
+ const details=root.children[0].querySelectorAll('*').find(n=>n.tag==='details'&&n.children[0].textContent?.startsWith('Подразделения'));details.open=true;await details.fire('toggle');await flush();
  const list=details.children[1];await list.scrollWindow.go(2);assert.equal(list.children.length,3);assert.deepEqual(orgReads,[[1,'r150',0,50],[1,'r150',2,50]]);
  await root.scrollWindow.go(0);assert.deepEqual(calls.map(c=>c[2]),[0,3,0]);assert.ok(calls.every(c=>c[3]===50));
 });
@@ -395,23 +398,24 @@ test('database manager refuses unavailable shared workspace writes and preserves
   managementReportWindow:async()=>({rows:[row],total_rows:1}),
   managementReportSummary:async()=>({reports:1,rows:1,latest:row.start}),
   unifiedReportDeletionCount:async()=>1,
-  unifiedDeleteReports:async()=>({deleted:1}),
-  unifiedClearReports:async()=>{commands.push('clear');throw Error('Нет прав записи');}
+  unifiedDeleteReports:async()=>{commands.push('delete');throw Error('Нет прав записи');}
  });
  ui.UI.notice=message=>notices.push(message);
  ui.window.sharedWorkspace={state:{mode:'shared',workspace_token:'team',folder:'C:/Team',available:false,pending:false}};
  await ui.view('databases');
- const clear=ui.nodes.unifiedDeleteAllReports;
+ const clear=ui.nodes.unifiedDeleteSelectedReports;
  assert.equal(clear.disabled,true);
  await clear.click();
  assert.deepEqual(commands,[]);
  ui.window.sharedWorkspace.state={...ui.window.sharedWorkspace.state,available:true};
  await ui.view('databases');
- ui.window.confirm=message=>{assert.match(message,/все 1 отчёт.*общей базы/s);return true;};
+ const check=ui.nodes.reports.querySelectorAll('*').find(node=>node.type==='checkbox');
+ check.checked=true;await check.fire('change');
+ ui.window.confirm=message=>{assert.match(message,/1 отчёт.*общей базы/s);return true;};
  await clear.click();
- assert.deepEqual(commands,['clear']);
+ assert.deepEqual(commands,['delete']);
  assert.match(notices.at(-1),/Нет прав записи/);
- assert.match(text(ui.nodes.reports),/2024-01-01/);
+ assert.match(text(ui.nodes.reports),/1 января 2024/);
  assert.equal(ui.UI.revision,1);
 });
 
@@ -437,11 +441,9 @@ test('bulk deletion keeps its actions unavailable until a partially published re
  const removing=ui.nodes.unifiedDeleteSelectedReports.click();
  await flush();
  assert.ok(completeRefresh,'the updated list is visible while refresh listeners are still running');
- const period=ui.nodes.unifiedDeletePeriodReports,all=ui.nodes.unifiedDeleteAllReports;
- for(const control of [period,all]){
-  assert.equal(control.disabled,false,'the browser must keep focus during the operation');
-  assert.equal(control.attrs['aria-disabled'],'true','another operation cannot start during refresh');
- }
+ const period=ui.nodes.unifiedDeletePeriodReports;
+ assert.equal(period.disabled,false,'the browser must keep focus during the operation');
+ assert.equal(period.attrs['aria-disabled'],'true','another operation cannot start during refresh');
  await period.click();
  assert.equal(opened,0);
  completeRefresh();await removing;
@@ -472,9 +474,10 @@ test('period deletion uses the chosen calendar range and blocks stale confirmati
  ui.UI.revision=2;accept(true);await pending;
  assert.deepEqual(JSON.parse(JSON.stringify(calls)),[['preview',1,{kind:'period',from:'2024-02-01',to:'2024-02-29'}]]);
  await ui.window.unifiedReports.openView('list');
- ui.window.confirm=message=>{assert.match(message,/все 73 отчёта/i);return true;};
- await ui.nodes.unifiedDeleteAllReports.click();
- assert.deepEqual(calls.at(-1),['clear',2]);
+ ui.window.confirm=()=>true;
+ await ui.nodes.unifiedDeletePeriodReports.click();
+ await calendar.apply('2024-02-11','month');
+ assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))),['delete',2,{kind:'period',from:'2024-02-01',to:'2024-02-29'},12]);
 });
 test('successful XLSX commit remains successful when view refresh fails',async()=>{
  let applies=0;
@@ -1003,4 +1006,22 @@ test('upload advances from source to review, labels the reviewed destination and
   assert.equal(ui.nodes.saveImport.disabled,true);
   assert.match(ui.nodes.unifiedImportStatus.textContent,/заново/);
  }
+});
+
+test('database rows format date boundaries and open warnings for only the selected report',async()=>{
+ const dates=[['2026-10-19','2026-10-25'],['2026-10-26','2026-11-01'],['2026-12-28','2027-01-03']];
+ const queries=[],ui=mount({
+  managementReportWindow:async()=>({rows:dates.map(([start,end],i)=>({id:'r'+i,start,end,report_type:'week',warnings:i?0:4,source_name:'book.xlsx'})),total_rows:3}),
+  unifiedQualityPage:async(_rev,query)=>{queries.push(query);return {issues:[],total:0,counts:{}};}
+ });
+ await ui.view('databases');
+ const table=ui.nodes.reports.children[0],rows=table.children.at(-1).children;
+ assert.deepEqual(rows.map(row=>row.querySelectorAll('*').find(n=>n.tag==='strong').textContent),[
+  'Неделя · 19–25 октября 2026','Неделя · 26 октября – 1 ноября 2026','Неделя · 28 декабря 2026 – 3 января 2027']);
+ const link=rows[0].querySelectorAll('button').find(n=>n.textContent==='⚠ 4 замечания');
+ assert.ok(link);assert.equal(rows[1].querySelectorAll('button').length,0);
+ ui.window.referenceDesktop={openPanel:()=>{Promise.resolve().then(()=>ui.window.unifiedReports.openView('import'));}};
+ await link.click();await flush();
+ assert.equal(queries.at(-1).report_id,'r0');assert.equal(queries.at(-1).source,'book.xlsx');
+ assert.equal(ui.nodes.unifiedUploadQuality.attrs['aria-pressed'],'true');
 });

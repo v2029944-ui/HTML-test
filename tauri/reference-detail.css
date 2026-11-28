@@ -236,3 +236,15 @@
 #refNative .metric-table > button {margin-block-start:8px}
 #refNative .metric-table > button + button {margin-inline-start:8px}
 #refNative #comparison .multi-filter:has(#comparisonMetrics) {margin-block-end:12px}
+
+#refNative .database-backup-cards {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr));gap:.75rem}
+#refNative #reports {display:block;max-height:none;overflow:visible}
+#refNative .saved-reports-table {width:100%;border-collapse:separate;border-spacing:0;font-variant-numeric:tabular-nums}
+#refNative .saved-reports-table caption {caption-side:bottom;text-align:start;color:var(--muted);padding-block:.5rem}
+#refNative .saved-reports-table :is(th,td) {padding:.5rem;text-align:start;vertical-align:top;border-bottom:1px solid var(--border);overflow-wrap:anywhere}
+#refNative .saved-reports-table th {position:sticky;top:var(--app-header-viewport-height,0px);z-index:1;background:var(--surface)}
+#refNative .saved-reports-table summary {cursor:pointer}
+#refNative .saved-reports-table input {accent-color:var(--accent)}
+#refRoot[data-settings-page] #refNative .saved-reports-table th {top:calc(var(--app-header-viewport-height,0px) + var(--management-header-height,0px))}
+#refNative .report-warning-link {font:inherit;color:var(--text);background:transparent;border:0;text-decoration:underline;text-underline-offset:.2em;cursor:pointer}
+#refNative .database-backup-cards :is(.muted,[role=status]) {color:var(--muted)}

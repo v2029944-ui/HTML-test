@@ -20,7 +20,7 @@
           <button type="button" class="button secondary" id="sharedWorkspaceRetry" hidden>Повторить подключение</button>
           <button type="button" class="button secondary" id="sharedWorkspaceDiscard" hidden>Отменить неподтверждённые изменения</button>
           <button type="button" class="button secondary" id="sharedSnapshotRetention" hidden>Включить очистку снимков</button>
-          <button type="button" class="button secondary" id="sharedWorkspaceReset" hidden>Сбросить общую базу</button>
+          <button type="button" class="button danger-button" id="sharedWorkspaceReset" hidden>Сбросить общую базу</button>
         </div>
         <p id="sharedSnapshotRetentionStatus" class="muted small" role="status" hidden></p>
         <p id="sharedWorkspaceMessage" role="status" hidden></p>
@@ -53,6 +53,7 @@
     <div id="personalTransferPager" class="actions" hidden></div>
     <p id="personalTransferResult" role="status" aria-live="polite" class="muted"></p>
   </section>
+  <div class="database-backup-cards">
   <section class="panel"><h2>Резервная копия</h2>
     <p id="storageModeInfo" class="muted">Копия SQLite включает отчёты, группы, справочник и настройки выбранной базы.</p>
     <div class="actions"><button id="exportBackup" type="button" class="button secondary">Сохранить копию активной базы</button>
@@ -64,8 +65,13 @@
   <section class="panel"><h2>Восстановление личной базы</h2>
     <p class="muted">Проверьте файл .sqlite3 и сравните число отчётов. Личная база заменится только после подтверждения и следующего запуска приложения. Перед заменой приложение создаст страховочную копию.</p>
     <div class="actions"><button id="importBackup" type="button" class="button secondary">Проверить файл копии…</button>
-      <button id="scheduleDatabaseRestore" type="button" class="button secondary" hidden>Восстановить при следующем запуске</button>
+      <button id="scheduleDatabaseRestore" type="button" class="button primary" hidden>Восстановить при следующем запуске</button>
       <button id="cancelDatabaseRestore" type="button" class="button secondary" hidden>Отменить запланированное восстановление</button></div>
     <p id="databaseRestoreStatus" role="status"></p>
+  </section>
+  </div>
+  <section class="panel"><h2>Очистка отчётов</h2>
+    <p class="muted">Удалить все импортированные отчёты из активной базы. Группы и файлы Excel сохранятся.</p>
+    <button id="clearReports" type="button" class="button danger-button">Удалить все отчёты…</button>
   </section>
 </section>

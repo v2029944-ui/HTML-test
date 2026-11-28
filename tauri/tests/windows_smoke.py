@@ -713,6 +713,7 @@ def check_cancelled_management_confirmations(page, confirmations):
         'Изменить названия подразделений во всех отчётах и справочнике? '
         'Сначала будет создана резервная копия SQLite.',drafts=drafts)
     fields.first.fill(original)
+    navigate(page,'databases')
     clear_report_confirmation(page,confirmations,before['reports'],drafts=drafts)
     for removed in ('Создать отдельную восстановленную копию',
                     'Восстановить при следующем запуске',
@@ -723,12 +724,12 @@ def check_cancelled_management_confirmations(page, confirmations):
     loaded=page.locator('#uploadedReports')
     if not loaded.evaluate('node=>node.open'):
         loaded.locator(':scope > summary').click()
-    card=page.locator('#reports .calendar-source').first
+    card=page.locator('#reports tbody tr').first
     expect(card).to_be_visible(timeout=90_000)
-    dates=re.search(r'· (\d{4}-\d{2}-\d{2}) — (\d{4}-\d{2}-\d{2})',card.locator('strong').inner_text())
-    assert dates, 'Saved report card must expose its real period'
+    start,end=card.get_attribute('data-start'),card.get_attribute('data-end')
+    card.locator('summary[aria-label]').click()
     confirmations.cancel_only(card.get_by_role('button',name='Удалить отчёт',exact=True),
-        'Удалить отчёт '+dates[1]+' — '+dates[2]+'?')
+        'Удалить отчёт '+start+' — '+end+'?')
     assert confirmations.revision()==revision
     after=api(page,'nativeSettingsBootstrap')
     assert after==before,('Cancelled management confirmations changed SQLite snapshot',before,after)
@@ -737,10 +738,10 @@ def check_cancelled_management_confirmations(page, confirmations):
 def check_report_views(page):
     page.locator('#unifiedUploadList').click()
     wait_for_text(page,'[data-sql-pager="reports"] [data-page-range]','1–50 из 366')
-    rows=page.locator('#reports .calendar-source')
+    rows=page.locator('#reports tbody tr')
     assert rows.count()==50
     first=rows.first.locator('strong').inner_text()
-    assert '2024-12-31' in first
+    assert '31 декабря 2024' in first
     pager=page.locator('[data-sql-pager="reports"]')
     expect(pager).to_be_visible()
     expect(page.locator('#unifiedReportsNext')).to_be_hidden()
@@ -764,7 +765,7 @@ def check_report_views(page):
     pager.locator('[data-page-action="choose"]').click()
     pager.locator('[data-page-number="8"]').click()
     wait_for_text(page,'[data-sql-pager="reports"] [data-page-range]','351–366 из 366')
-    assert rows.count()==16 and '2024-01-01' in rows.last.locator('strong').inner_text()
+    assert rows.count()==16 and '1 января 2024' in rows.last.locator('strong').inner_text()
     pager.locator('[data-page-action="choose"]').click()
     pager.locator('[data-page-number="1"]').click()
     wait_for_text(page,'[data-sql-pager="reports"] [data-page-range]','1–50 из 366')
@@ -1661,8 +1662,9 @@ def check_delete_without_backup(page, temporary, confirmations):
     loaded=page.locator('#uploadedReports')
     if not loaded.evaluate('node=>node.open'):
         loaded.locator(':scope > summary').click()
-    card=page.locator('#reports .calendar-source').first
-    expect(card.locator('strong')).to_contain_text('2030-01-06',timeout=90_000)
+    card=page.locator('#reports tbody tr').first
+    expect(card.locator('strong')).to_contain_text('6 января 2030',timeout=90_000)
+    card.locator('summary[aria-label]').click()
     confirmations.cancel_then_accept(card.get_by_role('button',name='Удалить отчёт',exact=True),
         'Удалить отчёт 2030-01-06 — 2030-01-06 из личной базы?')
     wait_for_app_state(page,
@@ -1674,7 +1676,7 @@ def check_delete_without_backup(page, temporary, confirmations):
     assert_rejected(lambda:api(page,'nativeDeleteReport',revision,rows[1]['id']),
                     'An old single-delete selection was accepted','stale storage revision')
     for stamp in ('2030-01-05','2030-01-04'):
-        report=page.locator('#reports .calendar-source').filter(has_text=stamp).first
+        report=page.locator(f'#reports tbody tr[data-start="{stamp}"]').first
         report.get_by_role('checkbox').check()
     selected=page.locator('#unifiedDeleteSelectedReports')
     selected.click()
@@ -1718,14 +1720,6 @@ def check_delete_without_backup(page, temporary, confirmations):
     assert after_period[0]==[row for row in stored[0] if row[0] not in {r['id'] for r in rows}]
     assert after_period[1:]==stored[1:]
 
-    all_reports=page.locator('#unifiedDeleteAllReports')
-    all_reports.click()
-    prompt='Удалить все '+str(before['reports'])
-    dialog,owner=confirmations.find_dialog(prompt)
-    confirmations.answer(dialog,owner,prompt,2)
-    expect(all_reports).to_be_focused()
-    assert backup_contents(database)==after_period
-    navigate(page,'storage')
     clear_snapshot=api(page,'nativeSettingsBootstrap')
     clear_revision=clear_snapshot['revision']
     clear_report_confirmation(page,confirmations,clear_snapshot['reports'],accept=True)
@@ -1785,10 +1779,10 @@ def check_scheduled_backup(page):
     control=page.locator('#scheduledBackupEnabled')
     expect(control).to_be_enabled()
     assert not control.is_checked()
-    expect(page.locator('#scheduledBackupStatus')).to_contain_text('ещё не создавалась')
+    expect(page.locator('#scheduledBackupStatus')).to_contain_text('Автокопирование выключено')
     revision=api(page,'nativeRevision')
     control.click()
-    wait_for_text(page,'#scheduledBackupStatus','Последняя успешная копия:',90_000)
+    wait_for_text(page,'#scheduledBackupStatus','Последняя успешная копия —',90_000)
     assert control.is_checked()
     status=api(page,'nativeScheduledBackup',None)
     assert status['enabled'] and status['lastSuccess']>0 and status['error'] is None,status

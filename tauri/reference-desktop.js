@@ -210,6 +210,8 @@
       event.preventDefault();
       byId(active).querySelector('[data-print-report]')?.click();
     });
+    const toolsHeader=tools.querySelector('header');
+    new ResizeObserver(()=>tools.style.setProperty('--management-header-height',toolsHeader.offsetHeight+'px')).observe(toolsHeader);
     const native = byId('refNative');
     let plotWidth = 0;
     new ResizeObserver(([entry]) => {

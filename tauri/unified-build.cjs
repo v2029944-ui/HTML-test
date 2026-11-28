@@ -332,12 +332,13 @@ function buildUnified(source){
  const appInfo='<section id="onlineUpdates" class="panel" aria-labelledby="appInfoHeading">'+
   '<div class="app-info-heading"><h2 id="appInfoHeading">Приложение и обновления</h2>'+
   '<span id="appVersion" class="app-version" role="status"></span></div></section>';
- html=html.slice(0,backupStart)+appInfo+html.slice(backupEnd);
+ const clearEnd=html.indexOf('</div>',backupEnd);
+ if(clearEnd<0||!html.slice(backupEnd,clearEnd).includes('id="clearReports"'))throw Error('Missing desktop clear reports control');
+ html=html.slice(0,backupStart)+appInfo+html.slice(clearEnd+'</div>'.length);
  html=html.replace(storageView,()=>fs.readFileSync(path.join(__dirname,'database-panel.html'),'utf8')+storageView);
  html=html.replace(uploadView,uploadView+
   '<div class="panel database-destination" id="sharedWorkspacePanel"><div>Отчёты сохраняются в выбранную базу <strong id="sharedWorkspaceMode" role="status">Проверка подключения…</strong></div>'+
   '<button type="button" class="button secondary" id="sharedWorkspaceShortcut">Управление базами</button></div>');
- html=html.replace('Удалить все импортированные отчёты на этом устройстве.', 'Удалить все импортированные отчёты из активной базы.');
  html=html.replace('Данные остаются в этом браузере','Локальная база SQLite');
  html=html.replace('и защиты от очистки данных браузера.','и защиты от потери данных.');
  html=html.replace('Работает в браузере · Без отправки Excel на сервер · На другом устройстве данные не появляются автоматически','Анализ работ · SQLite');

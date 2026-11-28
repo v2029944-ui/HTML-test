@@ -20,7 +20,7 @@ function fixture(initial=personal) {
     if(name==='shared_workspace_choose_folder')return scenario.selected;
     if(name==='shared_workspace_connect'){assert.equal(args.folder,scenario.selected);scenario.server=team;return team;}
     if(name==='shared_workspace_disconnect'){assert.equal(args.workspaceToken,scenario.server.workspace_token);return scenario.server=personal;}
-    if(name==='shared_workspace_sync'){if(scenario.syncError)throw Error(scenario.syncError);return scenario.server;}
+    if(name==='shared_workspace_sync'){if(scenario.syncError)throw Error(scenario.syncError);return scenario.syncResult||scenario.server;}
     if(name==='shared_workspace_discard_pending'){
       assert.equal(args.workspaceToken,scenario.server.workspace_token);
       return scenario.server={...team,generation:3,workspace_token:'team-3'};
@@ -323,4 +323,39 @@ test('changing a transfer filter discards a previous selection',async()=>{
  await f.click('personalTransferPreview');
  assert.equal(f.calls.filter(call=>call.name==='shared_workspace_transfer_preview').length,1);
  assert.match(f.node('personalTransferResult').textContent,/обе даты/i);
+});
+
+test('a personal-base switch clicked during automatic sync survives an unchanged poll',async()=>{
+ const f=fixture(team);await f.window.sharedWorkspace.init();
+ const button=f.node('sharedWorkspaceDisconnect'),states=[];
+ Object.defineProperty(button,'disabled',{get(){return states.at(-1)??false;},set(value){states.push(value);}});
+ let finish;f.scenario.syncResult=new Promise(done=>{finish=done;});
+ const poll=f.tick();
+ assert.equal(button.disabled,false);
+ const switching=f.click('sharedWorkspaceDisconnect');
+ assert.equal(f.scenario.confirmation,null);
+ finish(team);await poll;await switching;
+ assert.match(f.scenario.confirmation,/Перейти в личную базу/);
+ assert.equal(f.window.sharedWorkspace.state.mode,'shared','cancel preserves the mode');
+ assert.equal(f.calls.filter(c=>c.name==='shared_workspace_disconnect').length,0);
+ states.length=0;await f.tick();
+ assert.ok(!states.includes(true),'an unchanged background read must preserve control focus');
+});
+
+test('an automatic sync that changes the workspace invalidates a waiting disconnect',async()=>{
+ const f=fixture(team);await f.window.sharedWorkspace.init();f.scenario.accept=true;
+ let finish;f.scenario.syncResult=new Promise(done=>{finish=done;});
+ const poll=f.tick(),switching=f.click('sharedWorkspaceDisconnect');
+ finish({...team,workspace_token:'team-next'});await poll;await switching;
+ assert.equal(f.scenario.confirmation,null);
+ assert.equal(f.calls.filter(c=>c.name==='shared_workspace_disconnect').length,0);
+});
+
+test('repeated activation during one automatic poll switches once after positive confirmation',async()=>{
+ const f=fixture(team);await f.window.sharedWorkspace.init();f.scenario.accept=true;
+ let finish;f.scenario.syncResult=new Promise(done=>{finish=done;});
+ const poll=f.tick(),first=f.click('sharedWorkspaceDisconnect'),second=f.click('sharedWorkspaceDisconnect');
+ finish(team);await Promise.all([poll,first,second]);
+ assert.equal(f.calls.filter(c=>c.name==='shared_workspace_disconnect').length,1);
+ assert.equal(f.window.sharedWorkspace.state.mode,'personal');
 });

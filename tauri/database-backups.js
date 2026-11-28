@@ -36,11 +36,13 @@
       scheduleToggle.disabled = scheduleBusy || !scheduleState || !same(current());
       const stamp = scheduleState?.lastSuccess;
       const last = Number.isSafeInteger(stamp)
-        ? 'Последняя успешная копия: ' + new Date(stamp).toLocaleString('ru-RU') + '. Файл: ' + scheduleState.lastPath
-        : 'Ежедневная копия ещё не создавалась.';
+        ? 'Последняя успешная копия — ' + new Date(stamp).toLocaleString('ru-RU') + '. Файл: ' + scheduleState.lastPath
+        : '';
+      const mode = !scheduleState ? 'Проверка автокопирования.' : !scheduleState.enabled
+        ? 'Автокопирование выключено.' : last ? '' : 'Включено · первая копия ещё не создана.';
       const details = 'Приложение хранит семь последних ежедневных копий этой базы. Копирование выполняется, пока приложение открыто и база выбрана.';
       const error = scheduleError || scheduleState?.error;
-      const message = [last, details, error ? 'Не удалось выполнить резервное копирование. ' + error : ''].filter(Boolean).join(' ');
+      const message = [mode, last, details, error ? 'Не удалось выполнить резервное копирование. ' + error : ''].filter(Boolean).join(' ');
       if (out.textContent !== message) out.textContent = message;
     }
     async function updateSchedule(choice = null) {
