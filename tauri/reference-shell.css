@@ -1014,7 +1014,7 @@ body:has(#refRoot)>footer {display:none}
  }
  #refRoot[data-filter-sidebar] #reportShell .filter-reset {align-self:start}
 }
-#refRoot .head-tools .source-state {white-space:normal;max-width:20ch}
+
 #reportShell .filter-more > summary {color:var(--text);font-weight:600}
 #reportShell [data-presets-reason] {display:block;color:var(--muted)}
 #reportShell [data-presets-reason][hidden] {display:none}
@@ -1137,8 +1137,8 @@ body:has(#refRoot)>footer {display:none}
 #groupCatalog .catalog-table {width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed}
 #groupCatalog .catalog-table :is(th,td) {padding:2px 6px;text-align:left;overflow-wrap:anywhere;border-bottom:1px solid var(--border);font-size:13px}
 #groupCatalog .catalog-table th {position:sticky;top:var(--app-header-viewport-height,0px);z-index:2;background:var(--ui-surface)}
-#groupCatalog .catalog-table th:nth-child(2) {width:24%}
-#groupCatalog .catalog-table th:last-child {width:6em}
+#groupCatalog .catalog-table th:nth-child(2) {width:36%}
+#groupCatalog .catalog-table th:last-child {width:8em}
 #groupCatalog .catalog-variant {display:flex;align-items:center;justify-content:space-between;gap:.5rem;padding:2px 0}
 #groupCatalog .catalog-menu {position:relative}
 #groupCatalog .catalog-menu > summary {display:inline-grid;place-items:center;min-width:32px;min-height:28px;cursor:pointer;list-style:none;border:1px solid var(--border);border-radius:var(--radius-control)}
@@ -1158,7 +1158,7 @@ body:has(#refRoot)>footer {display:none}
 #groupWorkspace .group-members .group-member > span:first-child::before {content:"📄" / "";margin-inline-end:.45em}
 #groupWorkspace .group-members .group-member > span:first-child {min-width:0;overflow-wrap:anywhere}
 
-#storage label.placement-setting {display:grid;grid-template-columns:minmax(0,1fr) auto 3em;align-items:center;gap:4px 12px}
+#storage label.placement-setting {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 12px}
 .placement-setting small {grid-column:1/-1}
 #appearanceFilterPlacement {
  appearance:none;box-sizing:border-box;display:block;width:42px;height:24px;min-height:0;
@@ -1167,8 +1167,7 @@ body:has(#refRoot)>footer {display:none}
 }
 #appearanceFilterPlacement::before {content:"";display:block;width:18px;height:18px;border-radius:50%;background:currentColor}
 #appearanceFilterPlacement:checked {background:var(--accent-fill);color:var(--on-accent);border-color:var(--accent)}
-#appearanceFilterPlacement:checked + .placement-value span:first-child,
-#appearanceFilterPlacement:not(:checked) + .placement-value span:last-child {display:none}
+
 #appearanceFilterPlacement:checked::before {transform:translateX(17px)}
 #appearanceFilterPlacement:focus-visible {outline:2px solid var(--focus);outline-offset:3px}
 @media(forced-colors:active){#appearanceFilterPlacement {appearance:auto}}
@@ -1283,7 +1282,20 @@ body:has(#refRoot)>footer {display:none}
  #refNative .upload-layout:has(#importPreview:not(:empty)):has(#desktopSource[hidden]) #uploadParameterCard {grid-column:1;grid-row:3}
 }
 
-#refNative .upload-step {grid-column:1/-1;margin:0;font-weight:700}
+#refNative .upload-step {
+ grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,135px),1fr));gap:6px;
+ margin:0;padding:0;list-style:none;
+}
+#refNative .upload-step li {
+ display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:2px solid var(--field-border);
+ color:var(--muted);font-size:13px;
+}
+#refNative .upload-step li > span:first-child {
+ display:grid;place-items:center;width:1.5em;height:1.5em;flex:none;border:1px solid currentColor;border-radius:50%;
+}
+#refNative .upload-step li:is([aria-current="step"],[data-complete="true"]) {border-color:var(--accent-fill);color:var(--text)}
+#refNative .upload-step li[aria-current="step"] {font-weight:700}
+#refNative #inspectFileHint:empty {display:none}
 #refNative .upload-layout-cards {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,13rem),1fr));gap:8px;margin-block:12px}
 #refNative .upload-layout-cards button {display:grid;gap:8px;text-align:start;white-space:normal}
 #refNative .upload-layout-cards [aria-pressed="true"] {border-color:var(--accent-fill);box-shadow:inset 0 -2px var(--accent-fill)}
@@ -1366,8 +1378,7 @@ body:has(#refRoot)>footer {display:none}
 #sharedHeader .source-state::before {
  width:8px;height:8px;flex:none;border:1px solid currentColor;background:currentColor;
 }
-#groupSectionLinks {display:flex;flex-wrap:wrap;gap:6px 16px}
-#groupSectionLinks a {color:var(--text);text-underline-offset:3px}
+
 #groupExchange > summary {cursor:pointer;padding:6px 10px;border:1px solid var(--field-border);border-radius:var(--radius-control)}
 #groupExchange[open] > summary {margin-block-end:8px}
 #groupExchange .file-label {position:relative}
@@ -1383,7 +1394,7 @@ body:has(#refRoot)>footer {display:none}
 #refNative #unifiedUploadNav button[aria-pressed="true"] {
  color:var(--text);background:transparent;border-color:var(--accent-fill);box-shadow:none;
 }
-#refNative #unifiedUploadNav button:hover {background:var(--subtle)}
+#refNative #unifiedUploadNav button:hover {background:var(--hover);color:var(--text);text-decoration:underline;text-underline-offset:3px}
 #refNative :is(.actions,.catalog-actions,.desktop-file-actions) button:disabled {
  opacity:1;background:var(--subtle);color:var(--muted);border:1px dashed var(--field-border);cursor:not-allowed;
 }
@@ -1424,5 +1435,55 @@ body:has(#refRoot)>footer {display:none}
 :is(#s1,#s2) .quality-details:not([hidden]) {display:block;margin-block-start:6px}
 :is(#s1,#s2) .quality-info {min-height:28px;min-width:28px;padding:0;border:1px solid currentColor;border-radius:50%;color:inherit;background:transparent;font:inherit;cursor:pointer}
 
-/* The active upload tab already identifies the destination of this shortcut. */
-#refRoot:has(#refNative[data-panel="upload"] #unifiedUploadImport[aria-pressed="true"]) #refImport {display:none}
+
+
+/* Allocate separate tracks for navigation and controls, including at high zoom. */
+#refRoot #sharedHeader .app-header {
+ display:grid;grid-template-columns:auto minmax(0,1fr) minmax(0,auto);column-gap:clamp(8px,1vw,16px)!important;
+}
+#sharedHeader .app-header nav {overflow-x:auto;scrollbar-width:thin}
+#sharedHeader .app-header nav button,
+#sharedHeader .head-tools > :not(.source-state) {flex:none;white-space:nowrap}
+#refRoot #sharedHeader .head-tools .source-state {
+ display:inline-flex;flex:0 1 auto;justify-content:start;min-width:0;margin:0;
+}
+#sharedHeader .source-state span {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:1100px) {
+ #refRoot #sharedHeader .app-header {grid-template-columns:minmax(0,1fr) minmax(0,auto)}
+ #sharedHeader .app-header nav {grid-column:1/-1;grid-row:2}
+ #sharedHeader .app-header .brand {min-width:0;overflow:hidden}
+}
+#refRoot[data-ui-size="125"] #sharedHeader .app-header,
+#refRoot[data-ui-size="150"] #sharedHeader .app-header {grid-template-columns:minmax(0,1fr) minmax(0,auto)}
+#refRoot[data-ui-size="125"] #sharedHeader .app-header nav,
+#refRoot[data-ui-size="150"] #sharedHeader .app-header nav {grid-column:1/-1;grid-row:2}
+
+#groupWorkspace .group-details[open] {display:grid;grid-template-columns:minmax(0,1fr) auto}
+#groupWorkspace .group-details[open]::details-content {display:contents}
+#groupWorkspace .group-details[open] > :not(summary,.group-heading-actions) {grid-column:1/-1}
+#groupWorkspace .group-details > .group-heading-actions {
+ align-self:center;justify-content:flex-end;gap:4px;margin:0;padding:4px 8px;max-width:100%;
+}
+#groupWorkspace .group-heading-actions .button {margin:0;padding-inline:8px;min-height:30px;font-size:12px}
+#groupWorkspace .group-heading-actions .group-extra-actions {flex-basis:100%;text-align:end}
+#groupWorkspace .group-member .button {white-space:normal;overflow:visible;text-overflow:clip}
+@media(max-width:660px) {
+ #groupWorkspace .group-details[open] {grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+}
+
+#groupCatalog .catalog-records {white-space:nowrap;cursor:pointer}
+#groupCatalog .catalog-badges {display:flex;flex-wrap:wrap;gap:3px}
+#groupCatalog .catalog-badge {
+ --badge:var(--muted);
+ padding:1px 5px;border:1px solid color-mix(in srgb,var(--badge) 68%,var(--border));
+ border-radius:4px;background:color-mix(in srgb,var(--badge) 13%,var(--surface));color:var(--text);font-size:12px;
+}
+#groupCatalog .catalog-badge[data-department="0"] {--badge:var(--accent)}
+#groupCatalog .catalog-badge[data-department="1"] {--badge:var(--positive)}
+#groupCatalog .catalog-badge[data-department="2"] {--badge:var(--warning)}
+#groupCatalog .catalog-badge[data-department="3"] {--badge:var(--negative)}
+#groupAuditCoverage {display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:13px;color:var(--text)}
+#groupAuditCoverage .audit-coverage-label {padding:1px 5px;border:1px solid var(--field-border);border-radius:4px}
+#groupAuditPanel .audit-tools .audit-zero {color:var(--muted);border-color:var(--border)}
+#refNative :is([data-page-range],#unifiedReportsPager),
+#refNative :is(#groupWorkspace,#storage,#databases,#upload) .muted.small {color:var(--text)}

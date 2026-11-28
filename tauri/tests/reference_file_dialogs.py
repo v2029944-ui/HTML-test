@@ -593,13 +593,13 @@ def check_reference_file_dialogs(page, nativeConfirmations, output):
              'Проверить резервную копию SQLite')
 
     section('Группы работ')
-    for target in ('groupAuditPanel', 'groupCatalog', 'groupHeading'):
-        link = page.locator(f'#groupSectionLinks a[href="#{target}"]')
-        link.focus()
-        link.press('Enter')
-        heading = page.locator('#groupHeading' if target == 'groupHeading' else f'#{target} > summary')
-        expect(heading).to_be_focused(timeout=TIMEOUT)
-        expect(heading).to_be_in_viewport()
+    expect(page.locator('#groupSectionLinks')).to_have_count(0)
+    for target in ('groupAuditPanel', 'groupCatalog'):
+        disclosure = page.locator(f'#{target} > summary')
+        opened = disclosure.evaluate('node => node.parentElement.open')
+        disclosure.press('Enter')
+        assert disclosure.evaluate('node => node.parentElement.open') != opened
+        expect(disclosure).to_be_focused()
     exchange = page.locator('#groupExchange')
     if not exchange.evaluate('node=>node.open'):
         exchange.locator('summary').press('Enter')

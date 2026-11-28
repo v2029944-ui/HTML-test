@@ -251,3 +251,18 @@
 #refNative #hideEmptyExplanation {color:var(--muted)}
 #refNative .chart-mode-line {margin-block:0;min-width:0}
 #refNative #chartViewLabel {display:block;font-size:inherit;margin-block-end:5px}
+
+#refNative .saved-reports-table :is(th,td).report-number {text-align:end}
+#refNative .saved-reports-table :is(th,td).report-select {width:2.5em;text-align:center;padding-inline:4px}
+#refNative .saved-reports-table .report-row-menu > summary {
+ display:inline-grid;place-items:center;min-width:30px;min-height:28px;list-style:none;
+ border:1px solid var(--field-border);border-radius:var(--radius-control);
+}
+#refNative .report-row-menu > summary::-webkit-details-marker {display:none}
+#refNative .report-delete-actions .report-delete-outline {
+ color:var(--negative);border:1px solid var(--negative);background:transparent;
+}
+#refNative .report-delete-actions .report-delete-outline:hover:not(:disabled) {
+ background:color-mix(in srgb,var(--negative) 12%,var(--surface));
+}
+#refNative .report-delete-actions .report-delete-outline:disabled {opacity:.68}

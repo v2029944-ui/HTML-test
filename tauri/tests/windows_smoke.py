@@ -389,7 +389,7 @@ def check_runtime(page):
     placement = page.locator('#appearanceFilterPlacement')
     original_placement = placement.is_checked()
     placement.click()
-    expect(page.locator('.placement-value span:visible')).to_have_text('Выкл' if original_placement else 'Вкл')
+    assert placement.is_checked() != original_placement
     placement.focus()
     page.keyboard.press('Space')
     assert placement.is_checked() == original_placement
@@ -398,7 +398,7 @@ def check_runtime(page):
     palette = page.locator('#appearancePalette')
     palette.focus()
     expect(placement).not_to_be_focused()
-    expect(page.locator('.placement-value span:visible')).to_have_text('Вкл' if original_placement else 'Выкл')
+    assert placement.is_checked() == original_placement
     if page.evaluate("CSS.supports('appearance','base-select')"):
         original_palette = palette.input_value()
         palette.select_option('minimal')
@@ -1575,7 +1575,7 @@ def check_groups(page, confirmations):
     assert confirmations.revision()>initial_revision
     member=group.locator('.group-member').filter(has_text='Альфа')
     group_button=member.locator('.group-assign')
-    expect(group_button).to_have_text('Перенести…')
+    expect(group_button).to_have_text('Переместить')
     group_button.click(timeout=90_000)
     picker=page.locator('#groupPickerDialog')
     search=picker.locator('#groupPickerSearch')

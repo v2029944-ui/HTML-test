@@ -87,7 +87,7 @@ test('selected works survive pages and search and save through one atomic API',a
 test('deferred stale pages cannot resurrect rows after snapshot invalidation',async()=>{const m=mount();let resolve;m.setHandler((r,kind)=>kind==='works'?new Promise(done=>resolve=done):({rows:[],total:0}));m.snapshot(7);m.views.groups();await tick();m.snapshot(null);resolve({rows:[{name:'stale'}],total:1});await tick();assert.equal(m.nodes.worksList.children.length,0);assert.equal(m.nodes.workNext.disabled,true);});
 test('moving a member uses the Group picker and cannot assign from a stale dialog',async()=>{
  const m=mount();m.snapshot(7);m.views.groups();await tick();const group=m.nodes.groupList.children[0];group.open=true;await group.fire('toggle');await tick();
- const assignment=actionByText(group.children[2],'Перенести…');
+ const assignment=actionByText(group.children[2],'Переместить');
  const opening=assignment.fire();await tick();
  const picker=m.body.querySelectorAll('dialog').find(n=>n.id==='groupPickerDialog');
  assert.equal(picker.open,true);
@@ -98,7 +98,7 @@ test('moving a member uses the Group picker and cannot assign from a stale dialo
 test('group picker returns focus on Escape and selecting the current group does not write',async()=>{
  const m=mount();m.snapshot(7);m.views.groups();await tick();
  const group=m.nodes.groupList.children[0];group.open=true;await group.fire('toggle');
- const assignment=actionByText(group.children[2],'Перенести…');
+ const assignment=actionByText(group.children[2],'Переместить');
  for(const action of ['cancel','escape','current']){
   assignment.focused=false;
   const opening=assignment.fire();await tick();
@@ -116,7 +116,7 @@ test('confirmed group move focuses the refreshed group or the group search if it
  for(const survives of [true,false]){
   const m=mount();m.snapshot(7);m.views.groups();await tick();
   const group=m.nodes.groupList.children[0];group.open=true;await group.fire('toggle');
-  const assignment=actionByText(group.children[2],'Перенести…'),refresh=m.UI.refresh;
+  const assignment=actionByText(group.children[2],'Переместить'),refresh=m.UI.refresh;
   m.UI.refresh=async()=>{
    assignment.isConnected=false;
    if(!survives)m.setHandler(()=>({rows:[],total:0,grouped:0}));
@@ -159,7 +159,7 @@ test('expanded groups load one member page on demand and reuse loaded rows when 
  assert.deepEqual(m.reads.slice(before),[[7,'members','','g0',0,50],[7,'members','','g0',50,50],[7,'members','','g0',100,50]]);
  assert.equal(members.children.filter(row=>row.className==='group-member').length,101);
  assert.equal(members.scrollWindow,undefined);
- assert.equal(members.querySelectorAll('button').filter(row=>row.textContent==='Перенести…').length,101);
+ assert.equal(members.querySelectorAll('button').filter(row=>row.textContent==='Переместить').length,101);
  assert.equal(members.querySelectorAll('input').length,0);
 });
 test('group picker searches across SQLite pages and applies only an explicit choice',async()=>{
@@ -168,7 +168,7 @@ test('group picker searches across SQLite pages and applies only an explicit cho
   return {total:1,grouped:1,ungrouped:0,rows:[{name:'A',group:'g0'}]};
  });
  m.snapshot(7);m.views.groups();await tick();const group=m.nodes.groupList.children[0];group.open=true;await group.fire('toggle');await tick();
- const opening=actionByText(group.children[2],'Перенести…').fire();await tick();
+ const opening=actionByText(group.children[2],'Переместить').fire();await tick();
  const picker=m.body.querySelectorAll('dialog').find(n=>n.id==='groupPickerDialog');
  const search=picker.querySelectorAll('input')[0];
  await actionByText(picker,'Показать ещё').fire();
@@ -193,7 +193,7 @@ test('editing and audit share one visible search and result list',async()=>{
  assert.equal(m.nodes.worksList.parentNode,m.nodes.groupAuditResults);
  assert.ok(m.nodes.groupAuditPanel.querySelectorAll('input').includes(m.nodes.workSearch));
  assert.ok(!m.nodes.groupEditor.querySelectorAll('input').includes(m.nodes.workSearch));
- const opening=actionByText(m.nodes.worksList,'Перенести…').fire();await tick();
+ const opening=actionByText(m.nodes.worksList,'Переместить').fire();await tick();
  const picker=m.body.querySelectorAll('dialog').find(n=>n.id==='groupPickerDialog');
  assert.ok(picker);
  await actionByText(picker,'Отмена').fire();await opening;
@@ -262,7 +262,7 @@ test('organization form tracks edits, reverting, a failed write and a successful
 test('organization rename validates exactly four names and backs up before native mutation',async()=>{const m=mount();m.snapshot(7);const inputs=m.nodes.organizationFields.querySelectorAll('input');inputs[0].value='Б';await m.nodes.saveOrganizations.fire();assert.equal(m.writes.length,0);assert.equal(m.messages.at(-1)[1],true);inputs[0].value='АА';m.setBackup('/org-backup.sqlite3');await m.nodes.saveOrganizations.fire();assert.deepEqual(JSON.parse(JSON.stringify(m.writes)),[['org',7,['АА','Б','В','Г'],'/org-backup.sqlite3']]);assert.equal(m.UI.state.reports.length,0);});
 test('group file import is previewed and hash-confirmed; cancelled picker and denial never write',async()=>{const m=mount();m.snapshot(7);await m.nodes.importGroups.fire();assert.equal(m.writes.length,0);m.setSource('/groups.json');m.setConfirm(false);await m.nodes.importGroups.fire();assert.equal(m.writes.length,0);m.setConfirm(true);await m.nodes.importGroups.fire();assert.deepEqual(m.writes,[['import',7,'/groups.json','hash',true]]);});
 
-test('audit uses whole-name SQL query, custom dates, scoped coverage and never moves unused group labels',async()=>{const m=mount(),calls=[];m.api.unifiedGroupAuditPage=async(...args)=>{calls.push(args);return {rows:[{key:'group:one',name:'Unused group',group:'9007199254740999',members:2,active:null}],total:1,coverage:{complete:false,periods:2,missing:1}};};m.snapshot(7);for(const fn of m.scopes)fn(m.UI.scope);m.nodes.groupAuditMode.value='unused';m.nodes.groupAuditFrom.value='2024-01-02';m.nodes.groupAuditTo.value='2024-01-20';m.nodes.workSearch.value='all search';m.nodes.groupAuditPanel.open=true;await m.nodes.groupAuditPanel.fire('toggle');await tick();assert.deepEqual(JSON.parse(JSON.stringify(calls[0])),[{revision:7,displayType:'day',source:'daily',organizations:['А'],selectedNames:[],selectedKeys:[],allNames:true,from:'2024-01-02',to:'2024-01-20'},'unused','all search',0,50]);assert.equal(m.nodes.groupAuditResults.querySelectorAll('select').length,0);assert.match(m.nodes.groupAuditCoverage.textContent,/Неполные данные/);});
+test('audit uses whole-name SQL query, custom dates, scoped coverage and never moves unused group labels',async()=>{const m=mount(),calls=[];m.api.unifiedGroupAuditPage=async(...args)=>{calls.push(args);return {rows:[{key:'group:one',name:'Unused group',group:'9007199254740999',members:2,active:null}],total:1,coverage:{complete:false,periods:2,missing:1}};};m.snapshot(7);for(const fn of m.scopes)fn(m.UI.scope);m.nodes.groupAuditMode.value='unused';m.nodes.groupAuditFrom.value='2024-01-02';m.nodes.groupAuditTo.value='2024-01-20';m.nodes.workSearch.value='all search';m.nodes.groupAuditPanel.open=true;await m.nodes.groupAuditPanel.fire('toggle');await tick();assert.deepEqual(JSON.parse(JSON.stringify(calls[0])),[{revision:7,displayType:'day',source:'daily',organizations:['А'],selectedNames:[],selectedKeys:[],allNames:true,from:'2024-01-02',to:'2024-01-20'},'unused','all search',0,50]);assert.equal(m.nodes.groupAuditResults.querySelectorAll('select').length,0);assert.match(m.nodes.groupAuditCoverage.children.map(node=>node.textContent).join(" "),/Неполные данные/);});
 
 test('successful mutation followed by refresh failure clears stale rows and prevents duplicate writes',async()=>{const m=mount();m.snapshot(7);m.views.groups();await tick();m.UI.refresh=async()=>{throw Error('read failure');};m.setBackup('/safe.sqlite3');await confirmClear(m);assert.equal(m.writes.length,1);assert.equal(m.nodes.groupList.children.length,0);await m.nodes.clearReports.fire();assert.equal(m.writes.length,1);assert.match(m.messages.at(-1)[0],/Отчёты удалены.*Не удалось обновить/);});
 
@@ -482,8 +482,11 @@ test('identical service names expose only scoped edit and deletion of a single e
   {handle:'9007199254740902',organization:'СМУ16'},
   {handle:'9007199254740903',organization:null},
  ];
+ m.UI.state.settings.orgNames=['СМУ16','АВТО','ЦЕНТР','ТРАК'];
  m.setHandler((rev,kind)=>({rows:kind==='catalog_services'?[{name:'Услуга',handle:entries[0].handle,members:3,variants:entries}]:[],total:kind==='catalog_services'?1:0}));
  m.snapshot(7);panel.open=true;await panel.fire('toggle');await tick();
+ const badges=panel.querySelectorAll('span').filter(node=>node.className==='catalog-badge');
+ assert.deepEqual(badges.map(node=>node.textContent),['СМУ16','АВТО','Без подразделения']);
  const remove=panel.querySelectorAll('button').filter(n=>n.textContent==='Удалить');
  assert.equal(remove.length,3);m.setConfirm(false);
  for(const [index,entry] of entries.entries()){
