@@ -56,7 +56,6 @@ class DesktopTablePager(unittest.TestCase):
         nav=p.locator('[data-sql-pager="reference-changes"]')
         rows=p.locator('#s2 .changes-table tbody tr')
         expect(rows).to_have_count(50)
-        p.locator('#reportShell .filter-fold > summary').click()
         choose=nav.locator('[data-page-action=choose]')
         choose.scroll_into_view_if_needed()
         before=choose.bounding_box()['y']
@@ -274,6 +273,7 @@ class DesktopTablePager(unittest.TestCase):
             p.add_script_tag(path=str(TAURI/(name+'.js')))
         p.evaluate('referenceFilters.init()')
         p.wait_for_function('window.testScope?.revision===1')
+        p.locator('#reportShell .filter-fold > summary').click()
         return p
 
     def test_imported_week_scope_uses_the_saved_weekday(self):
@@ -293,6 +293,7 @@ class DesktopTablePager(unittest.TestCase):
 
     def test_sql_work_selection_survives_page_changes_search_and_revisions(self):
         p=self.load_reference_filters()
+        p.locator('#reportShell .filter-more > summary').click()
         p.locator('[data-pick=works]').click()
         nav=p.locator('[data-sql-pager=reference-work-options]')
         box=p.locator('#sheet .filter-checkboxes')

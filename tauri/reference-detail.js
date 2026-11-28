@@ -39,30 +39,29 @@
     if (!line) {
       line = document.createElement('p');
       line.className = 'detail-date-scope';
-      const edit = document.createElement('button');
-      edit.type = 'button';
-      edit.textContent = 'Изменить период';
-      edit.onclick = () => window.referenceFilters.openFilters();
-      line.append(document.createElement('span'), document.createElement('span'), edit);
+      line.append(document.createElement('span'), document.createElement('span'));
       (panel.querySelector(':scope > summary, :scope > .sectionbar, :scope > h2') || panel.firstElementChild).after(line);
     }
     const selected = window.unifiedUI.scope;
     const analytics = window.unifiedAnalytics;
     const displayed = key === 'chartPanel' ? analytics?.displayedChartScope : key === 'overviewPanel' ? analytics?.displayedOverviewScope : null;
     const scope = displayed || selected;
-    const pendingPeriod = scope && selected && (scope.from !== selected.from || scope.to !== selected.to ||
-      scope.displayType !== selected.displayType || scope.source !== selected.source ||
-      (key === 'overviewPanel' && (scope.baseFrom !== selected.baseFrom || scope.baseTo !== selected.baseTo)));
+    const shared = window.referenceFilters?.scope || selected;
+    const separatePeriod = scope && shared && (scope.from !== shared.from || scope.to !== shared.to ||
+      scope.source !== shared.source || scope.displayType !== shared.displayType);
     const showDate = value => value.split('-').reverse().join('.');
     const interval = (lo, hi) => lo === hi ? showDate(lo) : showDate(lo) + ' — ' + showDate(hi);
     const end = raw => scope.source === 'daily' ? raw : window.unifiedOriginal.periodEnd(raw, scope.displayType);
     const [period, base] = line.children;
-    period.textContent = scope ? (pendingPeriod ? 'Показан период ' : 'Общий период ') + interval(scope.from, end(scope.to)) : 'Нет выбранного периода';
+    period.textContent = scope ? (separatePeriod ? 'Период раздела ' : 'Общий период ') + interval(scope.from, end(scope.to)) : 'Нет выбранного периода';
     base.hidden = !(scope?.baseFrom && scope.baseTo && ['structurePanel','comparison','regularityPanel','overviewPanel'].includes(key));
     const before = key === 'comparison' && $('comparisonMode').value === 'periods' ? comparisonBase(scope) : null;
     if (key === 'comparison' && !before) base.hidden = true;
-    base.textContent = base.hidden ? '' : (before && localBase ? 'Локальная база ' : 'База ') +
-      interval(before?.from || scope.baseFrom, end(before?.to || scope.baseTo));
+    if (!base.hidden) {
+      const from = before?.from || scope.baseFrom, to = before?.to || scope.baseTo;
+      const separateBase = shared && (from !== shared.baseFrom || to !== shared.baseTo);
+      base.textContent = (separateBase ? 'Локальная база ' : 'База ') + interval(from, end(to));
+    }
   }
 
   function chartButtons() {
@@ -72,7 +71,7 @@
       const line = document.createElement('button');
       line.type = 'button';
       line.dataset.referenceLine = '';
-      line.textContent = 'Линейный график';
+      line.textContent = 'График';
       line.onclick = () => {
         state.chart = chartMode = 'line';
         $('workViewMode').dispatchEvent(new Event('change'));

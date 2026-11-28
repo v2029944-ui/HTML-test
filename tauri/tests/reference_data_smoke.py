@@ -530,6 +530,8 @@ def check_reference_data(page, output):
         page.set_viewport_size({'width': 1440, 'height': 1000})
         navigate('Сводка')
         fold()
+        if not page.locator('#reportShell').locator('.filter-more').evaluate('el=>el.open'):
+            page.locator('#reportShell').locator('.filter-more > summary').click()
         page.locator('#referenceSource').select_option('daily')
         # Use the real organization picker to establish all four organizations.
         page.locator('#reportShell [data-pick="orgs"]').click()

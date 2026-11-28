@@ -325,6 +325,12 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         expect(page.locator('#s1')).to_be_visible(timeout=TIMEOUT)
         expect(page.locator('#s2')).not_to_be_visible()
         panel('chartPanel')
+        top_fold = page.locator('#reportShell .filter-fold')
+        if not screenshot_scope:
+            expect(top_fold).to_have_js_property('open', False)
+            expect(top_fold.locator('.filter-more')).to_have_js_property('open', False)
+            expect(page.locator('#s1 .metrics-grid' if has_reports else '#summaryEmpty')).to_be_in_viewport()
+            assert page.locator('#s1 h1').evaluate('el => parseFloat(getComputedStyle(el).fontSize) <= 28')
         assert page.evaluate('window.unifiedUI.snapshot.reports > 0') is bool(has_reports)
         assert 'Демоданные' not in page.locator('#sharedHeader').inner_text()
         # The installed route uses the existing native document, never an iframe importer.
@@ -339,6 +345,11 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
             complete_week = page.locator('#reportShell .quick-actions').get_by_role('button', name='Прошлая неделя', exact=True)
             expect(complete_week).to_be_enabled(timeout=TIMEOUT)
             complete_week.click()
+        else:
+            top_fold.locator(':scope > summary').click()
+            expect(top_fold.locator('[data-presets-reason]')).to_have_text('Нет дневных отчётов.')
+            expect(top_fold.locator('.quick-actions button').first).to_be_disabled()
+            top_fold.locator(':scope > summary').click()
         # Preserve the initial overview, including the header, before any panel scroll.
         page.evaluate('window.scrollTo(0, 0)')
         page.locator('#sharedHeader').scroll_into_view_if_needed()
@@ -445,7 +456,26 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         # Tabs must switch actual native sections, not another application route.
         analytics = page.locator('#refAnalytics')
         if has_reports:
-            analytics.click()
+            for activate in ('click', 'Enter'):
+                # Close the native disclosure while its detail tab stays selected.
+                page.locator('#advancedAnalytics').evaluate('node => node.open = false')
+                for state in ('closed', 'open'):
+                    if activate == 'click':
+                        analytics.click()
+                    else:
+                        analytics.focus()
+                        analytics.press(activate)
+                    expect(page.locator('#advancedAnalytics')).to_have_js_property('open', True)
+                    expect(page.locator('#chartPanel')).to_be_visible()
+                    expect(page.locator('#toolsTitle')).to_be_focused()
+                    page.evaluate('() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))')
+                    assert page.locator('#toolsTitle').evaluate('''el => {
+                      const top = Math.max(...['#sharedHeader','#reportShell > .report-filter'].map(selector =>
+                        document.querySelector(selector).getBoundingClientRect().bottom));
+                      const r = el.getBoundingClientRect();
+                      return r.top >= top - 1 && r.bottom <= innerHeight;
+                    }'''), (state, activate)
+
         else:
             expect(analytics).to_be_hidden()
             expect(page.locator('#toolsPage')).to_be_visible()
@@ -698,7 +728,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         focused(settings)
 
         # Shared date/unit and picker dialogs are tested from the actual toolbar.
-        fold = page.locator('#reportShell details')
+        fold = page.locator('#reportShell .filter-fold')
         if not fold.evaluate('(node) => node.open'):
             fold.locator(':scope > summary').click()
         select_filter_period(fold, 'День', 'range')
@@ -714,13 +744,10 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         expect(base_end).to_have_attribute('aria-haspopup','dialog')
         calendar(base_start, '12-baseline-start', 'years')
         calendar(base_end, '12-baseline-end', 'years')
-        quick_prev=page.locator('#reportShell [data-baseline-quick="prev"]')
-        quick_year=page.locator('#reportShell [data-baseline-quick="year"]')
-        quick_year.click()
-        expect(quick_year).to_have_attribute('aria-pressed','true')
-        quick_prev.click()
-        expect(quick_prev).to_have_attribute('aria-pressed','true')
         baseline = page.locator('#sum-base')
+        for rule in ('year', 'prev'):
+            baseline.select_option(rule)
+            expect(baseline).to_have_value(rule)
         baseline_before = baseline.input_value()
         baseline.select_option('custom')
         expect(page.locator('dialog.period-calendar[open]')).to_have_count(1)
@@ -728,6 +755,9 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         expect(baseline).to_have_value(baseline_before)
         focused(baseline)
 
+        more = fold.locator('.filter-more')
+        if not more.evaluate('el=>el.open'):
+            more.locator('summary').press('Enter')
         for kind in ['orgs', 'works']:
             picker = page.locator(f'#reportShell [data-pick="{kind}"]')
             before = picker.inner_text()
@@ -736,6 +766,8 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
             modal(sheet)
             checkboxes = sheet.locator('input[type="checkbox"]')
             if checkboxes.count():
+                if not checkboxes.first.is_enabled():
+                    sheet.get_by_role('button', name='Снять выбор', exact=True).click()
                 checkboxes.first.set_checked(not checkboxes.first.is_checked())
                 expect(picker).to_have_text(before)
             record('13-picker-' + kind, sheet)
@@ -749,6 +781,9 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
             focused(picker)
             expect(picker).to_have_text(before)
 
+        page.keyboard.press('Escape')
+        expect(more).to_have_js_property('open', False)
+        expect(more.locator(':scope > summary')).to_be_focused()
         page.keyboard.press('Escape')
         assert not fold.evaluate('(node) => node.open')
         focused(fold.locator(':scope > summary'))
@@ -788,7 +823,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
             fold = page.locator('#reportShell .filter-fold')
             initially_open = fold.evaluate('el=>el.open')
             if not initially_open:
-                fold.locator('summary').click()
+                fold.locator(':scope > summary').click()
             try:
                 for theme in ('light','dark'):
                     page.locator('#appearanceTheme').select_option(theme, force=True)
@@ -812,19 +847,21 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
                               return color;
                             }""")
                             expect(row).to_have_css('background-color', expected)
-                        fold.locator('summary').click()
+                        fold.locator(':scope > summary').click()
                         page.screenshot(animations='disabled')
                         check_shell_layout(page, folded=True)
-                        fold.locator('summary').click()
+                        fold.locator(':scope > summary').click()
             finally:
                 page.locator('#appearanceTheme').select_option(initial_theme,force=True)
                 if not initially_open and fold.evaluate('el=>el.open'):
-                    fold.locator('summary').click()
+                    fold.locator(':scope > summary').click()
 
         if has_reports:
             check_filter_placement(page, record)
             page.evaluate('window.referenceFilters.openFilters()')
             works = page.locator('#reportShell [data-pick="works"]')
+            if not works.is_visible():
+                page.locator('#reportShell .filter-more > summary').click()
             works.click()
             search = page.get_by_role('searchbox', name='Найти работу')
             expect(search).to_be_focused()

@@ -134,7 +134,7 @@
   border-color:var(--border);
   opacity:1;
 }
-#refNative .chart-mode-line > .chart-mode-controls {
+#refNative .chart-mode-line .chart-mode-controls {
   margin-bottom:0;
   min-height:var(--control-height);
 }
@@ -248,3 +248,6 @@
 #refRoot[data-settings-page] #refNative .saved-reports-table th {top:calc(var(--app-header-viewport-height,0px) + var(--management-header-height,0px))}
 #refNative .report-warning-link {font:inherit;color:var(--text);background:transparent;border:0;text-decoration:underline;text-underline-offset:.2em;cursor:pointer}
 #refNative .database-backup-cards :is(.muted,[role=status]) {color:var(--muted)}
+#refNative #hideEmptyExplanation {color:var(--muted)}
+#refNative .chart-mode-line {margin-block:0;min-width:0}
+#refNative #chartViewLabel {display:block;font-size:inherit;margin-block-end:5px}

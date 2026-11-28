@@ -122,6 +122,13 @@
     if (restoreFocus && panelOpener?.isConnected) panelOpener.focus({preventScroll: true});
   }
 
+  function scrollToPanel(change) {
+    // The filter disclosure updates its sticky height through ResizeObserver.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (change === panelChange) byId('toolsPage').scrollIntoView({block:'start'});
+    }));
+  }
+
   function openPanel(key, opener, moveFocus = true) {
     if (!Object.hasOwn(sections, key)) return;
     const tools = byId('toolsPage'), nav = tools.querySelector('.tool-tabs');
@@ -173,11 +180,7 @@
     if (openingSettings) {
       window.scrollTo(0, 0);
     } else if (opener && !settingsReturn) {
-      // Collapsing filters changes the sticky offset in ResizeObserver. Scroll
-      // after that layout rather than retaining the expanded filter height.
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        if (panel === key && change === panelChange) tools.scrollIntoView({block:'start'});
-      }));
+      scrollToPanel(change);
     }
   }
 
@@ -234,11 +237,12 @@
     byId('refSettings').addEventListener('click', event => settingsReturn ? closePanel() : openPanel('storage', event.currentTarget));
     byId('referenceAdjacentHistory')?.addEventListener('click', event => openPanel('changes', event.currentTarget));
     byId('refAnalytics').addEventListener('click', event => {
-      if (!analyticsTabs.includes(panel)) {
+      if (!analyticsTabs.includes(panel) || !byId('advancedAnalytics').open || tools.hidden) {
         openPanel(analyticsTab, event.currentTarget);
       } else {
+        if (!window.referenceFilters.atSide()) window.referenceFilters.closeFilters();
         byId('toolsTitle').focus({preventScroll:true});
-        tools.scrollIntoView({block:'start'});
+        scrollToPanel(panelChange);
       }
     });
     byId('backBtn').addEventListener('click', () => closePanel());

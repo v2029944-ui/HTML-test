@@ -65,7 +65,7 @@ function chosenBaseRange(current){
 function layout(){const single=value('overviewMode')==='single';$('overviewSingle').hidden=!single;$('overviewRange').hidden=single;if(single){$('rangeStart').value=value('overviewPeriod');$('rangeEnd').value=value('overviewPeriod');}
  const departments=value('chartBreakdown')==='organizations',chosen=departments?[...state.chartMetrics]:chosenMetrics();
  $('chartOrgScopeLabel').hidden=!departments;$('chartMetricsWrap').hidden=!departments;$('chartSeriesLayoutLabel').hidden=!departments||chosen.length<2;$('chartNotes').hidden=!departments;$('chartComparisonHint').hidden=!departments;$('chartReadGuide').hidden=!departments||state.chart==='table';
- $('chartDescription').textContent=departments?'Все выбранные подразделения за один период.':'Отмеченные работы и группы из общих фильтров.';
+ $('chartDescription').textContent=displayedChart?.scope.revision===UI.revision && displayedChart?.caption || (departments?'Выбранные подразделения.':'Отмеченные работы и группы из общих фильтров.');
  $('chartComparisonHint').textContent='Подразделения выбираются вверху страницы. Показатели этого графика задаются независимо от показателей обзора и работ.';
  $('chartReadGuide').textContent=chosen.length>1&&value('chartSeriesLayout')==='combined'?'Цвет обозначает подразделение. В совместной диаграмме значения показаны в % от максимума каждого показателя, а не как процент изменения.':'У каждого показателя своя шкала в исходных единицах. Цвет обозначает подразделение.';
  const displayed=displayedChart&&displayedChart.scope.revision===UI.revision?displayedChart.mode:state.chart;
@@ -250,6 +250,10 @@ async function calculate(shared=null){
  }catch(error){if(valid(mine,revision)){invalidateScope();clear('overviewAlerts','Не удалось загрузить обзор. '+errorText(error));}}
  finally{if(valid(mine,revision))for(const id of overviewResults){$(id).inert=false;$(id).setAttribute('aria-busy','false');}}
 }
+function bucketLabel(granularity,s){
+ const unit=granularity==='period'?s.displayType:granularity;
+ return {day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам'}[unit]||'по периодам';
+}
 function descriptors(points,granularity,s){return window.analysisSummary.timelinePeriods(points,granularity,s,O.periodEnd);}
 const allPeriodsHidden='Фильтр скрыл все периоды в этой выборке. Отключите скрытие нулевых периодов и периодов без отчётов, чтобы увидеть их.';
 function confirmedZero(point){return point&&point.missing===0&&point.total?.count===0&&point.total?.amount===0;}
@@ -367,11 +371,13 @@ async function renderCharts(index=seriesIndex,paging=false){
  const requestedScope=scope;
  if(displayedChart?.scope.revision!==revision)for(const id of chartResults)clear(id,'Загрузка…',!paging);
  chartBusy(true);
- const commitView=()=>{
-  displayedChart={scope:requestedScope,mode:state.chart};layout();
+ const commitView=(granularity,metrics=[])=>{
+  const detail=granularity&&bucketLabel(granularity,s);
+  const caption=detail&&metrics.length?metrics.map(m=>titles[m]).join(', ')+' · '+detail:null;
+  displayedChart={scope:requestedScope,mode:state.chart,caption};layout();
   window.referenceDetail?.refreshChartCaption?.();
  };
- try{if(value('chartBreakdown')==='organizations'){await departmentCharts(s,isCurrent);if(isCurrent())commitView();return;}
+ try{if(value('chartBreakdown')==='organizations'){const granularity=await departmentCharts(s,isCurrent);if(isCurrent())commitView(granularity,[...state.chartMetrics]);return;}
   if(!allNames&&!selectedRows.size)throw Error('Выберите хотя бы одну работу или группу.');
   const pageSize=state.chart==='table'?50:8;let rows,seriesTotal;
   if(allNames){const page=await api.unifiedNameOptionsAtPage(revision,'',index,pageSize,true);if(!isCurrent())return;rows=page.rows;seriesTotal=page.total_rows;}
@@ -402,8 +408,8 @@ async function renderCharts(index=seriesIndex,paging=false){
    UI.table($('dataTable'),metric,chartInterval(s)+(metric==='average'?' · прочерк означает неполные данные или неположительное количество.':' · прочерк означает неполные данные.'),['Работа / группа',...periods.map(O.displayPeriod)],raw.map((row,i)=>[i?treeWorkLabel(rows[i-1],0,detail):row[0],...row.slice(1).map(n=>fmt(n,metric))]),{csvRows:raw,csvContext:chartExport(s,isCurrent,'works',[metric])});
    if(rows.some(row=>row.has_children))printWorkTree($('dataTable').lastElementChild,chartInterval(s));
   }else if(!filteredAll)UI.drawChart(periods,new Set(s.organizations),metric,plotSection($('chartsContainer'),metric,titles[metric]+' · '+chartInterval(s)),{chart:state.chart,orientation:orientation(),hiddenPeriods,categories:rows.map(r=>r.key),data,label:key=>rows.find(r=>r.key===key).name,pointNotice:i=>incomplete(points[i])?(points[i].missing?'Неполные данные: пропусков '+points[i].missing:'В некоторых строках сумма не указана.'):''});
-  commitView();seriesIndex=index;pager(root,index,i=>{seriesIndex=i;return renderCharts(i,true);},{size:pageSize,total:seriesTotal,count:rows.length,label:'Работы на графике',current:isCurrent});
-  $('chartHelp').textContent='Выбрано подразделений: '+s.organizations.length+' из '+UI.snapshot.org_names.length+'. Данные сгруппированы '+({day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам',period:'по выбранным периодам'}[totals.granularity]||'по периодам')+'.'+(points.some(incomplete)?partialChartNote:' Пропуски не считаются нулём.');
+  commitView(totals.granularity,chosenMetrics());seriesIndex=index;pager(root,index,i=>{seriesIndex=i;return renderCharts(i,true);},{size:pageSize,total:seriesTotal,count:rows.length,label:'Работы на графике',current:isCurrent});
+  $('chartHelp').textContent='Выбрано подразделений: '+s.organizations.length+' из '+UI.snapshot.org_names.length+'. Данные сгруппированы '+bucketLabel(totals.granularity,s)+'.'+(points.some(incomplete)?partialChartNote:' Пропуски не считаются нулём.');
  }catch(error){if(isCurrent()){for(const id of ['chartsContainer','dataTable'])clear(id,'Не удалось построить аналитику. '+errorText(error));clear('chartOrgTotals');clear('chartHelp');commitView();}}
  finally{if(isCurrent())chartBusy(false);}
 }
@@ -446,7 +452,8 @@ async function departmentCharts(base,isCurrent){
    (m==='average'?'Общая сумма / суммарное количество (объём)':'Итоговый показатель «'+titles[m]+'»')+' за выбранный диапазон. При пропусках итог учитывает доступные данные.'),
    'Полнота отчётов этого подразделения за диапазон. При неполных данных показано число пропущенных периодов.'],
   csvContext:chartExport(s,isCurrent,'organizationTotals',chosen)});
- $('chartHelp').textContent='Подразделений: '+s.organizations.length+'. Учитываются '+(all?'все выполненные работы.':'отмеченные работы и группы.')+' Прочерк означает неполные данные. Отношение суммы к количеству рассчитывается при положительном количестве. Данные сгруппированы '+({day:'по дням',week:'по неделям',month:'по месяцам',year:'по годам',period:'по выбранным периодам'}[trends.granularity]||'по периодам')+'.'+(rawSeries.some(series=>series.points.some(incomplete))?partialChartNote:'');
+ $('chartHelp').textContent='Подразделений: '+s.organizations.length+'. Учитываются '+(all?'все выполненные работы.':'отмеченные работы и группы.')+' Прочерк означает неполные данные. Отношение суммы к количеству рассчитывается при положительном количестве. Данные сгруппированы '+bucketLabel(trends.granularity,s)+'.'+(rawSeries.some(series=>series.points.some(incomplete))?partialChartNote:'');
+ return trends.granularity;
 }
 async function configure(snapshot){
  if(!snapshot){ticket++;nameTicket++;invalidateScope();clear('overviewAlerts','Подготовка данных…');clear('categories');return;}

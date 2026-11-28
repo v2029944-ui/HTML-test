@@ -11,7 +11,7 @@
 
 <div class="head-tools"><button type="button" class="source-state" title="Открыть базы данных"><span aria-live="polite">Открытие SQLite…</span></button><button class="btn" id="refImport"><svg aria-hidden="true" fill="none" height="15" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" viewBox="0 0 24 24" width="15"><path d="M12 15V3m-5 5 5-5 5 5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"></path></svg>Импорт Excel</button><button aria-label="Настройки" class="btn settings-trigger" id="refSettings" title="Настройки" aria-expanded="false" aria-controls="toolsPage"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m10 3-.5 2-1.6.9-2-.6-2 3.4 1.5 1.5v1.8l-1.5 1.5 2 3.5 2-.6 1.6.9.5 2.1h4l.5-2.1 1.6-.9 2 .6 2-3.5-1.5-1.5v-1.8l1.5-1.5-2-3.4-2 .6-1.6-.9L14 3Z"></path><circle cx="12" cy="11.3" r="3.1"></circle></svg></button></div></header></div>
 <div class="screen" id="reportShell"><section aria-label="Фильтры" class="card report-filter">
-<details class="filter-fold" open="">
+<details class="filter-fold">
 <summary><strong>Периоды и фильтры</strong><span class="filter-summary"></span></summary>
 <div class="filter-content">
 <div class="filter-periods">
@@ -26,6 +26,7 @@
   </optgroup>
 </select></label>
 <div class="lbl"><label for="sum-base">База сравнения</label><select class="sel ref-baseline" data-compare="" id="sum-base"></select></div>
+<label class="lbl">Подразделения<button aria-haspopup="dialog" class="filter-picker" data-pick="orgs" type="button">Все подразделения</button></label>
 </div>
 <div class="report-dates unified-date-scope">
   <section class="report-date-card" aria-labelledby="sum-base-title" data-base-card>
@@ -37,10 +38,6 @@
       <div class="date-label-pair" data-base-end-field><span class="date-section-label">По</span><button type="button" class="date-field-trigger date-field-baseline" data-base-end aria-haspopup="dialog" title="Изменить конец базового периода"></button></div>
     </div>
     <small class="date-range-caption" data-base-duration></small>
-    <div class="baseline-quick-actions" role="group" aria-label="Быстрый выбор базы сравнения">
-      <button type="button" class="chip" data-baseline-quick="prev" title="Равный по длительности интервал непосредственно перед текущим">Предыдущий</button>
-      <button type="button" class="chip" data-baseline-quick="year" title="Аналогичный календарный период год назад">Год назад</button>
-    </div>
   </section>
   <section class="report-date-card" aria-labelledby="sum-current-title" data-current-card>
     <div class="report-date-heading">
@@ -57,12 +54,14 @@
     <small class="date-range-caption period-duration" id="sum-duration"></small>
   </section>
 </div>
+<details class="filter-more"><summary>Ещё фильтры</summary>
 <div class="filter-options">
+<label class="lbl">Источник<select id="referenceSource" class="sel"><option value="daily">Дневные отчёты</option><option value="imported">Отчёты выбранного типа</option></select></label>
 <label class="lbl" title="Применяется к сводке и анализу изменений. Подробные графики имеют собственный выбор показателей.">Показатель сводки / изменений<select class="sel" data-measure="" aria-description="Подробные графики имеют собственный выбор показателей"><option value="amount">Сумма</option><option value="count">Количество / объём</option></select></label>
-<label class="lbl">Подразделения<button aria-haspopup="dialog" class="filter-picker" data-pick="orgs" type="button">Все подразделения</button></label>
 <label class="lbl">Работы<button aria-haspopup="dialog" class="filter-picker" data-pick="works" type="button">Все работы</button></label>
 </div>
-<div class="filter-shortcuts"><div class="preset-fields"><span class="preset-title">По последнему отчёту</span><div class="quick-actions"><button class="chip" type="button">Неделя</button><button class="chip" type="button">Прошлая неделя</button><button class="chip" type="button">4 недели</button><button class="chip" type="button">Месяц</button><button class="chip" type="button">Год</button></div></div><button class="chip" data-retry-periods type="button" hidden>Повторить загрузку периодов</button><button class="filter-reset" type="button">Сбросить</button></div>
+</details>
+<div class="filter-shortcuts"><div class="preset-fields"><span class="preset-title">По последнему отчёту</span><div class="quick-actions" role="group" aria-label="По последнему отчёту" aria-describedby="presetReason"><button class="chip" type="button">Неделя</button><button class="chip" type="button">Прошлая неделя</button><button class="chip" type="button">4 недели</button><button class="chip" type="button">Месяц</button><button class="chip" type="button">Год</button></div><small id="presetReason" data-presets-reason></small></div><button class="chip" data-retry-periods type="button" hidden>Повторить загрузку периодов</button><button class="filter-reset" type="button">Сбросить</button></div>
 <p class="period-length-note" hidden></p>
 </div>
 </details>
@@ -72,7 +71,7 @@
 
 <main style="width:100%;max-width:1200px;margin:0 auto;padding:28px 40px 48px;display:flex;flex-direction:column;gap:20px">
 <div class="title-row"><div>
-<h1 style="margin:0 0 4px;font-size:30px">Анализ выполненных работ</h1>
+<h1 style="margin:0 0 4px;font-size:28px">Анализ выполненных работ</h1>
 <p class="report-range"></p>
 </div><div class="summary-actions" hidden><button class="btn" hidden data-print-report>Печать / PDF</button></div></div>
 <section class="card summary-empty" id="summaryEmpty" aria-labelledby="summaryEmptyTitle" hidden>
@@ -112,7 +111,7 @@
 </div>
 </section>
 
-<div class="summary-actions summary-bottom-actions"><button class="btn analytics-trigger" id="refAnalytics" aria-controls="toolsPage">Подробная аналитика</button></div>
+<div class="summary-actions summary-bottom-actions"><button class="btn analytics-trigger" id="refAnalytics" aria-controls="toolsPage">Перейти к подробной аналитике</button></div>
 </main>
 </div>
 </section>
@@ -121,7 +120,7 @@
 
 <main style="width:100%;max-width:1200px;margin:0 auto;padding:28px 40px 48px;display:flex;flex-direction:column;gap:20px">
 <div class="title-row">
-<div><h1 style="margin:0 0 4px;font-size:30px">Анализ изменений</h1>
+<div><h1 style="margin:0 0 4px;font-size:28px">Анализ изменений</h1>
 <p class="report-range"></p></div>
 <div class="changes-header-actions"><button type="button" class="btn secondary" id="referenceAdjacentHistory" title="Изменения каждой работы между последовательными периодами, с фильтрами и экспортом">История соседних периодов</button><button class="btn ghost">Как читать результаты?</button></div>
 </div><section aria-label="Сводка изменений" class="kind-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px">
