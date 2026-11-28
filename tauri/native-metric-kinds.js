@@ -23,6 +23,16 @@ function clearReview(){
  source=null;review=null;format=null;xlsxArgs=null;
  $('metricKindPreview').replaceChildren();
 }
+const workspace=()=>window.sharedWorkspace?.state;
+const workspaceReady=()=>!window.sharedWorkspace||(workspace()?.available===true&&!workspace()?.pending);
+const destination=()=>workspace()?.mode==='shared'?'в общую базу':'в личную базу';
+const initialCount='Выберите вид отчёта и нажмите «Рассчитать». Пустые даты означают всю историю.';
+let calculationStale=false,reviewStale=false;
+function invalidateTotals(){
+ calculationStale=calculationStale||$('metricKindTotals').children.length>0;
+ $('metricKindTotals').replaceChildren();
+ $('metricKindCount').textContent=calculationStale?'Данные или диапазон изменились. Повторите расчёт.':initialCount;
+}
 function controls(){
  for(const id of ['metricKindSelect','metricKindFrom','metricKindTo','metricXlsxProfile']){
   $(id).disabled=busy;
@@ -30,7 +40,9 @@ function controls(){
  $('metricKindCalculate').disabled=busy||!kinds.length;
  $('metricKindChoose').disabled=busy||!kinds.length;
  $('metricKindChooseXlsx').disabled=busy||!profiles.length;
- $('metricKindApply').disabled=busy||!review;
+ $('metricKindApply').disabled=busy||!review||!workspaceReady();
+ $('metricKindApply').hidden=!review;
+ $('metricKindApply').textContent=workspaceReady()?'Сохранить '+destination():'База назначения недоступна';
 }
 function render(values,kind,container){
  const el=$(container);el.replaceChildren();
@@ -45,10 +57,9 @@ function render(values,kind,container){
 }
 if(typeof ui?.onSnapshot==='function')ui.onSnapshot(snapshot=>{
  if(snapshot&&!kinds.length)void loadCatalog();
- clearReview();
- $('metricKindTotals').replaceChildren();
- $('metricKindCount').textContent='Данные изменились. Повторите расчёт.';
- status('База обновилась. Перед импортом повторно проверьте источник.');
+ reviewStale=reviewStale||Boolean(review);
+ clearReview();invalidateTotals();
+ status(reviewStale?'База обновилась. Перед импортом повторно проверьте источник.':'Выберите XLSX или JSON для проверки.');
  controls();
 });
 function findKind(id){return kinds.find(k=>k.id===id);}
@@ -57,7 +68,7 @@ function showPreview(result){
     result.reviewToken.length!==64)throw Error('Неверный план импорта.');
  const kind=findKind(result.kind);
  render(result.values,kind,'metricKindPreview');
- review=result;
+ review=result;reviewStale=false;
  status('Проверено: '+kind.name+', '+result.start+' — '+result.end+
    ', '+result.rowCount+' строк. Запись начнётся только после подтверждения.');
 }
@@ -72,28 +83,28 @@ async function calculate(){
  try{
   const summary=await api.nativeMetricSummary(id,from,to);
   if(currentRevision()!==revision)throw Error('Данные изменились. Повторите расчёт.');
-  render(summary.values,kind,'metricKindTotals');
+  calculationStale=false;render(summary.values,kind,'metricKindTotals');
   $('metricKindCount').textContent='Отчётов: '+summary.reportCount+
     '. Строк: '+summary.rowCount+'. Суммы по загруженным данным, без проверки полноты периодов.';
   status('Показатели рассчитаны по отдельной схеме вида отчёта.');
  }catch(err){
-  $('metricKindTotals').replaceChildren();
+  invalidateTotals();
   status('Ошибка расчёта: '+userError(err),true);
  }finally{busy=false;controls();}
 }
 $('metricKindCalculate').addEventListener('click',calculate);
 $('metricKindSelect').addEventListener('change',()=>{
  clearReview();controls();
- $('metricKindTotals').replaceChildren();$('metricKindCount').textContent='Нажмите «Рассчитать».';
+ $('metricKindTotals').replaceChildren();calculationStale=false;invalidateTotals();
 });
 $('metricXlsxProfile').addEventListener('change',()=>{
  clearReview();controls();
- status('Шаблон изменён. Выберите XLSX заново.');
+ status('Выберите XLSX для проверки.');
 });
 for(const id of ['metricKindFrom','metricKindTo']){
  $(id).addEventListener('change',()=>{
   clearReview();
-  $('metricKindTotals').replaceChildren();$('metricKindCount').textContent='Диапазон изменён. Повторите расчёт.';
+  invalidateTotals();
   controls();
  });
 }
@@ -103,7 +114,7 @@ $('metricKindChoose').addEventListener('click',async()=>{
  try{
   const selected=await api.chooseMetricJson();
   if(!selected){if(!review)status('Выбор JSON отменён.');return;}
-  clearReview();
+  clearReview();reviewStale=false;
   $('metricKindFile').textContent='Проверяется JSON: '+selected.split(/[\\/]/).pop();
   const revision=currentRevision(),result=await api.nativeMetricPreview(selected);
   if(currentRevision()!==revision)throw Error('База изменилась во время проверки файла.');
@@ -125,7 +136,7 @@ $('metricKindChooseXlsx').addEventListener('click',async()=>{
  try{
   const selected=await api.chooseMetricXlsx();
   if(!selected){if(!review)status('Выбор XLSX отменён.');return;}
-  clearReview();
+  clearReview();reviewStale=false;
   $('metricKindFile').textContent='Проверяется XLSX: '+selected.split(/[\\/]/).pop();
   const revision=currentRevision(),result=await api.nativeMetricXlsxPreview(selected,profile,start,end);
   if(currentRevision()!==revision)throw Error('База изменилась во время проверки файла.');
@@ -136,13 +147,13 @@ $('metricKindChooseXlsx').addEventListener('click',async()=>{
  }finally{busy=false;controls();}
 });
 $('metricKindApply').addEventListener('click',async()=>{
- if(busy||!review||!source)return;
- const captured={review,source,format,xlsxArgs,revision:currentRevision(),parameters:parameters()};
+ if(busy||!review||!source||!workspaceReady())return;
+ const captured={review,source,format,xlsxArgs,workspace:workspace()?.workspace_token,revision:currentRevision(),parameters:parameters()};
  busy=true;controls();
  try{
-  const accepted=await window.confirm('Добавить отчёт «'+captured.review.reportId+'» в SQLite без перезаписи существующих?');
+  const accepted=await window.confirm('Добавить отчёт «'+captured.review.reportId+'» '+destination()+' без перезаписи существующих?');
   if(accepted!==true){status('Импорт отменён. Проверенные данные не записаны.');return;}
-  if(review!==captured.review||source!==captured.source||format!==captured.format||
+  if(!workspaceReady()||workspace()?.workspace_token!==captured.workspace||review!==captured.review||source!==captured.source||format!==captured.format||
      xlsxArgs!==captured.xlsxArgs||currentRevision()!==captured.revision||
      parameters()!==captured.parameters)throw Error('Параметры или база изменились. Проверьте файл заново.');
   const receipt=captured.format==='xlsx'

@@ -224,3 +224,25 @@ test('canceling JSON or XLSX reselection preserves the original reviewed path, f
   assert.equal(writes[0][1],original==='json'?'C:/Data/new.json':'C:/Data/hours.xlsx');assert.equal(writes[0].at(-1),'a'.repeat(64));
  }
 });
+
+test('empty calculation and import give first actions until a real result becomes stale',async()=>{
+ let notify;
+ const ui={revision:1,onSnapshot:fn=>{notify=fn;}};
+ const m=mount({ui}),e=m.elements;
+ await m.window.metricKindWorkspaceReady;
+ notify(null);notify({});
+ await e.metricKindFrom.events.change();
+ assert.doesNotMatch(e.metricKindCount.textContent,/Повторите/);
+ assert.doesNotMatch(e.metricKindStatus.textContent,/повторно/);
+ assert.equal(e.metricKindApply.hidden,true);
+ await e.metricKindCalculate.events.click();
+ await e.metricKindTo.events.change();
+ assert.match(e.metricKindCount.textContent,/Повторите/);
+ m.window.sharedWorkspace={state:{mode:'shared',workspace_token:'shared',available:true,pending:false}};
+ await e.metricKindChoose.events.click();
+ assert.equal(e.metricKindApply.hidden,false);
+ assert.equal(e.metricKindApply.textContent,'Сохранить в общую базу');
+ notify(null);notify({});
+ assert.match(e.metricKindStatus.textContent,/повторно/);
+ assert.equal(e.metricKindApply.hidden,true);
+});

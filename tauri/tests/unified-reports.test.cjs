@@ -979,3 +979,28 @@ test('a classic multi-sheet daily calendar supersedes the ordinary branch of a s
  await ui.nodes.inspectFile.click();
  assert.equal(calls[0].kind,'day');assert.equal(calls[0].start,null);assert.deepEqual(Array.from(calls[0].sheets),[]);
 });
+
+test('upload advances from source to review, labels the reviewed destination and invalidates edited input',async()=>{
+ for(const mode of ['personal','shared']){
+  const ui=mount({chooseWideXlsx:async()=>'/tmp/review.xlsx',nativeImportSheets:async()=>[
+   {name:'Дни',component:'sheet.xml',layout:null}
+  ]});
+  ui.window.sharedWorkspace={state:{mode,folder:mode==='shared'?'Shared':null,available:true,pending:false,workspace_token:mode}};
+  ui.snapshot();
+  assert.match(ui.nodes.uploadStep.textContent,/Шаг 1/);
+  assert.equal(ui.nodes.inspectFileHint.textContent,'Сначала выберите файл.');
+  await ui.nodes.excelFile.click();
+  assert.match(ui.nodes.uploadStep.textContent,/Шаг 2/);
+  ui.nodes.importFormat.value='legacy';await ui.nodes.importFormat.fire('change');
+  assert.match(ui.nodes.uploadStep.textContent,/Шаг 3/);
+  ui.nodes.importWeek.value='2024-01-01';await ui.nodes.importWeek.fire('change');
+  ui.snapshot();
+  assert.doesNotMatch(ui.nodes.unifiedImportStatus.textContent,/заново|новую проверку/);
+  await ui.nodes.inspectFile.click();
+  assert.match(ui.nodes.uploadStep.textContent,/Шаг 4/,ui.nodes.unifiedImportStatus.textContent);
+  assert.equal(ui.nodes.saveImport.textContent,mode==='shared'?'Сохранить в общую базу':'Сохранить в личную базу');
+  await ui.nodes.importWeek.fire('change');
+  assert.equal(ui.nodes.saveImport.disabled,true);
+  assert.match(ui.nodes.unifiedImportStatus.textContent,/заново/);
+ }
+});
