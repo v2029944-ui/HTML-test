@@ -37,7 +37,10 @@ test('overview totals explicitly keep all works while the separate detail work s
  const calls=[],api={nativeAnalysisCompare:async(...args)=>{calls.push(['compare',args]);return {};},nativeAnalysisOrganizations:async(...args)=>{calls.push(['organizations',args]);return [];}};
  const scope={revision:1,type:'day',source:'daily',displayType:'day',from:'2024-01-10',to:'2024-01-11',baseFrom:'2024-01-01',baseTo:'2024-01-02',organizations:['A','B','C','D'],allNames:false,selectedNames:['Группа'],selectedKeys:['group:g']};
  await window.analysisSummary.read(api,scope);
- assert.deepEqual(calls[0][1].slice(7),[null,null]);assert.deepEqual(calls[1][1].slice(5),[null,null]);
+ assert.deepEqual(calls[0][1].slice(7),[null,null,false]);assert.deepEqual(calls[1][1].slice(5),[null,null]);
+ const shell=window.analysisSummary.read(api,scope,true),detail=window.analysisSummary.read(api,scope);
+ assert.equal(shell,detail);await shell;
+ assert.equal(calls[2][1].at(-1),true);
  assert.deepEqual(scope.selectedNames,['Группа']);
 });
 

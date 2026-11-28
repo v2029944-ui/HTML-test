@@ -127,9 +127,9 @@ function explainSensitivity(){
  if(!Number.isFinite(percent)||!Number.isFinite(count)||!Number.isFinite(amount))return;
  const out=$('changesSensitivityValue'),example=$('changesSensitivityExample');
  if(out)out.textContent=percent.toLocaleString('ru-RU',{maximumFractionDigits:1})+'%';
- if(example)example.textContent='Пример: если было 100 единиц количества / объёма, изменение на '+percent.toLocaleString('ru-RU',{maximumFractionDigits:1})+
+ if(example)example.textContent='Пример: если было 100 единиц количества, изменение на '+percent.toLocaleString('ru-RU',{maximumFractionDigits:1})+
   ' достигает процентного порога. Для «сильного изменения» также нужна абсолютная разница от '+count.toLocaleString('ru-RU')+
-  ' по количеству / объёму или от '+amount.toLocaleString('ru-RU')+' по сумме. Чем выше процентный порог, тем меньше изменений попадёт в список.';
+  ' по количеству или от '+amount.toLocaleString('ru-RU')+' по сумме. Чем выше процентный порог, тем меньше изменений попадёт в список.';
 }
 function describeActiveFilters(){
  const node=$('changesActiveFilter');if(!node)return;
@@ -163,7 +163,7 @@ function renderChangeSummary(summary,chosen){clear('changesSummary');const root=
  for(const [label,n,cls,direction] of [['Значительно выросло',summary.grown,'numeric-rise','significant-up'],['Значительно снизилось',summary.fallen,'numeric-fall','significant-down'],['Новых услуг',summary.new,'','new'],['Нет выполнений',summary.gone,'','gone']]){
   const card=UI.el('button',null,'kpi kpi-action');card.type='button';
   const explanation=direction.startsWith('significant-')
-   ?'Изменение не меньше '+value('changesPercent')+'% и минимальной разницы: '+value('changesCountMin')+' по количеству / объёму или '+value('changesAmountMin')+' по сумме. Без отрицательных значений и малой базы.'
+   ?'Изменение не меньше '+value('changesPercent')+'% и минимальной разницы: '+value('changesCountMin')+' по количеству или '+value('changesAmountMin')+' по сумме. Без отрицательных значений и малой базы.'
    :direction==='new'?'Работа появилась в загруженном периоде и отсутствовала в базовом.':
     'В базовом периоде работа выполнялась, в текущем выполнений нет. Пропуски не считаются нулём.';
   card.title=explanation;card.setAttribute('aria-label',label+': '+n+'. '+explanation+' Показать строки этой категории.');
@@ -559,8 +559,8 @@ async function structure(){
   UI.table(root,metric,caption(before)+' / '+caption(after),headers,rows,{totalRow:false,csvRows:raw,
    headerHelp:headers.map(header=>({
     'Услуга / группа':'Название работы или объединяющей её группы. Строка «Остальные услуги» суммирует работы за пределами выбранного топа.',
-    'Значение раньше':'Количество / объём или сумма за базовый период по выбранным подразделениям.',
-    'Значение сейчас':'Количество / объём или сумма за анализируемый период по выбранным подразделениям.',
+    'Значение раньше':'Количество или сумма за базовый период по выбранным подразделениям.',
+    'Значение сейчас':'Количество или сумма за анализируемый период по выбранным подразделениям.',
     'Доля раньше':'Значение работы за базовый период / общий итог работ в выбранном составе за этот же период × 100%.',
     'Доля сейчас':'Значение работы за анализируемый период / общий итог работ в выбранном составе за этот же период × 100%.',
     'Накопленная доля':'Сумма текущих долей от первой строки до этой включительно. Строка «Остальные услуги» учитывает оставшиеся работы.',
@@ -723,7 +723,7 @@ function init(){if(initialized)return;initialized=true;explainSensitivity();desc
  for(const name of Object.keys(localPeriods))$(name+'PeriodReset')?.addEventListener('click',()=>resetLocalPeriod(name));
  $('changesType')?.addEventListener('change',updatePeriodOverrides);
  $('changesMethod')?.addEventListener('change',updatePeriodOverrides);
- checkboxList('changesMetrics',[['count','Количество / объём'],['amount','Сумма']],changeMetrics,()=>changes());
+ checkboxList('changesMetrics',[['count','Количество'],['amount','Сумма']],changeMetrics,()=>changes());
  const metricOptions=Object.entries(titles);
  const updateMetricCount=()=>{
   if(!window.unifiedOriginal?.renderMultiFilter)return;

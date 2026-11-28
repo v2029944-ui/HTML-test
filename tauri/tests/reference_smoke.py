@@ -354,7 +354,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         page.evaluate('window.scrollTo(0, 0)')
         page.locator('#sharedHeader').scroll_into_view_if_needed()
         record('01-summary', page.locator('body'), scroll=False)
-        for selector in ['#s1 .metric-sample', '#s1 .quality-notice button']:
+        for selector in ['#s1 .metric-sample', '#s1 .quality-notice > button']:
             source = page.locator(selector).first
             if not source.count() or not source.is_visible():
                 continue

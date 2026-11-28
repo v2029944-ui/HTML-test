@@ -367,6 +367,6 @@ test('top filters start folded and their caption identifies detail work and metr
   assert.equal(one('.filter-fold').open,false);
   controls.setWorks(false,[[choices[0].key,choices[0]]]);
   controls.setMetric('count');
-  assert.match(one('.filter-summary').textContent,/количество \/ объём, в аналитике: Ремонт/);
+  assert.match(one('.filter-summary').textContent,/количество, в аналитике: Ремонт/);
   assert.equal(panel.querySelectorAll('[data-shift]')[1].title,'Сдвинуть вперёд на 1 нед.');
 });

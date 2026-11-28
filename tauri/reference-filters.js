@@ -146,7 +146,7 @@ function paint(lo,hi){
  const summary=[caption,'база '+interval(lo,hi)];
  if(!allOrgs)summary.push('подразделений '+orgs.size+' из '+orgNames.length);
  if(source!=='daily')summary.push('отчёты выбранного типа');
- if(metric==='count')summary.push('количество / объём');
+ if(metric==='count')summary.push('количество');
  if(!allNames)summary.push('в аналитике: '+(nameRows.size===1?[...nameRows.values()][0].name:'выбрано позиций '+nameRows.size));
  one('.filter-summary').textContent=summary.join(', ');
  const note=one('.period-length-note');note.hidden=size(lo,hi)===size(from,to);note.textContent=note.hidden?'':'Интервалы разной длительности. Сравниваются итоги за каждый интервал.';

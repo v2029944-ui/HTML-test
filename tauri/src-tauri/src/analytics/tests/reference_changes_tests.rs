@@ -459,6 +459,7 @@ fn summary_csv_exports_observed_partial_values_and_leaves_unknown_cells_empty() 
     assert!(csv.contains("\"A\";\"20\";\"2\";\"100\";\"10\";\"частичные данные\""));
     assert!(csv.contains("\"Empty\";\"0\";\"0\";\"0\";\"\";\"частичные данные\""));
     assert!(csv.contains("\"Missing\";\"\";\"\";\"\";\"\";\"нет данных\""));
+    assert!(csv.lines().any(|r|r == r#""Итого";"20";"2";"100";"10";"";"20""#));
     let observed=csv.split("\"Подразделение\";\"Сумма\";").nth(1).unwrap();
     assert!(observed.find("\"A\";").unwrap()<observed.find("\"Empty\";").unwrap());
     assert!(observed.find("\"Empty\";").unwrap()<observed.find("\"Missing\";").unwrap());
@@ -550,6 +551,14 @@ fn disjoint_organizations_keep_aggregate_comparison_without_per_organization_del
     let dir=tempdir().unwrap();let store=Storage::new(dir.path().into()).unwrap();
     let revision=prepare(&store,vec![json!({"id":"base","type":"day","start":"2024-01-01","end":"2024-01-01","organizations":["A","B"],"rows":[row("A","Work",1.,10.),row("B","Work",2.,20.)]}),json!({"id":"current","type":"day","start":"2024-01-10","end":"2024-01-10","organizations":["Empty","D"],"rows":[row("Empty","Work",3.,30.),row("D","Work",4.,40.)]})]);
     let mut q=request(revision);q.to=q.from.clone();q.organizations=vec!["A".into(),"B".into(),"Empty".into(),"D".into()];
+    store.analysis().reference_scope(&q, |scope| {
+        let ranges = ComparisonQuery {before:q.baseline(), after:q.current(), percent:0., min_count:0., min_amount:0.};
+        let summary = store.analysis_comparison_dashboard_with_leaders(revision, scope, &ranges, true)?;
+        for leaders in [&summary.amount_leaders, &summary.count_leaders] {
+            assert!(leaders.up.is_empty() && leaders.down.is_empty());
+        }
+        Ok(())
+    }).unwrap();
     let result=store.reference_changes(&q).unwrap();assert!(result.comparable.is_empty());assert_eq!(result.rows.len(),4);
     assert!(result.rows.iter().all(|row| row.delta.is_none() && row.before.is_some()!=row.after.is_some()));
     for (summary,file) in [(true,"summary.csv"),(false,"changes.csv")] {
