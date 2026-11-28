@@ -630,7 +630,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         expect(page.get_by_role('heading', name='Настройки', level=1)).to_be_focused()
         expect(page.locator('#reportShell')).to_be_hidden()
         expect(page.locator('#s1')).to_be_hidden()
-        expect(page.locator('#backBtn')).to_have_text('Вернуться к анализу')
+        expect(page.locator('#backBtn')).to_have_text('Вернуться в раздел «Динамика»')
         page.locator('input[name="appearanceThemeChoice"][value="light"]').check()
         page.locator('input[name="appearanceSizeChoice"][value="xlarge"]').check()
         update_notes = page.locator('#appUpdateWhatsNew')

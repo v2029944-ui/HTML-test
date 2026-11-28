@@ -315,9 +315,21 @@ function buildUnified(source){
  html=html.replace('Данные остаются в этом браузере','Локальная база SQLite');
  html=html.replace('и защиты от очистки данных браузера.','и защиты от потери данных.');
  html=html.replace('Работает в браузере · Без отправки Excel на сервер · На другом устройстве данные не появляются автоматически','Анализ работ · SQLite');
- html=html.replace('>Скачать группы (JSON)</button>','>Экспорт групп</button>').replace('>Импорт групп JSON<input','>Импорт групп<input').replace('Добавить справочник услуг из Excel\n','Импорт справочника Excel\n');
- const catalog=html.match(/<div class="catalog-toolbar">[\s\S]*?<\/div>/);
- if(catalog){html=html.replace(catalog[0],'');const groups=html.indexOf('id="importGroups"');const end=html.indexOf('</div>',groups);if(groups<0||end<0)throw Error('Missing group import toolbar');html=html.slice(0,end)+catalog[0]+html.slice(end);}
+ const exchangeStart=html.indexOf('<button id="exportGroups"');
+ const exchangeEnd=html.indexOf('</label></div>',exchangeStart);
+ if(exchangeStart<0||exchangeEnd<0)throw Error('Missing group file commands');
+ const commands=html.slice(exchangeStart,exchangeEnd+8)
+  .replace('Скачать группы (JSON)','Скачать группы в JSON')
+  .replace('Импорт групп JSON','Заменить группы из JSON…')
+  .replaceAll(' hidden>',' class="group-file-input">');
+ const description=html.match(/<p class="muted small">Файл JSON содержит[^<]+<\/p>/);
+ if(!description)throw Error('Missing group exchange description');
+ html=html.slice(0,exchangeStart)+'<details id="groupExchange"><summary>Обмен файлами</summary>'+
+  '<div class="actions">'+commands+'</div>'+description[0]+'</details>'+html.slice(exchangeEnd+8).replace(description[0],'');
+ const groupNav='<nav id="groupSectionLinks" aria-label="Разделы групп работ">'+
+  '<a href="#groupHeading">Группы</a><a href="#groupAuditPanel">Проверка названий</a>'+
+  '<a href="#groupCatalog">Справочник услуг</a></nav>';
+ html=html.replace('<h2 id="groupHeading">Группы работ</h2>',groupNav+'<h2 id="groupHeading" tabindex="-1">Группы</h2>');
  // Mount the shared navigation and SQL forms once, retaining their inputs and listeners.
  const nativeStart=html.indexOf('<header class="topbar">');
  const nativeEnd=html.indexOf('<section id="printReport"');

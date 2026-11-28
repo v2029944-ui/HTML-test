@@ -141,7 +141,7 @@
     if (analyticsTabs.includes(key)) analyticsTab = key;
     const back = byId('backBtn');
     back.hidden = analyticsTabs.includes(key);
-    back.textContent = settingsReturn && !management.includes(settingsReturn.panel) ? 'Вернуться к анализу' : 'Назад';
+    back.textContent = settingsReturn ? 'Вернуться в раздел «' + (sections[settingsReturn.panel] || (active === 's1' ? 'Сводка' : 'Анализ изменений')) + '»' : 'Назад';
     tools.hidden = false;
     byId('refNative').dataset.panel = key;
     const manage = management.includes(key);
@@ -163,7 +163,7 @@
       title.removeAttribute('role');
       title.removeAttribute('aria-level');
     }
-    title.textContent = settingsReturn ? sections[key] : manage ? 'Управление' : key === 'changes' ? 'История соседних периодов' : key === 'overviewPanel' ? 'Сводка' : 'Подробная аналитика';
+    title.textContent = manage ? sections[key] : key === 'changes' ? 'История соседних периодов' : key === 'overviewPanel' ? 'Сводка' : 'Подробная аналитика';
     window.unifiedUI.activate(manage || key === 'changes' ? key : 'dashboard');
     window.referenceDetail.show(key);
     if (!manage) window.referenceFilters.syncDetails();
@@ -224,7 +224,11 @@
     });
     header.querySelectorAll('.main-nav button').forEach((tab, i) =>
       tab.addEventListener('click', () => navigate(i ? 's2' : 's1')));
-    byId('refImport').addEventListener('click', event => openPanel('upload', event.currentTarget));
+    byId('refImport').addEventListener('click', event => {
+      openPanel('upload', event.currentTarget);
+      const uploadTab = byId('unifiedUploadImport');
+      if (uploadTab.getAttribute('aria-pressed') !== 'true') uploadTab.click();
+    });
     byId('refSettings').addEventListener('click', event => settingsReturn ? closePanel() : openPanel('storage', event.currentTarget));
     byId('referenceAdjacentHistory')?.addEventListener('click', event => openPanel('changes', event.currentTarget));
     byId('refAnalytics').addEventListener('click', event => {
@@ -259,8 +263,9 @@
     notices.append(byId('flash'),byId('appActivity'));
     header.after(notices);
     const currentStatus = byId('unifiedIndexStatus'), status = header.querySelector('.source-state');
+    status.addEventListener('click', () => openPanel('databases', status));
     function statusChanged() {
-      status.textContent = currentStatus.firstElementChild.textContent;
+      status.firstElementChild.textContent = currentStatus.firstElementChild.textContent;
       const failed = !window.unifiedUI.snapshot && !currentStatus.lastElementChild.hidden;
       statusAction.hidden = currentStatus.children[1].hidden && !failed;
       statusAction.textContent = failed ? 'Повторить' : 'Остановить';

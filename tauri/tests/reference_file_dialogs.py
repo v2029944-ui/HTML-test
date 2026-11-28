@@ -516,12 +516,26 @@ def check_reference_file_dialogs(page, nativeConfirmations, output):
     page.locator('#uploadSourceFolder').click()
     exercise('excel-folder', page.locator('#sourceFolderChoose'), 'Папка с Excel-отчётами')
 
+    database_status = page.locator('#sharedHeader .source-state')
+    database_status.focus()
+    database_status.press('Enter')
+    expect(page.locator('#databases')).to_be_visible(timeout=TIMEOUT)
     section('Базы данных')
     exercise('sqlite-backup', page.locator('#exportBackup'), 'Сохранить резервную копию SQLite')
     exercise('sqlite-restore', page.locator('#importBackup'),
              'Проверить резервную копию SQLite')
 
     section('Группы работ')
+    for target in ('groupAuditPanel', 'groupCatalog', 'groupHeading'):
+        link = page.locator(f'#groupSectionLinks a[href="#{target}"]')
+        link.focus()
+        link.press('Enter')
+        heading = page.locator('#groupHeading' if target == 'groupHeading' else f'#{target} > summary')
+        expect(heading).to_be_focused(timeout=TIMEOUT)
+        expect(heading).to_be_in_viewport()
+    exchange = page.locator('#groupExchange')
+    if not exchange.evaluate('node=>node.open'):
+        exchange.locator('summary').press('Enter')
     exercise('groups-import', page.locator('#importGroups').locator('xpath=ancestor::label[1]'),
              'Импорт групп')
     exercise('groups-export', page.locator('#exportGroups'), 'Сохранить группы')

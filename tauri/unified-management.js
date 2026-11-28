@@ -297,7 +297,7 @@ function init(){
  function renderGroupRow(root,group,expected,hierarchy,depth=0){
   const details=el('details',null,'group-details'),summary=el('summary',group.name);
   const actions=el('div',null,'actions'),memberRoot=el('div',null,'group-members');
-  details.dataset.groupId=group.id;
+  details.dataset.groupId=group.id;details.dataset.groupHandle=group.handle;
   summary.append(el('small',(group.children?'Работ напрямую: ':'Работ: ')+group.members+(group.children?' · Подгрупп: '+group.children:'')));
   details.append(summary,actions,memberRoot);
   const rename=button('Переименовать',async()=>{
@@ -397,6 +397,42 @@ function init(){
   expandMembers(details,memberRoot,group,expected,openChildren);
   root.append(details);
  }
+ function focusGroupSection(target){
+  target.focus({preventScroll:true});
+  target.scrollIntoView({block:'start'});
+  const toolsHeader=$('toolsPage').firstElementChild;
+  const sticky=window.getComputedStyle(toolsHeader).position==='sticky'?toolsHeader:$('sharedHeader');
+  const overlap=sticky.getBoundingClientRect().bottom+8-target.getBoundingClientRect().top;
+  if(overlap>0)window.scrollBy(0,-overlap);
+ }
+ $('groupSectionLinks')?.addEventListener('click',event=>{
+  const link=event.target.closest('a');
+  if(!link||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
+  event.preventDefault();
+  const target=$(link.hash.slice(1));
+  if(target.tagName==='DETAILS')target.open=true;
+  focusGroupSection(target.tagName==='DETAILS'?target.firstElementChild:target);
+ });
+ async function openAuditGroup(row,expected){
+  if(!valid(expected)||busy)return;
+  const groupNode=()=>Array.from(groups.root.querySelectorAll('details')).find(item=>item.dataset.groupHandle===row.group);
+  let target=groupNode();
+  if(!target){
+   // Search includes descendants, even when their parents are on other pages.
+   const search=$('groupSearch'),name=row.group_name||row.name;
+   search.value=name;
+   for(let offset=0;;offset+=LIMIT){
+    const ticket=groups.ticket+1;
+    await load(groups,offset);
+    if(!valid(expected)||ticket!==groups.ticket||search.value!==name||!active)return;
+    target=groupNode();
+    if(target||offset+LIMIT>=groups.total)break;
+   }
+  }
+  if(!target){U.notice('Группа не найдена. Обновите список.',true);return;}
+  for(let item=target;item;item=item.parentElement?.closest('details'))item.open=true;
+  focusGroupSection(target.firstElementChild);
+ }
  groups.render=(result,expected)=>{
   found.textContent=result.total?(result.hierarchy&&!groups.query().trim()?'Групп верхнего уровня: ':'Найдено групп: ')+result.total:
    groups.query().trim()?'По запросу групп не найдено':'Групп пока нет';
@@ -469,7 +505,7 @@ function init(){
  const auditEmptyPeriod='Выберите корректный период в аналитике.';
  const audit=existingPager('groupAudit',works.root);audit.ready=()=>Boolean(U.scope);audit.query=works.query;
  audit.actions=el('div',null,'actions');$('groupAuditPanel').append(audit.actions);
- audit.render=(result,expected)=>{const unused=$('groupAuditMode').value==='unused';for(const row of result.rows){const status=row.active===true?'Есть выполнения':row.active===false?'Нет выполнений':'Недостаточно данных о выполнениях';if(unused){const node=el('div',null,'group-member');node.append(el('span',row.name+' · Работ: '+row.members),el('span',status,'muted small'),button('Открыть группу',()=>{if(!valid(expected))return;$('groupSearch').value=row.name;void load(groups); }));audit.root.append(node);}else{const node=moveControl(row,expected);node.append(el('span',(row.group_name?'Группа: '+row.group_name+' · ':'')+status,'muted small'));audit.root.append(node);}}if(result.total){
+ audit.render=(result,expected)=>{const unused=$('groupAuditMode').value==='unused';for(const row of result.rows){const status=row.active===true?'Есть выполнения':row.active===false?'Нет выполнений':'Недостаточно данных о выполнениях';if(unused){const node=el('div',null,'group-member');node.append(el('span',row.name+' · Работ: '+row.members),el('span',status,'muted small'),button('Открыть группу',()=>openAuditGroup(row,expected)));audit.root.append(node);}else{const node=moveControl(row,expected);node.append(el('span',(row.group_name?'Группа: '+row.group_name+' · ':'')+status,'muted small'));audit.root.append(node);}}if(result.total){
   const ticket=audit.ticket,save=button('Скачать CSV',async()=>{
    await guard(async()=>{
     if(!valid(expected)||ticket!==audit.ticket)return;

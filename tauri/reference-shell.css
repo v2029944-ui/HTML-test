@@ -1342,3 +1342,32 @@ label.placement-setting {display:grid;grid-template-columns:minmax(0,1fr) auto;a
 #s1 .data-card .bar {margin-inline-start:auto}
 #s1 .insight-card header {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 #s2 .leaders {align-self:flex-start;max-width:100%}
+
+#sharedHeader .source-state {
+ display:inline-flex;align-items:center;background:transparent;border:0;color:var(--ui-text);
+ text-align:start;font:inherit;font-size:13px;padding:3px 5px;cursor:pointer;
+}
+#sharedHeader .source-state::before {
+ width:8px;height:8px;flex:none;border:1px solid currentColor;background:currentColor;
+}
+#groupSectionLinks {display:flex;flex-wrap:wrap;gap:6px 16px}
+#groupSectionLinks a {color:var(--text);text-underline-offset:3px}
+#groupExchange > summary {cursor:pointer;padding:6px 10px;border:1px solid var(--field-border);border-radius:var(--radius-control)}
+#groupExchange[open] > summary {margin-block-end:8px}
+#groupExchange .file-label {position:relative}
+#groupExchange .group-file-input {position:absolute;width:1px;height:1px;clip-path:inset(50%);padding:0;overflow:hidden}
+#groupExchange .file-label:focus-within,
+#sharedHeader .source-state:focus-visible,
+#refNative #unifiedUploadNav button:focus-visible {
+ outline:2px solid var(--focus);outline-offset:2px;
+}
+#refNative #unifiedUploadNav button {
+ border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;color:var(--text);
+}
+#refNative #unifiedUploadNav button[aria-pressed="true"] {
+ color:var(--text);background:transparent;border-color:var(--accent-fill);box-shadow:none;
+}
+#refNative #unifiedUploadNav button:hover {background:var(--subtle)}
+#refNative :is(.actions,.catalog-actions,.desktop-file-actions) button:disabled {
+ opacity:1;background:var(--subtle);color:var(--muted);border:1px dashed var(--field-border);cursor:not-allowed;
+}
