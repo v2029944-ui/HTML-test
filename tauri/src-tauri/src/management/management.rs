@@ -109,6 +109,11 @@ pub struct ManagementWorkSummary {
 }
 
 #[derive(Debug, Serialize)]
+pub struct CatalogVariant {
+    pub handle: String,
+    pub organization: Option<String>,
+}
+#[derive(Debug, Serialize)]
 pub struct UnifiedManagementRow {
     pub handle: Option<String>,
     pub id: Option<String>,
@@ -118,6 +123,8 @@ pub struct UnifiedManagementRow {
     pub group: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<i64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<CatalogVariant>,
 }
 #[derive(Debug, Serialize)]
 pub struct UnifiedManagementPage {
@@ -185,6 +192,11 @@ impl Storage {
                 if !tx.query_row("SELECT EXISTS(SELECT 1 FROM management_groups WHERE handle=?1)", [handle], |r| r.get::<_, bool>(0)).map_err(err)? { return Err("Группа не найдена.".into()); }
                 format!("SELECT CAST(handle AS TEXT) handle,NULL id,work name,NULL organization,NULL members,CAST(group_handle AS TEXT) group_handle FROM management_members WHERE group_handle={handle}")
             },
+            "catalog_services" => "SELECT CAST(MIN(handle) AS TEXT) handle,NULL id,work name,NULL organization,COUNT(*) members,NULL group_handle FROM management_catalog GROUP BY work".into(),
+            "catalog_variants" => {
+                let representative = group.filter(|handle| *handle > 0).ok_or("Выберите услугу.")?;
+                format!("SELECT CAST(handle AS TEXT) handle,NULL id,work name,organization,NULL members,NULL group_handle FROM management_catalog WHERE work=(SELECT work FROM management_catalog WHERE handle={representative})")
+            },
             "catalog" => "SELECT CAST(handle AS TEXT) handle,NULL id,work name,organization,NULL members,NULL group_handle FROM management_catalog".to_string(),
             "works" => {
                 ensure_rows(&tx)?;
@@ -206,7 +218,16 @@ impl Storage {
             &counts_sql, rusqlite::params_from_iter(search_param), |row| Ok((row.get(0)?, row.get(1)?))
         ).map_err(err)?;
         let mut stmt = tx.prepare(&format!("SELECT handle,id,name,organization,members,group_handle,{children} FROM ({table}) {filter} ORDER BY {prefix_order}name COLLATE unified_ru,name,handle LIMIT ?2 OFFSET ?3")).map_err(err)?;
-        let rows = stmt.query_map(params![term,limit as i64,offset], |r| Ok(UnifiedManagementRow { handle:r.get(0)?, id:r.get(1)?, name:r.get(2)?, organization:r.get(3)?, members:r.get(4)?, group:r.get(5)?, children:r.get(6)? })).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+        let mut rows = stmt.query_map(params![term,limit as i64,offset], |r| Ok(UnifiedManagementRow { handle:r.get(0)?, id:r.get(1)?, name:r.get(2)?, organization:r.get(3)?, members:r.get(4)?, group:r.get(5)?, children:r.get(6)?, variants:Vec::new() })).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+        // The preview is bounded even when many records share one exact work name.
+        if kind == "catalog_services" {
+            let mut variants = tx.prepare("SELECT CAST(handle AS TEXT),organization FROM management_catalog WHERE work=?1 ORDER BY CAST(handle AS TEXT) LIMIT 4").map_err(err)?;
+            for row in &mut rows {
+                row.variants = variants.query_map([&row.name], |r| Ok(CatalogVariant {
+                    handle: r.get(0)?, organization: r.get(1)?,
+                })).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+            }
+        }
         Ok(UnifiedManagementPage { rows,total,grouped,ungrouped:total-grouped,hierarchy:link_root.is_some() })
     }
 
@@ -276,9 +297,14 @@ impl Storage {
     }
 
     pub fn unified_assign_work(&self, revision:i64, work:&str, group:Option<i64>) -> Result<ManagementReceipt,String> {
-        if work.trim().is_empty() || work.len()>4096 { return Err("Некорректное название работы.".into()); }
+        self.unified_assign_works(revision, &[work.to_owned()], group)
+    }
+
+    pub fn unified_assign_works(&self, revision:i64, works:&[String], group:Option<i64>) -> Result<ManagementReceipt,String> {
+        batch(works.len())?;
+        if works.iter().any(|work|work.trim().is_empty() || work.len()>4096) { return Err("Некорректное название работы.".into()); }
         let mut editor = self.management_begin_settings(revision,256*1024*1024,Arc::new(ManagementJob::new()))?;
-        editor.assign_work(work, group)?;
+        editor.assign_works(works, group)?;
         self.management_commit_settings(editor)
     }
 }
@@ -327,11 +353,16 @@ fn unified_remove_empty_groups(c:&Connection, except:Option<i64>) -> Result<(),S
     }
 }
 impl SettingsEditor {
-    fn assign_work(&mut self, work: &str, group: Option<i64>) -> Result<(), String> {
+    fn assign_works(&mut self, works: &[String], group: Option<i64>) -> Result<(), String> {
         self.mutate(|c| {
             let target=group.map(|g| works_node(c,g)).transpose()?;
-            unified_remove_work(c,work)?;
-            if let Some(parent)=target { add(c,parent,None,"string",Some(work))?; }
+            let mut seen = std::collections::HashSet::new();
+            for work in works {
+                if seen.insert(work) {
+                    unified_remove_work(c,work)?;
+                    if let Some(parent)=target { add(c,parent,None,"string",Some(work))?; }
+                }
+            }
             unified_remove_empty_groups(c,group)?;
             Ok(())
         })

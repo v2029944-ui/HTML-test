@@ -326,7 +326,8 @@ def connect_shared(client, folder, *, cancel_first=False, reports=0):
 
 def preview_xlsx(client, workbook, *, year=2024, report_count=366):
     page = client.page
-    page.locator('#refImport').click()
+    if not page.locator('#unifiedUploadImport[aria-pressed=true]').is_visible():
+        page.locator('#refImport').click()
     page.locator('#excelFile').click()
     native_select(client, workbook, 'xlsx', 'xlsx-' + client.name)
     wait_for_text(page, '#excelFileStatus', workbook.name)

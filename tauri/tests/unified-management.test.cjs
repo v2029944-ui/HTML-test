@@ -50,36 +50,36 @@ test('catalog search and labelled editor precede the bounded list and keep SQL s
  const search=panel.querySelectorAll('input').find(n=>n.id==='catalogSearch');
  assert.equal(search.parentNode.tagName,'label');
  assert.equal(panel.querySelectorAll('input').find(n=>n.id==='catalogWorkName').parentNode.tagName,'label');
- m.setHandler((rev,kind,query,group,offset)=>({rows:kind==='catalog'?[{handle:'c1',name:'Работа '+offset,organization:'А'}]:[],total:kind==='catalog'?101:0}));
+ m.setHandler((rev,kind,query,group,offset)=>({rows:kind==='catalog_services'?[{handle:'c1',name:'Работа '+offset,members:1,variants:[{handle:'c1',organization:'А'}]}]:[],total:kind==='catalog_services'?101:0}));
  m.snapshot(7);panel.open=true;await panel.fire('toggle');await tick();search.value='Точное название';await search.fire('input');await tick();
- assert.deepEqual(m.reads.at(-1),[7,'catalog','Точное название',null,0,50]);
- await list.scrollWindow.go(2);assert.deepEqual(m.reads.at(-1),[7,'catalog','Точное название',null,100,50]);
+ assert.deepEqual(m.reads.at(-1),[7,'catalog_services','Точное название',null,0,50]);
+ await list.scrollWindow.go(2);assert.deepEqual(m.reads.at(-1),[7,'catalog_services','Точное название',null,100,50]);
 });
 test('catalog validation, cancelled confirmation and failed writes retain the draft; reset clears edit and organization',async()=>{
  const m=mount(),panel=m.nodes.groupCatalog;
  const work=panel.querySelectorAll('input').find(n=>n.id==='catalogWorkName'),org=panel.querySelectorAll('select')[0];
- const save=actionByText(panel,'Сохранить услугу'),reset=actionByText(panel,'Сбросить');
+ const save=panel.querySelectorAll('button').find(n=>n.id==='catalogSave'),reset=actionByText(panel,'Отменить');
  const feedback=panel.querySelectorAll('p').find(n=>n.id==='catalogFeedback');
- m.snapshot(7);await save.fire();assert.equal(m.writes.length,0);assert.match(m.messages.at(-1)[0],/Введите название/);assert.equal(feedback.hidden,false);assert.match(feedback.textContent,/Введите название/);
+ m.snapshot(7);await actionByText(panel,'Добавить услугу').fire();await save.fire();assert.equal(m.writes.length,0);assert.match(m.messages.at(-1)[0],/Введите название/);assert.equal(feedback.hidden,false);assert.match(feedback.textContent,/Введите название/);
  work.value='  Новая услуга  ';org.value='А';m.setConfirm(false);await save.fire();assert.equal(m.writes.length,0);assert.equal(work.value,'  Новая услуга  ');assert.equal(org.value,'А');
  m.setConfirm(true);const original=m.api.nativeSettingsEdit;m.api.nativeSettingsEdit=async()=>{throw Error('storage failure');};await save.fire();
  assert.equal(m.writes.length,0);assert.equal(work.value,'  Новая услуга  ');assert.equal(org.value,'А');assert.match(m.messages.at(-1)[0],/storage failure/);assert.equal(feedback.hidden,false);assert.match(feedback.textContent,/storage failure/);
- await reset.fire();assert.equal(work.value,'');assert.equal(org.value,'');assert.equal(work.focused,true);assert.equal(feedback.hidden,true);
- m.setHandler((rev,kind)=>({rows:kind==='catalog'?[{handle:'c1',name:'Existing',organization:'А'}]:[],total:kind==='catalog'?1:0}));
+ await reset.fire();assert.equal(work.value,'');assert.equal(org.value,'');assert.equal(panel.querySelectorAll('button').find(n=>n.id==='catalogAdd').focused,true);assert.equal(feedback.hidden,true);
+ m.setHandler((rev,kind)=>({rows:kind==='catalog_services'?[{handle:'c1',name:'Existing',members:1,variants:[{handle:'c1',organization:'А'}]}]:[],total:kind==='catalog_services'?1:0}));
  panel.open=true;await panel.fire('toggle');await tick();await actionByText(panel,'Изменить').fire();assert.equal(work.value,'Existing');assert.equal(org.value,'А');
- await reset.fire();work.value='После сброса';org.value='Б';m.api.nativeSettingsEdit=original;await save.fire();
+ await reset.fire();await panel.querySelectorAll('button').find(n=>n.id==='catalogAdd').fire();work.value='После сброса';org.value='Б';m.api.nativeSettingsEdit=original;await save.fire();
  assert.deepEqual(JSON.parse(JSON.stringify(m.writes.at(-1))),['settings',7,{kind:'create_catalog',work:'После сброса',organization:'Б'}]);assert.equal(work.value,'');assert.equal(org.value,'');assert.equal(feedback.hidden,false);assert.equal(feedback.dataset.kind,'success');assert.match(feedback.textContent,/Услуга сохранена/);
 });
 test('catalog name and organization cannot change during the asynchronous save confirmation',async()=>{
  const m=mount(),panel=m.nodes.groupCatalog; m.snapshot(7);
- const work=panel.querySelectorAll('input').find(n=>n.id==='catalogWorkName'),org=panel.querySelectorAll('select')[0];work.value='Черновик';org.value='А';
- const answer=deferred();m.setConfirm(answer.promise);const pending=actionByText(panel,'Сохранить услугу').fire();await tick();
- assert.equal(work.disabled,true);assert.equal(org.disabled,true);await actionByText(panel,'Сбросить').fire();assert.equal(work.value,'Черновик');
+ await actionByText(panel,'Добавить услугу').fire();const work=panel.querySelectorAll('input').find(n=>n.id==='catalogWorkName'),org=panel.querySelectorAll('select')[0];work.value='Черновик';org.value='А';
+ const answer=deferred();m.setConfirm(answer.promise);const pending=panel.querySelectorAll('button').find(n=>n.id==='catalogSave').fire();await tick();
+ assert.equal(work.disabled,true);assert.equal(org.disabled,true);await actionByText(panel,'Отменить').fire();assert.equal(work.value,'Черновик');
  answer.resolve(false);await pending;assert.equal(work.disabled,false);assert.equal(org.disabled,false);assert.equal(work.value,'Черновик');assert.equal(org.value,'А');assert.equal(m.writes.length,0);
 });
 test('catalog committed before refresh failure stays saved and requires refreshing before another write',async()=>{
- const m=mount(),panel=m.nodes.groupCatalog;m.snapshot(7);m.UI.refresh=async()=>{throw Error('refresh failure');};
- const work=panel.querySelectorAll('input').find(n=>n.id==='catalogWorkName'),save=actionByText(panel,'Сохранить услугу');work.value='Сохранённая услуга';await save.fire();
+ const m=mount(),panel=m.nodes.groupCatalog;m.snapshot(7);m.UI.refresh=async()=>{throw Error('refresh failure');};await actionByText(panel,'Добавить услугу').fire();
+ const work=panel.querySelectorAll('input').find(n=>n.id==='catalogWorkName'),save=panel.querySelectorAll('button').find(n=>n.id==='catalogSave');work.value='Сохранённая услуга';await save.fire();
  const feedback=panel.querySelectorAll('p').find(n=>n.id==='catalogFeedback');assert.equal(m.writes.length,1);assert.match(feedback.textContent,/Услуга сохранена.*Обновите данные/);assert.equal(feedback.dataset.kind,'warning');assert.equal(save.disabled,true);
  await save.fire();assert.equal(m.writes.length,1);
 });
@@ -138,7 +138,8 @@ test('expanded groups load one member page on demand and reuse loaded rows when 
   return {total:210,grouped:101,ungrouped:109,rows:[{name:'Work 0'}]};
  });
  m.snapshot(7);m.views.groups();await tick();
- assert.equal(m.nodes.groupSearchCount.parentNode,m.nodes.groupCoverage.parentNode);
+ assert.equal(m.nodes.groupCoverage.parentNode,m.nodes.groupList.parentNode);
+ assert.equal(m.nodes.groupSearchCount.parentNode.className,'group-result-counts');
  assert.equal(m.nodes.groupSearchCount.className,m.nodes.groupCoverage.className);
  assert.match(m.nodes.groupCoverage.textContent,/101/);
  const group=m.nodes.groupList.children[0],members=group.children[2],before=m.reads.length;
@@ -334,8 +335,8 @@ test('all management destructive confirmations await native false promises',asyn
   const m=mount();m.snapshot(7);m.views.groups();await tick();m.setBackup('/safe.sqlite3');m.setSource('/source');
   let action;
   if(name==='delete group')action=actionByText(m.nodes.groupList,'Удалить');
-  if(name==='save catalog'){const field=m.nodes.groupCatalog.querySelectorAll('input').find(n=>n.placeholder==='Название услуги');field.value='Service';action=actionByText(m.nodes.groupCatalog,'Сохранить услугу');}
-  if(name==='delete catalog'){m.setHandler((r,kind)=>({rows:kind==='catalog'?[{handle:'c1',name:'Service',organization:'А'}]:[],total:kind==='catalog'?1:0}));m.nodes.groupCatalog.open=true;await m.nodes.groupCatalog.fire('toggle');await tick();action=actionByText(m.nodes.groupCatalog,'Удалить');}
+  if(name==='save catalog'){await actionByText(m.nodes.groupCatalog,'Добавить услугу').fire();const field=m.nodes.groupCatalog.querySelectorAll('input').find(n=>n.placeholder==='Название услуги');field.value='Service';action=m.nodes.groupCatalog.querySelectorAll('button').find(n=>n.id==='catalogSave');}
+  if(name==='delete catalog'){m.setHandler((r,kind)=>({rows:kind==='catalog_services'?[{handle:'c1',name:'Service',members:1,variants:[{handle:'c1',organization:'А'}]}]:[],total:kind==='catalog_services'?1:0}));m.nodes.groupCatalog.open=true;await m.nodes.groupCatalog.fire('toggle');await tick();action=actionByText(m.nodes.groupCatalog,'Удалить');}
   if(name==='import groups')action=m.nodes.importGroups;
   if(name==='import catalog')action=m.nodes.catalogFile;
   if(name==='rename organizations'){m.nodes.organizationFields.querySelectorAll('input')[0].value='Новое название';action=m.nodes.saveOrganizations;}
@@ -377,7 +378,7 @@ test('bulk selection spans search pages, and deletion confirms the active worksp
  m.api.unifiedGroupsDelete=async(...args)=>{m.writes.push(['groups',...JSON.parse(JSON.stringify(args))]);return {revision:8};};
  m.sharedWorkspace.state={mode:'shared',folder:'//team/data',workspace_token:'shared',available:true};
  m.snapshot(7);m.views.groups();await tick();
- await actionByText(m.body,'Выбрать группы').fire();
+ await actionByText(m.body,'Выбрать группы для удаления').fire();
  m.nodes.groupSearch.value='Ремонт';await m.nodes.groupSearch.fire('input');
  await actionByText(m.body,'Выбрать все найденные (52)').fire();
  await m.nodes.groupList.scrollWindow.go(1);
@@ -395,7 +396,7 @@ test('clear all counts the entire workspace and skips the backup picker after co
  m.api.unifiedGroupsDelete=async(...args)=>{m.writes.push(args);return {revision:8};};
  m.snapshot(7);m.views.groups();await tick();
  m.nodes.groupSearch.value='поиск';await m.nodes.groupSearch.fire('input');
- await actionByText(m.body,'Очистить список групп').fire();
+ await actionByText(m.body,'Удалить все группы…').fire();
  assert.equal(m.pickers.length,0);
  assert.equal(m.questions.length,1);
  assert.match(m.questions[0],/Личная база.*Очистить весь список групп.*Удаляемых групп: 1/s);
@@ -434,7 +435,7 @@ test('tree bulk picking includes expanded children and uses the whole tree for c
  m.api.unifiedGroupsDelete=async(...args)=>{m.writes.push(JSON.parse(JSON.stringify(args)));return {revision:8};};
  m.snapshot(7,12,true,2);m.views.groups();await tick();
  const tools=m.nodes.groupList.parentNode;
- await actionByText(tools,'Выбрать группы').fire();
+ await actionByText(tools,'Выбрать группы для удаления').fire();
  await actionByText(tools,'Выбрать на странице').fire();
  assert.match(tools.querySelectorAll('span').find(node=>node.role==='status').textContent,/групп: 1/);
  const displayed=m.nodes.groupList.children[0];
@@ -473,4 +474,57 @@ test('import replacement requires a chosen SQLite backup when the preview reques
  m.setBackup('/before.sqlite3');
  await m.nodes.importGroups.fire();
  assert.deepEqual(m.writes,[['import',7,'/new-groups.json','hash',true,'/before.sqlite3']]);
+});
+
+test('identical service names expose only scoped edit and deletion of a single exact catalog record',async()=>{
+ const m=mount(),panel=m.nodes.groupCatalog,entries=[
+  {handle:'9007199254740901',organization:'АВТО'},
+  {handle:'9007199254740902',organization:'СМУ16'},
+  {handle:'9007199254740903',organization:null},
+ ];
+ m.setHandler((rev,kind)=>({rows:kind==='catalog_services'?[{name:'Услуга',handle:entries[0].handle,members:3,variants:entries}]:[],total:kind==='catalog_services'?1:0}));
+ m.snapshot(7);panel.open=true;await panel.fire('toggle');await tick();
+ const remove=panel.querySelectorAll('button').filter(n=>n.textContent==='Удалить');
+ assert.equal(remove.length,3);m.setConfirm(false);
+ for(const [index,entry] of entries.entries()){
+  await remove[index].fire();
+  assert.equal(m.questions.at(-1),'Удалить «Услуга» из справочника? Подразделение: '+(entry.organization||'Без подразделения')+'.');
+ }
+ assert.equal(m.writes.length,0);m.setConfirm(true);await remove[1].fire();
+ assert.deepEqual(JSON.parse(JSON.stringify(m.writes)),[['settings',7,{kind:'delete_catalog',handle:entries[1].handle}]]);
+});
+test('audit combines status and group filters before paging, then assigns both selected pages in one write',async()=>{
+ const m=mount(),reads=[],assignments=[];
+ m.api.unifiedGroupAuditPage=async(_request,mode,search,offset,limit)=>{
+  reads.push([mode,search,offset,limit]);
+  return {rows:[{name:'Работа '+offset,group:null,active:null}],total:51,counts:{all:51,unknown:51,inactive:0,active:0,ungrouped:51}};
+ };
+ m.api.unifiedWorksAssign=async(...args)=>{assignments.push(args);return {revision:8};};
+ m.snapshot(7);m.views.groups();m.nodes.groupAuditPanel.open=true;await m.nodes.groupAuditPanel.fire('toggle');await tick();
+ const list=m.nodes.worksList;
+ await actionByText(list,'Без группы (51)').fire();await actionByText(list,'Недостаточно данных (51)').fire();
+ assert.deepEqual(reads.at(-1),['ungrouped:unknown','',0,50]);
+ for(const offset of [0,1]){
+  if(offset)await list.scrollWindow.go(offset);
+  const checkbox=list.querySelectorAll('input')[0];checkbox.checked=true;await checkbox.fire('change');
+ }
+ assert.deepEqual(reads.at(-1),['ungrouped:unknown','',50,50]);
+ const assigning=actionByText(list,'Назначить группу…').fire();await tick();
+ const picker=m.body.querySelectorAll('dialog').find(n=>n.id==='groupPickerDialog');
+ await actionByText(picker,'Группа').fire();await assigning;
+ assert.deepEqual(JSON.parse(JSON.stringify(assignments)),[[7,['Работа 0','Работа 50'],'g1']]);
+});
+test('work dragging requires a current internal source, confirmation, and the exact target handle',async()=>{
+ const m=mount();
+ m.setHandler((r,k)=>k==='groups'?{rows:[{id:'a',handle:'a',name:'Источник',members:1},{id:'b',handle:'b',name:'Цель',members:0}],total:2}:
+  k==='members'?{rows:[{name:'Услуга,',group:'a'}],total:1}:{rows:[],total:0});
+ m.snapshot(7);m.views.groups();await tick();
+ const [source,target]=m.nodes.groupList.children;source.open=true;await source.fire('toggle');await tick();
+ const title=source.children[2].querySelectorAll('span').find(n=>n.draggable),summary=target.children[0];
+ const event={dataTransfer:{setData(){}}};
+ await summary.fire('drop',event);assert.equal(m.writes.length,0);
+ await title.fire('dragstart',event);m.setConfirm(false);await summary.fire('drop',event);
+ assert.equal(m.writes.length,0);assert.match(m.questions.at(-1),/«Услуга,».*«Цель»/);
+ await title.fire('dragstart',event);m.setConfirm(true);await summary.fire('drop',event);
+ assert.deepEqual(m.writes,[['assign',7,'Услуга,','b']]);
 });

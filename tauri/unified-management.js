@@ -9,7 +9,8 @@ function init(){
  const controls=new Set(),pages=new Set();
  let organizationDirty=false;
  const valid=r=>Number.isSafeInteger(r)&&r===revision&&r===U.revision;
- async function confirmAction(expected,message){const accepted=await window.confirm(message);if(!valid(expected))throw Error('База изменилась. Повторите действие.');return accepted===true;}
+ async function confirmAction(expected,message){const generation=U.generation,token=window.sharedWorkspace?.state?.workspace_token;
+  const accepted=await window.confirm(message);if(!valid(expected)||generation!==U.generation||token!==window.sharedWorkspace?.state?.workspace_token)throw Error('База изменилась. Повторите действие.');return accepted===true;}
  function requestGroupName(anchor,group,create=false){
   const dialog=el('dialog'),form=el('form'),heading=el('h2',create?'Создать подгруппу в «'+group.name+'»':'Переименовать группу');
   dialog.id='groupRenameDialog';heading.id='groupRenameTitle';dialog.setAttribute('aria-labelledby',heading.id);
@@ -30,25 +31,26 @@ function init(){
  }
  const fail=e=>U.notice(window.analizUserError?window.analizUserError(e):(e?.message||String(e)),true);
  function button(text,run){const n=el('button',text,'button secondary');n.type='button';n.addEventListener('click',run);controls.add(n);return n;}
- function lock(){for(const n of controls){if(n.isConnected===false){controls.delete(n);continue;}n.disabled=busy||revision===null;}for(const p of pages){p.prev.disabled=busy||revision===null||p.loading||!p.offset;p.next.disabled=busy||revision===null||p.loading||p.offset+LIMIT>=p.total;}updateRemovalControls();$('saveOrganizations').disabled=busy||revision===null||!organizationDirty;}
+ function lock(){for(const n of controls){if(n.isConnected===false){controls.delete(n);continue;}n.disabled=busy||revision===null||n.dataset.needsSelection==='true';}for(const p of pages){p.prev.disabled=busy||revision===null||p.loading||!p.offset;p.next.disabled=busy||revision===null||p.loading||p.offset+LIMIT>=p.total;}updateRemovalControls();$('saveOrganizations').disabled=busy||revision===null||!organizationDirty;}
  function bind(id,run,event='click'){const n=$(id);if(!n)return;controls.add(n);n.addEventListener(event,run);}
  function guard(run){return async()=>{if(busy||!valid(revision))return;busy=true;lock();try{await run(revision);}catch(e){fail(e);}finally{busy=false;lock();}};}
  async function mutate(expected,run,message){if(!valid(expected))throw Error('База изменилась. Обновите данные.');const result=await run();resetEditor(false);revision=null;for(const p of pages)clear(p);try{await U.refresh();}catch(e){U.notice(message+' Не удалось обновить рабочую область. '+(e?.message||String(e)),true);return result;}U.notice(message+((result?.cleanup_warning||result?.cleanup_error)?' Не удалось удалить временные данные редактора.':''));return result;}
  function pager(root,prefix){const bar=el('div',null,'change-pagination'),prev=button('← Предыдущая',()=>load(p,p.offset-LIMIT)),label=el('span','','muted small'),next=button('Следующая →',()=>load(p,p.offset+LIMIT));bar.append(prev,label,next);window.sqlRowScroll?.retire(prev,next);root.append(bar);const p={prefix,root:null,prev,next,label,offset:0,total:0,ticket:0,loading:false,query:()=>'',kind:'works',group:()=>null,render:()=>{}};pages.add(p);return p;}
  function existingPager(prefix,root){const p={prefix,root,prev:$(prefix+'Prev'),next:$(prefix+'Next'),label:$(prefix+'Page'),offset:0,total:0,ticket:0,loading:false,query:()=>'',kind:'works',group:()=>null,render:()=>{}};window.sqlRowScroll?.retire(p.prev,p.next);p.prev.addEventListener('click',()=>load(p,p.offset-LIMIT));p.next.addEventListener('click',()=>load(p,p.offset+LIMIT));pages.add(p);return p;}
  function clear(p){p.actions?.replaceChildren();window.sqlRowScroll?.reset(p.root);++p.ticket;p.loading=false;p.total=0;p.root?.replaceChildren();p.label.textContent='';lock();}
- async function load(p,offset=0){if(p.ready&&!p.ready()){clear(p);$('groupAuditCoverage').textContent=auditEmptyPeriod;return;}const expected=revision;if(!valid(expected))return;const ticket=++p.ticket;p.actions?.replaceChildren();p.loading=true;p.offset=Math.max(0,offset);p.root.replaceChildren();p.label.textContent='Загрузка…';lock();try{
+ async function load(p,offset=0){if(p.ready&&!p.ready()){clear(p);$('groupAuditCoverage').textContent=auditEmptyPeriod;return;}const expected=revision;if(!valid(expected))return;const ticket=++p.ticket;p.actions?.replaceChildren();p.loading=true;p.offset=Math.max(0,offset);p.root.replaceChildren();p.label.textContent='Загрузка…';if(p.prefix==='catalog')$('catalogStatus').textContent='Загрузка справочника…';lock();try{
   const result=p.fetch?await p.fetch(expected,p.offset):await api.unifiedManagementPage(expected,p.kind,p.query(),p.group(),p.offset,LIMIT);
   if(ticket!==p.ticket||!valid(expected))return;
   if(!result||!Array.isArray(result.rows)||result.rows.length>LIMIT||!Number.isSafeInteger(result.total)||result.total<0)throw Error('Получена некорректная страница.');
+  if(p.prefix==='catalog'&&p.offset>0&&p.offset>=result.total)return load(p,Math.floor(Math.max(0,result.total-1)/LIMIT)*LIMIT);
   p.total=result.total;p.render(result,expected);p.label.textContent='';
   const label={unifiedGroup:'Группы работ',work:'Работы',catalog:'Справочник',groupAudit:'Проверка групп'}[p.prefix];
   p.root.dataset.sqlScrollHost=p.prefix==='groupAudit'?'groupAuditResults':p.root.id||p.prefix;
-  window.sqlRowScroll.attach(p.root,{index:Math.floor(p.offset/LIMIT),size:LIMIT,count:result.rows.length,total:p.total,label,controlsOnly:p.prefix!=='catalog',footer:p.label.parentNode,go:i=>{
+  window.sqlRowScroll.attach(p.root,{index:Math.floor(p.offset/LIMIT),size:LIMIT,count:result.rows.length,total:p.total,label,controlsOnly:true,edgeLinks:p.prefix==='catalog',footer:p.label.parentNode,go:i=>{
    if(ticket!==p.ticket||!valid(expected)||busy)return false;
    return load(p,i*LIMIT);
   }});
- }catch(e){if(ticket===p.ticket&&valid(expected)){window.sqlRowScroll?.reset(p.root);p.root.replaceChildren();p.total=0;p.label.textContent='Не удалось загрузить данные.';fail(e);}}finally{if(ticket===p.ticket){p.loading=false;lock();}}}
+ }catch(e){if(ticket===p.ticket&&valid(expected)){window.sqlRowScroll?.reset(p.root);p.root.replaceChildren();p.total=0;p.label.textContent='Не удалось загрузить данные.';if(p.prefix==='catalog')$('catalogStatus').textContent='Справочник недоступен.';fail(e);}}finally{if(ticket===p.ticket){p.loading=false;lock();}}}
  const groupPagination=el('div');$('groupList').parentNode.insertBefore(groupPagination,$('groupList').nextSibling);
  const groups=pager(groupPagination,'unifiedGroup');groups.root=$('groupList');groups.kind='groups';groups.query=()=>$('groupSearch').value;
  groups.fetch=(expected,offset,query=groups.query())=>api.unifiedManagementPage(expected,U.snapshot?.work_group_hierarchy?'group_tree':'groups',query,null,offset,LIMIT);
@@ -58,7 +60,7 @@ function init(){
  const removalBar=el('div',null,'actions group-removal');
  const selectionStatus=el('span','','muted small');
  selectionStatus.setAttribute('role','status');
- const selectionMode=button('Выбрать группы',()=>{
+ const selectionMode=button('Выбрать группы для удаления',()=>{
   selectingGroups=!selectingGroups;markedGroups.clear();updateRemovalControls();
  });
  const selectVisible=button('Выбрать на странице',()=>{
@@ -82,7 +84,8 @@ function init(){
  }));
  const unmark=button('Снять выделение',()=>{markedGroups.clear();updateRemovalControls();});
  const removeSelected=button('Удалить выбранные',guard(expected=>removeGroups(expected,[...markedGroups])));
- const clearGroups=button('Очистить список групп',guard(expected=>removeGroups(expected,null)));
+ const clearGroups=button('Удалить все группы…',guard(expected=>removeGroups(expected,null)));
+ removeSelected.className=clearGroups.className='button danger-button';
  removalBar.append(selectionMode,selectVisible,selectFound,unmark,removeSelected,clearGroups,selectionStatus);
  groups.root.parentNode.insertBefore(removalBar,groups.root);
  function addMarkedGroups(handles){
@@ -107,9 +110,9 @@ function init(){
  }
  function updateRemovalControls(){
   selectionMode.setAttribute('aria-pressed',String(selectingGroups));
-  selectionMode.textContent=selectingGroups?'Завершить выбор':'Выбрать группы';
+  selectionMode.textContent=selectingGroups?'Завершить выбор':'Выбрать группы для удаления';
   selectionStatus.hidden=!selectingGroups;
-  selectionStatus.textContent='Выбрано групп: '+markedGroups.size;
+  selectionStatus.textContent=markedGroups.size?'Выбрано групп: '+markedGroups.size:'Выберите хотя бы одну группу.';
   for(const control of [selectVisible,selectFound,unmark,removeSelected])control.hidden=!selectingGroups;
   selectVisible.disabled=busy||revision===null||groups.loading||!groupsOnPage().length;
   const matching=matchingGroupCount(),allTree=U.snapshot?.work_group_hierarchy&&!groups.query().trim();
@@ -156,10 +159,10 @@ function init(){
  auditSearchLabel.remove();
  const found=$('groupSearchCount'),coverage=$('groupCoverage'),counts=el('div',null,'group-result-counts');
  found.parentNode.insertBefore(counts,found);
- coverage.className=found.className='muted small';counts.append(found,coverage);
+ coverage.className=found.className='muted small';counts.append(found);groups.root.parentNode.insertBefore(coverage,removalBar);
  works.query=()=>workSearch.value;
  function count(){return el('p','Выбрано работ: '+selected.size,'muted small');}
- function showWorkTotals(result){if(Number.isSafeInteger(result?.grouped)&&Number.isSafeInteger(result.total))coverage.textContent='Работ в группах: '+result.grouped+' из '+result.total;}
+ function showWorkTotals(result){if(Number.isSafeInteger(result?.grouped)&&Number.isSafeInteger(result.total))coverage.textContent='В группах: '+result.grouped+' из '+result.total+' уникальных названий работ';}
  works.render=result=>{works.root.append(count());for(const row of result.rows){const label=el('label',null,'work-row'),check=el('input');check.type='checkbox';check.checked=selected.has(row.name);check.disabled=busy;controls.add(check);check.addEventListener('change',()=>{if(busy)return;if(check.checked)selected.add(row.name);else selected.delete(row.name);works.root.children[0].textContent='Выбрано работ: '+selected.size;});label.append(check,el('span',row.name));works.root.append(label);}if(!workSearch.value.trim())showWorkTotals(result);};
  function resetEditor(reload=true){editTicket++;editing=null;selected=new Set();$('groupName').value='';if(workMode==='edit')workSearch.value='';works.offset=0;if(reload&&active&&workMode==='edit')void load(works);}
  async function editGroup(group,expected,opener){if(busy||!valid(expected))return;const ticket=++editTicket;busy=true;lock();try{
@@ -167,8 +170,8 @@ function init(){
   while(offset<total){const page=await api.unifiedManagementPage(expected,'members','',group.handle,offset,LIMIT);if(ticket!==editTicket||!valid(expected))return;if(!Array.isArray(page?.rows)||page.rows.length>LIMIT||!Number.isSafeInteger(page.total)||page.total>maxGroupWorks||page.total<0||(!page.rows.length&&offset<page.total))throw Error('Не удалось загрузить состав группы (лимит 10 000 работ).');total=page.total;for(const row of page.rows)chosen.add(row.name);offset+=page.rows.length;}
   if(ticket!==editTicket||!valid(expected))return;editing=group;selected=chosen;showWorkMode('edit');openEditor(opener);$('groupName').value=group.name;workSearch.value='';await load(works);$('groupName').focus();
  }catch(e){if(ticket===editTicket)fail(e);}finally{busy=false;lock();}}
- function requestGroupSelection(anchor,row,expected,current,movingGroup=false){
-  const dialog=el('dialog',null,'group-picker'),heading=el('h2',movingGroup?'Переместить группу':'Перенести работу'),work=el('p',row.name,'muted small');
+ function requestGroupSelection(anchor,row,expected,current,movingGroup=false,assigning=false){
+  const dialog=el('dialog',null,'group-picker'),heading=el('h2',movingGroup?'Переместить группу':assigning?'Назначить группу':'Перенести работу'),work=el('p',row.name,'muted small');
   const label=el('label','Поиск групп'),search=el('input'),status=el('p','','muted small');
   const choices=el('div',null,'group-picker-choices'),more=el('button','Показать ещё','button secondary');
   const cancel=el('button','Отмена','button secondary');
@@ -189,7 +192,7 @@ function init(){
     if(!dialog.open||!current())return;
     const request=++ticket,term=search.value.trim();
     const live=()=>dialog.open&&current()&&request===ticket;
-    if(offset===0){choices.replaceChildren(choice(null,movingGroup?'Верхний уровень':'Без группы'));more.hidden=true;}
+    if(offset===0){choices.replaceChildren();if(!assigning)choices.append(choice(null,movingGroup?'Верхний уровень':'Без группы'));more.hidden=true;}
     more.disabled=true;status.textContent='Загрузка групп…';
     try{
      const result=await api.unifiedManagementPage(expected,'groups',term,null,offset,LIMIT);
@@ -216,7 +219,17 @@ function init(){
   return Array.isArray(page?.rows)&&page.rows.length<=LIMIT&&Number.isSafeInteger(page.total)&&page.total>=0&&
    (page.rows.length>0||offset>=page.total)&&(!page.rows.length||offset+page.rows.length<=page.total);
  }
- function moveControl(row,expected,sourceGroup){
+ let draggedWork=null;
+ function allowWorkDrag(node,row,expected){
+  node.draggable=true;
+  node.addEventListener('dragstart',event=>{
+   if(busy||!valid(expected)){event.preventDefault();return;}
+   draggedWork={row,revision:expected,generation:U.generation,token:window.sharedWorkspace?.state?.workspace_token};
+   event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('application/x-analiz-work','1');
+  });
+  node.addEventListener('dragend',()=>{draggedWork=null;});
+ }
+ function moveControl(row,expected,sourceGroup,compact=false){
   const box=el('div',null,'group-member');
   const pick=button('Перенести…',async()=>{
    if(!valid(expected))return;
@@ -241,7 +254,7 @@ function init(){
   });
   pick.className='button secondary group-assign';pick.setAttribute('aria-haspopup','dialog');
   pick.setAttribute('aria-label','Перенести работу «'+row.name+'» в другую группу');
-  box.append(el('span',row.name),pick);return box;
+  if(!compact){const name=el('span',row.name);allowWorkDrag(name,row,expected);box.append(name);}box.append(pick);return box;
  }
  function expandMembers(details,root,group,expected,openChildren){
   const pageTicket=groups.ticket,status=el('p','','muted small');
@@ -299,6 +312,20 @@ function init(){
   const details=el('details',null,'group-details'),summary=el('summary',group.name);
   const actions=el('div',null,'actions'),memberRoot=el('div',null,'group-members');
   details.dataset.groupId=group.id;details.dataset.groupHandle=group.handle;
+  function acceptsWork(){
+   return !busy&&valid(expected)&&draggedWork?.revision===expected&&draggedWork.generation===U.generation&&
+    draggedWork.token===window.sharedWorkspace?.state?.workspace_token&&draggedWork.row.group!==group.handle;
+  }
+  summary.addEventListener('dragover',event=>{if(acceptsWork()){event.preventDefault();event.dataTransfer.dropEffect='move';}});
+  summary.addEventListener('drop',event=>{
+   if(!acceptsWork())return;
+   event.preventDefault();event.stopPropagation();
+   const work=draggedWork.row.name;draggedWork=null;
+   return guard(async()=>{
+    if(await confirmAction(expected,'Перенести «'+work+'» в группу «'+group.name+'» для всех подразделений?'))
+     await mutate(expected,()=>api.unifiedWorkAssign(expected,work,group.handle),'Работа перенесена.');
+   })();
+  });
   summary.append(el('small',(group.children?'Работ напрямую: ':'Работ: ')+group.members+(group.children?' · Подгрупп: '+group.children:'')));
   details.append(summary,actions,memberRoot);
   const rename=button('Переименовать',async()=>{
@@ -353,6 +380,7 @@ function init(){
     kind:'delete',group:group.handle,delete_descendants:deleteDescendants,confirmed:true
    }),'Группа удалена.');
   }));
+  remove.className='button danger-button';
   const extra=el('div',null,'group-extra-actions');
   const more=button('Ещё',()=>showExtra(extra.hidden));
   function showExtra(open){
@@ -425,7 +453,7 @@ function init(){
    for(let offset=0;;offset+=LIMIT){
     const ticket=groups.ticket+1;
     await load(groups,offset);
-    if(!valid(expected)||ticket!==groups.ticket||search.value!==name||!active)return;
+    if(!valid(expected)||ticket!==groups.ticket||search.value!==name||$('refNative')?.dataset.panel!=='groups')return;
     target=groupNode();
     if(target||offset+LIMIT>=groups.total)break;
    }
@@ -440,23 +468,133 @@ function init(){
   for(const group of result.rows)renderGroupRow(groups.root,group,expected,result.hierarchy===true);
  };
  bind('createGroup',()=>{if(busy)return;showWorkMode('edit');resetEditor();openEditor($('createGroup'));$('groupName').focus();});bind('resetGroup',()=>{if(!busy)resetEditor();});bind('saveGroup',guard(async expected=>{const name=$('groupName').value.trim();if(!name||selected.size>maxGroupWorks)throw Error('Введите название и выберите не более 10 000 работ.');const id=editing?.id||window.crypto.randomUUID();await mutate(expected,()=>api.unifiedGroupSave(expected,editing?.handle||null,id,name,[...selected]),'Группа сохранена.');}));
- bind('groupSearch',()=>load(groups),'input');bind('workSearch',()=>load(workMode==='audit'?audit:works),'input');
+ bind('groupSearch',()=>load(groups),'input');bind('workSearch',()=>{if(workMode==='audit')auditSelected.clear();return load(workMode==='audit'?audit:works);},'input');
  const catalogRoot=el('div',null,'catalog-list'),catalogPanel=$('groupCatalog'),catalogControls=el('div',null,'catalog-controls');catalogRoot.id='catalogList';catalogControls.id='catalogControls';
  const catalogSearch=el('input'),searchLabel=el('label','Поиск в справочнике','catalog-field');catalogSearch.id='catalogSearch';catalogSearch.type='search';catalogSearch.placeholder='Поиск в справочнике';searchLabel.append(catalogSearch);catalogControls.append(searchLabel);
  const form=el('div',null,'catalog-form'),workInput=el('input'),orgInput=el('select'),catalogWorkLabel=el('label','Название услуги','catalog-field'),orgLabel=el('label','Подразделение','catalog-field');workInput.id='catalogWorkName';orgInput.id='catalogOrganization';workInput.placeholder='Название услуги';catalogWorkLabel.append(workInput);orgLabel.append(orgInput);let catalogEdit=null;
  const catalogFeedback=el('p',null,'catalog-feedback');catalogFeedback.id='catalogFeedback';catalogFeedback.hidden=true;catalogFeedback.setAttribute('role','status');catalogFeedback.setAttribute('aria-live','polite');workInput.setAttribute('aria-describedby',catalogFeedback.id);orgInput.setAttribute('aria-describedby',catalogFeedback.id);
  function clearCatalogFeedback(){catalogFeedback.hidden=true;catalogFeedback.textContent='';}
- function resetCatalogEditor(focus=false){catalogEdit=null;workInput.value='';orgInput.value='';clearCatalogFeedback();if(focus)workInput.focus();}
- const saveCatalog=button('Сохранить услугу',guard(async expected=>{
-  clearCatalogFeedback();
-  try{const work=workInput.value.trim();if(!work)throw Error('Введите название услуги.');const action={kind:catalogEdit?'update_catalog':'create_catalog',work,organization:orgInput.value||null};if(catalogEdit)action.handle=catalogEdit.handle;if(!await confirmAction(expected,'Сохранить услугу в справочнике?'))return;await mutate(expected,()=>api.nativeSettingsEdit(expected,action),'Справочник сохранён.');resetCatalogEditor();const refreshed=valid(revision);catalogFeedback.dataset.kind=refreshed?'success':'warning';catalogFeedback.textContent=refreshed?'Услуга сохранена.':'Услуга сохранена. Не удалось обновить список. Обновите данные.';catalogFeedback.hidden=false;}
-  catch(error){catalogFeedback.textContent=window.analizUserError?window.analizUserError(error):(error?.message||String(error));catalogFeedback.dataset.kind='error';catalogFeedback.hidden=false;throw error;}
- }));saveCatalog.id='catalogSave';
- const resetCatalog=button('Сбросить',()=>{if(!busy)resetCatalogEditor(true);});resetCatalog.id='catalogReset';const formActions=el('div',null,'catalog-actions');formActions.append(saveCatalog,resetCatalog);form.append(catalogWorkLabel,orgLabel,formActions);catalogControls.append(form,catalogFeedback);catalogPanel.append(catalogControls,catalogRoot);
+ const formHeading=el('strong'),addCatalog=button('Добавить услугу',()=>openCatalogEditor());
+ addCatalog.id='catalogAdd';addCatalog.setAttribute('aria-controls','catalogForm');form.id='catalogForm';form.hidden=true;
+ let catalogOrigin=null,catalogFocusRow=null;
+ function resetCatalogEditor(){
+  catalogEdit=null;catalogOrigin=null;workInput.value='';orgInput.value='';form.hidden=true;
+  addCatalog.hidden=false;addCatalog.setAttribute('aria-expanded','false');clearCatalogFeedback();
+ }
+ function openCatalogEditor(row=null,origin=addCatalog){
+  if(busy||!valid(revision))return;
+  catalogEdit=row;catalogOrigin=origin;clearCatalogFeedback();form.hidden=false;addCatalog.hidden=true;
+  workInput.value=row?.name||'';orgInput.value=row?.organization||'';
+  if(row?.organization&&orgInput.value!==row.organization){
+   const option=el('option',row.organization);option.value=row.organization;orgInput.append(option);orgInput.value=row.organization;
+  }
+  formHeading.textContent=row?'Редактирование услуги · '+(row.organization||'Без подразделения'):'Новая услуга';
+  saveCatalog.textContent=row?'Сохранить изменения':'Добавить услугу';
+  addCatalog.setAttribute('aria-expanded','true');workInput.focus();
+ }
+ const saveCatalog=button('Добавить услугу',async()=>{
+  let focusAfter;
+  await guard(async expected=>{
+   clearCatalogFeedback();
+   try{
+    const work=workInput.value.trim(),organization=orgInput.value||null;
+    if(!work)throw Error('Введите название услуги.');
+    const action={kind:catalogEdit?'update_catalog':'create_catalog',work,organization};
+    if(catalogEdit)action.handle=catalogEdit.handle;
+    if(!await confirmAction(expected,'Сохранить услугу в справочнике?'))return;
+    const offset=catalog.offset,token=window.sharedWorkspace?.state?.workspace_token;
+    await mutate(expected,()=>api.nativeSettingsEdit(expected,action),'Справочник сохранён.');
+    resetCatalogEditor();
+    const refreshed=valid(revision)&&token===window.sharedWorkspace?.state?.workspace_token;
+    if(refreshed&&catalogPanel.open){
+     await load(catalog,offset);
+     focusAfter=catalogFocusRow?.(work,organization)||addCatalog;
+    }
+    catalogFeedback.dataset.kind=refreshed?'success':'warning';
+    catalogFeedback.textContent=refreshed?'Услуга сохранена.':'Услуга сохранена. Не удалось обновить список. Обновите данные.';catalogFeedback.hidden=false;
+   }catch(error){
+    catalogFeedback.textContent=window.analizUserError?window.analizUserError(error):(error?.message||String(error));
+    catalogFeedback.dataset.kind='error';catalogFeedback.hidden=false;throw error;
+   }
+  })();
+  if(focusAfter?.isConnected!==false&&focusAfter&&!focusAfter.disabled)focusAfter.focus({preventScroll:true});
+ });saveCatalog.id='catalogSave';saveCatalog.className='button primary';
+ const resetCatalog=button('Отменить',()=>{
+  if(busy)return;
+  const origin=catalogOrigin;resetCatalogEditor();(origin?.isConnected!==false&&origin?origin:addCatalog).focus({preventScroll:true});
+ });
+ resetCatalog.id='catalogReset';const formActions=el('div',null,'catalog-actions');
+ formActions.append(saveCatalog,resetCatalog);form.append(formHeading,catalogWorkLabel,orgLabel,formActions);
+ catalogControls.append(addCatalog,form,catalogFeedback);catalogPanel.append(catalogControls,catalogRoot);
  for(const input of [catalogSearch,workInput,orgInput])controls.add(input);
- const catalog=pager(catalogPanel,'catalog');catalog.root=catalogRoot;catalog.kind='catalog';catalog.query=()=>catalogSearch.value;catalogSearch.addEventListener('input',()=>load(catalog));
- catalog.render=(result,expected)=>{ $('catalogStatus').textContent='Записей в справочнике: '+result.total;for(const row of result.rows){const node=el('div',null,'group-member catalog-row'),entry=el('div',null,'catalog-entry'),actions=el('div',null,'catalog-row-actions');entry.append(el('span',row.name,'catalog-name'),el('span',row.organization||'Без подразделения','catalog-organization'));actions.append(button('Изменить',()=>{if(!valid(expected)||busy)return;catalogEdit=row;clearCatalogFeedback();workInput.value=row.name;orgInput.value=row.organization||'';workInput.focus();}),button('Удалить',guard(async()=>{if(!valid(expected)||!await confirmAction(expected,'Удалить «'+row.name+'» из справочника?'))return;await mutate(expected,()=>api.nativeSettingsEdit(expected,{kind:'delete_catalog',handle:row.handle}),'Услуга удалена.');})));node.append(entry,actions);catalogRoot.append(node);}};
- catalogPanel.addEventListener('toggle',()=>{if(catalogPanel.open)void load(catalog);});
+ const catalog=pager(catalogPanel,'catalog');catalog.root=catalogRoot;catalog.kind='catalog_services';catalog.query=()=>catalogSearch.value;
+ catalogSearch.addEventListener('input',()=>load(catalog));
+ function catalogActions(row,expected,organization){
+  const menu=el('details',null,'catalog-menu'),trigger=el('summary','⋯'),actions=el('div',null,'catalog-row-actions');
+  trigger.setAttribute('aria-label','Действия · '+row.name+' · '+organization);
+  const edit=button('Изменить',()=>{if(!valid(expected)||busy)return;menu.open=false;openCatalogEditor(row,trigger);});
+  const remove=button('Удалить',guard(async()=>{
+   if(!valid(expected)||!await confirmAction(expected,'Удалить «'+row.name+'» из справочника? Подразделение: '+organization+'.'))return;
+   const offset=catalog.offset,token=window.sharedWorkspace?.state?.workspace_token;
+   await mutate(expected,()=>api.nativeSettingsEdit(expected,{kind:'delete_catalog',handle:row.handle}),'Услуга удалена.');
+   if(valid(revision)&&token===window.sharedWorkspace?.state?.workspace_token&&catalogPanel.open)await load(catalog,offset);
+  }));
+  remove.className='button danger-button';actions.append(edit,remove);menu.append(trigger,actions);return {menu,trigger};
+ }
+ catalog.render=(result,expected)=>{
+  const entries=[],services=new Map(),search=catalogSearch.value.trim();
+  addCatalog.textContent=!result.total&&!search?'Добавить первую услугу':'Добавить услугу';
+  $('catalogStatus').textContent=(search?'Найдено уникальных услуг: ':'Уникальных услуг в справочнике: ')+result.total;
+  catalogFocusRow=(work,org)=>{
+   const match=entries.find(entry=>entry.row.name===work&&(entry.row.organization||null)===org);
+   if(match?.disclosure){match.disclosure.open=true;match.detailRow.hidden=false;}
+   return match?.trigger||services.get(work);
+  };
+  if(!result.total){
+   catalogRoot.append(el('p',search?'Совпадений нет':'Справочник пуст','muted small'));
+   if(search)catalogRoot.append(button('Сбросить поиск',()=>{catalogSearch.value='';catalogSearch.focus();return load(catalog);}));
+   return;
+  }
+  const table=el('table',null,'catalog-table'),head=el('thead'),titles=el('tr'),body=el('tbody');
+  for(const title of ['Услуга','Подразделение','Действия']){const th=el('th',title);th.setAttribute('scope','col');titles.append(th);}
+  head.append(titles);table.append(head,body);catalogRoot.append(table);
+  for(const row of result.rows){
+   const node=el('tr',null,'catalog-row'),scope=el('td',null,'catalog-organization'),cell=el('td');
+   node.append(el('td',row.name,'catalog-name'),scope,cell);body.append(node);
+   const variants=row.variants||[],orgName=v=>v.organization||'Без подразделения';
+   scope.textContent=[...new Set(variants.map(orgName))].join(', ')+(row.members>variants.length?'…':'');
+   function addAction(container,variant,disclosure,detailRow){
+    const entry={...variant,name:row.name},action=catalogActions(entry,expected,orgName(entry));
+    entries.push({row:entry,trigger:action.trigger,disclosure,detailRow});container.append(action.menu);
+   }
+   if(row.members===1&&variants.length===1){addAction(cell,variants[0]);continue;}
+   const disclosure=el('details'),summary=el('summary','Записи ('+row.members+')'),list=el('div');
+   const detailRow=el('tr'),detailCell=el('td');detailCell.colSpan=3;detailRow.hidden=true;
+   detailCell.append(list);detailRow.append(detailCell);body.append(detailRow);
+   disclosure.append(summary);cell.append(disclosure);services.set(row.name,summary);
+   disclosure.addEventListener('toggle',()=>{detailRow.hidden=!disclosure.open;});
+   let cursor=0,fetching=false;
+   const more=button('Ещё записи',async()=>{
+    if(fetching||busy||!valid(expected))return;
+    fetching=true;more.disabled=true;
+    try{
+     const page=await api.unifiedManagementPage(expected,'catalog_variants','',row.handle,cursor,LIMIT);
+     if(!valid(expected)||detailRow.isConnected===false)return;
+     if(!validManagementPage(page,cursor)||page.total!==row.members)throw Error('Состав услуги изменился. Обновите список.');
+     appendVariants(page.rows);
+    }catch(error){fail(error);}finally{fetching=false;more.disabled=false;}
+   });
+   function appendVariants(batch){
+    for(const variant of batch){
+     const line=el('div',null,'catalog-variant');line.append(el('span',orgName(variant)));addAction(line,variant,disclosure,detailRow);list.append(line);
+    }
+    cursor+=batch.length;more.hidden=cursor>=row.members;list.append(more);
+   }
+   appendVariants(variants);
+
+  }
+ };
+ catalogPanel.addEventListener('toggle',()=>{if(catalogPanel.open)void load(catalog,catalog.offset);});
  function file(id,run){const n=$(id);if(!n)return;controls.add(n);n.addEventListener('click',event=>{event.preventDefault();return guard(run)();});}
  file('importGroups',async expected=>{const source=await api.chooseGroupsImport();if(!source)return;const review=await api.unifiedGroupsPreview(expected,source);if(!valid(expected))throw Error('База изменилась. Повторите импорт.');const question='Заменить текущие группы? Групп: '+review.groups+', работ: '+review.works+'.'+(review.requires_backup?' Сначала будет создана проверенная копия SQLite.':'');if(!await confirmAction(expected,question))return;let backup;if(review.requires_backup){backup=await api.chooseSqliteBackupPath('analiz-before-group-import.sqlite3');if(!backup)return;}await mutate(expected,()=>review.requires_backup?api.unifiedGroupsImport(expected,source,review.hash,true,backup):api.unifiedGroupsImport(expected,source,review.hash,true),'Группы импортированы.');});
  bind('exportGroups',guard(async expected=>{const destination=await api.chooseGroupsExport();if(!destination)return;if(!valid(expected))throw Error('База изменилась. Повторите экспорт.');await api.unifiedGroupsExport(expected,destination);U.notice('Группы сохранены.');}));
@@ -533,7 +671,76 @@ function init(){
  const auditEmptyPeriod='Выберите корректный период в аналитике.';
  const audit=existingPager('groupAudit',works.root);audit.ready=()=>Boolean(U.scope);audit.query=works.query;
  audit.actions=el('div',null,'actions');$('groupAuditPanel').append(audit.actions);
- audit.render=(result,expected)=>{const unused=$('groupAuditMode').value==='unused';for(const row of result.rows){const status=row.active===true?'Есть выполнения':row.active===false?'Нет выполнений':'Недостаточно данных о выполнениях';if(unused){const node=el('div',null,'group-member');node.append(el('span',row.name+' · Работ: '+row.members),el('span',status,'muted small'),button('Открыть группу',()=>openAuditGroup(row,expected)));audit.root.append(node);}else{const node=moveControl(row,expected);node.append(el('span',(row.group_name?'Группа: '+row.group_name+' · ':'')+status,'muted small'));audit.root.append(node);}}if(result.total){
+ const auditSelected=new Set(),activityNames={any:'Все состояния',active:'Есть выполнения',inactive:'Нет выполнений',unknown:'Недостаточно данных'};
+ let activity='any';
+ function auditMode(){const mode=$('groupAuditMode').value||'all';return mode==='unused'||activity==='any'?mode:mode+':'+activity;}
+ function drawAuditToolbar(result,expected){
+  const tools=el('div',null,'audit-tools'),states=el('div',null,'actions');
+  const chooseState=(name,selected,count,run)=>{
+   const control=button(name+' ('+count+')',run);control.setAttribute('aria-pressed',String(selected));states.append(control);
+  };
+  const mode=$('groupAuditMode'),counts=result.counts;
+  if(counts){
+   chooseState('Без группы',mode.value==='ungrouped',counts.ungrouped,()=>{
+    mode.value=mode.value==='ungrouped'?'all':'ungrouped';auditSelected.clear();return load(audit);
+   });
+   for(const [key,label] of Object.entries(activityNames)){
+    chooseState(label,activity===key,counts[key==='any'?'all':key],()=>{activity=key;auditSelected.clear();return load(audit);});
+   }
+  }
+  const selection=el('div',null,'actions'),status=el('span',null,'muted small');
+  status.setAttribute('role','status');
+  const assign=button('Назначить группу…',guard(async()=>{
+   if(!auditSelected.size||!valid(expected))return;
+   const generation=U.generation,token=window.sharedWorkspace?.state?.workspace_token,ticket=audit.ticket;
+   const current=()=>valid(expected)&&generation===U.generation&&token===window.sharedWorkspace?.state?.workspace_token&&ticket===audit.ticket;
+   const works=[...auditSelected],description={name:'Выбрано работ: '+works.length+'. Группа изменится во всех подразделениях.'};
+   const target=await requestGroupSelection(assign,description,expected,current,false,true);
+   if(target===undefined)return;
+   if(!current())throw Error('База или выборка изменилась. Повторите назначение.');
+   await mutate(expected,()=>api.unifiedWorksAssign(expected,works,target),'Группа назначена.');
+  }));
+  assign.setAttribute('aria-haspopup','dialog');
+  function updateSelection(){
+   assign.disabled=busy||!auditSelected.size||!valid(expected);assign.dataset.needsSelection=String(!auditSelected.size);
+   status.textContent=auditSelected.size?'Выбрано работ: '+auditSelected.size:'Выберите хотя бы одну работу.';
+  }
+  selection.append(assign,status);tools.append(states,selection);audit.root.append(tools);updateSelection();return updateSelection;
+ }
+ audit.render=(result,expected)=>{
+  const unused=$('groupAuditMode').value==='unused';
+  const updateSelection=unused?null:drawAuditToolbar(result,expected);
+  const table=el('table',null,'audit-table'),head=el('thead'),titles=el('tr'),body=el('tbody');
+  for(const text of (unused?['Группа','Работ','Статус','Действия']:['Работа','Группа','Статус','Действия'])){
+   const th=el('th',text);th.setAttribute('scope','col');titles.append(th);
+  }
+  head.append(titles);table.append(head,body);audit.root.append(table);
+  for(const row of result.rows){
+   const line=el('tr'),name=el('td'),group=el('td',unused?String(row.members):(row.group_name||'Без группы'));
+   if(!unused&&row.group&&row.group_name){
+    const open=button(row.group_name,()=>openAuditGroup(row,expected));
+    open.className='audit-group-link';
+    open.setAttribute('aria-label','Открыть группу «'+row.group_name+'»');
+    group.replaceChildren(open);
+   }
+   const state=row.active===true?'active':row.active===false?'inactive':'unknown';
+   const status=el('td',activityNames[state]);status.dataset.activity=state;
+   const actions=el('td'),menu=el('details',null,'catalog-menu'),trigger=el('summary','⋯');
+   trigger.setAttribute('aria-label','Действия · '+row.name);menu.append(trigger);
+   if(unused){
+    name.textContent=row.name;menu.append(button('Открыть группу',()=>openAuditGroup(row,expected)));
+   }else{
+    const label=el('label'),check=el('input');check.type='checkbox';check.checked=auditSelected.has(row.name);controls.add(check);
+    check.addEventListener('change',()=>{
+     if(check.checked&&auditSelected.size>=500&&!auditSelected.has(row.name)){check.checked=false;fail(Error('Можно выбрать не более 500 работ.'));return;}
+     if(check.checked)auditSelected.add(row.name);else auditSelected.delete(row.name);updateSelection();
+    });
+    const title=el('span',row.name);allowWorkDrag(title,row,expected);label.append(check,title);name.append(label);menu.append(moveControl(row,expected,undefined,true));
+   }
+   actions.append(menu);line.append(name,group,status,actions);body.append(line);
+  }
+  if(!result.rows.length)audit.root.append(el('p','Совпадений нет','muted small'));
+  if(result.total){
   const ticket=audit.ticket,save=button('Скачать CSV',async()=>{
    await guard(async()=>{
     if(!valid(expected)||ticket!==audit.ticket)return;
@@ -551,7 +758,7 @@ function init(){
   return U.request({...U.scope,...range,selectedNames:[],selectedKeys:[],allNames:true});
  }
  audit.fetch=async(expected,offset)=>{
-  const request=auditRequest(),mode=$('groupAuditMode').value,search=workSearch.value;
+  const request=auditRequest(),mode=auditMode(),search=workSearch.value;
   const page=await api.unifiedGroupAuditPage(request,mode,search,offset,LIMIT);
   return {...page,request,mode,search};
  };
@@ -559,13 +766,13 @@ function init(){
   if(mode===workMode)return false;
   clear(works);clear(audit);workMode=mode;
   if(mode==='audit'){
-   editor.hidden=true;editor.open=false;editorOpener=null;workSearchCaption.textContent='Поиск по всем названиям';auditSearchHome.append(workLabel);auditListHome.append(works.root);
+   editor.hidden=true;editor.open=false;editorOpener=null;workSearchCaption.textContent='Отбор названий · поиск';auditSearchHome.append(workLabel);auditListHome.append(works.root);
   }else{
    auditPanel.open=false;workSearchCaption.textContent='Поиск работ';workSearchHome.append(workLabel);workListHome.insertBefore(works.root,workListNext??null);
   }
   return true;
  }
- for(const id of ['groupAuditMode','groupAuditFrom','groupAuditTo'])bind(id,()=>{if(workMode==='audit')return load(audit);},'change');
+ for(const id of ['groupAuditMode','groupAuditFrom','groupAuditTo'])bind(id,()=>{auditSelected.clear();if(workMode==='audit')return load(audit);},'change');
  editor.addEventListener('toggle',()=>{
   if(!editor.open&&!editor.hidden){
    editor.hidden=true;
@@ -580,11 +787,14 @@ function init(){
    if(valid(expected)&&generation===U.generation)showWorkTotals(result);
   },error=>{if(valid(expected)&&generation===U.generation)fail(error);});
  }
- U.onScope(scope=>{if(scope){U.setPeriodInput('groupAuditFrom',scope.displayType,scope.from);U.setPeriodInput('groupAuditTo',scope.displayType,scope.to);}
+ U.onScope(scope=>{auditSelected.clear();
+  const type={day:'День',week:'Неделя',month:'Месяц',year:'Год'};
+  $('groupAuditScope').textContent=scope?(type[scope.displayType]||scope.displayType)+' · '+scope.organizations.join(', '):'';
+  if(scope){U.setPeriodInput('groupAuditFrom',scope.displayType,scope.from);U.setPeriodInput('groupAuditTo',scope.displayType,scope.to);}
   $('groupAuditCoverage').textContent=scope?'':auditEmptyPeriod;
   if(workMode==='audit'){clear(audit);if(scope&&active&&auditPanel.open)void load(audit);}
  });
- U.onSnapshot(snapshot=>{markedGroups.clear();selectingGroups=false;revision=Number.isSafeInteger(snapshot?.revision)?snapshot.revision:null;editTicket++;editing=null;selected=new Set();resetCatalogEditor();for(const p of pages)clear(p);found.textContent='';coverage.textContent='';$('catalogStatus').textContent='';$('groupAuditCoverage').textContent=U.scope?'':auditEmptyPeriod;organizationFields();lock();if(active&&valid(revision)){void reloadGroups();void load(workMode==='audit'?audit:works);if(workMode==='audit'||workSearch.value.trim())void readGroupTotals(revision);if(catalogPanel.open)void load(catalog);}});
+ U.onSnapshot(snapshot=>{auditSelected.clear();markedGroups.clear();selectingGroups=false;revision=Number.isSafeInteger(snapshot?.revision)?snapshot.revision:null;editTicket++;editing=null;selected=new Set();resetCatalogEditor();for(const p of pages)clear(p);found.textContent='';coverage.textContent='';$('catalogStatus').textContent='';$('groupAuditCoverage').textContent=U.scope?'':auditEmptyPeriod;organizationFields();lock();if(active&&valid(revision)){void reloadGroups();void load(workMode==='audit'?audit:works);if(workMode==='audit'||workSearch.value.trim())void readGroupTotals(revision);if(catalogPanel.open)void load(catalog);}});
  U.onView('groups',()=>{active=true;if(valid(revision)){void reloadGroups(groups.offset);const page=workMode==='audit'?audit:works;void load(page,page.offset);if(!coverage.textContent&&(workMode==='audit'||workSearch.value.trim()))void readGroupTotals(revision);if(catalogPanel.open)void load(catalog);}});U.onView('storage',()=>{organizationFields();});
 }
 window.unifiedManagement={init};

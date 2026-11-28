@@ -229,11 +229,7 @@
     });
     header.querySelectorAll('.main-nav button').forEach((tab, i) =>
       tab.addEventListener('click', () => navigate(i ? 's2' : 's1')));
-    byId('refImport').addEventListener('click', event => {
-      openPanel('upload', event.currentTarget);
-      const uploadTab = byId('unifiedUploadImport');
-      if (uploadTab.getAttribute('aria-pressed') !== 'true') uploadTab.click();
-    });
+    byId('refImport').addEventListener('click', event => openPanel('upload', event.currentTarget));
     byId('refSettings').addEventListener('click', event => settingsReturn ? closePanel() : openPanel('storage', event.currentTarget));
     byId('referenceAdjacentHistory')?.addEventListener('click', event => openPanel('changes', event.currentTarget));
     byId('refAnalytics').addEventListener('click', event => {

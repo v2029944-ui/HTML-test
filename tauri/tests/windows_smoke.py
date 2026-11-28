@@ -1602,7 +1602,7 @@ def check_groups(page, confirmations):
     # Removing the final member intentionally removes its source group.
     # Recreate it to verify the separate explicit-delete confirmation path.
     group=create()
-    page.get_by_role('button',name='Выбрать группы',exact=True).click()
+    page.get_by_role('button',name='Выбрать группы для удаления',exact=True).click()
     group.get_by_role('checkbox',name='Выбрать «Группа CI»',exact=True).check()
     expect(page.locator('.group-removal')).to_contain_text('Выбрано групп: 1')
     confirmations.cancel_only(page.get_by_role('button',name='Удалить выбранные',exact=True),

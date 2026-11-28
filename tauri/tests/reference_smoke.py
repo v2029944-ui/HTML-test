@@ -95,11 +95,11 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         assert dialog.evaluate('(node) => node.open && node.matches(":modal")')
         # Browser top-layer dialogs must intercept actual background interaction.
         try:
-            page.locator('#refImport').click(trial=True, timeout=600)
+            page.locator('#refSettings').click(trial=True, timeout=600)
         except PlaywrightTimeoutError:
             pass
         else:
-            raise AssertionError('An open modal did not block the background import button')
+            raise AssertionError('An open modal did not block the background settings button')
         # Native dialogs may hand Tab to browser chrome (activeElement=body).
         # A focusable control in the underlying application must never receive it.
         for _ in range(4):
@@ -412,6 +412,7 @@ def check_reference(page, output, has_reports, *, screenshot_scope=None):
         importer = page.locator('#refImport')
         importer.click()
         panel('upload')
+        expect(importer).to_be_hidden()
         expect(page.locator('#inspectFile')).to_be_disabled()
         expect(page.locator('#saveImport')).to_be_disabled()
         expect(page.locator('#excelFile')).to_be_attached()

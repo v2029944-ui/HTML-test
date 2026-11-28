@@ -174,6 +174,28 @@ pub async fn unified_work_assign(
 }
 
 #[tauri::command]
+pub async fn unified_works_assign(
+    app: AppHandle,
+    revision: i64,
+    works: Vec<String>,
+    group: Option<String>,
+    workspace_token: Option<String>,
+) -> Result<ManagementReceipt, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::native_shared_runtime::execute(
+            &app,
+            workspace_token.as_deref(),
+            crate::storage::shared_runtime::Access::Write,
+            |routed_storage| {
+                routed_storage.unified_assign_works(revision, &works, group_handle(group)?)
+            },
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn unified_groups_preview(
     app: AppHandle,
     revision: i64,
