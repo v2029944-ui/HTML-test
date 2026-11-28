@@ -359,6 +359,54 @@ class BackupOpenControlsTests(unittest.TestCase):
         self.assertEqual([call.args[1] for call in self.dialog.message.call_args_list],
                          [0x000C, 0x000D, 0x00F5])
 
+    def test_save_uses_the_filename_host_and_its_direct_edit_and_verified_idok(self):
+        self.facts['inventory'] = [
+            dict(pid=41, enabled=True, offscreen=False, automationId=key, handle=hwnd)
+            for key, hwnd in [('FileNameControlHost',104),('1001',103),('1001',107),('1',102)]
+        ]
+        self.dialog.native.window_class.side_effect = {104:'ComboBox',103:'Edit',102:'Button',107:'ToolbarWindow32',106:'Edit'}.get
+        self.dialog.user32.GetDlgCtrlID.side_effect = {104:0,103:1001,102:1,106:1001,107:1001}.get
+        self.assertEqual(self.dialog.rename_save_controls(101,self.facts),(103,102))
+        self.dialog.user32.GetParent.side_effect = lambda hwnd: 105
+        with self.assertRaises(AssertionError):
+            self.dialog.rename_save_controls(101,self.facts)
+        self.dialog.user32.GetParent.side_effect = lambda hwnd: 104
+        self.facts['inventory'].append(dict(self.facts['inventory'][1],handle=106))
+        with self.assertRaises(AssertionError):
+            self.dialog.rename_save_controls(101,self.facts)
+
+    def test_save_typing_requires_the_verified_edit_and_sends_each_utf16_unit(self):
+        self.dialog.message = Mock()
+        self.dialog.send_keys = Mock()
+        self.dialog.focused_control = Mock(return_value=999)
+        path = '"C:/файл-🗃.sqlite3"'
+        with self.assertRaises(AssertionError):
+            self.dialog.type_save_path(101,103,path)
+        self.dialog.send_keys.assert_not_called()
+        self.dialog.focused_control.return_value = 103
+        self.dialog.type_save_path(101,103,path)
+        hwnd,focus,events = self.dialog.send_keys.call_args.args
+        self.assertEqual((hwnd,focus),(101,103))
+        down,up = events[::2],events[1::2]
+        self.assertEqual(bytes().join(scan.to_bytes(2,'little') for _,scan,_ in down).decode('utf-16-le'),path)
+        self.assertEqual(up,[(0,scan,6) for vk,scan,flags in down if vk==0 and flags==4])
+        self.dialog.message.assert_called_with(103,0x00B1,0,-1)
+
+    def test_rename_save_targets_only_a_new_file_in_the_empty_test_directory(self):
+        self.dialog.verify_window = Mock()
+        self.dialog.native.window_class.side_effect = lambda hwnd: '#32770'
+        self.dialog._select_verified_path = Mock()
+        with tempfile.TemporaryDirectory() as scratch:
+            directory = Path(scratch)
+            destination = self.dialog.save_rename_backup(101, 100, directory, None)
+            self.assertEqual(destination, directory/'before-rename.sqlite3')
+            self.dialog._select_verified_path.assert_called_once_with(
+                101, 100, 'Сохранить резервную копию SQLite', destination, None, 'save-rename-backup')
+            destination.touch()
+            with self.assertRaises(AssertionError):
+                self.dialog.save_rename_backup(101, 100, directory, None)
+            self.assertEqual(self.dialog._select_verified_path.call_count, 1)
+
     def test_save_dialog_cannot_be_accepted_by_preview_helper(self):
         self.dialog.message = Mock()
         with self.assertRaisesRegex(AssertionError, 'Only a read-only preview Open'):

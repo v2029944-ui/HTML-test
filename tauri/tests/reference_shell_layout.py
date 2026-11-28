@@ -127,10 +127,10 @@ def check_filter_placement(page, record):
         assert not fold.evaluate('el => el.open')
         assert abs(page.evaluate('scrollY') - y) <= 2
 
-        page.set_viewport_size({'width':2600,'height':650})
         scope = page.evaluate('JSON.stringify(window.referenceFilters.scope)')
         reset = fold.locator('.filter-reset')
-        for scale in ('80','90','standard','large','xlarge'):
+        for scale in ('80','90','standard','110','125','150'):
+            page.set_viewport_size({'width':3200 if scale == '150' else 2600,'height':650})
             appearance(mode='top', scale=scale)
             page.evaluate("scrollTo({top:0,behavior:'instant'})")
             report = page.locator('#s1 main')
@@ -184,7 +184,7 @@ def check_filter_placement(page, record):
         page.set_viewport_size({'width':1920,'height':650})
         appearance(scale='standard')
         expect(sidebar).to_have_css('--filter-at-side','1')
-        appearance(scale='xlarge')
+        appearance(scale='125')
         page.evaluate(settle)
         assert not page.evaluate('window.referenceFilters.atSide()')
         appearance(scale='standard')

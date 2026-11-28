@@ -988,9 +988,9 @@ body:has(#refRoot)>footer {display:none}
  }
 }
 @media screen and (max-width:920px) {
- #refRoot[data-ui-size="xlarge"] #reportShell .report-dates {grid-template-columns:minmax(0,1fr);max-width:none}
+ #refRoot:is([data-ui-size="125"],[data-ui-size="150"]) #reportShell .report-dates {grid-template-columns:minmax(0,1fr);max-width:none}
 }
-#refRoot[data-ui-size="xlarge"] #reportShell .filter-periods > .lbl:has([data-compare]) {grid-column:1/-1}
+#refRoot:is([data-ui-size="125"],[data-ui-size="150"]) #reportShell .filter-periods > .lbl:has([data-compare]) {grid-column:1/-1}
 @media screen {
  /* The side panel uses the free margin outside the centered report. Its
     sticky anchor occupies no vertical space in the report flow. */
@@ -1117,24 +1117,16 @@ body:has(#refRoot)>footer {display:none}
   }
  }
 }
-#refRoot:is([data-ui-size="large"],[data-ui-size="xlarge"]) #toolsTitle {font-size:var(--ui-heading-font)}
-#refRoot:is([data-ui-size="large"],[data-ui-size="xlarge"]) #toolsPage header :is(.tool-tabs button,#backBtn) {
-  font-size:var(--ui-button-font);min-height:var(--ui-control-height);
-}
-#refRoot[data-ui-size="large"] {--reference-screen-zoom:1.12}
-#refRoot[data-ui-size="xlarge"] {--reference-screen-zoom:1.25}
-#refRoot:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(#sharedHeader,#reportShell,#s1,#s2) {zoom:var(--reference-screen-zoom)}
-/* Keep the same compact pager in the zoomed report and unzoomed SQL tabs. */
-#refRoot:is([data-ui-size="large"],[data-ui-size="xlarge"]) :is(#s1,#s2) .sql-pager {
- zoom:calc(1 / var(--reference-screen-zoom));
-}
 @media screen {
+  html[data-ui-size="110"] {--desktop-ui-scale:1.1}
+  html[data-ui-size="125"] {--desktop-ui-scale:1.25}
+  html[data-ui-size="150"] {--desktop-ui-scale:1.5}
   html[data-ui-size="80"] {--desktop-ui-scale:.8}
   html[data-ui-size="90"] {--desktop-ui-scale:.9}
-  html:is([data-ui-size="80"],[data-ui-size="90"]) body > #chartTooltip {
+  html[data-ui-size]:not([data-ui-size="standard"]) body > #chartTooltip {
     transform:scale(var(--desktop-ui-scale));transform-origin:top left;
   }
-  #refRoot:is([data-ui-size="80"],[data-ui-size="90"]) :is(#sharedHeader,#reportShell,#s1,#s2,.tools-layout,#sheet,.period-calendar,.update-notes,.update-notice,.desktop-notices) {
+  #refRoot[data-ui-size]:not([data-ui-size="standard"]) :is(#sharedHeader,#reportShell,#s1,#s2,.tools-layout,#sheet,.period-calendar,.update-notes,.update-notice,.desktop-notices) {
     zoom:var(--desktop-ui-scale);
   }
 }
@@ -1169,7 +1161,7 @@ body:has(#refRoot)>footer {display:none}
 #groupWorkspace .group-members .group-member > span:first-child::before {content:"📄" / "";margin-inline-end:.45em}
 #groupWorkspace .group-members .group-member > span:first-child {min-width:0;overflow-wrap:anywhere}
 
-label.placement-setting {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px 12px}
+#storage label.placement-setting {display:grid;grid-template-columns:minmax(0,1fr) auto 3em;align-items:center;gap:4px 12px}
 .placement-setting small {grid-column:1/-1}
 #appearanceFilterPlacement {
  appearance:none;box-sizing:border-box;display:block;width:42px;height:24px;min-height:0;
@@ -1177,9 +1169,11 @@ label.placement-setting {display:grid;grid-template-columns:minmax(0,1fr) auto;a
  background:var(--surface);color:var(--muted);cursor:pointer;
 }
 #appearanceFilterPlacement::before {content:"";display:block;width:18px;height:18px;border-radius:50%;background:currentColor}
-#appearanceFilterPlacement:checked {color:var(--text);border-color:currentColor}
+#appearanceFilterPlacement:checked {background:var(--accent-fill);color:var(--on-accent);border-color:var(--accent)}
+#appearanceFilterPlacement:checked + .placement-value span:first-child,
+#appearanceFilterPlacement:not(:checked) + .placement-value span:last-child {display:none}
 #appearanceFilterPlacement:checked::before {transform:translateX(17px)}
-#appearanceFilterPlacement:focus-visible {outline:2px solid currentColor;outline-offset:3px}
+#appearanceFilterPlacement:focus-visible {outline:2px solid var(--focus);outline-offset:3px}
 @media(forced-colors:active){#appearanceFilterPlacement {appearance:auto}}
 #storage .appearance-grid > label[hidden] {display:none!important}
 #storage .appearance-choices {display:flex;flex-wrap:wrap;gap:4px;min-width:0;margin:0;padding:0;border:0}
@@ -1189,7 +1183,18 @@ label.placement-setting {display:grid;grid-template-columns:minmax(0,1fr) auto;a
 #storage .appearance-choices span {padding:6px 10px;border:1px solid var(--field-border);border-radius:6px;background:var(--field-bg);color:var(--text)}
 #storage .appearance-choices input:checked + span {border-color:var(--selected-border);background:var(--selected);box-shadow:inset 0 -2px var(--accent)}
 #storage .appearance-choices input:focus-visible + span {outline:2px solid var(--focus);outline-offset:2px}
-#storage .appearance-swatch-label::after {content:"";display:block;width:60px;height:7px;border-radius:3px;background:linear-gradient(to right,var(--plot-0) 0 33%,var(--plot-1) 33% 66%,var(--plot-2) 66% 100%)}
+@supports (appearance:base-select) {
+ #appearancePalette, #appearancePalette::picker(select) {appearance:base-select}
+ #appearancePalette {align-items:center;gap:.5em}
+ #appearancePalette::picker(select) {background:var(--field-bg);color:var(--text);border:1px solid var(--field-border)}
+ #appearancePalette option {display:flex;align-items:center;padding:.5em;gap:.5em;white-space:normal}
+ #appearancePalette option:checked {background:var(--selected)}
+ #appearancePalette selectedcontent {display:flex;min-width:0;flex:1;align-items:center;gap:.5em;white-space:normal}
+ #appearancePalette .palette-colors {display:inline-flex;gap:3px;flex:none;margin-inline-start:auto}
+ #appearancePalette .palette-colors i {width:.7em;height:.7em;border:1px solid var(--muted);border-radius:2px;background:var(--sample-0)}
+ #appearancePalette .palette-colors i:nth-child(2) {background:var(--sample-1)}
+ #appearancePalette .palette-colors i:nth-child(3) {background:var(--sample-2)}
+}
 @media(forced-colors:active){#storage .appearance-choices input:checked + span {outline:2px solid Highlight}}
 
 #groupWorkspace .group-children {margin-inline-start:clamp(4px,1vw,16px); padding-inline-start:4px; border-inline-start:1px solid var(--line)}

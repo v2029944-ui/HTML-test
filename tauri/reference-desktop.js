@@ -279,10 +279,24 @@
     statusChanged();
 
     const syncTheme = appearanceChoices('appearanceTheme','Тема',{system:'Как в системе'});
-    const syncSize = appearanceChoices('appearanceSize','Масштаб интерфейса',{
-      '80':'80%', '90':'90%', standard:'100%', large:'≈115%', xlarge:'≈130%'
-    });
-    byId('appearancePalette').closest('label').classList.add('appearance-swatch-label');
+    const syncSize = appearanceChoices('appearanceSize','Масштаб интерфейса',{});
+    if (CSS.supports('appearance','base-select')) {
+      const palette = byId('appearancePalette');
+      const face = document.createElement('button');
+      face.type = 'button';
+      face.append(document.createElement('selectedcontent'));
+      palette.prepend(face);
+      for (const option of palette.options) {
+        const label = document.createElement('span');
+        label.textContent = option.textContent;
+        const colors = document.createElement('span');
+        colors.className = 'palette-colors';
+        colors.dataset.sample = option.value;
+        colors.setAttribute('aria-hidden','true');
+        colors.append(...Array.from({length:3}, () => document.createElement('i')));
+        option.replaceChildren(label, colors);
+      }
+    }
     const forcedColors = window.matchMedia('(forced-colors: active)');
     let captionKey;
     const syncAppearance = () => {

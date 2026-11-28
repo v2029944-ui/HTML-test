@@ -386,12 +386,50 @@ def check_runtime(page):
     navigate(page,'storage')
     expect(page.locator('#onlineUpdates #appVersion')).to_have_text('Версия '+expected_version)
     page.locator('input[name="appearanceSizeChoice"][value="standard"]').check()
+    placement = page.locator('#appearanceFilterPlacement')
+    original_placement = placement.is_checked()
+    placement.click()
+    expect(page.locator('.placement-value span:visible')).to_have_text('Выкл' if original_placement else 'Вкл')
+    placement.focus()
+    page.keyboard.press('Space')
+    assert placement.is_checked() == original_placement
+    expect(placement).to_be_focused()
+    assert placement.evaluate("el => el.matches(':focus-visible') && getComputedStyle(el).outlineStyle !== 'none'")
+    palette = page.locator('#appearancePalette')
+    palette.focus()
+    expect(placement).not_to_be_focused()
+    expect(page.locator('.placement-value span:visible')).to_have_text('Вкл' if original_placement else 'Выкл')
+    if page.evaluate("CSS.supports('appearance','base-select')"):
+        original_palette = palette.input_value()
+        palette.select_option('minimal')
+        palette.focus()
+        page.keyboard.press('Enter')
+        page.keyboard.press('ArrowDown')
+        page.keyboard.press('Enter')
+        expect(palette).to_have_value('neon')
+        expect(palette).to_be_focused()
+        colors = palette.locator('selectedcontent .palette-colors i').evaluate_all(
+            'nodes => nodes.map(el => getComputedStyle(el).backgroundColor)')
+        assert len(colors) == len(set(colors)) == 3
+        palette.select_option(original_palette)
+    preset = page.locator('#appearancePreset')
+    design = page.locator('#appearanceDesign')
+    saved_theme = page.locator('#appearanceTheme').input_value()
+    preset.select_option('paper')
+    expect(palette).to_have_value('paper')
+    expect(design).to_have_value('paper')
+    expect(page.locator('#appearanceDescription')).to_contain_text('Терракотовый и оливковый')
+    design.select_option('compact')
+    expect(preset).to_have_value('custom')
+    design.select_option('paper')
+    expect(preset).to_have_value('paper')
+    expect(page.locator('#appearanceTheme')).to_have_value(saved_theme)
     targets = page.locator('#refSettings, #checkAppUpdate')
     assert targets.count() == 2
     heights = 'nodes => nodes.map(node => node.getBoundingClientRect().height)'
     standard = targets.evaluate_all(heights)
     assert min(standard) > 0
-    for percent in (90, 80):
+    for percent in (80, 90, 110, 125, 150):
         page.locator(f'input[name="appearanceSizeChoice"][value="{percent}"]').check()
         expect(page.locator('#refRoot')).to_have_attribute('data-ui-size', str(percent))
         assert page.evaluate("localStorage.getItem('work-reports-ui-size-v1')") == str(percent)
@@ -401,10 +439,10 @@ def check_runtime(page):
     page.locator('input[name="appearanceThemeChoice"][value="dark"]').check()
     page.locator('#appearancePalette').select_option('paper')
     page.locator('#appearanceDesign').select_option('compact')
-    page.locator('input[name="appearanceSizeChoice"][value="large"]').check()
+    page.locator('input[name="appearanceSizeChoice"][value="110"]').check()
     assert page.evaluate('''() => {
       const {theme,palette,design,uiSize}=document.documentElement.dataset;
-      return [theme,palette,design,uiSize].join('/')==='dark/paper/compact/large';
+      return [theme,palette,design,uiSize].join('/')==='dark/paper/compact/110';
     }''')
     check_caption_colors(page)
     check_palette_contrast(page)
@@ -617,6 +655,43 @@ def clear_report_confirmation(page, confirmations, count, *, accept=False, draft
             assert confirmations.revision() == revision
             if drafts:
                 assert drafts() == before
+
+
+def check_saved_organization_name(page, confirmations, tmp, output):
+    """Exercise the final rename on the disposable personal database."""
+    navigate(page,'storage')
+    fields = page.locator('#organizationFields input')
+    save = page.locator('#saveOrganizations')
+    status = page.locator('#organizationSaveStatus')
+    before = api(page,'nativeSettingsBootstrap')
+    before_contents = backup_contents(confirmations.database)
+    original = fields.first.input_value()
+    name = original + ' · проверка сохранения'
+    expect(save).to_be_disabled()
+    fields.first.fill(name)
+    expect(status).to_have_text('Есть несохранённые изменения')
+    fields.first.fill(original)
+    expect(save).to_be_disabled()
+    expect(status).to_be_empty()
+    fields.first.fill(name)
+    save.click()
+    prompt = ('Изменить названия подразделений во всех отчётах и справочнике? '
+              'Сначала будет создана резервная копия SQLite.')
+    dialog, owner = confirmations.find_dialog(prompt)
+    confirmations.answer(dialog, owner, prompt, 1)
+    picker = OwnedFileDialogs(confirmations)
+    hwnd, owner = picker.find('Сохранить резервную копию SQLite')
+    with tempfile.TemporaryDirectory(dir=tmp) as directory:
+        backup = picker.save_rename_backup(hwnd, owner, Path(directory), output/'native-file-rename-backup.png')
+        expect(status).to_have_text('Названия сохранены',timeout=90_000)
+        assert backup.is_file(), ('Expected backup file', backup.name, 'found', [p.name for p in Path(directory).iterdir()])
+        assert backup_contents(backup) == before_contents, 'Backup differs from pre-rename SQLite data'
+        assert api(page,'nativeRestorePreview',str(backup))['reportCount'] == before['reports']
+    navigate(page,'databases')
+    navigate(page,'storage')
+    expect(fields.first).to_have_value(name)
+    expect(save).to_be_disabled()
+    assert api(page,'nativeSettingsBootstrap')['org_names'] == [name, *before['org_names'][1:]]
 
 
 def check_cancelled_management_confirmations(page, confirmations):
@@ -2161,6 +2236,11 @@ def run():
                 ready(page,0)
                 check_print_all_changes(page,tmp,output,pid,api,quality_evidence_xlsx,open_daily_overview)
                 report['checks'].append('Both native print previews contained all 13 filtered SQLite rows in order')
+            with installed_page() as (page,_,pid):
+                wait_for_app_state(page,'Boolean(window.unifiedUI?.snapshot)','Department name test')
+                confirmations=NativeConfirmations(pid,Path(api(page,'info')['dataFile']))
+                check_saved_organization_name(page,confirmations,tmp,output)
+                report['checks'].append('Department name draft reverts, saves with a verified SQLite backup, and remains changed after reopening settings')
     (output/'build-info.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     if independent_failures:
         raise ExceptionGroup('Installed WebView2 walkthroughs failed',independent_failures)

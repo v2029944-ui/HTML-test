@@ -22,6 +22,13 @@ test('installed reference screens and detail tools share the same native forms',
   }
 });
 
+test('preset precedes its design and palette controls in standalone and installed settings', () => {
+  for (const markup of [original,html]) {
+    const fields = Array.from(markup.matchAll(/<select id="appearance(Preset|Design|Palette|Theme)">/g), match => match[1]);
+    assert.deepEqual(fields,['Preset','Design','Theme','Palette']);
+  }
+});
+
 test('desktop starts in reference colors and honors previously selected appearance', () => {
   const context = {window:{}};
   vm.runInNewContext(script, context);
@@ -43,10 +50,12 @@ test('desktop compact scales match the picker and keep existing preference value
   vm.runInNewContext(script, context);
   const options = html.match(/<select id="appearanceSize">([\s\S]*?)<\/select>/)[1];
   const values = Array.from(options.matchAll(/value="([^"]+)"/g), match => match[1]);
-  assert.deepEqual(values, ['80', '90', 'standard', 'large', 'xlarge']);
+  assert.deepEqual(values, ['80', '90', 'standard', '110', '125', '150']);
   for (const value of values) {
     assert.equal(vm.runInNewContext(`uiSizePreference(${JSON.stringify(value)})`, context), value);
   }
+  assert.equal(vm.runInNewContext('uiSizePreference("large")', context), '110');
+  assert.equal(vm.runInNewContext('uiSizePreference("xlarge")', context), '125');
   assert.equal(vm.runInNewContext('uiSizePreference(null)', context), 'standard');
   assert.equal(html.split('id="appVersion"').length - 1, 1);
   assert.match(html, /id="onlineUpdates"[^>]*>[\s\S]*?Приложение и обновления<\/h2>\s*<span id="appVersion"/);
